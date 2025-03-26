@@ -1,4 +1,19 @@
-
+/**
+ * @license
+ * Copyright 2024 Thidima SA. All Rights Reserved.
+ * Licensed under the GNU AFFERO GENERAL PUBLIC LICENSE, Version 3 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * https://www.gnu.org/licenses/agpl-3.0.html
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ * =============================================================================
+ */
 const { Attr, Constants, Messenger, Cache } = require("@drumee/server-essentials");
 const { Mfs } = require('@drumee/server-core');
 const { isEmpty } = require('lodash');
@@ -97,6 +112,8 @@ class __dmz extends Mfs {
     } else if (res.require_password) {
       res.status = 'REQUIRED_PASSWORD'
     }
+    const guest_id = Cache.getSysConf("guest_id");
+    res.guest_id = guest_id;
     this.output.data(res);
   }
 
@@ -114,11 +131,12 @@ class __dmz extends Mfs {
     }
 
     let user = this.user.toJSON();
+    const guest_id = Cache.getSysConf("guest_id");
     let { regsid } = this.input.get(Attr.cookie);
     if (regsid) {
       /** Side user */
       let u = await this.yp.await_proc("cookie_retrieve_user", regsid);
-      if (u && u.id != ID_NOBODY) {
+      if (u && ![ID_NOBODY, guest_id].includes(u.id)) {
         if (u.profile) {
           user.profile = u.profile;
           user.uid = u.id;
@@ -126,7 +144,6 @@ class __dmz extends Mfs {
         }
       }
     }
-    //this.debug("AAAA:133", this.user.toJSON(), this.hub.get(Attr.home_id), this.uid, { info }, this.input.authorization())
     let rows = await this.yp.await_proc('forward_proc', info.hub_id, 'dmz_settings', ``);
     if (rows[0] && rows[0].hours !== null) {
       info.hours = rows[0].hours;
@@ -137,7 +154,6 @@ class __dmz extends Mfs {
     let node = await this.db.await_proc('mfs_access_node', this.uid, info.nid) || {};
     if (info.require_pwd && !node.privilege) {
       info.status = 'REQUIRED_PASSWORD';
-      //this.debug('AAA:148', this.uid, info.nid, { node });
       if (!password) {
         return this.output.data(info);
       }
@@ -168,7 +184,11 @@ class __dmz extends Mfs {
     }
     user.uid = user.id;
     let area = this.hub.get(Attr.area);
-    let out = { ...user, ...info, guest_id: info.uid, area };
+    let is_guest = (guest_id == info.uid);
+    if(user.profile){
+      user.profile.is_guest = is_guest;
+    }
+    let out = { ...user, ...info, guest_id: info.uid, area, is_guest };
     this.output.data(out);
   }
 

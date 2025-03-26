@@ -1,8 +1,24 @@
+/**
+ * @license
+ * Copyright 2024 Thidima SA. All Rights Reserved.
+ * Licensed under the GNU AFFERO GENERAL PUBLIC LICENSE, Version 3 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * https://www.gnu.org/licenses/agpl-3.0.html
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ * =============================================================================
+ */
 
 const { existsSync } = require('fs');
 const { isEmpty, isArray } = require('lodash');
 const { 
-  Attr, toArray, Remit, Constants, sendSms,
+  Attr, toArray, Remit, Constants, 
   Messenger, DrumeeCache, RedisStore 
 } = require("@drumee/server-essentials")
 
@@ -12,11 +28,39 @@ const {
   WRONG_PASSWORD 
 } = Constants;
 
+const Sms = require('../../vendor/smsfactor');
 const { Entity, Generator, MfsTools } = require("@drumee/server-core");
 const { get_node_content } = MfsTools;
 
 //########################################
 class __private_drumate extends Entity {
+
+  // ========================
+  // initialize
+  // ========================
+  // constructor(...args) {
+  //   super(...args);
+  //   this.change_email = this.change_email.bind(this);
+  //   this.change_mobile = this.change_mobile.bind(this);
+  //   this.change_password = this.change_password.bind(this);
+  //   this.check_password = this.check_password.bind(this);
+  //   this.contacts = this.contacts.bind(this);
+  //   this.data_usage = this.data_usage.bind(this);
+  //   this.confirm_delete_account = this.confirm_delete_account.bind(this);
+  //   this.delete_account = this.delete_account.bind(this);
+  //   this.drumate_hubs = this.drumate_hubs.bind(this);
+  //   this.get_drumate_detail = this.get_drumate_detail.bind(this);
+  //   this.get_profile = this.get_profile.bind(this);
+  //   this.get_settings = this.get_settings.bind(this);
+  //   this.hubs = this.hubs.bind(this);
+  //   this.intro_acknowledged = this.intro_acknowledged.bind(this);
+  //   this.my_hubs = this.my_hubs.bind(this);
+  //   this.set_avatar = this.set_avatar.bind(this);
+  //   this.set_lang = this.set_lang.bind(this);
+  //   this.update_ident = this.update_ident.bind(this);
+  //   this.update_profile = this.update_profile.bind(this);
+  //   this.update_settings = this.update_settings.bind(this);
+  // }
 
   /**
    * 
@@ -189,7 +233,6 @@ class __private_drumate extends Entity {
    *  @params {object} args -- extra data to be sent back to frontend
    */
   async get_otp() {
-    const Sms = require('../../vendor/smsfactor');
     let profile = this.user.get(Attr.profile);
     if (isEmpty(profile)) {
       let user = await this.yp.await_proc('get_visitor', this.uid);
@@ -259,6 +302,35 @@ class __private_drumate extends Entity {
     this.output.data(otp);
   }
 
+  /** Send One Time Password -- SMS
+   *  @params {object} cur_profile -- as extracted from yp
+   *  @params {object} args -- extra data to be sent back to frontend
+   */
+  async send_otp(cur_profile, args) {
+    const token = this.randomString();
+    const lang = this.client_language();
+    let otp = await this.yp.await_proc('otp_create', this.uid, token);
+    const message = DrumeeCache.message('_otp_code', lang);
+    const Moment = require('moment');
+    Moment.locale(lang);
+    const expiry = Moment(otp.expiry, 'X').format("hh:mm");
+    const mobile = `${cur_profile.areacode}${cur_profile.mobile}`
+    let opt = {
+      message: `${message.format(otp.code, expiry)}`,
+      receivers: [mobile]
+    }
+    let sms = new Sms(opt);
+    sms.send().then((result) => {
+      //this.debug("AAAA:334", result);
+      if (!isEmpty(result.invalidReceivers)) {
+        let msg = `${DrumeeCache.message('_invalid_recipient', lang)}`
+        this.output.data({ error: `${msg} : ${result.invalidReceivers[0]}` });
+        return;
+      }
+      otp.code = '******';
+      this.output.data({ ...otp, ...args });
+    })
+  }
 
   /** check_otp
    *  Check if there pending OTP
@@ -319,12 +391,21 @@ class __private_drumate extends Entity {
    * @returns 
    */
   async update_profile() {
-    let user = this.user.toJSON();
-    let { profile } = user;
+    let profile = this.input.need(Attr.profile);
+    let cur_profile = {};
+    try {
+      cur_profile = this.user.get(Attr.profile);
+    } catch {
+      cur_profile = {};
+    }
     if (await this.check_otp()) return;
-    if (/^(sms|email|passkey|1)$/.test(profile.otp)) {
-      await this.session.send_otp(user);
-      return;
+    for (let key in profile) {
+      if (['otp'].includes(key)) {
+        if (cur_profile.otp != null) {
+          await this.send_otp(cur_profile, { profile });
+          return;
+        }
+      }
     }
     await this.do_update_profile();
   }
@@ -615,8 +696,7 @@ class __private_drumate extends Entity {
    * 
    */
   set_lang() {
-    let lang = this.supportedLanguage(this.input.get('Xlang')); // Don't use Attr.lang, because it's superset by core/io
-    this.debug(`ZEZEZEZEZE lang=${lang}`, this.user_id());
+    let lang = this.supportedLanguage(this.input.get('Xlang')); 
     this.yp.call_proc('drumate_set_lang', this.user_id(), lang, this.output.data);
   }
 

@@ -1,10 +1,21 @@
-// ================================  *
-//   Copyright Xialia.com  2013-2017 *
-//   FILE  : src/service/yp
-//   TYPE  : module
-// ================================  *
+/**
+ * @license
+ * Copyright 2024 Thidima SA. All Rights Reserved.
+ * Licensed under the GNU AFFERO GENERAL PUBLIC LICENSE, Version 3 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * https://www.gnu.org/licenses/agpl-3.0.html
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ * =============================================================================
+ */
 const {
-  Attr, Constants, Cache, toArray, RedisStore, sysEnv
+  Attr, Constants, Cache, toArray, RedisStore, sysEnv, TFauth
 } = require("@drumee/server-essentials");
 
 const {
@@ -14,14 +25,16 @@ const {
 } = Constants;
 const { Entity, FileIo } = require("@drumee/server-core");
 const { existsSync, readFileSync } = require("fs");
-const { isEmpty, isString, isArray } = require("lodash");
+const { isEmpty, isString, isArray, isObject, keys } = require("lodash");
 
 const { getPlugins } = require("../router/rest");
 const { resolve } = require("path");
 const { credential_dir } = sysEnv();
-let file = resolve(credential_dir, `crypto/public.pem`);
-let publicKey = readFileSync(file);
-
+let keyFile = resolve(credential_dir, `crypto/public.pem`);
+const publicKey = readFileSync(keyFile);
+const TfaMethods = TFauth.Methods.map((e) => {
+  return e.type
+});
 //########################################
 class __yp extends Entity {
 
@@ -109,10 +122,7 @@ class __yp extends Entity {
     data.platform.arch = global.myDrumee.arch || "pod";
     data.platform.cdnHost = global.myDrumee.cdnHost;
     data.platform.version = global.VERSION;
-    data.platform.licence = {
-      signature: await this.yp.await_func("sys_conf_get", "licence_signature"),
-      content: await this.yp.await_func("sys_conf_get", "licence_content"),
-    };
+    data.platform.TfaMethods = TfaMethods;
     if (
       global.myDrumee.isPublic &&
       global.myDrumee.useEmail &&
@@ -124,7 +134,7 @@ class __yp extends Entity {
     if (plugins) {
       data.platform.plugins = plugins;
     }
-    data.plateform = data.platform; // tmp
+    data.plateform = data.platform;
     this.output.data(data);
   }
 
@@ -192,7 +202,6 @@ class __yp extends Entity {
     );
   }
 
-
   /**
    *
    */
@@ -236,6 +245,13 @@ class __yp extends Entity {
   }
 
   /**
+   * 
+   */
+  async request_otp() {
+
+  }
+
+  /**
    *
    */
   async login() {
@@ -247,11 +263,8 @@ class __yp extends Entity {
    */
   async guest_login() {
     let token = this.input.need(Attr.token);
-
     let res = await this.session.dmz_login(token, this.input.get(Attr.password));
-
     if (res.failed) {
-      //res.status = res.error;
       res.validity = res.error;
     }
     let info = await this.yp.await_proc("dmz_info_next", token);
@@ -488,7 +501,6 @@ class __yp extends Entity {
     for (var s of rows) {
       payload.socket_id = s.id;
       payload.model = { user_id: s.my_id, status: s.my_state };
-      //console.log("AAA:530:", { payload, s });
       await RedisStore.sendData(payload, s.id);
     }
   }
@@ -498,12 +510,19 @@ class __yp extends Entity {
    */
   async ping() {
     let data = this.input.get("data");
-    if (!data || !data.socket_id) {
+    if (data && data == "debug") {
       this.output.data({ verbosity: global.verbosity, modules: global.debug });
+      await RedisStore.sendData(data);
       return;
     }
-    redisStore.sendData(data);
-    this.output.data({ verbosity: global.verbosity, modules: global.debug });
+    if (!data) {
+      data = "Pong";
+    }
+    if (isObject(data)) {
+      this.output.data(data);
+    } else {
+      this.output.data({ response: data });
+    }
   }
 
   /**

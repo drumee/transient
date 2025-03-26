@@ -1,9 +1,19 @@
-// ================================  *
-//   Copyright Xialia.com  2013-2017 *
-//   FILE  : src/service/private/hub
-//   TYPE  : module
-// ================================  *
-
+/**
+ * @license
+ * Copyright 2024 Thidima SA. All Rights Reserved.
+ * Licensed under the GNU AFFERO GENERAL PUBLIC LICENSE, Version 3 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * https://www.gnu.org/licenses/agpl-3.0.html
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ * =============================================================================
+ */
 const {
   isEmpty, filter, isArray, difference, map
 } = require("lodash");
@@ -23,6 +33,7 @@ const { remove_dir } = MfsTools;
 const { toArray } = utils;
 const { stringify } = JSON;
 const { server_location } = sysEnv();
+const { toUnicode } = require('punycode/');
 
 const Hub = require("../hub");
 class __private_hub extends Hub {
@@ -129,9 +140,10 @@ class __private_hub extends Hub {
    * 
    */
   _getShareLink(token) {
-    let keysel = this.hub.get(Attr.hubname);
-    const pathname = this.input.basepath(`/?keysel=${keysel}#/dmz/share/`);
-    let link = `https://${this.hub.get(Attr.vhost)}${pathname}`;
+    let keysel = this.hub.get(Attr.id);
+    const pathname = this.input.basepath(`/?keysel=${keysel}/#/dmz/share/`);
+    const hostname = toUnicode(this.hub.get(Attr.vhost));
+    let link = `https://${hostname}${pathname}`;
     if (token) return link + token;
     return link;
   }
@@ -191,11 +203,25 @@ class __private_hub extends Hub {
    * 
    */
   async update_name() {
-    let tag = this.randomString();
     const hub_id = this.hub.get(Attr.id);
     const name = this.input.need(Attr.name);
-    const data = await this.yp.await_proc("hub_update_name", hub_id, name);
-    this.output.data({ ...data, name });
+    let sql = "SELECT * FROM hub WHERE name=?"
+    let { id } = await this.yp.await_query(sql, name);
+    if (id) {
+      this.output.data({ error: "ALREADY_EXISTS" });
+      return;
+    }
+
+    await this.yp.await_proc("hub_update_name", hub_id, name);
+    let hub = await this.yp.await_proc("get_hub", hub_id);
+    let my_db = this.user.get(Attr.db_name)
+    let recipients = await this.yp.await_proc("entity_sockets", hub_id);
+    let node = await this.yp.await_proc(`${my_db}.mfs_access_node`, this.uid, hub_id);
+    node.hubname = hub.hubname;
+    node.name = hub.hubname;
+    node.fieldName = 'hubname';
+    await RedisStore.sendData(this.payload(node), recipients);
+    this.output.data(node);
   }
 
   /**
@@ -251,7 +277,6 @@ class __private_hub extends Hub {
   update_ident() {
     const ident = this.input.need(Attr.ident);
     const id = this.input.use(Attr.id);
-    this.debug("AAAA 112", ident);
     this.yp.call_proc(
       "ident_exists",
       ident,
@@ -415,7 +440,7 @@ class __private_hub extends Hub {
       );
     }
     if (!isEmpty(rows)) {
-      for (let recipient of rows) {
+      for (let recipient of toArray(rows)) {
         let hub = await this.yp.await_proc(
           `${recipient.db_name}.mfs_access_node`,
           recipient.id,
@@ -423,6 +448,8 @@ class __private_hub extends Hub {
         );
         hub.message = message;
         hub.ownpath = '/';
+        hub.hub_id = hub.actual_hub_id;
+        hub.db_name = hub.actual_db_name;
         let sockets = await this.yp.await_proc("user_sockets", recipient.id);
         await RedisStore.sendData(this.payload(hub), sockets);
       }
@@ -479,7 +506,6 @@ class __private_hub extends Hub {
     let sockets = await this.yp.await_proc("entity_sockets", hub_id);
     await RedisStore.sendData(this.payload(data), sockets);
 
-    this.debug(`SSSSSSSSS ::::hub_id==${hub_id}:::::157`, Attr.nid, data, hub_id);
     await this.db.await_proc(`remove_all_members`, 0);
     let entity = await this.yp.await_proc("entity_delete", hub_id);
     remove_dir(entity.home_dir, 1);
@@ -490,7 +516,7 @@ class __private_hub extends Hub {
    *
    */
   async get_external_room_attr() {
-    let rows = (await this.db.await_proc("dmz_settings")) || [];
+    let rows = await this.db.await_proc("dmz_settings") || [];
     let res = rows.shift();
     res.details = rows;
     res.members = [];
@@ -553,48 +579,50 @@ class __private_hub extends Hub {
     const flag = this.input.need(Attr.flag);
     const validityMode = this.input.get("validity_mode") || "infinity";
     const expiry = hours * 1 + days * 24;
-
     let res = {};
     let nid = this.home_id;
     let hub_id = this.hub.get(Attr.id);
 
-    if (flag == Attr.password) {
-      await this.yp.await_proc("dmz_update_password", hub_id, nid, pw);
-      res.password = pw;
-    }
-
-    if (flag == Attr.permission) {
-      await this.yp.await_proc(
-        "dmz_update_permission_next",
-        hub_id,
-        nid,
-        permission
-      );
-      res.permission = permission;
-    }
-
-    if (flag == Attr.expiry) {
-      await this.yp.await_proc(
-        "dmz_update_expiry_new",
-        hub_id,
-        nid,
-        validityMode,
-        expiry
-      );
-      res.hours = hours;
-      res.days = days;
-      res.dmz_expiry = "active";
-      if (expiry == 0) {
-        res.dmz_expiry = "expired";
-      }
-      if (validityMode == "infinity") {
-        res.dmz_expiry = "infinity";
-      }
+    switch (flag) {
+      case Attr.password:
+        await this.yp.await_proc("dmz_update_password", hub_id, nid, pw);
+        res.password = pw;
+        break;
+      case Attr.permission:
+        await this.yp.await_proc(
+          "dmz_update_permission_next",
+          hub_id,
+          nid,
+          permission
+        );
+        res.permission = permission;
+        break;
+      case Attr.expiry:
+        await this.yp.await_proc(
+          "dmz_update_expiry_new",
+          hub_id,
+          nid,
+          validityMode,
+          expiry
+        );
+        res.hours = hours;
+        res.days = days;
+        res.dmz_expiry = "active";
+        if (expiry == 0) {
+          res.dmz_expiry = "expired";
+        }
+        if (validityMode == "infinity") {
+          res.dmz_expiry = "infinity";
+        }
+        break;
     }
 
     this.output.data(res);
   }
 
+  /**
+   * 
+   */
   async update_external_members() {
     let emails = this.input.use(Attr.emails) || this.input.use(Attr.email) || [];
     if (!isArray(emails)) {
@@ -773,21 +801,20 @@ class __private_hub extends Hub {
 
     let nid = this.home_id;
     let hub_id = this.hub.get(Attr.id);
-    let public_id = Cache.getSysConf("public_id");
-
+    //let public_id = Cache.getSysConf("public_id");
+    let guest_id = Cache.getSysConf("guest_id");
     let g = await this.yp.await_proc(
       "dmz_grant_next",
       hub_id,
       nid,
-      public_id,
+      guest_id,
       this.randomString(),
       pw
     );
-    this.debug("ZEZEZEZEZE GRANT", public_id, g);
     await this.db.await_proc(
       "permission_grant",
       nid,
-      public_id,
+      guest_id,
       expiry,
       permission,
       "link",
@@ -891,7 +918,8 @@ class __private_hub extends Hub {
       let node = this.granted_node();
       node.nid = node.id = this.hub.get(Attr.id);
       let sockets = await this.yp.await_proc("user_sockets", uid);
-      await RedisStore.sendData(this.payload(node, { service }), sockets);
+      let payload = this.payload(node, { service });
+      await RedisStore.sendData(payload, sockets);
     }
     this.output.list(members);
   }

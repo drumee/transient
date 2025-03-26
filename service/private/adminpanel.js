@@ -1,12 +1,24 @@
+/**
+ * @license
+ * Copyright 2024 Thidima SA. All Rights Reserved.
+ * Licensed under the GNU AFFERO GENERAL PUBLIC LICENSE, Version 3 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * https://www.gnu.org/licenses/agpl-3.0.html
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ * =============================================================================
+ */
 
-// ================================  *
-//   Copyright Xialia.com  2013-2017 *
-//   FILE  : src/service/private/chat
-//   TYPE  : module
-// ================================  *
-const { Attr, Constants, Remit, sysEnv } = require("@drumee/server-essentials");
-const { utils, Messenger, RedisStore, Cache } = require('@drumee/server-essentials');
-const { toArray } = utils;
+const {
+  Attr, Constants, Remit, sysEnv, utils, Messenger, RedisStore, Cache, nullValue
+} = require("@drumee/server-essentials");
+const { toArray, randomString } = utils;
 const { main_domain } = sysEnv();
 
 const { stringify } = JSON;
@@ -15,7 +27,9 @@ const Crypto = require("crypto");
 const xlsxj = require("xlsx-to-json");
 const Uniqid = require('uniqid');
 const { Mfs, MfsTools } = require('@drumee/server-core');
+const { Mfs: MfsApi, Drumate } = require('@drumee/setup-schemas');
 const { remove_dir } = MfsTools;
+
 class __private_adminpanel extends Mfs {
 
   // ========================
@@ -1098,8 +1112,8 @@ class __private_adminpanel extends Mfs {
    * @returns 
    */
   async member_list() {
-    let role_id = this.input.use(Attr.role_id) || 0;
-    let orgid //= this.input.need(Attr.orgid);
+    let role_id = this.input.use(Attr.role_id);
+    if (nullValue(role_id)) role_id = 0;
     const key = this.input.use(Attr.key);
     const page = this.input.use(Attr.page) || 1;
     const option = this.input.use(Attr.option) || 'member';
@@ -1108,7 +1122,7 @@ class __private_adminpanel extends Mfs {
     let result = [];
 
     let org = await this.yp.await_proc('organisation_get', this.user.domain_id())
-    orgid = org.id;
+    let orgid = org.id;
     if (isEmpty(org)) return this.output.status('NO_ORG');
     res = await this.yp.await_proc('member_list', this.uid, role_id, orgid, key, option, page);
     if (!isArray(res)) {
@@ -1149,9 +1163,10 @@ class __private_adminpanel extends Mfs {
     this.output.data(res);
   }
 
+
   /***
-* 
-*/
+  * 
+  */
   async createMember(opt) {
     let {
       domain, firstname, lastname, email, ident, areacode
@@ -1179,7 +1194,6 @@ class __private_adminpanel extends Mfs {
       }
     }
 
-    let password = uniqueId();
     firstname = firstname.trim();
     lastname = lastname.trim();
     if (!/^\+/.test(areacode)) {
@@ -1194,26 +1208,21 @@ class __private_adminpanel extends Mfs {
       privilege: Remit.dom_member,
       domain,
       username,
-      sharebox: uniqueId(),
+      sharebox: randomString(),
       otp: 0,
       areacode,
       category: "regular",
       profile_type: "standard",
     };
+
+    let drumate = new Drumate({ yp: this.yp });
+    let user = await drumate.create(profile);
+    this.debug("AAA:1203", user)
     this.set({ email });
-    let rows = await this.yp.await_proc("drumate_create", password, profile);
-    let drumate = null;
-    for (let r of rows) {
-      if (r && r.failed) {
-        return { error: r }
-      }
-      if (r.drumate) {
-        drumate = r.drumate;
-      }
-    }
 
     drumate.firstname = firstname;
     drumate.lastname = lastname;
+    const ulang = this.input.ua_language();
     let quota = Cache.getSysConf('quota') || {};
     if (isString(quota)) {
       try { quota = JSON.parse(quota) } catch (e) { quota = {} };
@@ -1222,7 +1231,31 @@ class __private_adminpanel extends Mfs {
 
     await this.yp.await_proc("drumate_update_profile", drumate.id, { quota });
     await this.set_wallpaper(drumate.id);
-    return drumate;
+    let hub = await drumate.createHub({
+      domain,
+      area: Attr.private,
+      hubname: randomString(),
+      filename: Cache.message('_my_share_box', ulang),
+      owner_id: drumate.id
+    });
+
+    await this.yp.await_proc(`${user.db_name}.join_hub`, hub.id);
+    await this.yp.await_proc(`${user.db_name}.permission_grant`, hub.id, drumate.id, 0, 31, 'system', '');
+    await this.yp.await_proc(`${hub.db_name}.permission_grant`, '*', drumate.id, 0, 31, 'system', '');
+
+    hub = await drumate.createHub({
+      domain,
+      area: Attr.dmz,
+      hubname: randomString(),
+      filename: Cache.message('_my_dmz_box', ulang),
+      owner_id: drumate.id
+    });
+
+    await this.yp.await_proc(`${user.db_name}.join_hub`, hub.id);
+    await this.yp.await_proc(`${user.db_name}.permission_grant`, hub.id, drumate.id, 0, 31, 'system', '');
+    await this.yp.await_proc(`${hub.db_name}.permission_grant`, '*', drumate.id, 0, 31, 'system', '');
+
+    return user;
   }
 
   /**
@@ -1258,8 +1291,7 @@ class __private_adminpanel extends Mfs {
     await this.yp.await_proc('token_generate_next', email, email, token, Constants.FORGOT_PASSWORD, '');
     let user = await this.yp.await_proc('get_visitor', email);
     const ulang = this.input.ua_language();
-    //const pathname = this.input.use(Attr.location).pathname.replace(/service.*$/, '');
-    let host = (await this.user.organization()).link;// || process.env.domain_name;
+    const { link: host } = await this.user.organization();
     const link = `${this.input.homepath(host)}#/welcome/reset/${user.id}/${token}/reason=new-account`;
     const subject = `${Cache.message('_admin_network_subject', ulang)}`;
     const msg = new Messenger({
@@ -1306,7 +1338,6 @@ class __private_adminpanel extends Mfs {
     await this.yp.await_proc('token_generate_next', email, email, token, Constants.FORGOT_PASSWORD, '');
     let user = await this.yp.await_proc('get_visitor', email);
     const ulang = this.input.ua_language();
-    //const pathname = this.input.use(Attr.location).pathname.replace(/service.*$/, '');
     const link = `${this.input.homepath()}#/welcome/reset/${user.id}/${token}`;
     const subject = Cache.message("_admin_password_reset_link", ulang);
     const msg = new Messenger({
@@ -1512,7 +1543,6 @@ class __private_adminpanel extends Mfs {
     }
 
     let user = await this.createMember(profile);
-    this.debug("AAA:1515", { user, profile })
     if (!user || user.error) {
       return this.output.status(user.error || "INTERNAL_ERROR")
     }
@@ -1595,7 +1625,7 @@ class __private_adminpanel extends Mfs {
     if (isEmpty(drumate)) return this.output.status('DRUMATE_NOT_EXISTS');
 
     let domain = await this.yp.await_proc('domain_exists', my_org.domain_id);
-    if (drumate.ident != ident) {
+    if (drumate.ident.toLowerCase() != ident) {
       chk = await this.yp.await_proc('get_user_in_domain', ident, domain.name)
       if (chk.exists == 1) return this.output.status('IDENT_NOT_AVAILABLE');
     }

@@ -1,5 +1,20 @@
-
-const { Attr, Constants, Messenger, utils, RedisStore, Cache } = require("@drumee/server-essentials");
+/**
+ * @license
+ * Copyright 2024 Thidima SA. All Rights Reserved.
+ * Licensed under the GNU AFFERO GENERAL PUBLIC LICENSE, Version 3 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * https://www.gnu.org/licenses/agpl-3.0.html
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ * =============================================================================
+ */
+const { Attr, Constants, Messenger, utils, RedisStore, Cache, nullValue } = require("@drumee/server-essentials");
 const { EMAIL_CHECKER } = Constants;
 
 const { readFileSync } = require('fs');
@@ -79,7 +94,6 @@ class __private_contact extends Contact {
     let progress = Math.ceil(result.loaded * 100 / result.total);
     if (this._pendingLoad.model.progress == progress) return;
     this._pendingLoad.model.progress = progres;
-    this.debug("AAA:220", progress, progress % 5, result.loaded);
     await RedisStore.sendData(this._pendingLoad, socket_id);
   }
 
@@ -533,15 +547,17 @@ class __private_contact extends Contact {
   /**
    * 
    */
-  show_contact() {
-    const tag_id = this.input.use(Attr.tag_id, '');
+  async show_contact() {
+    let tag_id = this.input.use(Attr.tag_id);
+    if (nullValue(tag_id)) tag_id = '';
     const name = this.input.use(Attr.name, Attr.name);
     const order = this.input.use(Attr.order, 'asc');
     const page = this.input.use(Attr.page) || 1;
     const option = this.input.use(Attr.option) || 'active';
-    this.db.call_proc('my_contact_show_next',
-      tag_id, name, order, option, page, this.output.list
+    let contacts = await this.db.await_proc('my_contact_show_next',
+      tag_id, name, order, option, page
     );
+    this.output.list(contacts);
   }
 
   /**

@@ -1,11 +1,29 @@
+/**
+ * @license
+ * Copyright 2024 Thidima SA. All Rights Reserved.
+ * Licensed under the GNU AFFERO GENERAL PUBLIC LICENSE, Version 3 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * https://www.gnu.org/licenses/agpl-3.0.html
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ * =============================================================================
+ */
 
 const { isArray, after, union, filter, isEmpty } = require('lodash');
+const { toASCII } = require('punycode/');
+const Media = require('../media');
 
 const {
-  Attr, Privilege, toArray, RedisStore, uniqueId, sysEnv,
+  Attr, Privilege, toArray,
+  RedisStore, uniqueId, sysEnv
 } = require("@drumee/server-essentials");
-const { Mfs } = require("@drumee/server-core");
-class PrivateDesk extends Mfs {
+class __private_desk extends Media {
 
   /**
    * 
@@ -59,21 +77,22 @@ class PrivateDesk extends Mfs {
    */
   async _createHub(args, opt = {}) {
     const domain = this.user.get(Attr.domain);
+    let hostname = this.user.get(Attr.hostname);
     const owner_id = this.uid;
-    let { hubname, area, filename } = args;
+    let { area, filename } = args;
     if (!domain || !area) {
       this.warn("MAL_FORMED_DATA", { args }, { domain, area });
       return this.exception.user("MAL_FORMED_DATA");
     }
 
-    hubname = hubname || uniqueId();
-    filename = filename || hubname;
-
+    hostname = hostname || filename;
+    hostname = hostname.replace(/[ \.,;:!&~#'|@*\$><\?]/, '');
+    hostname = toASCII(hostname);
+    hostname = hostname.replace(/\-$/, '');
+    hostname = hostname.toLowerCase();
+    args = { hostname, area, filename, owner_id, domain };
     opt.lang = this.input.use(Attr.lang) || "en";
-    const rows = await this.db.await_proc(
-      `desk_create_hub`,
-      { hubname, area, filename, owner_id, domain }, opt,
-    );
+    const rows = await this.db.await_proc(`desk_create_hub`, args, opt);
     let hub_id, hub_db, home_id;
     for (let r of rows) {
       if (r && r.failed) {
@@ -81,12 +100,13 @@ class PrivateDesk extends Mfs {
         this.warn("Failed to create hub", { args, opt, rows });
         return {};
       }
-      if (r.db_name && r.filesize && r.actual_home_id) {
+      if (r.db_name && r.filesize != null && r.actual_home_id) {
         hub_db = r.db_name;
         home_id = r.actual_home_id;
       }
       if (r.db_name && r.home_dir) {
         hub_id = r.id;
+        hub_db = hub_db || r.db_name;
       }
     }
     return { hub_id, hub_db, home_id }
@@ -98,9 +118,6 @@ class PrivateDesk extends Mfs {
    * @returns 
    */
   async pre_create() {
-    const { main_domain } = sysEnv();
-    const domain = this.user.get(Attr.domain) || main_domain;
-    const hubname = this.input.use(Attr.hubname) || uniqueId();
     const area = this.input.need(Attr.area, Attr.private);
     const folders = [];
     if (isArray(this.input.use('folders'))) {
@@ -120,17 +137,9 @@ class PrivateDesk extends Mfs {
       limit = hub_limit.avaialable_share_hub - 1
     }
 
-    let data = await this.yp.await_proc('hubname_exists', hubname, domain);
     if (limit < 0) {
       this.warn("HUB LIMIT REACHED", data);
       this.exception.user(message);
-      return;
-    }
-
-
-    if (!isEmpty(data)) {
-      this.warn("IDENT UNVAVAILABLE", data);
-      this.exception.user('_ident_already_exists');
       return;
     }
     this._done();
@@ -181,13 +190,11 @@ class PrivateDesk extends Mfs {
   /**
    * 
    */
-  home() {
+  async home() {
     const page = this.input.use(Attr.page, 1);
-    const self = this;
-    this.db.call_proc("mfs_show_node_by",
-      self.home_id, this.uid, 'rank', 'asc', page,
-      this.output.list
-    );
+    let res = await this.db.call_proc("mfs_show_node_by",
+      this.home_id, this.uid, 'rank', 'asc', page)
+    this.output.list(res);
   }
 
   /**
@@ -278,11 +285,8 @@ class PrivateDesk extends Mfs {
     let email;
     let guest;
     let res = {};
-    let share_id
-    let home
-
-    const hubname = uniqueId();
-    share_id = this.randomString();
+    let home;
+    let share_id = this.randomString();
 
     if (!isArray(emails)) {
       emails = [emails];
@@ -296,7 +300,7 @@ class PrivateDesk extends Mfs {
       }
     }
 
-    const args = { hubname, area: 'dmz', filename };
+    const args = { area: 'dmz', filename };
     let { home_id, hub_id } = await this._createHub(args);
     if (!hub_id) {
       res.status = 'CREATION_FAILED';
@@ -314,7 +318,7 @@ class PrivateDesk extends Mfs {
     home = await this.yp.await_proc('forward_proc', hub.id, 'mfs_home', ``)
 
     let p = await this.yp.await_proc('forward_proc', hub.id, 'permission_grant',
-      `'${home.home_id}','*' ,${expiry},${permission},'link','${share_id}'`);
+      `'${home.home_id}', '*', ${expiry}, ${permission}, 'link', '${share_id}'`);
 
     res = await this.yp.await_proc('forward_proc', hub.id, 'dmz_add_share',
       `'${share_id}', '${p.id}','${this.uid}','${hub.id}','${pw}'`);
@@ -329,7 +333,7 @@ class PrivateDesk extends Mfs {
     media.privilege = media.permission;
     media.actual_home_id = home_id;
     await this.notify_user(this.uid, media);
-    res.link = `${this.input.homepath(hub.vhost)}#/dmz/inbound/token=${share_id}`;
+    res.link = `${this.input.homepath(hub.vhost)}/#/dmz/inbound/token=${share_id}`;
     this.output.data(res)
   }
 
@@ -390,8 +394,8 @@ class PrivateDesk extends Mfs {
     if (pid && pid != this.get(Attr.home_id)) {
       await this.db.await_proc("mfs_move", hub.id, pid)
     }
-    await this.yp.await_proc('hub_update_name', hub.id, filename);
-    await this.yp.await_proc('change_vhost', hub.id, hubname);
+    // await this.yp.await_proc('hub_update_name', hub.id, filename);
+    // await this.yp.await_proc('change_vhost', hub.id, hubname);
     let media = await this.db.await_proc("mfs_access_node", this.uid, hub.id);
     media.hub_id = media.id;
     media.hubname = hubname;
@@ -403,6 +407,7 @@ class PrivateDesk extends Mfs {
     let keys = { pid: Attr.nid, vhost: 'vhost' };
     let sockets = await this.yp.await_proc('entity_sockets', media.hub_id);
     await RedisStore.sendData(this.payload(media, { service, keys }), sockets);
+    await this.changelog_write({ src: media, event: "media.new" });
     this.output.data(media);
   }
 
@@ -429,17 +434,19 @@ class PrivateDesk extends Mfs {
     if (pid && pid != this.get(Attr.home_id)) {
       await this.db.await_proc("mfs_move", hub.id, pid)
     }
-    await this.yp.await_proc('hub_update_name', hub.id, filename);
+    //await this.yp.await_proc('hub_update_name', hub.id, filename);
     let media = await this.db.await_proc("mfs_access_node", this.uid, hub.id);
-    media.hub_id = media.id;
+    media.hub_id = hub_id;
+    media.vhost = hub.vhost;
     media.filename = filename;
     media.hubname = hubname;
     media.privilege = media.permission;
-    media.actual_home_id = home_id;
+    media.actual_home_id = hub.home_id;
     media.isalink = 1;
     media.ownpath = '/';
     let sockets = await this.yp.await_proc('entity_sockets', media.hub_id);
     await RedisStore.sendData(this.payload(media), sockets);
+    await this.changelog_write({ src: media, event: "media.new" });
     this.output.data(media);
   }
 
@@ -465,6 +472,7 @@ class PrivateDesk extends Mfs {
     const hub_id = this.input.use(Attr.nid);
     let sockets = await this.yp.await_proc('user_sockets', this.uid);
     let payload = { ...this.granted_node(), reason: 'leave', uid: this.uid };
+    await this.changelog_write({ src: payload, event: "media.remove" });
     payload = this.payload(payload, { loopback: 1 });
     await RedisStore.sendData(payload, sockets);
     await this.db.await_proc('leave_hub', hub_id);
@@ -533,4 +541,4 @@ class PrivateDesk extends Mfs {
   }
 }
 
-module.exports = PrivateDesk;
+module.exports = __private_desk;

@@ -1,10 +1,19 @@
-
-// ================================  *
-//   Copyright Xialia.com  2013-2017 *
-//   FILE  : src/service/private/chat
-//   TYPE  : module
-// ================================  *
-
+/**
+ * @license
+ * Copyright 2024 Thidima SA. All Rights Reserved.
+ * Licensed under the GNU AFFERO GENERAL PUBLIC LICENSE, Version 3 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * https://www.gnu.org/licenses/agpl-3.0.html
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ * =============================================================================
+ */
 const {
   Attr, RedisStore, toArray
 } = require("@drumee/server-essentials");
@@ -29,7 +38,6 @@ class __private_channel extends Entity {
     this.show_ticket = this.show_ticket.bind(this);
     this.list_tickets = this.list_tickets.bind(this);
     this.update_ticket = this.update_ticket.bind(this);
-
   }
 
   /**
@@ -78,10 +86,11 @@ class __private_channel extends Entity {
     })
     await RedisStore.sendData(this.payload(messages, { service: "channel.acknowledge" }), dest);
 
-    dest = await this.yp.await_proc('user_sockets', this.uid);
-    let db_name = this.user.get(Attr.db_name);
-    let model = await this.yp.await_proc(`${db_name}.notification_center_next`);
-    await RedisStore.sendData(this.payload(model, { service: "messages.read" }), dest);
+    // Why do we need to inform the reader ?
+    // dest = await this.yp.await_proc('user_sockets', this.uid);
+    // let db_name = this.user.get(Attr.db_name);
+    // let model = await this.yp.await_proc(`${db_name}.notification_center_next`);
+    // await RedisStore.sendData(this.payload(model, { service: "messages.read" }), dest);
 
     this.output.list(messages);
 
@@ -527,7 +536,8 @@ class __private_channel extends Entity {
     let message = this.input.use(Attr.message, '');
     const thread_id = this.input.use(Attr.thread_id);
     let attachment = this.input.use(Attr.attachment, []);
-    let temp_result = {};
+    let exclude = this.input.need(Attr.socket_id);
+    if (exclude) exclude = [exclude];
     let input = {};
     let message_id = await this.db.await_proc('message_id');
     let sbox;
@@ -571,10 +581,9 @@ class __private_channel extends Entity {
     data.lastname = profile.lastname;
     data.hub_id = this.hub.get(Attr.id);
 
-    //await this.notify_hub(this.hub.get(Attr.id), data);
     data.echoId = this.input.get('echoId');
     let hub_id = this.hub.get(Attr.id);
-    let recipients = await this.yp.await_proc('entity_sockets', hub_id);
+    let recipients = await this.yp.await_proc('entity_sockets', { exclude, hub_id });
     await RedisStore.sendData(this.payload(data), recipients);
 
     this.output.data(data)
@@ -599,11 +608,17 @@ class __private_channel extends Entity {
    */
   async acknowledge() {
     const message_id = this.input.use(Attr.message_id);
+    let exclude = this.input.need(Attr.socket_id);
+    if (exclude) exclude = [exclude];
+
     let res = {};
     res = await this.db.await_proc('acknowledge_message', message_id, this.uid);
     let message = await this.db.await_proc('channel_get', message_id);
-    let recipients = await this.yp.await_proc('entity_sockets', this.hub.get(Attr.id));
     message.key_id = this.hub.get(Attr.id);
+    let recipients = await this.yp.await_proc('entity_sockets', {
+      hub_id: message.key_id,
+      exclude,
+    });
     await RedisStore.sendData(this.payload(message), recipients);
     this.output.data(res);
   }
@@ -722,13 +737,12 @@ class __private_channel extends Entity {
 
       if (!isEmpty(message.delete_attachment)) {
         message.delete_attachment = this.parseJSON(message.delete_attachment)
-
         for (let tempattach of message.delete_attachment) {
-          tempattach = this.parseJSON(tempattach)
-          let sbox = await this.yp.await_proc('forward_proc', tempattach.hub_id, 'mfs_home', ``)
-          let src = { nid: tempattach.nid, hub_id: tempattach.hub_id, mfs_root: sbox.home_dir + '/__storage__/' };
+          let { nid, hub_id } = this.parseJSON(tempattach) || {};
+          if (!nid || !hub_id) continue;
+          let { home_dir } = await this.yp.await_proc('forward_proc', hub_id, 'mfs_home', ``)
+          let src = { nid, hub_id, home_dir };
           await remove_node(src);
-
         }
       }
 
@@ -747,9 +761,7 @@ class __private_channel extends Entity {
       await RedisStore.sendData(this.payload(msg, { service }), recipients);
     }
     this.output.list(temp_result);
-
   }
-
 }
 
 

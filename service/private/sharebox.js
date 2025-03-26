@@ -1,9 +1,19 @@
-// ================================  *
-//   Copyright Xialia.com  2013-2017 *
-//   FILE  : src/service/private/drumate
-//   TYPE  : module
-// ================================  *
-
+/**
+ * @license
+ * Copyright 2024 Thidima SA. All Rights Reserved.
+ * Licensed under the GNU AFFERO GENERAL PUBLIC LICENSE, Version 3 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * https://www.gnu.org/licenses/agpl-3.0.html
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ * =============================================================================
+ */
 
 const {
   Permission, Privilege,
@@ -274,7 +284,7 @@ class __private_sharebox extends __public {
 
     res = await this.db.await_proc('dmz_show_link_content', share_id)
     let host = this.hub.get(Attr.vhost);
-    res.link = `${this.input.homepath(host)}#/dmz/inbound/token=${share_id}`;
+    res.link = `${this.input.homepath(host)}/#/dmz/inbound/token=${share_id}`;
     this.output.data(res);
   }
 
@@ -328,7 +338,7 @@ class __private_sharebox extends __public {
       share_id, p.id, this.uid, guest.id, 'private', node.id, pw);
 
     let host = this.hub.get(Attr.vhost);
-    res.link = `${this.input.homepath(host)}#/dmz/inbound/token=${share_id}`;
+    res.link = `${this.input.homepath(host)}/#/dmz/inbound/token=${share_id}`;
     this.output.data(res);
   }
 
@@ -340,7 +350,7 @@ class __private_sharebox extends __public {
     let res = {};
     res = await this.db.await_proc('dmz_show_link_content', nid)
     let host = this.hub.get(Attr.vhost);
-    res.link = `${this.input.homepath(host)}#/dmz/inbound/token=${res.share_id}`;
+    res.link = `${this.input.homepath(host)}/#/dmz/inbound/token=${res.share_id}`;
     this.output.data(res);
   }
 
@@ -372,7 +382,7 @@ class __private_sharebox extends __public {
 
     res = await this.db.await_proc('dmz_show_link_content', share_id)
     let host = this.hub.get(Attr.vhost);
-    res.link = `${this.input.homepath(host)}#/dmz/inbound/token=${share_id}`;
+    res.link = `${this.input.homepath(host)}/#/dmz/inbound/token=${share_id}`;
 
     this.output.data(res);
   }
@@ -389,7 +399,7 @@ class __private_sharebox extends __public {
     const lang = this.user.language() || this.input.app_language();
     message = message.replace(/\n/g, '<br>');
     const username = this.user.get('fullname');
-    const link = `${this.input.homepath(host)}#/dmz/inbound/token=${share_id}`;
+    const link = `${this.input.homepath(host)}/#/dmz/inbound/token=${share_id}`;
     const subject = `${Cache.message('_sent_you_drop_link', lang)
       .format(username)}`;
 
@@ -429,7 +439,7 @@ class __private_sharebox extends __public {
     let node = args.node;
     let share_id = args.share.share_id;
     const username = this.user.get('fullname');
-    const link = `${this.input.homepath(host)}#/dmz/inbound/token=${share_id}`;
+    const link = `${this.input.homepath(host)}/#/dmz/inbound/token=${share_id}`;
     const subject = `${Cache.message('_sent_you_drop_link', lang)
       .format(username)}`;
     for (let recipient of email) {
@@ -738,7 +748,7 @@ class __private_sharebox extends __public {
         await this.db.await_proc('dmz_add_link',
           share.share_id, p.id, this.uid, guest.id);
         let host = this.hub.get(Attr.vhost);
-        let link = `${this.input.homepath(host)}#/dmz/${share.share_id}`;
+        let link = `${this.input.homepath(host)}/#/dmz/${share.share_id}`;
         if (!isEmpty(message)) {
           message = message.replace(/\n/g, '<br>');
         }

@@ -1,14 +1,22 @@
-
-// ================================  *
-//   Copyright Xialia.com  2013-2017 *
-//   FILE  : src/service/private/yp
-//   TYPE  : module
-// ================================  *
-
-
+/**
+ * @license
+ * Copyright 2024 Thidima SA. All Rights Reserved.
+ * Licensed under the GNU AFFERO GENERAL PUBLIC LICENSE, Version 3 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * https://www.gnu.org/licenses/agpl-3.0.html
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ * =============================================================================
+ */
 const { isEmpty, isArray, difference, map } = require('lodash');
 const __public_room = require("../room");
-const { Attr, Privilege, Cache } = require("@drumee/server-essentials")
+const { Attr, Privilege, Cache, sysEnv } = require("@drumee/server-essentials")
 
 //########################################
 class __private_room extends __public_room {
@@ -18,9 +26,12 @@ class __private_room extends __public_room {
  * 
  */
   _getShareLink(token) {
-    let keysel = this.hub.get(Attr.hubname);
-    const pathname = this.input.basepath(`/?keysel=${keysel}#/dmz/meeting/`);
-    let link = `https://${this.hub.get(Attr.vhost)}${pathname}`;
+    const {
+      main_domain
+    } = sysEnv();
+    let keysel = this.hub.get(Attr.id);
+    const pathname = this.input.basepath(`/?keysel=${keysel}/#/dmz/meeting/`);
+    let link = `https://${main_domain}${pathname}`;
     if (token) return link + token;
     return link;
   }
@@ -44,7 +55,6 @@ class __private_room extends __public_room {
     if (!isArray(recipients)) {
       recipients = [recipients];
     }
-    let pathname = this.input.basepath('/?guest#/dmz/meeting/');
     for (var r of recipients) {
       let g = await this.yp.await_proc('dmz_add_user', r.email, r.name);
       let p = await this.yp.await_proc('dmz_grant_next', hub_id, nid,

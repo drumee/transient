@@ -1,9 +1,20 @@
-// ================================  *
-//   Copyright Xialia.com  2013-2023 *
-//   FILE  : src/service/private/chat
-//   TYPE  : module
-// ================================  *
-const { Attr, RedisStore } = require("@drumee/server-essentials");
+/**
+ * @license
+ * Copyright 2024 Thidima SA. All Rights Reserved.
+ * Licensed under the GNU AFFERO GENERAL PUBLIC LICENSE, Version 3 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * https://www.gnu.org/licenses/agpl-3.0.html
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ * =============================================================================
+ */
+const { Attr, RedisStore, toArray } = require("@drumee/server-essentials");
 const { Entity, MfsTools } = require("@drumee/server-core");
 const { remove_node, move_node, copy_node } = MfsTools;
 
@@ -311,7 +322,7 @@ class privateChat extends Entity {
     let myinput = { ...input };
     let hisinput = { ...input };
     let acknowledge = {};
-
+    let socket_id = this.input.get(Attr.socket_id);
     for (let entity_id of entities) {
       let drumate = await this.yp.await_proc("drumate_exists", entity_id);
       //if(!message_id) message_id = await this.db.await_proc('message_id');
@@ -382,8 +393,14 @@ class privateChat extends Entity {
         mydata.echoId = this.input.get("echoId");
         hisdata.to_id = entity_id;
 
+        /** Update sibling sessions */
         let myDest = await this.yp.await_proc("user_sockets", this.uid);
-        await RedisStore.sendData(this.payload(mydata), myDest);
+        myDest = toArray(myDest).filter(e =>{
+          return (e && socket_id && e.socket_id != socket_id)
+        });
+        if(!isEmpty(myDest)){
+          await RedisStore.sendData(this.payload(mydata), myDest);
+        }
         temp_result.push(mydata);
 
         let hiscount = await this.yp.await_proc(
@@ -633,12 +650,13 @@ class privateChat extends Entity {
       dest
     );
 
-    dest = await this.yp.await_proc("user_sockets", this.uid);
-    let model = await this.db.await_proc("notification_center_next");
-    await RedisStore.sendData(
-      this.payload(model, { service: "messages.read" }),
-      dest
-    );
+    // Why do we need to inform the reader ?
+    // dest = await this.yp.await_proc("user_sockets", this.uid);
+    // let model = await this.db.await_proc("notification_center_next");
+    // await RedisStore.sendData(
+    //   this.payload(model, { service: "messages.read" }),
+    //   dest
+    // );
 
     this.output.list(messages);
   }

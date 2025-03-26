@@ -111,6 +111,12 @@
         "src": "anonymous"
       }
     },
+    "get_otp": {
+      "scope": "hub",
+      "permission": {
+        "src": "owner"
+      }
+    },
     "b2c_signup_otpresend": {
       "scope": "hub",
       "permission": {
