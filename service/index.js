@@ -35,7 +35,7 @@ class Sandbox extends Entity {
     let i = 0;
     if (owner) {
       const members = [];
-      while (i < 3) {
+      while (i < 1) {
         let member = await org.AddMember();
         members.push(member.get(Attr.uid));
         i++;

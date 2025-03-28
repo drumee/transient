@@ -31,8 +31,8 @@ class SandboxPage extends RuntimeEnv {
     const { org_name, icon } = this.hub.toJSON();
     let env = await this.getSettings();
     let data = { ...env, ...user };
-    data.description = `Drumee sandbox ${org_name}`;
-    data.keywords = `Drumee sandbox`;
+    data.description = `Drumee Team Live Demo ${org_name}`;
+    data.keywords = `Drumee Team Live Demo`;
     data.icon = icon;
     data.keysel = user.id;
     data.uid = user.id;
