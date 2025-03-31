@@ -1,14 +1,23 @@
 # Drumee Team Server
-This package provides API Drumee Team Services API. It depends on Drumee Mfs Server. [https://github.com/drumee/server-mfs.git]
+This package provides Drumee Team Services API. It is intended for developers purpose. 
+If you just need to use Drumee as a standalone Collaborative system, head to [this documentation](https://github.com/drumee/documentation/blob/main/Production-install.md)
+At the moment the package contains following components. There are plans to split into smaller part. Contributors are gladly welcome to help.
 
-If you are contributor and are willing to contribute to the project, you can work by installing node pacakages as follow.
+## Drumee Core Features
+- Identity managemen (yellow page)
+- Filesystem Management
+## File sharing
+- Open or closed groups
+## Video conferencing 
+- Jitsi embodied
+## Instant message
+- Chat
 
+# How to install on your local host 
+- Install Drumee Docker Image from this [documentation] (https://github.com/drumee/documentation/wiki/Developer-Corner)
+- 
 ```console
-npm install @drumee/server-mfs
-sudo npm run register-plugin -- --endpoint=$USER
-
-npm install @drumee/server-team
-sudo npm run register-plugin -- --endpoint=$USER
+git clone https://github.com/drumee/server-team.git
+cd server-team
+npm i
 ```
-
-If you intend to use only features from Drumee Team, it is recommended to install from Debian package or Docker Image.
