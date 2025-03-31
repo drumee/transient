@@ -55,7 +55,6 @@ class __private_reminder extends Mfs {
    */
   async list() {
     let data = await this.yp.await_proc('reminder_list', this.uid);
-    this.debug("AAA:66", data);
     this.output.list(data);
   }
 
