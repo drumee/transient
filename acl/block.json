@@ -1,0 +1,100 @@
+{
+  "services": {
+    "assembly": {
+      "scope": "hub",
+      "permission": {
+        "src": "anonymous"
+      }
+    },
+    "content": {
+      "scope": "hub",
+      "permission": {
+        "src": "anonymous"
+      }
+    },
+    "copy": {
+      "scope": "hub",
+      "permission": {
+        "src": "admin"
+      }
+    },
+    "delete": {
+      "scope": "hub",
+      "permission": {
+        "src": "delete"
+      }
+    },
+    "exists": {
+      "scope": "hub",
+      "permission": {
+        "src": "anonymous"
+      }
+    },
+    "filter": {
+      "scope": "hub",
+      "permission": {
+        "src": "delete"
+      }
+    },
+    "history": {
+      "scope": "hub",
+      "permission": {
+        "src": "delete"
+      }
+    },
+    "info": {
+      "scope": "hub",
+      "permission": {
+        "src": "read"
+      }
+    },
+    "list": {
+      "scope": "hub",
+      "permission": {
+        "src": "delete"
+      }
+    },
+    "list_by": {
+      "scope": "hub",
+      "permission": {
+        "src": "delete"
+      }
+    },
+    "log": {
+      "scope": "hub",
+      "permission": {
+        "src": "delete"
+      }
+    },
+    "purge": {
+      "scope": "hub",
+      "permission": {
+        "src": "delete"
+      }
+    },
+    "rename": {
+      "scope": "hub",
+      "permission": {
+        "src": "delete"
+      }
+    },
+    "search": {
+      "scope": "hub",
+      "permission": {
+        "src": "anonymous"
+      }
+    },
+    "store": {
+      "scope": "hub",
+      "permission": {
+        "src": "delete"
+      }
+    },
+    "unpublish": {
+      "scope": "hub",
+      "permission": {
+        "src": "admin"
+      }
+    }
+  }
+}

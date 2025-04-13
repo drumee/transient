@@ -1,0 +1,16 @@
+{
+  "services": {
+    "store": {
+      "scope": "hub",
+      "permission": {
+        "src": "write"
+      }
+    },
+    "content": {
+      "scope": "hub",
+      "permission": {
+        "src": "anonymous"
+      }
+    }
+  }
+}

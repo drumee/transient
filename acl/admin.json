@@ -1,0 +1,19 @@
+{
+  "services": {
+    "show_watermark": {
+      "scope": "plateform",
+      "permission": {
+        "permission": "read"
+      }
+    },
+    "yp_test": {
+      "scope": "plateform",
+      "permission": {
+        "permission": "write"
+      }
+    }
+  },
+  "modules": {
+    "private": "service/private/admin"
+  }
+}

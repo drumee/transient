@@ -1,0 +1,67 @@
+{
+  "services": {
+    "invoice": {
+      "scope": "hub",
+      "permission": {
+        "src": "owner"
+      }
+    },
+    "get_plans": {
+      "scope": "hub",
+      "permission": {
+        "src": "owner"
+      }
+    },
+    "new": {
+      "scope": "hub",
+      "permission": {
+        "src": "owner"
+      }
+    },
+    "update": {
+      "scope": "hub",
+      "permission": {
+        "src": "owner"
+      }
+    },
+    "cancel": {
+      "scope": "hub",
+      "permission": {
+        "src": "owner"
+      }
+    },
+    "init": {
+      "scope": "hub",
+      "permission": {
+        "src": "owner"
+      }
+    },
+    "active": {
+      "scope": "hub",
+      "permission": {
+        "src": "owner"
+      }
+    },
+    "proration": {
+      "scope": "hub",
+      "permission": {
+        "src": "owner"
+      }
+    },
+    "payment_status": {
+      "scope": "hub",
+      "permission": {
+        "src": "owner"
+      }
+    },
+    "update_clock": {
+      "scope": "hub",
+      "permission": {
+        "src": "owner"
+      }
+    }
+  },
+  "modules": {
+    "private": "service/private/subscription"
+  }
+}

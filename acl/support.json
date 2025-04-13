@@ -1,0 +1,30 @@
+{
+  "services": {
+    "bug_report": {
+      "scope": "hub",
+      "permission": {
+        "src": "anonymous"
+      }
+    },
+    "leave_comment": {
+      "scope": "hub",
+      "permission": {
+        "src": "anonymous"
+      }
+    },
+    "list_feedback": {
+      "scope": "hub",
+      "permission": {
+        "src": "delete",
+        "preproc": {
+          "checker": "special_access",
+          "remit": 1
+        }
+      }
+    }
+  },
+  "modules": {
+    "private": "service/private/support",
+    "public": "service/support"
+  }
+}

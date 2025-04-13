@@ -1,0 +1,22 @@
+{
+  "services": {
+    "change": {
+      "scope": "hub",
+      "permission": {
+        "src": "anonymous"
+      }
+    },
+    "count_users": {
+      "scope": "hub",
+      "permission": {
+        "src": "anonymous"
+      }
+    },
+    "list_users": {
+      "scope": "hub",
+      "permission": {
+        "src": "anonymous"
+      }
+    }
+  }
+}

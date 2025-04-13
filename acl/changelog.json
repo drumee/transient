@@ -1,0 +1,13 @@
+{
+  "services": {
+    "read": {
+      "scope": "hub",
+      "permission": {
+        "src": "owner"
+      }
+    }
+  },
+  "modules": {
+    "private": "service/changelog"
+  }
+}

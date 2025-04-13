@@ -1,0 +1,66 @@
+{
+  "services": {
+    "create": {
+      "scope": "hub",
+      "permission": {
+        "src": "write"
+      },
+      "log": true
+    },
+    "send_link": {
+      "scope": "hub",
+      "permission": {
+        "src": "write"
+      },
+      "log": true
+    },
+    "create_link": {
+      "scope": "hub",
+      "permission": {
+        "src": "write"
+      },
+      "log": true
+    },
+    "download": {
+      "scope": "hub",
+      "permission": {
+        "src": "read"
+      },
+      "log": true
+    },
+    "remove": {
+      "scope": "hub",
+      "permission": {
+        "src": "read"
+      }
+    },
+    "link_info": {
+      "scope": "hub",
+      "permission": {
+        "src": "read"
+      }
+    },
+    "chk_password": {
+      "scope": "hub",
+      "permission": {
+        "src": "read"
+      }
+    },
+    "send_otp": {
+      "scope": "hub",
+      "permission": {
+        "src": "read"
+      }
+    },
+    "delete": {
+      "scope": "hub",
+      "permission": {
+        "src": "read"
+      }
+    }
+  },
+  "modules": {
+    "private": "service/transfer",
+    "public": "service/transfer"
+  }
+}
