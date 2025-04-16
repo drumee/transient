@@ -83,7 +83,6 @@ const Spawn = require("child_process").spawn;
 const DATA_ROOT = new RegExp(`^${data_dir}`);
 const SPAWN_OPT = { detached: true, stdio: ["ignore", "ignore", "ignore"] };
 const OFFLINE_DIR = resolve(server_home, "offline", "media");
-
 class __media extends Mfs {
   /**
    *
