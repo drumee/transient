@@ -17,18 +17,17 @@
 
 const { existsSync } = require('fs');
 const { isEmpty, isArray } = require('lodash');
-const { 
-  Attr, toArray, Remit, Constants, 
-  Messenger, DrumeeCache, RedisStore 
+const {
+  Attr, toArray, Remit, Constants,
+  Messenger, DrumeeCache, RedisStore
 } = require("@drumee/server-essentials")
 
-const { 
-  INVALID_EMAIL_FORMAT, 
-  EMAIL_ALREADY_EXIST, 
-  WRONG_PASSWORD 
+const {
+  INVALID_EMAIL_FORMAT,
+  EMAIL_ALREADY_EXIST,
+  WRONG_PASSWORD
 } = Constants;
 
-const Sms = require('../../vendor/smsfactor');
 const { Entity, Generator, MfsTools } = require("@drumee/server-core");
 const { get_node_content } = MfsTools;
 
@@ -233,6 +232,12 @@ class __private_drumate extends Entity {
    *  @params {object} args -- extra data to be sent back to frontend
    */
   async get_otp() {
+    let { useSms } = global.myDrumee || {};
+    if (!useSms) {
+      this.exception.server("OTP_NOT_AVAILABLE");
+      return 
+    }
+    const Sms = require('../../vendor/smsfactor');
     let profile = this.user.get(Attr.profile);
     if (isEmpty(profile)) {
       let user = await this.yp.await_proc('get_visitor', this.uid);
@@ -696,7 +701,7 @@ class __private_drumate extends Entity {
    * 
    */
   set_lang() {
-    let lang = this.supportedLanguage(this.input.get('Xlang')); 
+    let lang = this.supportedLanguage(this.input.get('Xlang'));
     this.yp.call_proc('drumate_set_lang', this.user_id(), lang, this.output.data);
   }
 
