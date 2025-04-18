@@ -16,9 +16,7 @@ const {
 } = Constants;
 const { dom_owner } = Remit;
 const { Mfs, MfsTools } = require("@drumee/server-core");
-const { remove_node } = MfsTools;
 
-const Sms = require("../vendor/smsfactor");
 const { google } = require("googleapis");
 const oauth2 = google.oauth2("v2");
 const { stringify } = JSON;
@@ -37,6 +35,12 @@ class __butler extends Mfs {
    * 
    */
   async send_otp(mobile, uid) {
+    let { useSms } = global.myDrumee || {};
+    if (!useSms) {
+      this.exception.server("OTP_NOT_AVAILABLE");
+      return 
+    }
+
     const token = this.randomString();
     const lang = this.user.language() || this.input.app_language();
     let otp = await this.yp.await_proc("otp_create", uid, token);
@@ -48,6 +52,7 @@ class __butler extends Mfs {
       message: `${message.format(otp.code, expiry)}`,
       receivers: [mobile],
     };
+    const Sms = require('../../vendor/smsfactor');
     let sms = new Sms(opt);
     let data = await sms.send().then((result) => {
       if (!_.isEmpty(result.invalidReceivers)) {

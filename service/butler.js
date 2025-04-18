@@ -27,7 +27,6 @@ const {
 } = Constants;
 const { Mfs } = require("@drumee/server-core");
 
-const Sms = require("../vendor/smsfactor");
 const { stringify } = JSON;
 
 class __butler extends Mfs {
