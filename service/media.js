@@ -511,16 +511,36 @@ class __media extends Mfs {
     let exists = await this.db.await_func("node_id_from_path", ownpath);
     let node = await this.db.await_proc("mfs_make_dir", id, path, showResult);
     let i = 0;
-    while (node[1] && node[1].sqlstate == '40001' && i < 30) {
-      await sleep(500);
-      node = await this.db.await_proc("mfs_make_dir", id, path, showResult);
+    let failed;
+    let error;
+    const Moment = require("moment");
+    while (node[1] && i < 30) {
+      failed = '';
+      error = node[1]
+      switch (node[1].sqlstate) {
+        case '40001':
+          failed = 'DEAD_LOCK_WAIT_TOOL_LONG';
+          await sleep(500);
+          node = await this.db.await_proc("mfs_make_dir", id, path, showResult);
+          break;
+        case '23000':
+          failed = 'DUPLICATE_ENTRY';
+          await sleep(1000);
+          let t = Moment(Moment.now() / 1000, "X").format("YYYY-MM-DD@hh:mm:ss@");
+          args.filename = `${args.filename}-${t}`
+          node = await this.db.await_proc("mfs_make_dir", id, path, showResult);
+          break;
+        default:
+          failed = `${UNEXPECTED_ERROR} ${node[1].sqlstate}`;
+      }
       i++;
     }
-    if (!exists && node.nid) {
-      await this.notifyNewNode(node);
-    }
-    if (i > 29) {
-      this.warn(`DEAD_LOCK_WAIT_TOOL_LONG. mfs_make_dir waited ${i} times`, node)
+    if (failed) {
+      this.warn(`${failed}: mfs_create_node waited ${i} times`, error)
+    } else {
+      if (!exists && node.nid) {
+        await this.notifyNewNode(node);
+      }
     }
     return node;
   }
@@ -532,13 +552,32 @@ class __media extends Mfs {
   async ensureCreateNode(args, metadata, results = { isOutput: 1 }) {
     let node = await this.db.await_proc("mfs_create_node", args, metadata, results);
     let i = 0;
-    while (node[1] && node[1].sqlstate == '40001' && i < 30) {
-      await sleep(500);
-      node = await this.db.await_proc("mfs_create_node", args, metadata, results);
+    let failed;
+    let error;
+    const Moment = require("moment");
+    while (node[1] && i < 30) {
+      failed = '';
+      error = node[1]
+      switch (node[1].sqlstate) {
+        case '40001':
+          failed = 'DEAD_LOCK_WAIT_TOOL_LONG';
+          await sleep(500);
+          node = await this.db.await_proc("mfs_create_node", args, metadata, results);
+          break;
+        case '23000':
+          failed = 'DUPLICATE_ENTRY';
+          await sleep(1000);
+          let t = Moment(Moment.now() / 1000, "X").format("YYYY-MM-DD@hh:mm:ss");
+          args.filename = `${args.filename}-${t}`
+          node = await this.db.await_proc("mfs_create_node", args, metadata, results);
+          break;
+        default:
+          failed = `${UNEXPECTED_ERROR} ${node[1].sqlstate}`;
+      }
       i++;
     }
-    if (i > 29) {
-      this.warn(`DEAD_LOCK_WAIT_TOOL_LONG. mfs_create_node waited ${i} times`, node)
+    if (failed) {
+      this.warn(`${failed}: mfs_create_node waited ${i} times`, error)
     }
     return node;
   }

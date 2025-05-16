@@ -28,7 +28,8 @@ class Changelog extends Entity {
       uid: this.uid,
       last: this.input.get('last'),
       id: this.input.get(Attr.id),
-      page: this.input.get(Attr.page)
+      page: this.input.get(Attr.page),
+      exclude: this.input.get(Attr.exclude),
     }
     for (let k in args) {
       if (!args[k]) delete args[k]
