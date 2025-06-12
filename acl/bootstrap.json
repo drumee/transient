@@ -21,6 +21,13 @@
         "fast_check": "public-api"
       }
     },
+    "getSyncTimes": {
+      "scope": "hub",
+      "permission": {
+        "src": "anonymous",
+        "fast_check": "public-api"
+      }
+    },
     "authn": {
       "scope": "hub",
       "permission": {

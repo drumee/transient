@@ -359,7 +359,7 @@ class Acl {
       if (!existsSync(plgin)) {
         console.warn(`A folder name 'acl' must exist within directory ${dir}`);
       }
-      console.log(`Loading plgin for ${plgin}`);
+      console.log(`Loading pulgin for ${plgin}`);
       await registerModules(plgin, true, force);
     }
     // Once the lock is set, no more plugins will be added, unless forced

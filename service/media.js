@@ -102,6 +102,7 @@ class __media extends Mfs {
         nodes[r.uid] = attr;
         payload = this.payload({ ...attr, ...extraData }, { echoId, service });
       }
+      if (payload.model && (/^\/__chat__\//.test(payload.model.ownpath))) continue;
       await RedisStore.sendData(payload, r);
     }
   }
@@ -153,7 +154,7 @@ class __media extends Mfs {
       node = await this.db.await_proc("mfs_access_node", uid, dir.id);
     }
 
-    await this.changelog_write({ src: node });
+    await this.changelog_write({ src: node, event: "media.new"});
 
     if (/^(.|.+\/.+| )$/.test(dirname)) {
       this.exception.user("INVALID_FILENAME");
@@ -566,7 +567,8 @@ class __media extends Mfs {
           break;
         case '23000':
           failed = 'DUPLICATE_ENTRY';
-          await sleep(1000);
+          if (node[0].ownpath)
+            await sleep(1000);
           let t = Moment(Moment.now() / 1000, "X").format("YYYY-MM-DD@hh:mm:ss");
           args.filename = `${args.filename}-${t}`
           node = await this.db.await_proc("mfs_create_node", args, metadata, results);
@@ -879,7 +881,7 @@ class __media extends Mfs {
     }
     let changelog;
     try {
-      if (/^\/__chat__\//.test(src.filepath) || /^\/__chat__\//.test(dest.filepath)) {
+      if (/^\/__chat__\//.test(src.ownpth) || /^\/__chat__\//.test(dest.ownpth)) {
         this.__changelog = null;
         return this.__changelog;
       }

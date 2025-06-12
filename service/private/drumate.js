@@ -34,32 +34,6 @@ const { get_node_content } = MfsTools;
 //########################################
 class __private_drumate extends Entity {
 
-  // ========================
-  // initialize
-  // ========================
-  // constructor(...args) {
-  //   super(...args);
-  //   this.change_email = this.change_email.bind(this);
-  //   this.change_mobile = this.change_mobile.bind(this);
-  //   this.change_password = this.change_password.bind(this);
-  //   this.check_password = this.check_password.bind(this);
-  //   this.contacts = this.contacts.bind(this);
-  //   this.data_usage = this.data_usage.bind(this);
-  //   this.confirm_delete_account = this.confirm_delete_account.bind(this);
-  //   this.delete_account = this.delete_account.bind(this);
-  //   this.drumate_hubs = this.drumate_hubs.bind(this);
-  //   this.get_drumate_detail = this.get_drumate_detail.bind(this);
-  //   this.get_profile = this.get_profile.bind(this);
-  //   this.get_settings = this.get_settings.bind(this);
-  //   this.hubs = this.hubs.bind(this);
-  //   this.intro_acknowledged = this.intro_acknowledged.bind(this);
-  //   this.my_hubs = this.my_hubs.bind(this);
-  //   this.set_avatar = this.set_avatar.bind(this);
-  //   this.set_lang = this.set_lang.bind(this);
-  //   this.update_ident = this.update_ident.bind(this);
-  //   this.update_profile = this.update_profile.bind(this);
-  //   this.update_settings = this.update_settings.bind(this);
-  // }
 
   /**
    * 
@@ -594,7 +568,6 @@ class __private_drumate extends Entity {
     const lang = this.client_language();
     const subject = DrumeeCache.message("_account_reactivation_link", lang);
     const message = DrumeeCache.message("_account_deletion_email", lang);
-    // const pathname = this.input.pathname().replace(/(svc|service).*$/, '');
     const link = `${this.input.homepath()}#/welcome/back=${secret}`;
     const Moment = require('moment');
     let date = Moment(this.input.timestamp / 1000 + 30 * 60 * 60 * 24, 'X')

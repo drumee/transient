@@ -270,12 +270,14 @@ class __private_media extends Media {
     let copied = [];
     let dest, src;
     let notify = {};
+    let nodes = {};
     for (node of data) {
       switch (node.action) {
         case "move":
           src = { nid: node.nid, mfs_root: node.src_mfs_root };
           dest = { nid: node.des_id, hub_id: rid, mfs_root: node.des_mfs_root };
           move_node(src, dest, 1);
+          break;
         case "copy":
           src = { nid: node.nid, mfs_root: node.src_mfs_root };
           dest = { nid: node.des_id, hub_id: rid, mfs_root: node.des_mfs_root };
@@ -305,7 +307,7 @@ class __private_media extends Media {
           let sockets = await this.yp.await_proc("entity_sockets", {
             db_name: node.des_db,
           });
-          let nodes = {};
+          nodes = {};
           let counts = {};
           for (let s of toArray(sockets)) {
             if (!s || !s.uid) continue;

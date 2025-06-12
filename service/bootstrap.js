@@ -85,6 +85,14 @@ class __bootstrap extends RuntimeEnv {
     this.output.data(data);
   }
 
+  getSyncTimes() {
+    const t1 = this.input.get('t1'); // Client's send time
+    const t2 = this.input.timestamp();
+    const t3 = Date.now()
+    this.debug("AAAA:92", t3-t2, { t1, t2, t3 })
+    this.output.data({ t2, t3 });
+  }
+
 }
 
 module.exports = __bootstrap;
