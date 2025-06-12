@@ -1,6 +1,5 @@
 
   const xia_lang = "<%= language %>";
-  const scheme = "<%= scheme %>"
   const bootstrap = function() {
     return {
       access        : "<%= access %>",
