@@ -28,7 +28,7 @@ class Organization extends Demo {
  * 
  * @returns 
  */
-  async updateProgress() {
+  async updateProgress(type) {
     this.debug("PROGRESS:32", this._progress, this.socket_id);
     if (!this.socket_id) return;
     this._progress++;
@@ -40,6 +40,7 @@ class Organization extends Demo {
       service: "sandbox.progress",
       options: {
         service: "sandbox.progress",
+        type
       },
       model
     };
@@ -100,7 +101,7 @@ class Organization extends Demo {
       //this._totalProgress = users.length;
       for (let peer of toArray(users)) {
         drumate.remove(peer);
-        this.updateProgress();
+        this.updateProgress('remove');
         await this.yp.await_query(`DELETE FROM map_role WHERE uid=?`, peer.id);
         await this.yp.await_query(`DELETE FROM privilege WHERE uid=?`, peer.id);
         await this.yp.await_query(`DELETE FROM cookie WHERE uid=?`, peer.id);

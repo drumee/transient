@@ -32,8 +32,8 @@ class SandboxPage extends RuntimeEnv {
     let env = await this.getSettings();
     this.debug("AAAA:33", env)
     let data = { ...env, ...user };
-    data.description = `Drumee sandbox ${org_name}`;
-    data.keywords = `Drumee sandbox`;
+    data.description = `Drumee Team Live Demo ${org_name}`;
+    data.keywords = `Drumee Team Live Demo`;
     data.icon = icon;
     data.keysel = user.id;
     data.uid = user.id;
