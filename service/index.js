@@ -35,7 +35,7 @@ class Sandbox extends Entity {
     let i = 0;
     if (owner) {
       const members = [];
-      while (i < 3) {
+      while (i < 1) {
         let member = await org.AddMember();
         members.push(member.get(Attr.uid));
         i++;
@@ -180,7 +180,7 @@ class Sandbox extends Entity {
    * 
    */
   async get_env() {
-    this._progress = 10;
+    this._progress = 5;
     // this.debug(sysEnv())
     const quota = Cache.getSysConf("sandbox_quota");
     const domain = this.input.get(Attr.domain);
@@ -189,9 +189,22 @@ class Sandbox extends Entity {
     await this.updateProgress();
     this.output.data({ users, quota: JSON.parse(quota) });
   }
+
   /**
- * 
- */
+   * 
+   */
+  async subscribe_me() {
+    const email = this.input.need(Attr.email);
+    let headers = this.input.headers();
+    delete headers.cookie;
+    await this.yp.await_proc("sandbox.store_email", email, headers);
+    this.output.data({ email });
+  }
+
+
+  /**
+   * 
+   */
   async load() {
     let token = this.input.need(Attr.token);
     const user = await this._checkSession(token);

@@ -72,7 +72,7 @@ class Organization extends Demo {
 
     let domain = await this.yp.await_proc("domain_create", ident);
     this.domain = { ...domain, ident };
-    this._totalProgress = 17;
+    this._totalProgress = 11;
     this.updateProgress();
     return this.domain;
 

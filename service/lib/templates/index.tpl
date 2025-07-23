@@ -49,7 +49,7 @@
           mfs_base      : "<%= endpointPath %>/",
           mfsRootUrl    : `<%= endpointPath %>/`,
           online        : 1,
-          pdfworker     : "<%= pdfworker %>",
+          pdfworker     : "<%= app.pdfworker %>",
           service       : "<%= servicePath %>?",
           serviceApi    : "<%= servicePath %>?",
           servicePath   : "<%= servicePath %>",

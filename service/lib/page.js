@@ -30,6 +30,7 @@ class SandboxPage extends RuntimeEnv {
     const tpl = resolve(__dirname, TPL_BASE, 'index.tpl');;
     const { org_name, icon } = this.hub.toJSON();
     let env = await this.getSettings();
+    this.debug("AAAA:33", env)
     let data = { ...env, ...user };
     data.description = `Drumee sandbox ${org_name}`;
     data.keywords = `Drumee sandbox`;
