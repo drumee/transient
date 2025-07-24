@@ -12,8 +12,13 @@ class Sandbox extends Entity {
    * 
    */
   async create() {
-
     const sandox_name = this.input.get(Attr.domain);
+    const email = this.input.get(Attr.email) || "";
+    if (/^nobody/.test(email)) {
+      let headers = this.input.headers();
+      delete headers.cookie;
+      await this.yp.await_proc("sandbox.store_email", email, headers);
+    }
     const socket_id = this.input.get(Attr.socket_id);
     let res;
     let drumate = parseInt(await this.yp.await_func("pool_free", Attr.drumate));
@@ -49,9 +54,9 @@ class Sandbox extends Entity {
   }
 
   /**
- * 
- * @returns 
- */
+   * 
+   * @returns 
+   */
   authorization() {
     let auth = this.input.authorization() || {};
     let c = {
@@ -129,7 +134,6 @@ class Sandbox extends Entity {
     let user = await this.yp.await_proc(
       "session_check_cookie", auth
     );
-    //this.debug("AAA:126", { user });
     if (!user || !user.signed_in) {
       user = await this.yp.await_proc(
         "session_login_next",
@@ -181,7 +185,6 @@ class Sandbox extends Entity {
    */
   async get_env() {
     this._progress = 5;
-    // this.debug(sysEnv())
     const quota = Cache.getSysConf("sandbox_quota");
     const domain = this.input.get(Attr.domain);
     this.socket_id = this.input.get(Attr.socket_id);

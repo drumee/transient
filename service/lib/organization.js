@@ -40,7 +40,7 @@ class Organization extends Demo {
       service: "sandbox.progress",
       options: {
         service: "sandbox.progress",
-        type
+        type: type || this._typeProgress
       },
       model
     };
@@ -91,7 +91,8 @@ class Organization extends Demo {
     }
     let dom = await this.yp.await_query(`SELECT * FROM domain WHERE name=? OR id=?`, name, id);
     let { count } = await this.yp.await_query(`SELECT count(*) count FROM entity WHERE dom_id=?`, id);
-    this._totalProgress = Number(count) - 5;
+    this._totalProgress = Number(count) - 3;
+    this._typeProgress = 'remove'
     let drumate = new Drumate({ yp: this.yp });
     drumate.on('progress', this.updateProgress.bind(this));
     let users = [];
