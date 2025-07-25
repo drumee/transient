@@ -34,7 +34,7 @@
       uid           : "<%= uid %>",
       user_domain   : "<%= user_domain %>",
       vdo           : "<%= vdoPath %>",
-      websocketApi  : "<%= ws_protocol %>://<%= main_domain %><%= websocketPath %>",
+      websocketApi  : "<%= ws_protocol %>:<%= ws_port %>//<%= main_domain %><%= websocketPath %>",
       websocketPath : "<%= websocketPath %>",
     };
   }

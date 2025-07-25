@@ -374,7 +374,7 @@ class __private_desk extends Media {
     let fqdn = `${hubname}.${main_domain}`;
     let vhost = await this.yp.await_proc("vhost_exists", fqdn);
     if (!isEmpty(vhost)) {
-      this.warn("AAA:512 -- ALREADY_EXIST", vhost, fqdn);
+      this.warn("VHOST ALREADY_EXIST", vhost, fqdn);
       this.exception.user(`ALREADY_EXIST`);
       return;
     }

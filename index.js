@@ -109,7 +109,7 @@ const http = HttpServer.createServer(handler);
 
 Router.once(ROUTER_READY, async function () {
   console.log("START WEBSOCKET SERVER...", env.endpointAddress);
-  await env.yp.await_query("SET @@character_set_collations = 'utf8mb4=utf8mb4_general_ci'", env.endpointAddress);
+  // await env.yp.await_query("SET @@character_set_collations = 'utf8mb4=utf8mb4_general_ci'", env.endpointAddress);
   await env.yp.await_proc("socket_reset", env.endpointAddress);
   new DrumeeCache();
   await DrumeeCache.load();

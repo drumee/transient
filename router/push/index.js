@@ -262,7 +262,7 @@ class __websocket_router extends Logger {
         this.chekcSockekBinding(socket);
         break;
       case "ping":
-        this.debug("AAA:398 -- PING ***", args);
+        this.debug("PING ***", args);
         switch (args.type) {
           case "showConnections":
             this.showConnections();
@@ -273,15 +273,13 @@ class __websocket_router extends Logger {
               ok = await this.yp.await_func("is_socket_active", socket.id);
             }
             this.ping(socket, { ok });
-            this.debug("AAA:398 -- PING *** OK ", args.type, ok);
+            this.debug("PING *** OK ", args.type, ok);
             break;
           case "publishOnlineStatus":
-            // this.silly("AAAA:305 publishOnlineStatus", sender);
             await this.yp.await_proc("socket_set_state", socket.id, 1);
             await this.broadcastStatus(socket.id);
             break;
           case "publishOfflineStatus":
-            //this.silly("AAAA:311 publishOfflineStatus", sender);
             await this.yp.await_proc("socket_set_state", socket.id, 0);
             await this.broadcastStatus(socket.id);
             break;
@@ -505,7 +503,6 @@ class __websocket_router extends Logger {
   async create_connection(request) {
     const self = this;
     const { protocol, group } = this.protocol(request);
-
     let socket = await this.check_connection(request, protocol);
     if (!socket || !socket.id) {
       this.debug(`Invalid socket`, socket);
@@ -541,7 +538,6 @@ class __websocket_router extends Logger {
         });
     });
     socket.once(CLOSE, (reasonCode, description) => {
-      this.silly("AAAA:653 connection closed");
       this.close(socket, reasonCode, description, request.key);
     });
   }
@@ -565,7 +561,6 @@ class __websocket_router extends Logger {
     let ids = [];
     this.connections.forEach(async (socket, id) => {
       if (!socket.connected) {
-        this.silly("AAA:708 Releasing disconnected socket", id);
         await this.close(socket, 9999, "Unreachable");
         return;
       }
