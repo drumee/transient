@@ -19,11 +19,10 @@ const { isFunction, isEmpty, isString } = require("lodash");
 const { Data, Input } = require("@drumee/server-core");
 const Page = require("../../client/page");
 
-const { readFileSync } = require("jsonfile");
-const { verbosity } = readFileSync("/etc/drumee/conf.d/myDrumee.json");
 const WATCHDOG_TIMER = 15000;
 
-const { main_domain, log_level, endpoint } = sysEnv();
+const { main_domain, log_level, endpoint, myConf } = sysEnv();
+const { verbosity } = myConf;
 
 /**  verbosity level = {
   ERROR: 0,

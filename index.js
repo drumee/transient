@@ -1,7 +1,3 @@
-// ================================  *
-//   Copyright Xialia.com  2013-2020 *
-//   Add by Somanos 12345!
-// ================================  *
 
 const { DrumeeCache, Events } = require("@drumee/server-essentials");
 const { END, ERROR, ROUTER_READY, START } = Events;

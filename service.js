@@ -11,17 +11,17 @@ const HttpServer = require("http");
 const Acl = require("./router/rest");
 
 console.log(`Starting service server with verbosity = ${global.verbosity}`);
-// console.log(require("@drumee/server-core").Info);
-// console.log(require("@drumee/server-essentials").Info);
 
-// ========================================
-//
-// ========================================
-const handler = function (request, response) {
+
+/**
+ * 
+ * @param {*} request 
+ * @param {*} response 
+ */
+function handler (request, response) {
   const input = new Input({ request, sourceName: "service" });
   const output = new Output({ response });
   let session = new Session({ input, output, env});
-  // global.verbosity = env.cache.get(VERBOSITY) || process.env.verbosity || 3;
 
   session.once(ERROR, function (e) {
     console.error("SERVER_FAULT[47]", e);
@@ -32,7 +32,6 @@ const handler = function (request, response) {
 
 
   session.once(START, function () {
-    // console.log("_____________ RUNNING SERVICE _____________");
     try {
       Acl.run(session);
     } catch (e) {
@@ -71,8 +70,8 @@ res
     Cache.setEnv(env);
     await Cache.load();
 
-    console.log("Cache loaded", Cache.message("_domain_name"));
-    await Acl.loadModules();
+    console.log("Cache loaded ", Cache.message("_domain_name"));
+    await Acl.loadModules(__dirname);
     await Acl.loadPlugins();
     const http = HttpServer.createServer((request, response) => {
       try {

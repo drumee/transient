@@ -28,10 +28,19 @@ class __history extends Entity {
     let icon = this.hub.get(Attr.icon) || '';
     let vhost = this.hub.get(Attr.vhost) || main_domain;
     let url = icon;
-    if (/^\//.test(icon)) {
-      url = `https://${vhost}${icon}`
-    } else if (!/^http/.test(icon)) {
-      url = `https://${icon}`;
+    let proto = this.input.get(Attr.protocol);
+    if (this.input.get(Attr.localhost)) {
+      if (/^\//.test(icon)) {
+        url = `${proto}://${Attr.localhost}/-/svc/@{vhost}/media.raw?p=${icon}`
+      } else if (!/^http/.test(icon)) {
+        url = `${proto}://${icon}`;
+      }
+    } else {
+      if (/^\//.test(icon)) {
+        url = `${proto}://${vhost}${icon}`
+      } else if (!/^http/.test(icon)) {
+        url = `${proto}://${icon}`;
+      }
     }
     this.output.data({ url });
   }

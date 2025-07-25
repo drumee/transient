@@ -1,6 +1,6 @@
 
   const xia_lang = "<%= language %>";
-  const scheme = "<%= scheme %>"
+  const protocol = "<%= protocol %>";
   const bootstrap = function() {
     return {
       access        : "<%= access %>",
@@ -17,6 +17,7 @@
       instance_name : "<%= instance_name %>",
       keysel        : "<%= keysel %>",
       lang          : "<%= language %>",
+      localhost     : <%= localhost %>,
       main_domain   : "<%= main_domain %>",
       mfs_base      : "<%= endpointPath %>/",
       mfsRootUrl    : `<%= endpointPath %>/`,
@@ -26,14 +27,14 @@
       service       : "<%= servicePath %>?",
       serviceApi    : "<%= servicePath %>?",
       servicePath   : "<%= servicePath %>",
-      serviceUrl    : "https://<%= main_domain %><%= servicePath %>?",
+      serviceUrl    : "<%= protocol %>://<%= main_domain %><%= servicePath %>?",
       signed_in     : "<%= signed_in %>",
       static        : "<%= appRoot %>/static/",
       svc           : "<%= svcPath %>",
       uid           : "<%= uid %>",
       user_domain   : "<%= user_domain %>",
       vdo           : "<%= vdoPath %>",
-      websocketApi  : "wss://<%= main_domain %><%= websocketPath %>",
+      websocketApi  : "<%= ws_protocol %>://<%= main_domain %><%= websocketPath %>",
       websocketPath : "<%= websocketPath %>",
     };
   }

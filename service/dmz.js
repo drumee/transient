@@ -60,8 +60,7 @@ class __dmz extends Mfs {
       return this.output.data(res);
     }
     const lang = this.input.ua_language();
-    const pathname = this.input.basepath();
-    const link = `https://${process.env.domain_name}${pathname}#/welcome/signup/${token}`;
+    const link = `${this.input.homepath()}#/welcome/signup/${token}`;
     const subject = Cache.message("_signup_activation", lang);
     const method = 'signup';
     let email = res.email;

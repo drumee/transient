@@ -86,7 +86,7 @@ class __drumee_factory extends Offline {
     console.log(`STARTING SCHEMAS FACTORY... `);
     let s = await this.yp.await_query(`SHOW SLAVE STATUS`);
     if (s && s.Slave_IO_Running) {
-      this.error("Must be run on replica server");
+      this.error("This daemon must not run on replica server");
       return;
     }
     const { username } = userInfo();
