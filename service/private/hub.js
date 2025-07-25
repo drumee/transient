@@ -141,9 +141,8 @@ class __private_hub extends Hub {
    */
   _getShareLink(token) {
     let keysel = this.hub.get(Attr.id);
-    const pathname = this.input.basepath(`/?keysel=${keysel}/#/dmz/share/`);
-    const hostname = toUnicode(this.hub.get(Attr.vhost));
-    let link = `https://${hostname}${pathname}`;
+    const pathname = `/?keysel=${keysel}/#/dmz/share/`;
+    let link = `${this.input.homepath()}${pathname}`;
     if (token) return link + token;
     return link;
   }

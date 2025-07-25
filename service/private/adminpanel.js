@@ -2106,7 +2106,7 @@ class __private_adminpanel extends Mfs {
     await this.yp.await_proc('domain_grant', domain.id, Remit.dom_owner, this.uid, 1);
     recds.domain_id = domain.id;
     recds.owner_id = this.id;
-    let link = `https://${domain.name}`
+    let link = this.input.homepath();
     recds.link = link
     org = await this.yp.await_proc('organisation_add', this.uid, name, link, ident, domain.id, stringify(recds));
     this.output.data(org);
@@ -2134,7 +2134,7 @@ class __private_adminpanel extends Mfs {
     if (my_privilege.privilege < Remit.dom_admin) return this.output.status('NOT_ENOUGH_PRIVILEGE');
 
     let domain = await this.yp.await_proc('domain_update', org.ident, org.domain_id);
-    let link = domain.name.replace(/^http.*:\/\//, '');// `https://${domain.name}`;
+    let link = domain.name.replace(/^http.*:\/\//, '');
 
     org = await this.yp.await_proc('organisation_update', this.uid, orgid, name, link, org.ident);
     this.output.data(org);

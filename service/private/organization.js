@@ -14,7 +14,7 @@
  * limitations under the License.
  * =============================================================================
  */
-const { Attr, Remit, Cache } = require("@drumee/server-essentials");
+const { Attr, Remit } = require("@drumee/server-essentials");
 
 const { stringify } = JSON;
 const {isEmpty } = require('lodash');
@@ -104,9 +104,8 @@ class __private_adminpanel extends Entity {
     await this.yp.await_proc('domain_grant', domain.id, Remit.dom_owner, this.uid, 1);
     recds.domain_id = domain.id;
     recds.owner_id = this.id;
-    let link = `https://${domain.name}`
-    recds.link = link
-    org = await this.yp.await_proc('organisation_add', this.uid, name, link, ident, domain.id, stringify(recds));
+    recds.link = domain.name
+    org = await this.yp.await_proc('organisation_add', this.uid, name, domain.name, ident, domain.id, stringify(recds));
     this.output.data(org);
   }
 
@@ -123,7 +122,6 @@ class __private_adminpanel extends Entity {
     orgid = org.id;
     if (isEmpty(org)) return this.output.status('NO_ORG');
 
-    // let my_org = await this.yp.await_proc('my_organisation', this.uid)
     let my_org = await this.user.organization();
     if (isEmpty(my_org)) return this.output.status('NO_ORG_TO_UPDATE');
     if (my_org.id != org.id) return this.output.status('INVALID_ORG');
@@ -132,7 +130,7 @@ class __private_adminpanel extends Entity {
     if (my_privilege.privilege < Remit.dom_admin) return this.output.status('NOT_ENOUGH_PRIVILEGE');
 
     let domain = await this.yp.await_proc('domain_update', org.ident, org.domain_id);
-    let link = domain.name.replace(/^http.*:\/\//, '');// `https://${domain.name}`;
+    let link = domain.name.replace(/^http.*:\/\//, '');
 
     org = await this.yp.await_proc('organisation_update', this.uid, orgid, name, link, org.ident);
     this.output.data(org);

@@ -26,12 +26,9 @@ class __private_room extends __public_room {
  * 
  */
   _getShareLink(token) {
-    const {
-      main_domain
-    } = sysEnv();
     let keysel = this.hub.get(Attr.id);
     const pathname = this.input.basepath(`/?keysel=${keysel}/#/dmz/meeting/`);
-    let link = `https://${main_domain}${pathname}`;
+    let link = `${this.input.homepath()}#${pathname}`;
     if (token) return link + token;
     return link;
   }

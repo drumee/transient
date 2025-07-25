@@ -1,23 +1,63 @@
-#!/usr/bin/env node
 
-// ================================  *
-//   Copyright Xialia.com  2013-2017 *
-//   FILE  : src/offline/factory.hub
-//   TYPE  : module
-// ================================  *
-const { sysEnv } = require("@drumee/server-essentials");
+const { sysEnv, loadSysEnv } = require("@drumee/server-essentials");
 const { exit } = require('process');
-const APP_CONF_DIR = '/etc/drumee/conf.d';
 const { existsSync } = require('fs');
+const { join } = require('path');
 const { readFileSync } = require("jsonfile");
-const { join } = require("path");
+let APP_CONF_DIR = '/etc/drumee/conf.d';
+
+const argparse = require("argparse");
+const parser = new argparse.ArgumentParser({
+  description: "Drumee Server Essentials Args Parser",
+  add_help: true,
+});
+
+
+parser.add_argument("--http-port", {
+  type: "int",
+  default: 80,
+  help: "If set, write minimal configs, no jitsi, no bind",
+});
+
+parser.add_argument("--https-port", {
+  type: "int",
+  default: 443,
+  help: "If set, write minimal configs, no jitsi, no bind",
+});
+
+parser.add_argument("--restPort", {
+  type: "int",
+  default: 24000,
+  help: "Micro server posrt",
+});
+
+parser.add_argument("--pushPort", {
+  type: "int",
+  default: 23000,
+  help: "Page server port + websocket",
+});
+
+parser.add_argument("--conf-path", {
+  type: String,
+  default: null,
+  help: "Path to application conf dir",
+});
+
+const args = parser.parse_args();
+
+module.exports = args;
+
+if (args.conf_path) {
+  loadSysEnv(join(args.conf_path, 'etc'))
+  APP_CONF_DIR = join(args.conf_path, 'etc', 'drumee', 'conf.d')
+}
 
 const { version } = require('./package.json');
-const { endpoint: endpointRoute, endpoint_name, ui_home } = sysEnv();
-let UI_INFO = {};
+const { endpoint: endpointRoute, endpoint_name } = sysEnv();
 
 global.VERSION = version;
 let myDrumee = null;
+
 
 /**
  * 
@@ -25,9 +65,8 @@ let myDrumee = null;
  * @returns 
  */
 function load(reload = 0) {
-  const Path = require('path');
-  const APP_CONF_FILE = Path.resolve(APP_CONF_DIR, 'drumee.json');
-  const JITSI_FILE = Path.resolve(APP_CONF_DIR, 'conference.json');
+  const APP_CONF_FILE = join(APP_CONF_DIR, 'drumee.json');
+  const JITSI_FILE = join(APP_CONF_DIR, 'conference.json');
   const JITSI_VERSIONS = '/etc/jitsi/versions.js';
   if (myDrumee && !reload) {
     return myDrumee;
@@ -42,11 +81,11 @@ function load(reload = 0) {
   }
 
 
-  let MY_CONF = Path.resolve(APP_CONF_DIR, endpoint_name, 'myDrumee.json');
+  let MY_CONF = join(APP_CONF_DIR, endpoint_name, 'myDrumee.json');
   if (existsSync(MY_CONF)) {
     myConf = readFileSync(MY_CONF);
   } else {
-    MY_CONF = Path.resolve(APP_CONF_DIR, 'myDrumee.json');
+    MY_CONF = join(APP_CONF_DIR, 'myDrumee.json');
     if (existsSync(MY_CONF)) {
       myConf = readFileSync(MY_CONF);
     }
@@ -91,6 +130,26 @@ const error = function (response, msg = 'SERVER FAULT') {
   response.end();
 }
 
+/**
+ * 
+ * @returns 
+ */
+function getAddress() {
+  const os = require('os');
+
+  const networkInterfaces = os.networkInterfaces();
+
+  // To get IPv4 addresses:
+  let a = []
+  Object.keys(networkInterfaces).forEach(interfaceName => {
+    networkInterfaces[interfaceName].forEach(interface => {
+      if (interface.family === 'IPv4' && !interface.internal) {
+        a.push(interface.address)
+      }
+    });
+  });
+  return a[0]
+}
 
 /**
  * 
@@ -98,13 +157,10 @@ const error = function (response, msg = 'SERVER FAULT') {
  */
 function env() {
   //const Db = require('./core/db/mariadb');
-  const Minimist = require('minimist');
-  const argv = Minimist(process.argv.slice(2));
-  const restPort = argv.restPort;
-  const pushPort = argv.pushPort;
+  const restPort = args.restPort || 24000;
+  const pushPort = args.pushPort || 23000;
   const { Mariadb } = require('@drumee/server-essentials/lib');
-  const IP = require('ip');
-  const address = IP.address();
+  const address = getAddress();
   const endpointAddress = `${address}:${pushPort}`;
   const restServer = `${address}:${restPort}`;
 
@@ -145,4 +201,4 @@ function handleSignals(cb) {
   });
 }
 
-module.exports = { load, env, handleSignals};
+module.exports = { load, env, handleSignals };

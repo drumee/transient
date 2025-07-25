@@ -18,7 +18,7 @@ const { readFileSync, existsSync } = require('fs');
 const { resolve } = require('path');
 const keyFile = '/etc/drumee/credential/crypto/public.pem';
 const { RuntimeEnv } = require('@drumee/server-core');
-const { uniqueId, sysEnv, Attr } = require("@drumee/server-essentials");
+const { uniqueId, Attr } = require("@drumee/server-essentials");
 const TPL_BASE = "client/templates";
 
 class __bootstrap extends RuntimeEnv {
@@ -85,11 +85,12 @@ class __bootstrap extends RuntimeEnv {
     this.output.data(data);
   }
 
+  /**
+   * 
+   */
   getSyncTimes() {
-    const t1 = this.input.get('t1'); // Client's send time
     const t2 = this.input.timestamp();
     const t3 = Date.now()
-    this.debug("AAAA:92", t3-t2, { t1, t2, t3 })
     this.output.data({ t2, t3 });
   }
 

@@ -374,7 +374,7 @@ class __private_desk extends Media {
     let fqdn = `${hubname}.${main_domain}`;
     let vhost = await this.yp.await_proc("vhost_exists", fqdn);
     if (!isEmpty(vhost)) {
-      this.warn("AAA:512 -- ALREADY_EXIST", vhost, fqdn);
+      this.warn("VHOST ALREADY_EXIST", vhost, fqdn);
       this.exception.user(`ALREADY_EXIST`);
       return;
     }
@@ -431,6 +431,14 @@ class __private_desk extends Media {
       this.exception.server("Corrupted hub");
       return;
     }
+    let vhost = await this.yp.await_proc("vhost_exists", hubname);
+    let fqdn = `${hubname}.${main_domain}`;
+    if (!isEmpty(vhost)) {
+      this.warn("AAA:512 -- ALREADY_EXIST", vhost, fqdn);
+      this.exception.user(`ALREADY_EXIST`);
+      return;
+    }
+
     if (pid && pid != this.get(Attr.home_id)) {
       await this.db.await_proc("mfs_move", hub.id, pid)
     }
@@ -475,6 +483,10 @@ class __private_desk extends Media {
     await this.changelog_write({ src: payload, event: "media.remove" });
     payload = this.payload(payload, { loopback: 1 });
     await RedisStore.sendData(payload, sockets);
+    if(hub_id == this.uid){
+      this.exception.server("HUB_ID_NOT ALLOWED");
+      return
+    }
     await this.db.await_proc('leave_hub', hub_id);
     this.output.data({ uid: this.uid, hub_id });
   }
