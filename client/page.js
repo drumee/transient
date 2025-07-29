@@ -114,6 +114,9 @@ class MainPage extends RuntimeEnv {
     let lex = DrumeeCache.lex(lang);
     const env = await this.getRuntimeEnv();
     let data = { ...lex, ...this.hub.toJSON(), ...env, ...opt };
+    if (data.ws_port && !/^:/.test(data.ws_port)) {
+      data.ws_port = `:${data.ws_port}`
+    }
     let sent = await this.shouldSendHomepage(data);
     await this.session.log_service();
     if (sent) {
