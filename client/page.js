@@ -1,14 +1,10 @@
-// ================================  *
-//   Copyright Xialia.com  2013-2017 *
-//   FILE  : src/service/yp
-//   TYPE  : module
-// ================================  *
 const { RuntimeEnv } = require('@drumee/server-core');
 
-const { resolve } = require("path");
-const { readFileSync } = require("fs");
+const { resolve, join } = require("path");
+const { readFileSync, existsSync } = require("fs");
+const { readFileSync: readJsonSync } = require("jsonfile");
 const {
-  DrumeeCache, sysEnv, Permission, Attr, Events, nullValue, getUiInfo, getPluginsInfo
+  DrumeeCache, sysEnv, Permission, Attr, Events, nullValue, getUiInfo,
 } = require("@drumee/server-essentials/lib");
 const { END, GRANTED } = Events;
 const { READ } = Permission;
@@ -107,6 +103,26 @@ class MainPage extends RuntimeEnv {
   }
 
   /**
+   * 
+   */
+  getCustomPlugins() {
+    let { plugins } = this.hub.get(Attr.settings) || [];
+    let Plugins = []
+    for (let [path, entry] of Object.entries(plugins)) {
+      let index = join(path, 'index.json');
+      if (existsSync(index)) {
+        let info = readJsonSync(index)
+        Plugins.push({ ...info, entry: `${entry}-${info.hash}.js` })
+      }
+    }
+    this.debug("AAA:118", Plugins)
+    if (Plugins.length) {
+      return Plugins
+    }
+    return null;
+  }
+
+  /**
    *
    */
   async start(opt) {
@@ -122,8 +138,13 @@ class MainPage extends RuntimeEnv {
     if (sent) {
       return;
     }
+    let plugins = this.getCustomPlugins();
+    if (plugins) {
+      data.plugins = plugins;
+    } else if (data.plugins && data.plugins.location) {
+      data.plugins = toArray(data.plugins)
+    }
     data.keysel = this.refreshAuthorization(data);
-
     let db = this.hub.get(Attr.db_name);
     data.fonts_links = await this.yp.await_proc(`${db}.get_fonts_links`);
     data.fonts_faces = await this.yp.await_proc(`${db}.get_fonts_faces`);
