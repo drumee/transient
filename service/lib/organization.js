@@ -1,4 +1,4 @@
-const { toArray, Remit, Attr, RedisStore } = require("@drumee/server-essentials");
+const { toArray, uniqueId, Remit, Attr, RedisStore } = require("@drumee/server-essentials");
 const { uniqueNamesGenerator, adjectives } = require('unique-names-generator');
 const { isEmpty } = require("lodash");
 const { DOM_OWNER, DOM_MEMBER } = Remit;
@@ -172,7 +172,7 @@ class Organization extends Demo {
       await owner.createHub({ domain: name, area: Attr.private });
       await owner.createHub({ domain: name, area: Attr.dmz });
       await owner.createHub({ domain: name, area: Attr.dmz }, {
-        filename: "wicket", is_wicket: 1
+        filename: uniqueId(), is_wicket: 1
       });
     } catch (e) {
       console.error("Failed to create owner hubs", e);
@@ -209,7 +209,7 @@ class Organization extends Demo {
       await member.createHub({ domain: name, area: Attr.private });
       await member.createHub({ domain: name, area: Attr.dmz });
       await member.createHub({ domain: name, area: Attr.dmz }, {
-        filename: "wicket", is_wicket: 1
+        filename: uniqueId(), is_wicket: 1
       });
     } catch (e) {
       console.error("Failed to create owner hubs", e);
