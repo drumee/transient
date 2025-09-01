@@ -1,6 +1,7 @@
 
   const xia_lang = "<%= language %>";
   const protocol = "<%= protocol %>";
+  const startTime = new Date().getTime();
   const bootstrap = function() {
     return {
       access        : "<%= access %>",
@@ -28,7 +29,8 @@
       serviceApi    : "<%= servicePath %>?",
       servicePath   : "<%= servicePath %>",
       serviceUrl    : "<%= protocol %>://<%= main_domain %><%= servicePath %>?",
-      signed_in     : "<%= signed_in %>",
+      signed_in     : <%= signed_in || 0 %>,
+      startTime,
       static        : "<%= appRoot %>/static/",
       svc           : "<%= svcPath %>",
       uid           : "<%= uid %>",

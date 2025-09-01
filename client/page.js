@@ -4,7 +4,7 @@ const { resolve, join } = require("path");
 const { readFileSync, existsSync } = require("fs");
 const { readFileSync: readJsonSync } = require("jsonfile");
 const {
-  DrumeeCache, sysEnv, Permission, Attr, Events, nullValue, getUiInfo,
+  DrumeeCache, sysEnv, Permission, Attr, Events, nullValue, getUiInfo, toArray
 } = require("@drumee/server-essentials/lib");
 const { END, GRANTED } = Events;
 const { READ } = Permission;
@@ -106,7 +106,8 @@ class MainPage extends RuntimeEnv {
    * 
    */
   getCustomPlugins() {
-    let { plugins } = this.hub.get(Attr.settings) || [];
+    let { plugins } = this.hub.get(Attr.settings) || {};
+    if (!plugins) return null;
     let Plugins = []
     for (let [path, entry] of Object.entries(plugins)) {
       let index = join(path, 'index.json');
@@ -143,6 +144,8 @@ class MainPage extends RuntimeEnv {
       data.plugins = plugins;
     } else if (data.plugins && data.plugins.location) {
       data.plugins = toArray(data.plugins)
+    } else {
+      data.plugins = []
     }
     data.keysel = this.refreshAuthorization(data);
     let db = this.hub.get(Attr.db_name);

@@ -23,6 +23,8 @@ const {
   Attr, Privilege, toArray,
   RedisStore, uniqueId, sysEnv
 } = require("@drumee/server-essentials");
+let { main_domain } = sysEnv();
+
 class __private_desk extends Media {
 
   /**
@@ -77,21 +79,27 @@ class __private_desk extends Media {
    */
   async _createHub(args, opt = {}) {
     const domain = this.user.get(Attr.domain);
-    let hostname = this.user.get(Attr.hostname);
     const owner_id = this.uid;
-    let { area, filename } = args;
+    let { area, filename, hostname } = args;
     if (!domain || !area) {
       this.warn("MAL_FORMED_DATA", { args }, { domain, area });
       return this.exception.user("MAL_FORMED_DATA");
     }
 
-    hostname = hostname || filename;
-    hostname = hostname.replace(/[ \.,;:!&~#'|@*\$><\?]/, '');
-    hostname = toASCII(hostname);
-    hostname = hostname.replace(/\-$/, '');
-    hostname = hostname.toLowerCase();
-    args = { hostname, area, filename, owner_id, domain };
+    if (opt.is_wicket) {
+      hostname = uniqueId()
+      filename = "my-wicket";
+    } else {
+      hostname = hostname || filename;
+      hostname = hostname.replace(/[ \.,;:!&~#'|@*\$><\?]/, '');
+      hostname = toASCII(hostname);
+      hostname = hostname.replace(/\-$/, '');
+      hostname = hostname.toLowerCase();
+    }
+
     opt.lang = this.input.use(Attr.lang) || "en";
+    args = { hostname, area, filename, owner_id, domain };
+    this.debug("AAA:102", JSON.stringify(args), JSON.stringify(opt))
     const rows = await this.db.await_proc(`desk_create_hub`, args, opt);
     let hub_id, hub_db, home_id;
     for (let r of rows) {
@@ -126,19 +134,27 @@ class __private_desk extends Media {
       }
     }
 
-    let limit = 0
-    let hub_limit = await this.yp.await_proc('hub_limit', this.uid);
-    let message = '_private_hub_limit_reached'
-    if (area == 'private') {
-      limit = hub_limit.available_private_hub - 1
-    }
-    if (area == 'share') {
-      message = '_share_hub_limit_reached'
-      limit = hub_limit.avaialable_share_hub - 1
-    }
 
-    if (limit < 0) {
-      this.warn("HUB LIMIT REACHED", data);
+    let remain = 0
+    let { private_hub, share_hub, public_hub } = await this.yp.await_proc("get_quota", this.uid) || {};
+    let used = await this.yp.await_func("hub_usage", this.uid, area) || 0;
+    let message = '_private_hub_limit_reached'
+    switch (area) {
+      case Attr.private:
+        remain = private_hub - used;
+        message = '_private_hub_limit_reached'
+        break;
+      case Attr.share:
+        remain = share_hub - used;
+        message = '_share_hub_limit_reached'
+        break;
+      case Attr.public:
+        remain = public_hub - used;
+        message = '_public_hub_limit_reached'
+        break;
+    }
+    if (remain <= 0) {
+      this.warn("HUB LIMIT REACHED", hub_limit);
       this.exception.user(message);
       return;
     }
@@ -367,19 +383,11 @@ class __private_desk extends Media {
    * @returns 
    */
   async create_website() {
-    const { main_domain } = sysEnv();
     const pid = this.input.use(Attr.pid) || this.home_id;
-    const hubname = this.input.need(Attr.hubname);
     const filename = this.input.need(Attr.filename);
-    let fqdn = `${hubname}.${main_domain}`;
-    let vhost = await this.yp.await_proc("vhost_exists", fqdn);
-    if (!isEmpty(vhost)) {
-      this.warn("VHOST ALREADY_EXIST", vhost, fqdn);
-      this.exception.user(`ALREADY_EXIST`);
-      return;
-    }
+    const hostname = this.user.get(Attr.hostname);
 
-    const args = { hubname, area: Attr.public, filename };
+    const args = { hostname, area: Attr.public, filename };
     let { home_id, hub_id } = await this._createHub(args);
     if (!hub_id) {
       return this.output.data({ status: 'CREATION_FAILED' })
@@ -422,6 +430,7 @@ class __private_desk extends Media {
     const area = this.input.need(Attr.area, Attr.private);
     let hubname = this.input.get(Attr.hubname) || uniqueId();
     const args = { hubname, area, filename };
+
     let { home_id, hub_id } = await this._createHub(args);
     if (!hub_id) {
       return this.output.data({ status: 'CREATION_FAILED' })
@@ -429,13 +438,6 @@ class __private_desk extends Media {
     const hub = await this.yp.await_proc("get_hub", hub_id);
     if (isEmpty(hub)) {
       this.exception.server("Corrupted hub");
-      return;
-    }
-    let vhost = await this.yp.await_proc("vhost_exists", hubname);
-    let fqdn = `${hubname}.${main_domain}`;
-    if (!isEmpty(vhost)) {
-      this.warn("AAA:512 -- ALREADY_EXIST", vhost, fqdn);
-      this.exception.user(`ALREADY_EXIST`);
       return;
     }
 
@@ -483,7 +485,7 @@ class __private_desk extends Media {
     await this.changelog_write({ src: payload, event: "media.remove" });
     payload = this.payload(payload, { loopback: 1 });
     await RedisStore.sendData(payload, sockets);
-    if(hub_id == this.uid){
+    if (hub_id == this.uid) {
       this.exception.server("HUB_ID_NOT ALLOWED");
       return
     }

@@ -154,7 +154,7 @@ class __media extends Mfs {
       node = await this.db.await_proc("mfs_access_node", uid, dir.id);
     }
 
-    await this.changelog_write({ src: node, event: "media.new"});
+    await this.changelog_write({ src: node, event: "media.new" });
 
     if (/^(.|.+\/.+| )$/.test(dirname)) {
       this.exception.user("INVALID_FILENAME");
@@ -417,19 +417,21 @@ class __media extends Mfs {
   /**
    *
    */
-  async chekcDiskLimit(rid) {
-    if (!rid) {
-      rid = this.hub.get(Attr.id);
-    }
-    let curr_filesize = this.input.use(FILESIZE, 0);
-    let disk_limit = await this.yp.await_proc("disk_limit", rid) || {};
-    let { watermark, owner_id, available_disk } = disk_limit;
+  async chekcDiskLimit() {
     let { watermark: sys_watermark } = quota;
     if (watermark == Infinity || sys_watermark == Infinity) {
       return true;
     }
-    let allowed_limit = available_disk || 0;
-    if (curr_filesize > allowed_limit) {
+
+    let { storage } = await this.yp.await_proc("get_quota", this.uid) || {};
+    if (storage == Infinity) {
+      return true;
+    }
+
+    let curr_filesize = this.input.use(FILESIZE, 0);
+    let { total_usage } = await this.yp.await_proc("disk_usage", this.uid) || {};
+    
+    if (total_usage + curr_filesize > storage) {
       let error = Cache.message("your_limit_exceeded");
       if (this.uid != owner_id) {
         error = Cache.message("limit_exceeded");
@@ -685,8 +687,8 @@ class __media extends Mfs {
     if (isFunction(callback)) {
       return callback(node);
     }
-    let disk_usage = await this.yp.await_func("disk_usage", this.uid);
-    node.disk_usage = disk_usage;
+    let { total_usage } = await this.yp.await_proc("disk_usage", this.uid);
+    node.disk_usage = total_usage;
     this.output.add_data({
       args: {
         changelog: this.__changelog
@@ -696,8 +698,8 @@ class __media extends Mfs {
   }
 
   /**
- *
- */
+   *
+   */
   async handleForm(incoming_file, data) {
     let error;
     if (this.shouldReplace()) {

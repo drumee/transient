@@ -27,7 +27,7 @@ const { Entity, FileIo } = require("@drumee/server-core");
 const { existsSync, readFileSync } = require("fs");
 const { isEmpty, isString, isArray, isObject, keys } = require("lodash");
 
-const { getPlugins } = require("../router/rest");
+const { getPlugins, getServices } = require("../router/rest");
 const { resolve } = require("path");
 const { credential_dir } = sysEnv();
 let keyFile = resolve(credential_dir, `crypto/public.pem`);
@@ -35,6 +35,7 @@ const publicKey = readFileSync(keyFile);
 const TfaMethods = TFauth.Methods.map((e) => {
   return e.type
 });
+
 //########################################
 class __yp extends Entity {
 
@@ -51,6 +52,7 @@ class __yp extends Entity {
     );
     data.platform.fonts = [];
     data.platform.description = Cache.getSysConf('platform_intro_popup_title');
+    data.platform.termsandconditions = Cache.getSysConf('termsandconditions') || '{}';
     if (data.platform.description) {
       data.platform.description = JSON.parse(data.platform.description);
     }
@@ -130,11 +132,10 @@ class __yp extends Entity {
     ) {
       data.platform.isPublic = 1;
     }
-    let plugins = getPlugins();
-    if (plugins) {
-      data.platform.plugins = plugins;
-    }
-    data.plateform = data.platform;
+
+    data.platform.plugins = getPlugins();
+    data.platform.services = getServices();
+
     this.output.data(data);
   }
 
@@ -248,7 +249,7 @@ class __yp extends Entity {
    * 
    */
   async request_otp() {
-
+    this.output.data({ status: "NOT_IN_USE" });
   }
 
   /**

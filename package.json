@@ -9,7 +9,6 @@
     "test:redis": "node test/redis.js",
     "test:cache": "node test/cache.js",
     "test:modules": "node test/modules.js",
-    "ui:services": ". .dev-tools.rc/devel.sh && node utils/ui-services.js",
     "dev": "drumee-server-devel",
     "add-dev-endpoint": "drumee-server-endpoint add --endpoin=devel --watchDirs=/mnt/devel --baseDir=/mnt/devel",
     "deploy": "drumee-server-deploy"

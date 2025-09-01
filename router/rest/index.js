@@ -309,9 +309,28 @@ class Acl {
   /**
    * Load modules definitions from the passed directory
    */
+  static getServices() {
+    if (!Modules.size) {
+      return {};
+    }
+
+    let r = {};
+    for (let name of Modules.keys()) {
+      let { services } = Modules.get(name);
+      r[name] = {};
+      for (let k in services) {
+        r[name][k] = `${name}.${k}`;
+      }
+    }
+    return r;
+  }
+
+  /**
+   * Load modules definitions from the passed directory
+   */
   static getPlugins() {
     if (!Plugins.size) {
-      return null;
+      return {};
     }
 
     let r = {};
