@@ -209,7 +209,7 @@ class __private_drumate extends Entity {
     let { useSms } = global.myDrumee || {};
     if (!useSms) {
       this.exception.server("OTP_NOT_AVAILABLE");
-      return 
+      return
     }
     const Sms = require('../../vendor/smsfactor');
     let profile = this.user.get(Attr.profile);
@@ -514,13 +514,11 @@ class __private_drumate extends Entity {
    * 
    */
   async data_usage() {
-    let disk = await this.yp.await_proc('my_disk_limit', this.uid);
-    var r = await this.db.await_proc("mfs_manifest", this.home_id, this.uid, 0);
+    let quota = await this.yp.await_func("get_quota", this.uid) || {};
+    let { usage } = await this.yp.await_proc("disk_usage", this.uid) || {};
     this.output.data({
-      total: r[0],
-      details: toArray(r[2]),
-      usage: r[3],
-      disk
+      usage,
+      quota
     });
   }
 

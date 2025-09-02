@@ -61,13 +61,16 @@ class __private_desk extends Media {
    * 
    */
   async limit() {
-    let { mfs_dir } = sysEnv();
-    let limit = await this.yp.await_proc('my_disk_limit', this.uid);
-    if (global.myDrumee.arch == "pod" || limit.watermark == Infinity) {
+    let { quota, mfs_dir } = sysEnv();
+    let { watermark, sys_watermark } = quota;
+    let limit = {}
+    if (watermark == Infinity || sys_watermark == Infinity) {
       const diskSpace = require('check-disk-space').default;
       let df = await diskSpace(mfs_dir);
       limit.real = df.free;
-      limit.quota_disk = df.free;
+      limit.storage = df.free;
+    } else {
+      limit = await this.yp.await_proc("get_quota", this.uid) || { storage: 0, real: 0 };
     }
     this.output.data(limit)
   }
@@ -197,9 +200,8 @@ class __private_desk extends Media {
   async get_env() {
     let data = await this.db.await_proc("desk_env");
     data.filenames = await this.db.await_proc('mfs_get_filenames', this.home_id);
-    let disk = await this.yp.await_proc('my_disk_limit', this.uid);
     data.privilege = Privilege.OWNER;
-    data.disk = disk;
+    data.quota = await this.yp.await_proc("get_quota", this.uid) || { storage: 0, real: 0 };
     this.output.data(data);
   }
 

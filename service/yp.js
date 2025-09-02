@@ -67,9 +67,9 @@ class __yp extends Entity {
       data.platform.wallpaper = wp;
     }
     const hub = this.hub.toJSON();
-    hub.stylesheets = await this.db.await_proc("style_get_files");
-    hub.fonts_links = await this.db.await_proc("get_fonts_links");
-    hub.fonts_faces = await this.db.await_proc("get_fonts_faces");
+    // hub.stylesheets = await this.db.await_proc("style_get_files");
+    // hub.fonts_links = await this.db.await_proc("get_fonts_links");
+    // hub.fonts_faces = await this.db.await_proc("get_fonts_faces");
     if (!isEmpty(hub.fonts_faces)) {
       hub.fonts_faces = hub.fonts_faces.concat(_def_fonts);
     }
@@ -79,14 +79,10 @@ class __yp extends Entity {
     }
     data.hub = { ...data.hub, ...hub };
     this.user.set(Attr.quota, {});
-    data.user = await this.yp.await_proc("get_user", this.uid);
-    data.user.quota = {};
+    data.user = await this.yp.await_proc("get_user", this.uid) || {};
+    let { usage } = await this.yp.await_proc("disk_usage", this.uid) || {};
+    data.user.disk_usage = usage;
     data.user.otp_key = this.session.get('secret');
-    try {
-      data.user.quota = this.parseJSON(data.user.quota);
-    } catch (e) { }
-    data.disk = await this.yp.await_proc("my_disk_limit", this.uid);
-
     data.organization = await this.yp.await_proc("my_organisation", this.uid);
     const { main_domain } = sysEnv();
     if (isEmpty(data.organization)) {

@@ -418,7 +418,7 @@ class __media extends Mfs {
    *
    */
   async chekcDiskLimit() {
-    let { watermark: sys_watermark } = quota;
+    let { watermark, sys_watermark } = quota;
     if (watermark == Infinity || sys_watermark == Infinity) {
       return true;
     }
@@ -430,7 +430,7 @@ class __media extends Mfs {
 
     let curr_filesize = this.input.use(FILESIZE, 0);
     let { total_usage } = await this.yp.await_proc("disk_usage", this.uid) || {};
-    
+
     if (total_usage + curr_filesize > storage) {
       let error = Cache.message("your_limit_exceeded");
       if (this.uid != owner_id) {
