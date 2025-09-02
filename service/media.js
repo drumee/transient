@@ -429,9 +429,10 @@ class __media extends Mfs {
     }
 
     let curr_filesize = this.input.use(FILESIZE, 0);
-    let { total_usage } = await this.yp.await_proc("disk_usage", this.uid) || {};
+    let { usage } = await this.yp.await_proc("disk_usage", this.uid) || {};
+    let disk_used = parseInt(usage.total);
 
-    if (total_usage + curr_filesize > storage) {
+    if (disk_used + curr_filesize > storage) {
       let error = Cache.message("your_limit_exceeded");
       if (this.uid != owner_id) {
         error = Cache.message("limit_exceeded");
@@ -687,8 +688,8 @@ class __media extends Mfs {
     if (isFunction(callback)) {
       return callback(node);
     }
-    let { total_usage } = await this.yp.await_proc("disk_usage", this.uid);
-    node.disk_usage = total_usage;
+    // let { total_usage } = await this.yp.await_proc("disk_usage", this.uid);
+    // node.disk_usage = total_usage;
     this.output.add_data({
       args: {
         changelog: this.__changelog

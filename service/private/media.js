@@ -1113,8 +1113,8 @@ class __private_media extends Media {
     if (!isEmpty(data)) {
       await this._empty_bin(data);
     }
-    let { total_usage } = await this.yp.await_proc("disk_usage", this.uid);
-    this.output.data({ disk_usage: total_usage });
+    let { usage } = await this.yp.await_proc("disk_usage", this.uid);
+    this.output.data({ disk_usage: usage });
   }
 
   /**
