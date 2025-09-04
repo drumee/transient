@@ -211,22 +211,24 @@ class __media extends Mfs {
    */
   async _ensureParentExists() {
     let node = this.granted_node();
-    let replace =
-      this.input.get("replace") || this.input.get("createOrReplace");
+    // let replace =
+    //   this.input.get(Attr.replace) || this.input.get(Attr.createOrReplace);
     /** Standard upload, using nid as destination */
     let ownpath = this.input.get(Attr.ownpath);
     this.heap.upload = node;
 
     if (nullValue(ownpath)) {
       if (this.isBranche(node)) {
-        this._mustReplace = false;
-      } else {
-        if (replace) {
-          this._mustReplace = true;
-        } else {
-          this._mustReplace = false;
-        }
+        this.input.set({ replace: 0 })
+        // this._mustReplace = false;
       }
+      // else {
+      //   if (replace) {
+      //     this._mustReplace = true;
+      //   } else {
+      //     this._mustReplace = false;
+      //   }
+      // }
       this._done();
       return;
     }
@@ -241,21 +243,38 @@ class __media extends Mfs {
     }
 
     let filename = basename(ownpath);
+
+    /** Check existing item or its parent */
     id = await this.db.await_func("node_id_from_path", ownpath);
     if (id) {
       let item = await this.db.await_proc('mfs_access_node', this.uid, id);
       if (item && item.nid) {
         if (this.isBranche(item)) {
-          return this.exception.server("CANNOT_REPLACE_FOLDER");
+          if (this.shouldReplace()) {
+            return this.exception.server("CANNOT_REPLACE_FOLDER");
+          } else {
+            this.heap.upload = item;
+            this.granted_node(item);
+          }
+        } else {
+          if (this.shouldReplace()) {
+            this.heap.upload = item;
+            this.granted_node(item);
+          } else {
+            /** Ensure permission leak ? */
+            let parent = await this.db.await_proc('mfs_access_node', this.uid, item.parent_id);
+            this.heap.upload = parent;
+            this.granted_node(parent);
+          }
         }
-        this._mustReplace = 1;
-        this.granted_node(item);
-        this.heap.upload = item;
         return this._done();
       }
     }
 
-    let dir = dirname(ownpath).split(/\/+/).filter(function (e) {
+    /** No parent found. Create one with recursivity */
+    let dest_dir = dirname(ownpath);
+    let dest_id = await this.db.await_func("node_id_from_path", dest_dir);
+    let dir = dest_dir.split(/\/+/).filter(function (e) {
       return e.length
     });
 
@@ -279,19 +298,13 @@ class __media extends Mfs {
    *
    */
   shouldReplace() {
-    if (this._mustReplace != null) {
-      return this._mustReplace;
-    }
-    let node = this.granted_node();
 
-    if (this.isBranche(node)) {
-      this._mustReplace = false;
-      return this._mustReplace;
+    let replace = this.input.use(Attr.replace) || this.input.use(Attr.createOrReplace);
+    if (replace != null) {
+      if (replace == 0) return 0
+      return 1
     }
-    let replace =
-      this.input.use("replace") || this.input.use("createOrReplace") || false;
-    this._mustReplace = replace;
-    return replace;
+    return 0
   }
 
   /**
@@ -688,8 +701,6 @@ class __media extends Mfs {
     if (isFunction(callback)) {
       return callback(node);
     }
-    // let { total_usage } = await this.yp.await_proc("disk_usage", this.uid);
-    // node.disk_usage = total_usage;
     this.output.add_data({
       args: {
         changelog: this.__changelog

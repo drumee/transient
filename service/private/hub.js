@@ -501,6 +501,7 @@ class __private_hub extends Hub {
     const hub_id = this.input.need(Attr.hub_id);
     let data = this.hub.toJSON();
     if (data.type !== Attr.hub) {
+      this.warn("delete_hub: WRONG_ENTITY_TYPE", hub_id)
       return this.exception.user("WRONG_ENTITY_TYPE");
     }
     data.nid = data.id;
