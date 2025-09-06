@@ -691,13 +691,15 @@ class __media extends Mfs {
       myData: res
     });
 
-    if ([Attr.document, Attr.image].includes(data[CATEGORY])) {
-      if (data[FILESIZE] < 1024 * 1024) {
-        Document.buildIndex(node);
-      } else {
-        // TO DO : add yp.crontab
-      }
-    }
+    /** May reuqires CPU power -- stand by */
+    // if ([Attr.document, Attr.image].includes(data[CATEGORY])) {
+    //   if (data[FILESIZE] < 1024 * 1024) {
+    //     Document.buildIndex(node);
+    //   } else {
+    //     TO DO : add yp.crontab
+    //   }
+    // }
+
     if (isFunction(callback)) {
       return callback(node);
     }
