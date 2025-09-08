@@ -26,13 +26,10 @@ class __private_room extends __public_room {
  * 
  */
   _getShareLink(token) {
-    const {
-      main_domain
-    } = sysEnv();
     let keysel = this.hub.get(Attr.id);
-    const pathname = this.input.basepath(`/?keysel=${keysel}/#/dmz/meeting/`);
-    let link = `https://${main_domain}${pathname}`;
-    if (token) return link + token;
+    const pathname = `?keysel=${keysel}/#/dmz/meeting`;
+    let link = `${this.input.homepath()}${pathname}`;
+    if (token) link = `${link}/${token}`;
     return link;
   }
 
@@ -104,6 +101,7 @@ class __private_room extends __public_room {
     await this.db.await_proc('permission_grant',
       nid, public_id, expiry, permission, 'link', ''
     );
+    this.debug("AAAA:104", p)
     let link = this._getShareLink(p.token)
     this.output.data({ link });
   }

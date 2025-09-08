@@ -27,7 +27,7 @@ const { Entity, FileIo } = require("@drumee/server-core");
 const { existsSync, readFileSync } = require("fs");
 const { isEmpty, isString, isArray, isObject, keys } = require("lodash");
 
-const { getPlugins } = require("../router/rest");
+const { getPlugins, getServices } = require("../router/rest");
 const { resolve } = require("path");
 const { credential_dir } = sysEnv();
 let keyFile = resolve(credential_dir, `crypto/public.pem`);
@@ -35,6 +35,7 @@ const publicKey = readFileSync(keyFile);
 const TfaMethods = TFauth.Methods.map((e) => {
   return e.type
 });
+
 //########################################
 class __yp extends Entity {
 
@@ -51,6 +52,7 @@ class __yp extends Entity {
     );
     data.platform.fonts = [];
     data.platform.description = Cache.getSysConf('platform_intro_popup_title');
+    data.platform.termsandconditions = Cache.getSysConf('termsandconditions') || '{}';
     if (data.platform.description) {
       data.platform.description = JSON.parse(data.platform.description);
     }
@@ -65,9 +67,9 @@ class __yp extends Entity {
       data.platform.wallpaper = wp;
     }
     const hub = this.hub.toJSON();
-    hub.stylesheets = await this.db.await_proc("style_get_files");
-    hub.fonts_links = await this.db.await_proc("get_fonts_links");
-    hub.fonts_faces = await this.db.await_proc("get_fonts_faces");
+    // hub.stylesheets = await this.db.await_proc("style_get_files");
+    // hub.fonts_links = await this.db.await_proc("get_fonts_links");
+    // hub.fonts_faces = await this.db.await_proc("get_fonts_faces");
     if (!isEmpty(hub.fonts_faces)) {
       hub.fonts_faces = hub.fonts_faces.concat(_def_fonts);
     }
@@ -77,14 +79,10 @@ class __yp extends Entity {
     }
     data.hub = { ...data.hub, ...hub };
     this.user.set(Attr.quota, {});
-    data.user = await this.yp.await_proc("get_user", this.uid);
-    data.user.quota = {};
+    data.user = await this.yp.await_proc("get_user", this.uid) || {};
+    let { usage } = await this.yp.await_proc("disk_usage", this.uid) || {};
+    data.user.disk_usage = usage;
     data.user.otp_key = this.session.get('secret');
-    try {
-      data.user.quota = this.parseJSON(data.user.quota);
-    } catch (e) { }
-    data.disk = await this.yp.await_proc("my_disk_limit", this.uid);
-
     data.organization = await this.yp.await_proc("my_organisation", this.uid);
     const { main_domain } = sysEnv();
     if (isEmpty(data.organization)) {
@@ -130,11 +128,10 @@ class __yp extends Entity {
     ) {
       data.platform.isPublic = 1;
     }
-    let plugins = getPlugins();
-    if (plugins) {
-      data.platform.plugins = plugins;
-    }
-    data.plateform = data.platform;
+
+    data.platform.plugins = getPlugins();
+    data.platform.services = getServices();
+
     this.output.data(data);
   }
 
@@ -248,7 +245,7 @@ class __yp extends Entity {
    * 
    */
   async request_otp() {
-
+    this.output.data({ status: "NOT_IN_USE" });
   }
 
   /**

@@ -14,8 +14,8 @@
  * limitations under the License.
  * =============================================================================
  */
-const { 
-  Attr, Constants, Mariadb, Logger, sysEnv 
+const {
+  Attr, Constants, Mariadb, Logger, sysEnv
 } = require("@drumee/server-essentials");
 const { isEmpty } = require("lodash");
 const { existsSync, mkdirSync, rmSync } = require("fs");
@@ -49,6 +49,14 @@ class __schema extends Logger {
     }
   }
 
+  /**
+   * 
+   * @param {*} opt 
+   */
+  destroy(opt) {
+    if (this.db) this.db.end();
+    super.destroy()
+  }
 
   /**
    * 
@@ -149,6 +157,7 @@ class __schema extends Logger {
       rmSync(node.home_dir, { recursive: true, force: true });
       throw `roll back on ${ident}`;
     }
+    this.destroy()
   }
   //db.query options, copy_file
 

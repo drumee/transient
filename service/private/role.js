@@ -14,13 +14,13 @@
  * limitations under the License.
  * =============================================================================
  */
-const { Attr, Remit, Cache,Messenger, toArray, RedisStore, Constants } = require("@drumee/server-essentials");
-const {EMAIL_CHECKER, PHONE_CHECKER,FORGOT_PASSWORD } = Constants;
-const {Mfs, MfsTools} = require('@drumee/server-core');
-const {remove_dir} = MfsTools;
+const { Attr, Remit, Cache, Messenger, toArray, RedisStore, Constants } = require("@drumee/server-essentials");
+const { EMAIL_CHECKER, PHONE_CHECKER, FORGOT_PASSWORD } = Constants;
+const { Mfs, MfsTools } = require('@drumee/server-core');
+const { remove_dir } = MfsTools;
 
 const { stringify } = JSON;
-const {isEmpty, isArray} = require('lodash');
+const { isEmpty, isArray } = require('lodash');
 const Crypto = require("crypto");
 const Uniqid = require('uniqid');
 class __private_adminpanel extends Mfs {
@@ -32,7 +32,6 @@ class __private_adminpanel extends Mfs {
    */
   async members_whocansee() {
     let user_id = this.input.need(Attr.user_id);
-    let orgid // = this.input.need(Attr.orgid);
     let res = {};
 
     let org = await this.yp.await_proc('organisation_get', this.user.domain_id())
@@ -152,7 +151,7 @@ class __private_adminpanel extends Mfs {
     if (mimic.mimicker != this.mimicker) return this.output.status('INVALID_MIMIC');
 
     if (mimic.status != 'active') return this.output.status('INVALID_STATUS');
-    let res = {status : 'INVALID_STATUS'};
+    let res = { status: 'INVALID_STATUS' };
     let final = await this.yp.await_proc('mimic_set_by_status', mimic_id, 'endbymimic')
     if (final.status != 'active') {
       await this.yp.await_proc('uncast_user', mimic.mimicker, mimic.uid)
@@ -628,7 +627,7 @@ class __private_adminpanel extends Mfs {
       settings.wallpaper = Cache.getSysConf('wallpaper_b2b');
     }
 
-    const merged_settings = {...old_settings, ...settings};
+    const merged_settings = { ...old_settings, ...settings };
     const settings_str = stringify(merged_settings);
     this.yp.call_proc('drumate_update_settings', uid, settings_str);
   }
@@ -1467,9 +1466,8 @@ class __private_adminpanel extends Mfs {
     await this.yp.await_proc('domain_grant', domain.id, Remit.dom_owner, this.uid, 1);
     recds.domain_id = domain.id;
     recds.owner_id = this.id;
-    let link = `https://${domain.name}`
-    recds.link = link
-    org = await this.yp.await_proc('organisation_add', this.uid, name, link, ident, domain.id, stringify(recds));
+    recds.link = domain.name;
+    org = await this.yp.await_proc('organisation_add', this.uid, name, domain.name, ident, domain.id, stringify(recds));
     this.output.data(org);
   }
 
@@ -1495,7 +1493,7 @@ class __private_adminpanel extends Mfs {
     if (my_privilege.privilege < Remit.dom_admin) return this.output.status('NOT_ENOUGH_PRIVILEGE');
 
     let domain = await this.yp.await_proc('domain_update', org.ident, org.domain_id);
-    let link = domain.name.replace(/^http.*:\/\//, '');// `https://${domain.name}`;
+    let link = domain.name.replace(/^http.*:\/\//, '');
 
     org = await this.yp.await_proc('organisation_update', this.uid, orgid, name, link, org.ident);
     this.output.data(org);

@@ -14,11 +14,17 @@
  * limitations under the License.
  * =============================================================================
  */
+
 const {
-  Attr, Constants, sendSms, Messenger, Cache, sysEnv
+  Attr, Constants, sendSms, Messenger, Cache, sysEnv, uniqueId
 } = require("@drumee/server-essentials");
 
-const _ = require("lodash");
+const { resolve } = require('path');
+const {
+  readFileSync,
+  existsSync
+} = require("fs");
+const { isEmpty, template } = require("lodash");
 const {
   PASS_CHECKER,
   ID_NOBODY,
@@ -39,7 +45,7 @@ class __butler extends Mfs {
     let data = await this.yp.await_proc(
       `${db_name}.contact_join`, secret
     );
-    if (!_.isEmpty(data)) {
+    if (!isEmpty(data)) {
       data = await this.yp.await_proc(
         `${db_name}.contact_notification_by_entity`,
         inviter_id
@@ -66,7 +72,7 @@ class __butler extends Mfs {
     };
     try {
       let { invalidReceivers } = await sendSms(opt) || {};
-      if (!_.isEmpty(invalidReceivers)) {
+      if (!isEmpty(invalidReceivers)) {
         return 0;
       }
       return otp;
@@ -82,9 +88,9 @@ class __butler extends Mfs {
   async get_otp() {
     let r = await this.send_otp();
     this.debug("AAA:69", r);
-    if(r){
+    if (r) {
       this.output.status(Attr.ok)
-    }else{
+    } else {
       this.output.status(Attr.error)
     }
   }
@@ -142,7 +148,7 @@ class __butler extends Mfs {
     }
 
     let user = await this.yp.await_proc("get_visitor", email);
-    if (_.isEmpty(user) || user.id === ID_NOBODY) {
+    if (isEmpty(user) || user.id === ID_NOBODY) {
       this.output.data({});
       return null;
     }
@@ -199,13 +205,13 @@ class __butler extends Mfs {
     }
 
     drumate = await this.yp.await_proc("drumate_exists", id);
-    if (_.isEmpty(drumate)) {
+    if (isEmpty(drumate)) {
       return this.output.data({ status: "DRUMATE_NOT_EXISTS" });
     }
 
     pass = await this.yp.await_proc("token_get_next", secret);
 
-    if (_.isEmpty(pass)) {
+    if (isEmpty(pass)) {
       return this.output.data({ status: "INVALID_SECRET" });
     }
     if (pass.status != "active") {
@@ -221,7 +227,7 @@ class __butler extends Mfs {
     }
 
     drumate = await this.yp.await_proc("drumate_exists", pass.email);
-    if (_.isEmpty(drumate)) {
+    if (isEmpty(drumate)) {
       return this.output.data({ status: "DRUMATE_NOT_EXISTS" });
     }
     drumate = await this.yp.await_proc("set_password", id, pw);
@@ -237,7 +243,7 @@ class __butler extends Mfs {
         metadata.uid
       );
       delete metadata["otp_secret"];
-      if (!_.isEmpty(data)) {
+      if (!isEmpty(data)) {
         metadata.otp_secret = data.secret;
       }
       await this.yp.await_proc("token_update", secret, metadata);
@@ -262,11 +268,11 @@ class __butler extends Mfs {
       await this.yp.await_proc("token_delete", secret);
       connection = "online";
     }
-    if (!_.isEmpty(res)) {
+    if (!isEmpty(res)) {
       if (res.metadata != null) {
         res.metadata = {};
         res.metadata.step = metadata.step;
-        if (!_.isEmpty(metadata.mobile)) {
+        if (!isEmpty(metadata.mobile)) {
           res.metadata.mobile = metadata.mobile.substr(
             metadata.mobile.length - 4
           );
@@ -288,7 +294,7 @@ class __butler extends Mfs {
     let pass = {};
 
     pass = await this.yp.await_proc("token_get_next", secret);
-    if (_.isEmpty(pass)) {
+    if (isEmpty(pass)) {
       return this.output.data({ status: "INVALID_SECRET" });
     }
     if (pass.status != "active") {
@@ -310,17 +316,17 @@ class __butler extends Mfs {
     );
 
     delete metadata["otp_secret"];
-    if (!_.isEmpty(data)) {
+    if (!isEmpty(data)) {
       metadata.otp_secret = data.secret;
     }
     metadata.step = "otpverify";
     await this.yp.await_proc("token_update", secret, metadata);
     res = await this.yp.await_proc("token_get_next", secret);
-    if (!_.isEmpty(res)) {
+    if (!isEmpty(res)) {
       if (res.metadata != null) {
         res.metadata = {}; // this.parseJSON(res.metadata)
         res.metadata.step = metadata.step;
-        if (!_.isEmpty(metadata.mobile)) {
+        if (!isEmpty(metadata.mobile)) {
           res.metadata.mobile = metadata.mobile.substr(
             metadata.mobile.length - 4
           );
@@ -343,7 +349,7 @@ class __butler extends Mfs {
     let pass = {};
 
     pass = await this.yp.await_proc("token_get_next", secret);
-    if (_.isEmpty(pass)) {
+    if (isEmpty(pass)) {
       return this.output.data({ status: "INVALID_SECRET" });
     }
     if (pass.status != "active") {
@@ -364,7 +370,7 @@ class __butler extends Mfs {
       metadata.otp_secret,
       code
     );
-    if (!_.isEmpty(otp)) {
+    if (!isEmpty(otp)) {
       metadata.step = "complete";
 
       profile.email_verified = "yes";
@@ -398,11 +404,11 @@ class __butler extends Mfs {
       await this.yp.await_proc("token_update", secret, metadata);
       res = await this.yp.await_proc("token_get_next", secret);
     }
-    if (!_.isEmpty(res)) {
+    if (!isEmpty(res)) {
       if (res.metadata != null) {
         res.metadata = {}; // this.parseJSON(res.metadata)
         res.metadata.step = metadata.step;
-        if (!_.isEmpty(metadata.mobile)) {
+        if (!isEmpty(metadata.mobile)) {
           res.metadata.mobile = metadata.mobile.substr(
             metadata.mobile.length - 4
           );
@@ -427,7 +433,7 @@ class __butler extends Mfs {
     res.isvalid = 0;
     domain = domain.replace(/^(.*\/\/)/, "").replace(/\/.*$/, "");
     let org = await this.yp.await_proc("organisation_get", domain);
-    if (_.isEmpty(org)) {
+    if (isEmpty(org)) {
       res.url = domain;
       return this.output.data(res);
     }
@@ -467,7 +473,7 @@ class __butler extends Mfs {
       return;
     }
     let user = await this.yp.await_proc("drumate_get", id);
-    if (_.isEmpty(user) || user.id === ID_NOBODY) {
+    if (isEmpty(user) || user.id === ID_NOBODY) {
       this.output.data({
         rejected: 1,
         reason: "not_found",
@@ -480,7 +486,7 @@ class __butler extends Mfs {
       secret,
       FORGOT_PASSWORD
     );
-    if (_.isEmpty(data)) {
+    if (isEmpty(data)) {
       this.output.data({
         rejected: 1,
         reason: "not_found",
@@ -500,14 +506,130 @@ class __butler extends Mfs {
     await this.yp.await_proc("token_delete", secret);
     this.output.data(user);
   }
+  /**
+   * The account schema is picked from the pool of hubs that are already created by offline process 
+   */
+  async _create_account(data) {
+    const { main_domain: domain } = sysEnv();
+    let {
+      email,
+      firstname = "",
+      password,
+    } = data;
+    let username = firstname || email.split('@')[0];
+    username = await this.yp.await_func("ensure_username", { username: username.toLowerCase(), domain });
+    let a = firstname.split(/ +/)
+    let lastname = "";
+    if (a.length > 1) {
+      firstname = a[0]
+      a.shift()
+      lastname = a.join(' ')
+    }
+    username = username.replace(/[^a-zA-Z0-9]/g, '');
+    let profile = {
+      username,
+      sharebox: uniqueId(),
+      otp: 0,
+      category: "trial",
+      profile_type: "trial",
+      lang: this.user.language() || this.input.app_language(),
+      firstname,
+      lastname,
+      email
+    }
+
+    let user = await this.yp.await_proc("drumate_create", password, profile);
+    this.debug("AAA:522", user, data, profile)
+    if (!user || !user[0]) {
+      return { ...profile, error: 1, status: "unknown_error" }
+    }
+
+    if (user[0].failed) {
+      return { ...profile, error: 1, status: "db_error", ...user[0] }
+    }
+    let { permission, failed } = user[0];
+    let { drumate } = user[2] || {};
+    if (drumate && permission) {
+      try {
+        this.debug("Trying auto login", { ident: email, password })
+        await this.session.login({ ident: email, password }, 0);
+        return { error: 0, failed, status: "ok" }
+      } catch (e) {
+        this.warn("Auto login failed", e)
+        return { error: 1, failed, status: "internal_error" }
+      }
+    }
+    return { error: 1, failed, status: "unexpected_error" }
+  }
 
   /**
    * 
    */
-  hello() {
+  async signup() {
+    const socket_id = this.input.need(Attr.socket_id);
+    const password = this.input.need(Attr.password).trim();
+    const email = this.input.need(Attr.email).trim();
+    const firstname = this.input.get(Attr.firstname);
+    let bound = await this.yp.await_func("socket_check_binding", socket_id, this.input.sid());
+    if (!bound) {
+      return this.output.data({ status: "not_bound" });
+    }
+    let data = {
+      socket_id, password, email, firstname
+    }
+    let user = await this.yp.await_proc("drumate_exists", email);
+    if (user && user.email) {
+      return this.output.data({ status: "user_exists", email });
+    }
+    data = await this._create_account(data)
+    let tpl = resolve(__dirname, "./templates/welcome.html")
+    switch (data.failed) {
+      case 0:
+        /** Output done by session.login */
+        const ulang = this.input.ua_language();
+        let lex = Cache.lex(ulang)
+        const { main_domain } = sysEnv();
+        let data = {
+          heading: lex._your_account_is_all_set,
+          message: lex._mail_signup_drumee,
+          workspace: lex._discover_drumee_desk,
+          link: `https://${main_domain}/-/`,
+          signature: lex._drumee_team,
+          reminder: lex._copyright.format(`${new Date().getFullYear()}`),
+          hello: lex._hello_x.format(firstname || ""),
+        }
+        const msg = new Messenger({
+          subject: lex._welcome_on_drumee,
+          recipient: email,
+          handler: this.exception.email,
+        });
+
+        let html = msg.renderFrom(tpl, data)
+        await msg.send({ html });
+        return
+      case 2:
+        return this.output.data({ status: 'server_busy' });
+      default: {
+        this.warn("Failed to create drumate", data)
+        if (data.error) {
+          return this.output.data({ status: 'server_error' });
+        }
+      }
+    }
+    if (!data.error) {
+      /** Output done by session.login */
+      return
+    }
+
+    return this.output.data(data);
+  }
+
+  /**
+   * 
+   */
+  async hello() {
     const geoip = require("geoip-lite");
     const ip = this.input.ip();
-    //this.debug("HELLO", this.user.get(Attr.domain));
     const data = geoip.lookup(ip) || {};
     data.ip = ip;
     this.output.data(data);

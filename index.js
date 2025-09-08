@@ -1,7 +1,3 @@
-// ================================  *
-//   Copyright Xialia.com  2013-2020 *
-//   Add by Somanos 12345!
-// ================================  *
 
 const { DrumeeCache, Events } = require("@drumee/server-essentials");
 const { END, ERROR, ROUTER_READY, START } = Events;
@@ -113,7 +109,7 @@ const http = HttpServer.createServer(handler);
 
 Router.once(ROUTER_READY, async function () {
   console.log("START WEBSOCKET SERVER...", env.endpointAddress);
-  await env.yp.await_query("SET @@character_set_collations = 'utf8mb4=utf8mb4_general_ci'", env.endpointAddress);
+  // await env.yp.await_query("SET @@character_set_collations = 'utf8mb4=utf8mb4_general_ci'", env.endpointAddress);
   await env.yp.await_proc("socket_reset", env.endpointAddress);
   new DrumeeCache();
   await DrumeeCache.load();

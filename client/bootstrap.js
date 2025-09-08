@@ -38,6 +38,9 @@ class BootstrapPage extends RuntimeEnv {
     }
 
     data = { ...this.hub.toJSON(), ...data, loader };
+    if(data.ws_port && !/^:/.test(data.ws_port)){
+      data.ws_port = `:${data.ws_port}`
+    }
     let auth = this.input.authorization();
     data.keysel = auth.keysel ||  Attr.regsid;
     this.output.setAuthorization(auth);

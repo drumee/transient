@@ -18,13 +18,15 @@
  */
 const Minimist = require('minimist');
 const { exit } = require('process');
-const Jsonfile = require('jsonfile');
-const Path = require('path');
-const Fs = require("fs");
+const { readFileSync: readJson, writeFileSync: writeJson } = require('jsonfile');
+const { exec } = require('shelljs')
+const { join, resolve } = require('path');
+const { existsSync, writeFileSync, readFileSync } = require("fs");
+const { spawn: Spawn } = require("child_process");
 const SEPARATOR = /[ ,.:;?!\/\-\_\$\&\'\"\\|\@=+\t\n\r\f\)\(\[\]\’\`]+/;
 const tesseract = require("node-tesseract-ocr");
 const { remove_item } = require('@drumee/server-core').MfsTools;
-const {Mariadb, Attr, Offline} = require('@drumee/server-essentials');
+const { Mariadb, Attr, Offline } = require('@drumee/server-essentials');
 
 class __seo_indexer extends Offline {
 
@@ -46,7 +48,7 @@ class __seo_indexer extends Offline {
     this.db = new Mariadb({ name: db_name });
     this.node = node;
     // Logger.debug(`START`);
-    this.syslog(`START INDEXING ${node.filename}`);
+    this.syslog(`START INDEXING ${node.filename} ${node.filetype}`);
     if (![Attr.document, Attr.image].includes(node.filetype)) {
       this.syslog('Unsupported file type', node.filetype);
       process.exit(1);
@@ -76,7 +78,7 @@ class __seo_indexer extends Offline {
    * 
    */
   fromImage(src, index) {
-    if (!Fs.existsSync(src)) {
+    if (!existsSync(src)) {
       this.syslog(`Source file not found *${src}*`);
     }
     const config = { lang: "eng", oem: 1, psm: 11 } //see docs to config
@@ -84,7 +86,7 @@ class __seo_indexer extends Offline {
       .recognize(src, config)
       .then((text) => {
         console.log("Result:", text);
-        Fs.writeFileSync(index, text, 'utf8');
+        writeFileSync(index, text, 'utf8');
       }).catch((e) => {
         this.syslog(`Failed to convert *${src}* ${e.toString()}`);
       })
@@ -94,7 +96,7 @@ class __seo_indexer extends Offline {
    * 
    */
   fromPdf(src, index) {
-    if (Fs.existsSync(src)) {
+    if (existsSync(src)) {
       let cmd = `/usr/bin/pdftotext ${src} ${index}`;
       this.syslog(`RUN CMD = ${cmd}`);
       this.exec(cmd);
@@ -105,16 +107,23 @@ class __seo_indexer extends Offline {
 
   /**
    * 
+   */
+  index_medata(){
+
+  }
+  
+  /**
+   * 
    * @param {*} file 
    */
   async parse(node) {
-    const mfs_dir = Path.resolve(node.mfs_root, node.id);
-    let index = Path.join(mfs_dir, `index.txt`);
-    let src = Path.resolve(mfs_dir, `orig.${node.extension}`);
+    const mfs_dir = resolve(node.mfs_root, node.id);
+    let index = join(mfs_dir, `index.txt`);
+    let src = resolve(mfs_dir, `orig.${node.extension}`);
     let attr = await this.db.await_proc('mfs_access_node', node.uid, node.id);
     switch (node.extension) {
       case 'pdf':
-        if (node.file && Fs.existsSync(node.file)) {
+        if (node.file && existsSync(node.file)) {
 
           //pdfinfo
           /*
@@ -134,7 +143,7 @@ class __seo_indexer extends Offline {
             type: 'jpg',
             size: 1024,
             density: 600,
-            outputdir: mfs_dir + Path.sep + 'jpgout',
+            outputdir: join(mfs_dir, sep, 'jpgout'),
             outputname: null,
             page: null
           });
@@ -144,13 +153,13 @@ class __seo_indexer extends Offline {
             else console.log(info);
           });
 
-          node.file = mfs_dir + Path.sep + 'jpgout' + Path.sep + 'orig_1.jpg';
+          node.file = join(mfs_dir, 'jpgout', 'orig_1.jpg');
           const config = { lang: "eng", oem: 1, psm: 11 } //see docs to config
           tesseract
             .recognize(node.file, config)
             .then((text) => {
               console.log("Result:", text);
-              Fs.writeFileSync(index, text, 'utf8');
+              writeFileSync(index, text, 'utf8');
             })
         }
         break;
@@ -166,19 +175,25 @@ class __seo_indexer extends Offline {
       case 'xlsx':
       case 'doc':
       case 'docx':
-        src = Path.resolve(mfs_dir, `preview.pdf`);
-        if (Fs.existsSync(src)) {
+      case 'odt':
+        src = resolve(mfs_dir, `preview.pdf`);
+        if (existsSync(src)) {
           this.fromPdf(src, index);
         } else {
-          let cmd = Path.resolve('.', 'to-pdf.js');
-          let args = {
-            node,
-            uid: this.uid,
-            noSocket: 1
-          };
-          Shell.exec(`${cmd} '${JSON.stringify(args)}'`);
-          this.syslog(`Converting to pdf with\n ${cmd} '${JSON.stringify(args)}'`);
-          //Spawn(cmd, [JSON.stringify(args)]);
+          src = resolve(mfs_dir, `orig.pdf`);
+          if (existsSync(src)) {
+            this.fromPdf(src, index);
+          } else {
+            let cmd = resolve(__dirname, 'to-pdf.js');
+            let args = {
+              node,
+              uid: this.uid,
+              noSocket: 1
+            };
+            exec(`${cmd} '${JSON.stringify(args)}'`);
+            console.log(`Converting to pdf with\n ${cmd} '${JSON.stringify(args)}'`);
+            Spawn(cmd, [JSON.stringify(args)]);
+          }
         }
         break;
       //OCR
@@ -191,12 +206,12 @@ class __seo_indexer extends Offline {
         return;
     }
 
-    if (!Fs.existsSync(index)) {
+    if (!existsSync(index)) {
       this.stop(`file not found ${index}`);
       return;
     }
 
-    let doc = Fs.readFileSync(index, 'utf8');
+    let doc = readFileSync(index, 'utf8');
     let newwords = doc.toLowerCase();
     let words = newwords.split(SEPARATOR).filter((e) => {
       if (!e) return false;
@@ -219,10 +234,10 @@ class __seo_indexer extends Offline {
     }
     await this.db.await_proc("seo_index", JSON.stringify(data));
     await this.db.await_proc("seo_register", node.hub_id, node.id, JSON.stringify(attr));
-    let info = Path.join(mfs_dir, `info.json`);
-    let json = Jsonfile.readFileSync(info);
+    let info = join(mfs_dir, `info.json`);
+    let json = readJson(info);
     json.index = new Date().getTime();
-    Jsonfile.writeFileSync(info, json);
+    writeJson(info, json);
     remove_item(index, 1);
     this.stop();
   }

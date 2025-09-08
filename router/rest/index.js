@@ -87,9 +87,9 @@ async function registerModules(dir, isPlugin, force) {
   const { readdir } = require("fs/promises");
   console.log(`Registering modules from ${dir}`);
   if (!existsSync(dir)) {
-    try{
+    try {
       statSync(dir)
-    }catch(e){
+    } catch (e) {
       console.log(e)
     }
     console.warn(
@@ -143,7 +143,7 @@ function complain(error, reason) {
 }
 
 /**
- * ================================================
+ * 
  */
 class Acl {
   _instance = {};
@@ -302,9 +302,27 @@ class Acl {
   /**
    * Load modules definitions from the passed directory
    */
-  static async loadModules() {
-    let dirname = join(process.env.cwd, "acl")
-    await registerModules(dirname);
+  static async loadModules(dirname) {
+    await registerModules(join(dirname, "acl"));
+  }
+
+  /**
+   * Load modules definitions from the passed directory
+   */
+  static getServices() {
+    if (!Modules.size) {
+      return {};
+    }
+
+    let r = {};
+    for (let name of Modules.keys()) {
+      let { services } = Modules.get(name);
+      r[name] = {};
+      for (let k in services) {
+        r[name][k] = `${name}.${k}`;
+      }
+    }
+    return r;
   }
 
   /**
@@ -312,7 +330,7 @@ class Acl {
    */
   static getPlugins() {
     if (!Plugins.size) {
-      return null;
+      return {};
     }
 
     let r = {};
@@ -350,9 +368,9 @@ class Acl {
     //console.log(`Loading plugins from ${file}`);
     for (let dir of acl) {
       let plgin = join(dir, "acl");
-      try{
+      try {
         statSync(plgin)
-      }catch(e){
+      } catch (e) {
         console.warn(`Could not load plugin acl file ${plgin}`, e);
         return;
       }

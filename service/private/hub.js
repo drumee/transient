@@ -141,9 +141,8 @@ class __private_hub extends Hub {
    */
   _getShareLink(token) {
     let keysel = this.hub.get(Attr.id);
-    const pathname = this.input.basepath(`/?keysel=${keysel}/#/dmz/share/`);
-    const hostname = toUnicode(this.hub.get(Attr.vhost));
-    let link = `https://${hostname}${pathname}`;
+    const pathname = `/?keysel=${keysel}/#/dmz/share/`;
+    let link = `${this.input.homepath(this.hub.get(Attr.hostname))}${pathname}`;
     if (token) return link + token;
     return link;
   }
@@ -175,7 +174,6 @@ class __private_hub extends Hub {
     spawn(cmd, args, { detached: true });
 
     return members;
-
   }
 
 
@@ -502,6 +500,10 @@ class __private_hub extends Hub {
   async delete_hub() {
     const hub_id = this.input.need(Attr.hub_id);
     let data = this.hub.toJSON();
+    if (data.type !== Attr.hub) {
+      this.warn("delete_hub: WRONG_ENTITY_TYPE", hub_id)
+      return this.exception.user("WRONG_ENTITY_TYPE");
+    }
     data.nid = data.id;
     let sockets = await this.yp.await_proc("entity_sockets", hub_id);
     await RedisStore.sendData(this.payload(data), sockets);
@@ -528,6 +530,7 @@ class __private_hub extends Hub {
       }
     }
     res.members = members;
+    this.debug(res)
     res.link = this._getShareLink(res.link);
     this.output.data(res);
   }

@@ -56,8 +56,10 @@
     </div>
     <div class="margin-auto" id="--wrapper"></div>
     <script type="text/javascript" src="<%= app.location %>/app/<%= app.entry %>" crossorigin="true"></script> 
-    <% if (typeof(plugins) !== "undefined" && plugins && plugins.entry) { %>
-    <script type="text/javascript" src="<%= plugins.location %>/plugins/<%= plugins.entry %>" crossorigin="true"></script> 
+    <% if (typeof(plugins) !== "undefined" && plugins.length) { %>
+      <% _.each(plugins, function(m) { %>
+        <script type="text/javascript" src="<%= m.location %><%= m.entry %>" crossorigin="true"></script> 
+    <% }); %>
     <% } %>
   </body>
 </html>
