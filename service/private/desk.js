@@ -285,6 +285,21 @@ class __private_desk extends Media {
     })
   }
 
+  /**
+   * 
+   */
+  async search() {
+    const string = this.input.safe_string(Attr.string);
+    const page = this.input.use(Attr.page, 1);
+    if (isEmpty(string)) {
+      this.output.list([]);
+      return;
+    }
+    let pattern = string.trim().replace(/ +/g, '.+');
+    let res = await this.db.await_proc("desk_search", { pattern, page });
+    this.output.list(res)
+  }
+
 
   /**
    * 

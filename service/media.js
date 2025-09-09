@@ -1087,14 +1087,7 @@ class __media extends Mfs {
    * @returns 
    */
   media_search() {
-    const string = this.input.safe_string(Attr.string);
-    const page = this.input.use(Attr.page, 1);
-    if (isEmpty(string)) {
-      this.output.data([]);
-      return;
-    }
-
-    this.db.call_proc("media_search", string, page, this.output.list);
+    return this.exception.user("DEPRECATED")
   }
 
   /**

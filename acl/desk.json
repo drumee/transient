@@ -44,6 +44,12 @@
         "src": "owner"
       }
     },
+    "search": {
+      "scope": "hub",
+      "permission": {
+        "src": "owner"
+      }
+    },
     "get_workers": {
       "scope": "hub",
       "permission": {

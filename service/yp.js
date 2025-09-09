@@ -506,19 +506,20 @@ class __yp extends Entity {
    *
    */
   async ping() {
-    let data = this.input.get("data");
-    if (data && data == "debug") {
-      this.output.data({ verbosity: global.verbosity, modules: global.debug });
-      await RedisStore.sendData(data);
-      return;
-    }
-    if (!data) {
-      data = "Pong";
-    }
-    if (isObject(data)) {
-      this.output.data(data);
-    } else {
-      this.output.data({ response: data });
+    let { type, nid } = this.input.data();
+    switch (type) {
+      case "debug":
+        this.output.data({ verbosity: global.verbosity, modules: global.debug });
+        await RedisStore.sendData(data);
+        return
+      case "test":
+        let t1 = new Date().getTime()
+        let t2 = new Date().getTime()
+        this.debug("AAA:159", t2 - t1)
+        this.output.list({t1, t2});
+        return
+      default:
+        this.output.data({ type });
     }
   }
 
