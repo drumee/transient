@@ -1,6 +1,5 @@
 
   const xia_lang = "<%= language %>";
-  const protocol = "<%= protocol %>";
   const startTime = new Date().getTime();
   const bootstrap = function() {
     return {
@@ -10,7 +9,7 @@
       arch          : "<%= arch %>",
       area          : "<%= area %>",
       connection    : "<%= connection %>",
-      endpoint      : "<%= endpointPath %>/",
+      endpoint      : "<%= protocol %>://<%= user_domain || main_domain %><%= endpointPath %>/",
       endpointName  : "<%= instance_name %>",
       endpointPath  : "<%= endpointPath %>/",
       ident         : "<%= ident %>",
@@ -25,6 +24,7 @@
       online        : 1,
       pdfworker     : "<%= app.pdfworker %>",
       pdfworkerLegacy : "<%= app.pdfworkerLegacy %>",
+      protocol     : "<%= protocol %>",
       service       : "<%= servicePath %>?",
       serviceApi    : "<%= servicePath %>?",
       servicePath   : "<%= servicePath %>",

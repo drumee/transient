@@ -95,9 +95,10 @@ class __private_desk extends Media {
     } else {
       hostname = hostname || filename;
       hostname = hostname.replace(/[ \.,;:!&~#'|@*\$><\?]/, '');
-      hostname = toASCII(hostname);
+      hostname = await this.yp.await_func("strip_accents", hostname);
       hostname = hostname.replace(/\-$/, '');
-      hostname = hostname.toLowerCase();
+      hostname = hostname.trim().toLowerCase();
+      hostname = toASCII(hostname);
     }
 
     opt.lang = this.input.use(Attr.lang) || "en";

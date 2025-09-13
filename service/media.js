@@ -273,7 +273,9 @@ class __media extends Mfs {
 
     /** No parent found. Create one with recursivity */
     let dest_dir = dirname(ownpath);
-    let dest_id = await this.db.await_func("node_id_from_path", dest_dir);
+    /** The item doesn't exist, force replace to 0 */
+    this.input.set({ replace: 0, createOrReplace: 0 })
+
     let dir = dest_dir.split(/\/+/).filter(function (e) {
       return e.length
     });

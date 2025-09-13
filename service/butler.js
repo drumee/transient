@@ -539,7 +539,6 @@ class __butler extends Mfs {
     }
 
     let user = await this.yp.await_proc("drumate_create", password, profile);
-    this.debug("AAA:522", user, data, profile)
     if (!user || !user[0]) {
       return { ...profile, error: 1, status: "unknown_error" }
     }
