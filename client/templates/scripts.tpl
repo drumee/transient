@@ -9,7 +9,7 @@
       arch          : "<%= arch %>",
       area          : "<%= area %>",
       connection    : "<%= connection %>",
-      endpoint      : "<%= protocol %>://<%= user_domain || main_domain %><%= endpointPath %>/",
+      endpoint      : "<%= endpointPath %>/",
       endpointName  : "<%= instance_name %>",
       endpointPath  : "<%= endpointPath %>/",
       ident         : "<%= ident %>",
