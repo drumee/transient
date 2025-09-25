@@ -14,6 +14,13 @@
         "fast_check": "public-api"
       }
     },
+    "report_error": {
+      "scope": "hub",
+      "permission": {
+        "src": "anonymous",
+        "fast_check": "public-api"
+      }
+    },
     "publicKey": {
       "scope": "hub",
       "permission": {

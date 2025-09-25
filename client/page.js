@@ -106,17 +106,23 @@ class MainPage extends RuntimeEnv {
    * 
    */
   getCustomPlugins() {
+    /** Get plugins path from hub settings */
     let { plugins } = this.hub.get(Attr.settings) || {};
     if (!plugins) return null;
     let Plugins = []
+    /** Read plugins settings the path */
     for (let [path, entry] of Object.entries(plugins)) {
       let index = join(path, 'index.json');
-      if (existsSync(index)) {
-        let info = readJsonSync(index)
-        Plugins.push({ ...info, entry: `${entry}-${info.hash}.js` })
+      if (!existsSync(index)) continue;
+      let info = readJsonSync(index)
+      if (!info || !info.location) continue;
+      if (!/.+\/$/.test(info.location)) {
+        info.location = `${info.location}/`;
+      } else {
+        info.location = info.location.replace(/\/+$/, '/')
       }
+      Plugins.push({ ...info, entry: `${entry}-${info.hash}.js` })
     }
-    this.debug("AAA:118", Plugins)
     if (Plugins.length) {
       return Plugins
     }
@@ -160,6 +166,9 @@ class MainPage extends RuntimeEnv {
     this.output.set_header("Pragma", "no-cache");
     this.output.set_header("Expires", "0");
     this.set({ data });
+    if(this.input.get('debug-ui')){
+      data.debugUi=1;
+    }
     const template_dir = resolve(__dirname, TPL_BASE);
     let content = this.getRender(template_dir, "index.tpl")(data);
     this.output.html(content);

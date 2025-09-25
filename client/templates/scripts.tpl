@@ -22,9 +22,8 @@
       mfs_base      : "<%= endpointPath %>/",
       mfsRootUrl    : `<%= endpointPath %>/`,
       online        : 1,
-      pdfworker     : "<%= app.pdfworker %>",
-      pdfworkerLegacy : "<%= app.pdfworkerLegacy %>",
-      protocol     : "<%= protocol %>",
+      pdfium_wasm   : "<%= appRoot %>/static/vendor/embedpdf/pdfium.wasm",
+      protocol      : "<%= protocol %>",
       service       : "<%= servicePath %>?",
       serviceApi    : "<%= servicePath %>?",
       servicePath   : "<%= servicePath %>",
@@ -42,4 +41,12 @@
   }
 
   const DEBUG =  {};
+
+  window.onerror = function (msg, url, line, col, error) {
+    fetch('<%= svcPath %>bootstrap.report_error', {
+      method: 'POST',
+      body: JSON.stringify({ msg, url, line, col, stack: error?.stack }),
+      headers: { 'Content-Type': 'application/json' }
+    });
+  };
 

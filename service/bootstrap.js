@@ -72,6 +72,14 @@ class __bootstrap extends RuntimeEnv {
   /**
    * 
    */
+  async report_error() {
+    this.debug("AAAA:78", this.input.data())
+    this.output.text("OK");
+  }
+
+  /**
+   * 
+   */
   async authn() {
     let token = uniqueId(22);
     let auth = this.input.authorization();

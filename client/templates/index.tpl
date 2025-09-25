@@ -35,6 +35,9 @@
       <script defer type="text/javascript" src="<%= loader %>"></script> 
     <% } %>
 
+    <% if (typeof(debugUi) !== "undefined" && debugUi) { %>
+      <script>localStorage.logLevel = "3;</script>
+    <% } %>
 
   </head>
 
@@ -60,6 +63,10 @@
       <% _.each(plugins, function(m) { %>
         <script type="text/javascript" src="<%= m.location %><%= m.entry %>" crossorigin="true"></script> 
     <% }); %>
+    <% } %>
+    <% if (typeof(debugUi) !== "undefined" && debugUi) { %>
+      <script src="https://cdn.jsdelivr.net/npm/eruda"></script>
+      <script>eruda.init();</script>
     <% } %>
   </body>
 </html>
