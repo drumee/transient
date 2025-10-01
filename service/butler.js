@@ -18,13 +18,10 @@
 const {
   Attr, Constants, sendSms, Messenger, Cache, sysEnv, uniqueId
 } = require("@drumee/server-essentials");
-
+const { platform } = require('./lib/env');
 const { resolve } = require('path');
-const {
-  readFileSync,
-  existsSync
-} = require("fs");
-const { isEmpty, template } = require("lodash");
+const { isEmpty, isString } = require("lodash");
+const { getPlugins, getServices } = require("../router/rest");
 const {
   PASS_CHECKER,
   ID_NOBODY,
@@ -36,6 +33,11 @@ const { Mfs } = require("@drumee/server-core");
 const { stringify } = JSON;
 
 class __butler extends Mfs {
+
+  constructor(...args) {
+    super(...args);
+    this.platform = platform.bind(this);
+  }
 
   /**
    * 
@@ -87,7 +89,6 @@ class __butler extends Mfs {
    */
   async get_otp() {
     let r = await this.send_otp();
-    this.debug("AAA:69", r);
     if (r) {
       this.output.status(Attr.ok)
     } else {
@@ -103,7 +104,7 @@ class __butler extends Mfs {
     const secret = this.input.need(Attr.secret);
     let data = await this.yp.await_proc("token_get_next", secret);
     let a;
-    if (data && _.isString(data.metadata)) {
+    if (data && isString(data.metadata)) {
       let md = {};
       try {
         md = this.parseJSON(data.metadata);
@@ -424,6 +425,7 @@ class __butler extends Mfs {
    */
   async check_domain() {
     let url = this.input.get(Attr.domain) || this.input.host();
+    const { main_domain } = sysEnv();
     let res = {};
     let domain = url;
 
@@ -433,26 +435,42 @@ class __butler extends Mfs {
     res.isvalid = 0;
     domain = domain.replace(/^(.*\/\/)/, "").replace(/\/.*$/, "");
     let org = await this.yp.await_proc("organisation_get", domain);
-    if (isEmpty(org)) {
+    if (!org?.url) {
       res.url = domain;
       return this.output.data(res);
     }
-    res.isvalid = 1;
+    let hub = await this.yp.await_proc("get_hub", org.url);
     let user = await this.yp.await_proc("get_user", this.uid);
-    res.user = { ...this.user.toJSON(), ...user };
-    res.organization = {
-      url: org.link,
-      name: org.name,
-      domain_id: user.domain_id,
-      username: user.username,
-      uid: user.id,
-      ...org,
-    };
-    const { main_domain } = sysEnv();
-    res.main_domain = main_domain;
-    res.user.main_domain = main_domain;
+    if(!user?.id){
+      user = {
+        uid:this.uid,
+        id:this.uid,
+        profile:{},
+        ident: this.session.ident(),
+        username:this.session.ident(),
+        signed_in:0,
+        settings: {},
+        organisation:org
+      }
+    }
+    user.main_domain = main_domain;
     this.session.refreshAuthorization();
-    this.output.data({ ...org, ...res });
+    let data = {
+      organization: {
+        url: org.link,
+        name: org.name,
+        domain_id: user.domain_id,
+        username: user.username,
+        uid: user.id,
+        ...org,
+      },
+      hub,
+      user,
+      platform: this.platform(),
+      isvalid: 1,
+      main_domain,
+    }
+    this.output.data(data);
   }
 
   /**
@@ -550,7 +568,6 @@ class __butler extends Mfs {
     let { drumate } = user[2] || {};
     if (drumate && permission) {
       try {
-        this.debug("Trying auto login", { ident: email, password })
         await this.session.login({ ident: email, password }, 0);
         return { error: 0, failed, status: "ok" }
       } catch (e) {

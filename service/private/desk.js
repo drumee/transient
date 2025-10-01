@@ -404,6 +404,7 @@ class __private_desk extends Media {
     const pid = this.input.use(Attr.pid) || this.home_id;
     const filename = this.input.need(Attr.filename);
     const hostname = this.user.get(Attr.hostname);
+    let hubname = this.input.get(Attr.hubname) || filename || uniqueId();
 
     const args = { hostname, area: Attr.public, filename };
     let { home_id, hub_id } = await this._createHub(args);
@@ -420,8 +421,6 @@ class __private_desk extends Media {
     if (pid && pid != this.get(Attr.home_id)) {
       await this.db.await_proc("mfs_move", hub.id, pid)
     }
-    // await this.yp.await_proc('hub_update_name', hub.id, filename);
-    // await this.yp.await_proc('change_vhost', hub.id, hubname);
     let media = await this.db.await_proc("mfs_access_node", this.uid, hub.id);
     media.hub_id = media.id;
     media.hubname = hubname;
@@ -446,7 +445,7 @@ class __private_desk extends Media {
     const pid = this.input.use(Attr.pid);
     const filename = this.input.need(Attr.filename);
     const area = this.input.need(Attr.area, Attr.private);
-    let hubname = this.input.get(Attr.hubname) || uniqueId();
+    let hubname = this.input.get(Attr.hubname) || filename || uniqueId();
     const args = { hubname, area, filename };
 
     let { home_id, hub_id } = await this._createHub(args);

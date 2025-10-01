@@ -26,7 +26,7 @@ const {
 const { Entity, FileIo } = require("@drumee/server-core");
 const { existsSync, readFileSync } = require("fs");
 const { isEmpty, isString, isArray, isObject, keys } = require("lodash");
-
+const { get_env, platform } = require('./lib/env');
 const { getPlugins, getServices } = require("../router/rest");
 const { resolve } = require("path");
 const { credential_dir } = sysEnv();
@@ -39,101 +39,20 @@ const TfaMethods = TFauth.Methods.map((e) => {
 //########################################
 class __yp extends Entity {
 
+  constructor(...args) {
+    super(...args);
+    this.platform = platform.bind(this);
+    this._get_env = get_env.bind(this);
+  }
+
   /**
    *
    */
   async get_env() {
-    const yp = this.yp;
-    let data = {
-      platform: {},
-    };
-    let _def_fonts = await yp.await_query(
-      "SELECT * FROM font WHERE family='Roboto' ORDER BY `name` ASC"
-    );
-    data.platform.fonts = [];
-    data.platform.description = Cache.getSysConf('platform_intro_popup_title');
-    data.platform.termsandconditions = Cache.getSysConf('termsandconditions') || '{}';
-    if (data.platform.description) {
-      data.platform.description = JSON.parse(data.platform.description);
-    }
-    data.platform.setup = await yp.await_query(
-      "SELECT count(*) as ok FROM privilege where privilege>=63 AND domain_id=1"
-    );
-
-    let wp = Cache.getSysConf("wallpaper");
-    if (isString(wp)) {
-      data.platform.wallpaper = JSON.parse(wp);
-    } else {
-      data.platform.wallpaper = wp;
-    }
-    const hub = this.hub.toJSON();
-    // hub.stylesheets = await this.db.await_proc("style_get_files");
-    // hub.fonts_links = await this.db.await_proc("get_fonts_links");
-    // hub.fonts_faces = await this.db.await_proc("get_fonts_faces");
-    if (!isEmpty(hub.fonts_faces)) {
-      hub.fonts_faces = hub.fonts_faces.concat(_def_fonts);
-    }
-    if (!hub.exists) {
-      this.exception.not_found("HUB_NOT_FOUND");
-      return;
-    }
-    data.hub = { ...data.hub, ...hub };
-    this.user.set(Attr.quota, {});
-    data.user = await this.yp.await_proc("get_user", this.uid) || {};
-    let { usage } = await this.yp.await_proc("disk_usage", this.uid) || {};
-    data.user.disk_usage = usage;
-    data.user.otp_key = this.session.get('secret');
-    data.organization = await this.yp.await_proc("my_organisation", this.uid);
-    const { main_domain } = sysEnv();
-    if (isEmpty(data.organization)) {
-      let host = main_domain;
-      if (this.uid == ID_NOBODY) {
-        host = this.input.host();
-      }
-      data.organization = await this.yp.await_proc(
-        "organisation_get",
-        host
-      );
-    }
-    if (isArray(data.organization)) {
-      data.organization = data.organization[0] || {};
-    }
-    data.organization.useEmail = global.myDrumee.useEmail || 0;
-    data.user.is_reseller = 0;
-    if (data.organization.metadata) {
-      data.user.is_reseller = data.organization.metadata.is_reseller || 0;
-    } else {
-      data.organization.metadata = {};
-    }
-    data.user.main_domain = main_domain;
-    if (this.user.get("signed_in")) {
-      data.user.signed_in = 1;
-      data.user.connection = "online";
-    } else {
-      data.user.signed_in = 0;
-      data.user.connection = "offline";
-    }
-    data.user.privilege = data.organization.privilege; // To be use from withon origanization
-    data.main_domain = main_domain;
-    data.hub = hub;
-    data.platform.intl = this.supportedLanguage();
-    data.platform.arch = global.myDrumee.arch || "pod";
-    data.platform.cdnHost = global.myDrumee.cdnHost;
-    data.platform.version = global.VERSION;
-    data.platform.TfaMethods = TfaMethods;
-    if (
-      global.myDrumee.isPublic &&
-      global.myDrumee.useEmail &&
-      global.myDrumee.arch == "cloud"
-    ) {
-      data.platform.isPublic = 1;
-    }
-
-    data.platform.plugins = getPlugins();
-    data.platform.services = getServices();
-
+    let data = await this._get_env()
     this.output.data(data);
   }
+
 
   /**
    *
@@ -516,7 +435,7 @@ class __yp extends Entity {
         let t1 = new Date().getTime()
         let t2 = new Date().getTime()
         this.debug("AAA:159", t2 - t1)
-        this.output.list({t1, t2});
+        this.output.list({ t1, t2 });
         return
       default:
         this.output.data({ type });
