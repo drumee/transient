@@ -18,7 +18,7 @@
 const { existsSync } = require('fs');
 const { isEmpty, isArray } = require('lodash');
 const {
-  Attr, toArray, Remit, Constants,
+  Attr, toArray, Remit, Constants, sendSms,
   Messenger, DrumeeCache, RedisStore
 } = require("@drumee/server-essentials")
 
@@ -211,7 +211,6 @@ class __private_drumate extends Entity {
       this.exception.server("OTP_NOT_AVAILABLE");
       return
     }
-    const Sms = require('../../vendor/smsfactor');
     let profile = this.user.get(Attr.profile);
     if (isEmpty(profile)) {
       let user = await this.yp.await_proc('get_visitor', this.uid);
@@ -240,8 +239,7 @@ class __private_drumate extends Entity {
         message,
         receivers: [phone]
       }
-      let sms = new Sms(opt);
-      sms.send().then((result) => {
+      sendSms(opt).send().then((result) => {
         if (!isEmpty(result.invalidReceivers)) {
           let msg = `${DrumeeCache.message('_invalid_recipient', lang)}`
           this.output.data({ error: `${msg} : ${result.invalidReceivers[0]}` });
@@ -298,9 +296,7 @@ class __private_drumate extends Entity {
       message: `${message.format(otp.code, expiry)}`,
       receivers: [mobile]
     }
-    let sms = new Sms(opt);
-    sms.send().then((result) => {
-      //this.debug("AAAA:334", result);
+    sendSms(opt).then((result) => {
       if (!isEmpty(result.invalidReceivers)) {
         let msg = `${DrumeeCache.message('_invalid_recipient', lang)}`
         this.output.data({ error: `${msg} : ${result.invalidReceivers[0]}` });

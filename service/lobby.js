@@ -1,10 +1,5 @@
-// ================================  *
-//   Copyright Xialia.com  2013-2023 *
-//   FILE  : src/service/yp
-//   TYPE  : module
-// ================================  **
 const {
-  Attr, Constants, uniqueId, Messenger, Cache, Remit, sysEnv
+  Attr, Constants, Messenger, Cache, sendSms
 } = require("@drumee/server-essentials");
 
 const _ = require("lodash");
@@ -14,7 +9,7 @@ const {
   FORGOT_PASSWORD,
   INVALID_EMAIL_FORMAT,
 } = Constants;
-const { dom_owner } = Remit;
+
 const { Mfs, MfsTools } = require("@drumee/server-core");
 
 const { google } = require("googleapis");
@@ -38,7 +33,7 @@ class __butler extends Mfs {
     let { useSms } = global.myDrumee || {};
     if (!useSms) {
       this.exception.server("OTP_NOT_AVAILABLE");
-      return 
+      return
     }
 
     const token = this.randomString();
@@ -52,8 +47,7 @@ class __butler extends Mfs {
       message: `${message.format(otp.code, expiry)}`,
       receivers: [mobile],
     };
-    const Sms = require('../../vendor/smsfactor');
-    let sms = new Sms(opt);
+    let sms = sendSms(opt);
     let data = await sms.send().then((result) => {
       if (!_.isEmpty(result.invalidReceivers)) {
         return 0;
@@ -207,7 +201,6 @@ class __butler extends Mfs {
     }
     drumate = await this.yp.await_proc("set_password", id, pw);
     let connection = "offline";
-    //this.debug("AAA:1586", drumate);
     if ([1, "1", "sms"].includes(drumate.otp)) {
       metadata.step = "otpverify";
       metadata.uid = id;
@@ -396,7 +389,7 @@ class __butler extends Mfs {
   }
 
 
- 
+
 }
 
 module.exports = __butler;

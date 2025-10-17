@@ -1,7 +1,10 @@
 
   const xia_lang = "<%= language %>";
+
   const startTime = new Date().getTime();
   const bootstrap = function() {
+    let protocol = "<%= protocol %>" || location?.protocol;
+    protocol = protocol.replace(/[: ]+/, '');
     return {
       access        : "<%= access %>",
       appHash       : "<%= app.hash %>",
@@ -23,7 +26,7 @@
       mfsRootUrl    : `<%= endpointPath %>/`,
       online        : 1,
       pdfium_wasm   : "<%= appRoot %>/static/vendor/embedpdf/pdfium.wasm",
-      protocol      : "<%= protocol %>",
+      protocol,
       service       : "<%= servicePath %>?",
       serviceApi    : "<%= servicePath %>?",
       servicePath   : "<%= servicePath %>",

@@ -371,11 +371,12 @@ class __private_desk extends Media {
     this.output.data(res)
   }
 
-
-  // ========================
-  // Wicket is used to handle external meeting
-  // It must be unique per drumate
-  // ========================
+  /**
+   * 
+   * Wicket is used to handle external meeting
+   * It must be unique per drumate
+   * @returns 
+   */
   async create_wicket() {
     let media;
     let data = await this.db.await_proc("desk_env");
