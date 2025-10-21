@@ -140,6 +140,14 @@ class MainPage extends RuntimeEnv {
     if (data.ws_port && !/^:/.test(data.ws_port)) {
       data.ws_port = `:${data.ws_port}`
     }
+
+    if (!data.protocol) {
+      data.protocol = 'https';
+      data.ws_protocol = 'wss';
+      data.ws_port = '';
+    }
+    if (data.localhost == null) data.localhost = 0;
+
     let sent = await this.shouldSendHomepage(data);
     await this.session.log_service();
     if (sent) {
@@ -166,8 +174,8 @@ class MainPage extends RuntimeEnv {
     this.output.set_header("Pragma", "no-cache");
     this.output.set_header("Expires", "0");
     this.set({ data });
-    if(this.input.get('debug-ui')){
-      data.debugUi=1;
+    if (this.input.get('debug-ui')) {
+      data.debugUi = 1;
     }
     const template_dir = resolve(__dirname, TPL_BASE);
     let content = this.getRender(template_dir, "index.tpl")(data);
