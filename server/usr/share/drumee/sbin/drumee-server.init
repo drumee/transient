@@ -1,0 +1,68 @@
+#!/bin/bash
+source /etc/drumee/drumee.sh
+if [ ! -d $DRUMEE_BACKEND_HOME ]; then
+  echo "DRUMEE_BACKEND_HOME doesn't exist"
+  exit 1
+fi
+if [ -z $DRUMEE_SYSTEM_USER ]; then
+  DRUMEE_SYSTEM_USER=www-data
+fi
+
+manager() {
+  su -s /bin/bash $DRUMEE_SYSTEM_USER -c "HOME=$DRUMEE_BACKEND_HOME pm2 $*"
+}
+# su -s /bin/bash $DRUMEE_SYSTEM_USER -c "HOME=$DRUMEE_BACKEND_HOME pm2 $*"
+cd $DRUMEE_BACKEND_HOME
+case "$1" in
+start)
+  if [ -z $2 ]; then
+    manager start ecosystem.config.js
+  else
+    manager start ecosystem.config.js --only $2
+  fi
+  ;;
+stop)
+  if [ -z $2 ]; then
+    manager $1 all
+  else
+    if [[ $2 =~ ^(factory.+)$ ]]; then
+      type=$(echo $2 | sed 's/factory\///')
+      touch /var/run/drumee/factory.$type.stop
+    else
+      manager $1 $2
+    fi
+  fi
+  ;;
+restart)
+  if [ -z $2 ]; then
+    manager $1 all
+  else
+    if [[ $2 =~ ^(factory.+)$ ]]; then
+      type=$(echo $2 | sed 's/factory\///')
+      rm -f /var/run/drumee/factory.$type.stop
+    fi
+    manager $1 $2
+  fi
+  ;;
+delete | show | monitor | status)
+  if [ -z $2 ]; then
+    echo "$0 $1 : name or id must be specified"
+  else
+    manager $1 $2
+  fi
+  ;;
+monit | dash | list)
+  manager $1
+  ;;
+log)
+  if [ -z $2 ]; then
+    manager $1 main
+  else
+    manager $1 $2
+  fi
+  ;;
+*)
+  manager $*
+  ;;
+esac
+exit 0

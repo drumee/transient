@@ -1,0 +1,11 @@
+Source: drumee-ui-pod
+Section: non-free
+Priority: optional
+Maintainer: Somanos Sar <somanos.sar@drumee.com>
+Standards-Version: 2.6.2
+Homepage: https://drumee.com
+
+Package: drumee-ui-pod
+Architecture: all
+Depends: ${misc:Depends}, binutils, nodejs, git, drumee-infra
+Description: Drumee User Interface

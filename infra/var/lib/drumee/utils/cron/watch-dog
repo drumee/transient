@@ -1,0 +1,17 @@
+#!/bin/bash
+# Ensure that factory daemon is always running
+set -e
+
+# For operational reson we may want to suspend auto restart
+if [ -f /tmp/drumee/factory-down ]; then
+  exit 0
+fi
+
+export PATH=$PATH:/usr/sbin
+status=$(drumee show factory | grep status | awk  '{print $4}')
+
+if [ "$status" = "stopped" ]; then
+  drumee start factory
+fi
+
+

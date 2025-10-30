@@ -1,0 +1,13 @@
+drumee-server-pod (2.4.1) stable; urgency=medium
+
+  * Synology build
+
+ -- Somanos Sar <somanos.sar@drumee.com>  Thu, 01 Jun 2023 09:04:42 +0000
+
+drumee-server-pod (2.4.0) stable; urgency=medium
+
+  * Initial Package
+
+ -- Somanos Sar <somanos.sar@drumee.com>  Fri, 07 Nov 2022 10:33:42 +0000
+
+

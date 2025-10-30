@@ -1,0 +1,14 @@
+{
+  "name": "drumee-configs",
+  "version": "1.0.0",
+  "description": "Handle Drumee genral configs",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "jsonfile": "^6.1.0"
+  }
+}

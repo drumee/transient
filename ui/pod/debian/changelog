@@ -1,0 +1,228 @@
+drumee-ui-pod (3.1.7) stable; urgency=medium
+  * Unify initial env
+ -- Somanos Sar <somanos.sar@drumee.com>  Wed, 01 Oct 2025 10:00:00 +000
+ 
+ drumee-ui-pod (3.1.6) stable; urgency=medium
+  * Fix issues on mobile devices
+ -- Somanos Sar <somanos.sar@drumee.com>  Wed, 25 Sep 2025 10:00:00 +000
+
+drumee-ui-pod (3.1.5) stable; urgency=medium
+  * Change Locale + Butler
+ -- Somanos Sar <somanos.sar@drumee.com>  Wed, 17 Sep 2025 10:00:00 +000
+
+drumee-ui-pod (3.1.4) stable; urgency=medium
+  * Unifiy endpoint
+  * Change Visitor default labguage selector
+ -- Somanos Sar <somanos.sar@drumee.com>  Sat, 13 Sep 2025 10:00:00 +000
+
+drumee-ui-pod (3.1.3) stable; urgency=medium
+  * Handle unsupported Notification
+ -- Somanos Sar <somanos.sar@drumee.com>  Wed, Sep Jun 2025 10:00:00 +000
+
+drumee-ui-pod (3.1.2) stable; urgency=medium
+  * Fix search bar
+ -- Somanos Sar <somanos.sar@drumee.com>  Tue, 09 Jun 2025 10:00:00 +000
+
+drumee-ui-pod (3.1.1) stable; urgency=medium
+  * Small fixes
+ -- Somanos Sar <somanos.sar@drumee.com>  Mon, 08 Jun 2025 10:00:00 +000
+
+drumee-ui-pod (3.1.0) stable; urgency=medium
+  * Merge from starter kik
+  * Support specifi port
+  * Support local host
+  * Support group quota
+ -- Somanos Sar <somanos.sar@drumee.com>  Mon, 08 Jun 2025 10:00:00 +000
+
+drumee-ui-pod (2.20.4) stable; urgency=medium
+  * Improve list smart scroll handling
+
+ -- Somanos Sar <somanos.sar@drumee.com>  Fri, 30 Jun 2025 17:54:00 +000
+
+drumee-ui-pod (2.20.3) stable; urgency=medium
+  * Improve failed loading handling
+
+ -- Somanos Sar <somanos.sar@drumee.com>  Thu, 22 May 2025 17:54:00 +000
+
+drumee-ui-pod (2.20.2) stable; urgency=medium
+  * Improve chat attachment handling
+
+ -- Somanos Sar <somanos.sar@drumee.com>  Fri, 16 May 2025 17:54:00 +000
+
+drumee-ui-pod (2.20.1) stable; urgency=medium
+  * Small fixes
+
+ -- Somanos Sar <somanos.sar@drumee.com>  Wed, 05 May 2025 17:54:00 +000
+
+drumee-ui-pod (2.20.0) stable; urgency=medium
+  * Move repository from Gitlab to Github 
+
+ -- Somanos Sar <somanos.sar@drumee.com>  Wed, 16 Apr 2025 17:54:00 +000
+
+drumee-ui-pod (2.10.1) stable; urgency=medium
+  * Update locale
+
+ -- Somanos Sar <somanos.sar@drumee.com>  Wed, 28 Mar 2025 17:54:00 +000
+
+drumee-ui-pod (2.10.0) stable; urgency=medium
+  * Implement global plugin
+
+ -- Somanos Sar <somanos.sar@drumee.com>  Wed, 26 Mar 2025 17:54:00 +0000
+
+drumee-ui-pod (2.9.16) stable; urgency=medium
+  * Export to Doecker devel
+
+ -- Somanos Sar <somanos.sar@drumee.com>  Sun, 09 Mar 2025 17:54:00 +0000
+ 
+ drumee-ui-pod (2.9.15) stable; urgency=medium
+
+  * Handle double extension
+  * Fixed markdown editor
+
+ -- Somanos Sar <somanos.sar@drumee.com>  Fri, 11 Feb 2025 17:54:00 +0000
+
+drumee-ui-pod (2.9.14) stable; urgency=medium
+
+  * Fixed schedule player
+
+ -- Somanos Sar <somanos.sar@drumee.com>  Mon, 02 Feb 2025 17:54:00 +0000
+
+drumee-ui-pod (2.9.12) stable; urgency=medium
+
+  * Fixed chat attachment send buuton
+
+ -- Somanos Sar <somanos.sar@drumee.com>  Wed, 30 Jan 2025 17:54:00 +0000
+
+
+drumee-ui-pod (2.9.11) stable; urgency=medium
+
+  * Fixed extension various issues
+
+ -- Somanos Sar <somanos.sar@drumee.com>  Tue, 29 Jan 2025 17:54:00 +0000
+
+drumee-ui-pod (2.9.10) stable; urgency=medium
+
+  * Fixed sharebox various issues
+
+ -- Somanos Sar <somanos.sar@drumee.com>  Tue, 28 Jan 2025 17:54:00 +0000
+
+drumee-ui-pod (2.9.9) stable; urgency=medium
+
+  * Media player UX improvment 
+
+ -- Somanos Sar <somanos.sar@drumee.com>  Mon, 27 Jan 2025 17:54:00 +0000
+
+drumee-ui-pod (2.9.8) stable; urgency=medium
+
+  * Fixed media upload 
+
+ -- Somanos Sar <somanos.sar@drumee.com>  Mon, 23 Jan 2025 17:54:00 +0000
+
+
+drumee-ui-pod (2.9.7) stable; urgency=medium
+
+  * Improved media mkdir UX 
+  * Added new attributes to input widget
+
+ -- Somanos Sar <somanos.sar@drumee.com>  Mon, 06 Jan 2025 17:54:00 +0000
+
+ drumee-ui-pod (2.9.6) stable; urgency=medium
+
+ * Fixed media upload in chat
+ * Fixed document player
+
+-- Somanos Sar <somanos.sar@drumee.com>  Tue, 17 Dec 2024 17:54:00 +0000
+
+ drumee-ui-pod (2.9.5) stable; urgency=medium
+
+ * Fixed media progress
+ * Fixed media upload
+
+ -- Somanos Sar <somanos.sar@drumee.com>  Tue, 10 Dec 2024 17:54:00 +0000
+
+drumee-ui-pod (2.9.4) stable; urgency=medium
+
+  * Fixed media core
+  * Fixed window/hub
+
+ -- Somanos Sar <somanos.sar@drumee.com>  Tue, 10 Dec 2024 17:54:00 +0000
+
+drumee-ui-pod (2.9.3) stable; urgency=medium
+
+  * Fixed media sync
+  * Changed mediaViewMode replace localstorage by Map
+
+ -- Somanos Sar <somanos.sar@drumee.com>  Tue, 26 Nov 2024 17:54:00 +0000
+
+drumee-ui-pod (2.9.3) stable; urgency=medium
+
+  * Fixed media sync
+  * Changed mediaViewMode replace localstorage by Map
+
+ -- Somanos Sar <somanos.sar@drumee.com>  Tue, 26 Nov 2024 17:54:00 +0000
+
+drumee-ui-pod (2.9.2) stable; urgency=medium
+
+  * Changed trash to show purge progress 
+  * Fixed RT sync
+
+ -- Somanos Sar <somanos.sar@drumee.com>  Tue, 26 Nov 2024 17:54:00 +0000
+
+drumee-ui-pod (2.9.1) stable; urgency=medium
+
+  * Revamp realtime sync logics
+  * Fixed folder upload
+
+ -- Somanos Sar <somanos.sar@drumee.com>  Mon, 25 Nov 2024 17:54:00 +0000
+
+drumee-ui-pod (2.9.0) stable; urgency=medium
+
+  * Fixed LETC View prototypes
+  * Revamp image player
+
+ -- Somanos Sar <somanos.sar@drumee.com>  Sat, 09 Nov 2024 17:54:00 +0000
+
+drumee-ui-pod (2.8.27) stable; urgency=medium
+
+  * Revamp image player
+
+ -- Somanos Sar <somanos.sar@drumee.com>  Sat, 09 Nov 2024 17:54:00 +0000
+
+drumee-ui-pod (2.8.26) stable; urgency=medium
+
+  * Updates for electron
+
+ -- Somanos Sar <somanos.sar@drumee.com>  Fri, 31 Oct 2024 17:54:00 +0000
+
+drumee-ui-pod (2.8.25) stable; urgency=medium
+
+  * Fixed welcome/reset
+  * Fixed window.viewMode consistency
+
+ -- Somanos Sar <somanos.sar@drumee.com>  Fri, 11 Oct 2024 17:54:00 +0000
+
+drumee-ui-pod (2.8.24) stable; urgency=medium
+
+  * Fixed media/uploader
+
+ -- Somanos Sar <somanos.sar@drumee.com>  Fri, 11 Oct 2024 17:54:00 +0000
+
+drumee-ui-pod (2.8.23) stable; urgency=medium
+
+  * Fixed media massive upload
+  * Changed window viewMode
+
+ -- Somanos Sar <somanos.sar@drumee.com>  Fri, 11 Oct 2024 17:54:00 +0000
+
+drumee-ui-pod (2.8.22) stable; urgency=medium
+
+  * prepare change security handling
+
+ -- Somanos Sar <somanos.sar@drumee.com>  Thu, 19 Aug 2024 01:23:00 +0000
+
+drumee-ui-pod (2.8.21) stable; urgency=medium
+
+  * Fixed document player for older browser
+  * Changed webpack
+
+ -- Somanos Sar <somanos.sar@drumee.com>  Fri, 11 Oct 2024 17:54:00 +0000
