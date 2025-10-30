@@ -1123,8 +1123,9 @@ class __private_media extends Media {
    */
   async _empty_bin(data) {
     let entities = toArray(data) || [];
+    const { server_home } = sysEnv();
     let cmd = resolve(
-      server_location,
+      server_home,
       "offline",
       "media",
       "purge.js"
@@ -1152,7 +1153,6 @@ class __private_media extends Media {
     }
     this.output.list(data);
   }
-
 
   /**
    *

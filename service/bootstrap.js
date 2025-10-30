@@ -39,6 +39,16 @@ class __bootstrap extends RuntimeEnv {
     this.output.javascript(content);
   }
 
+
+  /**
+   * 
+   */
+  async css() {
+    const template_dir = resolve(__dirname, '..', TPL_BASE);
+    let content = this.getRender(template_dir, "fonts.tpl")();
+    this.output.text(content, "text/css");
+  }
+
   /**
    * 
    */

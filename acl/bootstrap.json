@@ -7,6 +7,13 @@
         "fast_check": "public-api"
       }
     },
+    "css": {
+      "scope": "hub",
+      "permission": {
+        "src": "anonymous",
+        "fast_check": "public-api"
+      }
+    },
     "dom": {
       "scope": "hub",
       "permission": {

@@ -141,13 +141,6 @@ class MainPage extends RuntimeEnv {
       data.ws_port = `:${data.ws_port}`
     }
 
-    if (!data.protocol) {
-      data.protocol = 'https';
-      data.ws_protocol = 'wss';
-      data.ws_port = '';
-    }
-    if (data.localhost == null) data.localhost = 0;
-
     let sent = await this.shouldSendHomepage(data);
     await this.session.log_service();
     if (sent) {
@@ -177,6 +170,7 @@ class MainPage extends RuntimeEnv {
     if (this.input.get('debug-ui')) {
       data.debugUi = 1;
     }
+    this.debug("AAA:173", data)
     const template_dir = resolve(__dirname, TPL_BASE);
     let content = this.getRender(template_dir, "index.tpl")(data);
     this.output.html(content);

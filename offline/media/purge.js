@@ -108,7 +108,6 @@ class offline_media_purge extends Offline {
     let total = entities.length;
     let { data_dir } = sysEnv();
     let mfs_base = new RegExp('^' + join(data_dir, 'mfs' + '/.+/.+$'))
-    console.log(sysEnv())
     let model = {
       phase: "progress",
       progress: 0,
@@ -135,6 +134,8 @@ class offline_media_purge extends Offline {
         console.log("Invalid node path", mfs_base, path)
       }
       payload.model.progress = progress;
+      payload.model.home_dir = e.home_dir;
+      payload.model.nid = e.id;
       if (this.recipients && this.recipients.length && progress > prev) {
         await RedisStore.sendData(payload, this.recipients);
         prev = progress;
