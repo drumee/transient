@@ -170,7 +170,6 @@ class MainPage extends RuntimeEnv {
     if (this.input.get('debug-ui')) {
       data.debugUi = 1;
     }
-    this.debug("AAA:173", data)
     const template_dir = resolve(__dirname, TPL_BASE);
     let content = this.getRender(template_dir, "index.tpl")(data);
     this.output.html(content);
