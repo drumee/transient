@@ -43,6 +43,7 @@ class MainPage extends RuntimeEnv {
    *
    */
   async shouldSendHomepage(data) {
+    let tag = new RegExp("^/-/")
     if (!/^\/.*(.+)\.(.+)/.test(data.homepage)) {
       return false;
     }
