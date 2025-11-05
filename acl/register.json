@@ -1,0 +1,24 @@
+{
+  "services": {
+    "google_callback": {
+      "doc": "Handles the OAuth 2.0 callback from Google Sign-In.",
+      "scope": "public",
+      "permission": {
+        "src": "anonymous",
+        "fast_check": "public-api"
+      }
+    },
+    "apple_callback": {
+      "doc": "Handles the OAuth 2.0 callback from Apple Sign-In.",
+      "scope": "public",
+      "permission": {
+        "src": "anonymous",
+        "fast_check": "public-api"
+      }
+    }
+  },
+  "modules": {
+    "private": "service/register",
+    "public": "service/register"
+  }
+}
