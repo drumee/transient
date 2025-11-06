@@ -1,16 +1,33 @@
 {
   "services": {
-    "google_callback": {
-      "doc": "Handles the OAuth 2.0 callback from Google Sign-In.",
-      "scope": "public",
+    "google_start": {
+      "doc": "Initiates Google OAuth 2.0 authorization flow.",
+      "scope": "hub",
       "permission": {
         "src": "anonymous",
         "fast_check": "public-api"
       }
     },
+    "google_callback": {
+      "doc": "Handles the OAuth 2.0 callback from Google Sign-In.",
+      "scope": "hub",
+      "permission": {
+        "src": "anonymous",
+        "fast_check": "public-api"
+      }
+    },
+    "apple_start": {
+      "doc": "Initiates Apple Sign-In authorization flow.",
+      "scope": "hub",
+      "permission": {
+        "src": "anonymous",
+        "fast_check": "public-api"
+
+      }
+    },
     "apple_callback": {
       "doc": "Handles the OAuth 2.0 callback from Apple Sign-In.",
-      "scope": "public",
+      "scope": "hub",
       "permission": {
         "src": "anonymous",
         "fast_check": "public-api"

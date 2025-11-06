@@ -1,10 +1,11 @@
 // service/register.js
 
 const { Entity } = require('@drumee/server-core');
-const { toArray, Attr, Cache, sysEnv } = require('@drumee/server-essentials'); 
+const { toArray, Attr, Cache, sysEnv, uniqueId } = require('@drumee/server-essentials');
 const { resolve } = require('path');
-const { readFileSync: readJson } = require("jsonfile");
-const { readFileSync } = require("fs"); 
+const { Messenger } = require('@drumee/server-core'); 
+const { readFileSync: readJson } = require('jsonfile');
+const { readFileSync } = require('fs');
 
 const { OAuth2Client } = require('google-auth-library'); 
 const jwt = require('jsonwebtoken'); 
@@ -17,38 +18,53 @@ class Register extends __butler {
   initialize(opt) {
     super.initialize(opt);
     
-    // 
     try {
-      // // 1. Google Credentials
-      // this.googleCreds = Cache.getSysConf('google_oauth_creds'); 
+      const { credential_dir } = sysEnv();
       
-      // if (this.googleCreds && this.googleCreds.client_id) {
-      //   this.googleClient = new OAuth2Client(
-      //     this.googleCreds.client_id,
-      //     this.googleCreds.client_secret,
-      //     this.googleCreds.redirect_uri
-      //   );
-      //   this.googleClientId = this.googleCreds.client_id;
-      //   console.log("[Auth] Google Credentials loaded.");
-      // } else {
-      //   this.warn("[Auth] CRITICAL: Failed to load 'google_oauth_creds'.");
-      // }
+      // Load Google credentials
+      let gkey = resolve(credential_dir, `google/info.json`);
+      const { id, secret } = readJson(gkey);
+      
+      if (id && secret) {
+        this.googleClient = new OAuth2Client(
+          id,
+          secret,
+          `${this.input.host()}/-/duynguyen/svc/register.google_callback` 
+        );
+        this.googleClientId = id;
+        console.log("[Auth] Google Credentials loaded.");
+      } else {
+        this.warn("[Auth] CRITICAL: Failed to load Google credentials.");
+      }
 
-      // // Apple Credentials
-      // this.appleCreds = Cache.getSysConf('apple_oauth_creds');
-      // if (this.appleCreds && this.appleCreds.team_id) {
-      //   console.log("[Auth] Apple Credentials loaded.");
-      // } else {
-      //   this.warn("[Auth] CRITICAL: Failed to load 'apple_oauth_creds'.");
-      // }
+      // Load Apple credentials
+      let akey = resolve(credential_dir, `apple/info.json`);
+      const { team_id, service_id, key_id } = readJson(akey);
+      let pkey = resolve(credential_dir, `apple`, `${key_id}.p8`);
+      const private_key = readFileSync(pkey, 'utf8');
+      
+      if (team_id && service_id && key_id && private_key) {
+        this.appleCreds = {
+          team_id,
+          service_id,
+          key_id,
+          private_key
+        };
+        console.log("[Auth] Apple Credentials loaded.");
+      } else {
+        this.warn("[Auth] CRITICAL: Failed to load Apple credentials.");
+      }
 
     } catch (e) {
       this.warn("[Auth] CRITICAL: Failed to load OAuth credentials!", e.message);
     }
   }
   
+  /**
+   * Mock OAuth profile for testing
+   */
   async _getMockOAuthProfile(provider, code) {
-    console.log(`[Auth] Code received '${code}' from ${provider}. USING MOCK DATA.`);
+    console.log(`[Auth] Code '${code}' received from ${provider}. USING MOCK DATA.`);
     const timestamp = Date.now().toString().slice(-6); 
     return {
       email: `user.${timestamp}@${provider}-mock.com`,
@@ -61,103 +77,237 @@ class Register extends __butler {
   }
 
   /**
-   * callback for Google and Apple.
-   * @param {string} provider - 'google' or 'apple'
+   * Main OAuth callback handler for both Google and Apple
    */
   async _handleOAuthCallback(provider) {
-    const code = this.input.get(Attr.code); 
-    if (!code) {
-      this.warn("[Auth] OAuth code is missing.");
-      throw new Error("OAuth authorization code is missing.");
-    }
+    try {
+      const code = this.input.get(Attr.code); 
+      if (!code) {
+        this.warn(`[Auth] Missing OAuth code from ${provider}`);
+        return this.output.data({ 
+          status: 'error', 
+          error: 'missing_code',
+          message: 'Authorization code is missing.' 
+        });
+      }
 
-    // --- 1. GET USER INFO (USE MOCK) ---
-    // (Will change _getMockOAuthProfile to _getGoogleProfile / _getAppleProfile)
-    const profile = await this._getMockOAuthProfile(provider, code); 
-    const { email, provider_id, first_name, last_name, access_token, refresh_token } = profile;
-    
-    const session_id = this.input.sid();
-    const domain_name = this.input.host(); 
-
-    console.log(`[Auth] OAuth info received (Mocked): email=${email}, provider_id=${provider_id}`);
-
-    // --- 2. SIGN IN / LINK ---
-    let sessionData = await this.yp.await_proc( 
-      'session_login_with_oauth',
-      provider,
-      provider_id,
-      email,
-      session_id,
-      domain_name
-    );
-    sessionData = toArray(sessionData)[0];
-
-    // --- 3. RESULTS PROCESSING ---
-    // ----- CASE A: SUCCESS SIGN IN -----
-    if (sessionData && sessionData.status === 'ok') {
-      console.log(`[Auth] Success to Signin/Link user ${email}.`);
+      const profile = await this._getMockOAuthProfile(provider, code); 
+      const { email, provider_id, first_name, last_name, access_token, refresh_token } = profile;
       
-      await this.yp.await_query(
-        'UPDATE oauth_accounts SET access_token = ?, refresh_token = ?, mtime = UNIX_TIMESTAMP() WHERE user_id = ? AND provider = ?',
-        access_token, refresh_token, sessionData.id, provider
+      const session_id = this.input.sid();
+      const domain_name = this.input.host(); 
+
+      console.log(`[Auth] OAuth callback: email=${email}, provider=${provider}, provider_id=${provider_id}`);
+
+      let sessionData = await this.yp.await_proc( 
+        'session_login_with_oauth',
+        provider,
+        provider_id,
+        email,
+        session_id,
+        domain_name
       );
+      sessionData = toArray(sessionData)[0];
 
-      this.output.data(sessionData);
-      return;
-    }
-    
-    // ----- CASE B: NEW SIGN UP -----
-    console.log(`[Auth] User ${email} doesn't exist. Sign up new account...`);
-    
-    const createData = {
-      email: email,
-      firstname: `${first_name} ${last_name}`, 
-      password: null 
-    };
-    
-    const creationResult = await this._create_account(createData);
-    
-    if (creationResult.error !== 0 || creationResult.status !== 'ok') {
-      this.warn("[Auth] _create_account failed", creationResult);
-      throw new Error(`Failed to create account: ${creationResult.status || 'unknown_error'}`);
-    }
-    
-    console.log(`[Auth] Success Sign up for ${email}.`);
+      if (sessionData && sessionData.status === 'ok') {
+        console.log(`[Auth] ✓ Sign-in successful for ${email}`);
+        
+        await this.yp.await_query(
+          `UPDATE oauth_accounts 
+           SET access_token = ?, refresh_token = ?, mtime = UNIX_TIMESTAMP() 
+           WHERE user_id = ? AND provider = ?`,
+          access_token, refresh_token, sessionData.id, provider
+        );
 
-    const newUserId = this.uid; 
-    if (!newUserId) {
-      this.warn("[Auth] Can not find newUserId (this.uid) in session after _create_account");
-      throw new Error("Failed to get new user ID from session after creation.");
-    }
-    
-    await this.yp.await_query(
-      'INSERT INTO oauth_accounts (user_id, provider, provider_user_id, email, ctime, mtime, access_token, refresh_token) VALUES (?, ?, ?, ?, UNIX_TIMESTAMP(), UNIX_TIMESTAMP(), ?, ?)',
-      newUserId, 
-      provider, 
-      provider_id, 
-      email,
-      access_token,
-      refresh_token
-    );
-    
-    console.log(`[Auth] Already linked ${provider} ID with user ${newUserId}.`);    
-    
-    console.log(`[Auth] Re-calling session_login_with_oauth to fetch full session packet.`);
-    let finalSessionData = await this.yp.await_proc( 
-      'session_login_with_oauth', 
-      provider,
-      provider_id,
-      email,
-      session_id,
-      domain_name
-    );
-    finalSessionData = toArray(finalSessionData)[0];
+        return this.output.data(sessionData);
+      }
+      
+      if (sessionData && sessionData.error_code === 'oauth_not_linked') {
+        console.log(`[Auth] ⚠ Email ${email} exists but not linked to ${provider}`);
+        return this.output.data({
+          status: 'error',
+          error: 'oauth_not_linked',
+          message: 'This email is already registered. Please sign in with password first.',
+          email: email
+        });
+      }
+      
+      if (sessionData && sessionData.error_code === 'oauth_user_not_found') {
+        console.log(`[Auth] User ${email} not found. Starting sign-up flow...`);
+        
+        let existingUser = await this.yp.await_proc("drumate_exists", email); 
+        if (existingUser && existingUser.email) {
+          console.log(`[Auth] ⚠ Email ${email} already exists but OAuth not linked`);
+          return this.output.data({ 
+            status: 'error', 
+            error: 'user_exists',
+            message: 'This email is already registered. Please sign in with password.',
+            email: email 
+          });
+        }
 
-    if (finalSessionData && finalSessionData.status === 'ok') {
-      this.output.data(finalSessionData);
-    } else {
-      this.warn("[Auth] Failed to fetch session packet after creating user.", finalSessionData);
-      throw new Error("Failed to log in automatically after creating account.");
+        const fullname = `${first_name} ${last_name}`.trim();
+        const createData = {
+          email: email,
+          firstname: fullname || first_name,
+          password: `oauth_${provider}_${Date.now()}`
+        };
+        
+        // reuse _create_account from butler.js
+        const creationResult = await this._create_account(createData);
+        
+        if (creationResult.error !== 0 || creationResult.status !== 'ok') {
+          this.warn(`[Auth] ✗ Failed to create account for ${email}:`, creationResult);
+          return this.output.data({
+            status: 'error',
+            error: 'account_creation_failed',
+            message: `Failed to create account: ${creationResult.status || 'unknown_error'}`,
+            details: creationResult
+          });
+        }
+        
+        console.log(`[Auth] ✓ Account created successfully for ${email}`);
+
+        let newUser = await this.yp.await_proc("drumate_exists", email);
+        if (!newUser || !newUser.id) {
+            this.warn(`[Auth] ✗ Cannot find newUserId (by email) after _create_account`);
+            throw new Error("Failed to get new user ID from created account.");
+        }
+        const newUserId = newUser.id;
+        console.log(`[Auth] ✓ Found new user ID via email: ${newUserId}`);
+        
+        await this.yp.await_query(
+          `INSERT INTO oauth_accounts 
+           (user_id, provider, provider_user_id, email, access_token, refresh_token, ctime, mtime) 
+           VALUES (?, ?, ?, ?, ?, ?, UNIX_TIMESTAMP(), UNIX_TIMESTAMP())`,
+          newUserId, 
+          provider, 
+          provider_id, 
+          email,
+          access_token,
+          refresh_token
+        );
+        
+        console.log(`[Auth] ✓ OAuth account linked: user_id=${newUserId}, provider=${provider}`);    
+        
+        console.log(`[Auth] Re-calling session_login_with_oauth to fetch full session packet.`);
+        let finalSessionData = await this.yp.await_proc( 
+          'session_login_with_oauth',
+          provider,
+          provider_id,
+          email,
+          session_id,
+          domain_name
+        );
+        finalSessionData = toArray(finalSessionData)[0];
+
+        if (finalSessionData && finalSessionData.status === 'ok') {
+          console.log(`[Auth] ✓ Sign-up complete for ${email}`);
+          return this.output.data(finalSessionData);
+        } else {
+          this.warn(`[Auth] ✗ Failed to fetch session after sign-up:`, finalSessionData);
+          return this.output.data({
+            status: 'error',
+            error: 'session_fetch_failed',
+            message: 'Account created but failed to log in automatically.',
+            details: finalSessionData
+          });
+        }
+      }
+
+      this.warn(`[Auth] ✗ Unexpected error during OAuth callback:`, sessionData);
+      return this.output.data({
+        status: 'error',
+        error: 'unexpected_error',
+        message: 'An unexpected error occurred during authentication.',
+        details: sessionData
+      });
+
+    } catch (error) {
+      this.warn(`[Auth] ✗ Exception in OAuth callback:`, error);
+      return this.output.data({
+        status: 'error',
+        error: 'exception',
+        message: error.message || 'An error occurred during OAuth authentication.'
+      });
+    }
+  }
+
+  async google_start() {
+    try {
+      if (!this.googleClient) {
+        return this.output.data({
+          status: 'error',
+          error: 'credentials_missing',
+          message: 'Google OAuth credentials not configured.'
+        });
+      }
+
+      const authUrl = this.googleClient.generateAuthUrl({
+        access_type: 'offline',
+        scope: [
+          'https://www.googleapis.com/auth/userinfo.email',
+          'https://www.googleapis.com/auth/userinfo.profile'
+        ],
+        prompt: 'consent'
+      });
+
+      console.log('[Auth] Returning Google OAuth URL:', authUrl);
+      
+      this.output.data({ 
+        success: true, 
+        authUrl: authUrl 
+      });
+      
+    } catch (error) {
+      this.warn('[Auth] Error initiating Google OAuth:', error);
+      return this.output.data({
+        status: 'error',
+        error: 'oauth_init_failed',
+        message: error.message
+      });
+    }
+  }
+
+  async apple_start() {
+    try {
+      if (!this.appleCreds) {
+        return this.output.data({
+          status: 'error',
+          error: 'credentials_missing',
+          message: 'Apple OAuth credentials not configured.'
+        });
+      }
+
+      const creds = this.appleCreds;
+      const state = Math.random().toString(36).substring(2, 15);
+      
+      // TODO: Store 'state' in Redis/DB for CSRF protection
+      const redirect_uri = creds.redirect_uri || `${this.input.host()}/-/duynguyen/svc/register.apple_callback`; // Need verification
+      
+      const authUrl = `https://appleid.apple.com/auth/authorize?` +
+        `client_id=${encodeURIComponent(creds.service_id)}` +
+        `&redirect_uri=${encodeURIComponent(redirect_uri)}` +
+        `&response_type=code` +
+        `&response_mode=form_post` +
+        `&scope=name email` +
+        `&state=${state}`;
+
+      console.log('[Auth] Returning Apple OAuth URL:', authUrl);
+      
+      this.output.data({ 
+        success: true, 
+        authUrl: authUrl,
+        state: state 
+      });
+      
+    } catch (error) {
+      this.warn('[Auth] Error initiating Apple OAuth:', error);
+      return this.output.data({
+        status: 'error',
+        error: 'oauth_init_failed',
+        message: error.message
+      });
     }
   }
 
