@@ -23,7 +23,6 @@ const {
   Attr, Privilege, toArray,
   RedisStore, uniqueId, sysEnv
 } = require("@drumee/server-essentials");
-let { main_domain } = sysEnv();
 
 class __private_desk extends Media {
 
@@ -91,7 +90,7 @@ class __private_desk extends Media {
 
     if (opt.is_wicket) {
       hostname = uniqueId()
-      filename = "my-wicket";
+      filename = hostname;
     } else {
       hostname = hostname || filename;
       hostname = hostname.replace(/[ \.,;:!&~#'|@*\$><\?]/, '');

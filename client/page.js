@@ -43,6 +43,7 @@ class MainPage extends RuntimeEnv {
    *
    */
   async shouldSendHomepage(data) {
+    let tag = new RegExp("^/-/")
     if (!/^\/.*(.+)\.(.+)/.test(data.homepage)) {
       return false;
     }
@@ -140,13 +141,6 @@ class MainPage extends RuntimeEnv {
     if (data.ws_port && !/^:/.test(data.ws_port)) {
       data.ws_port = `:${data.ws_port}`
     }
-
-    if (!data.protocol) {
-      data.protocol = 'https';
-      data.ws_protocol = 'wss';
-      data.ws_port = '';
-    }
-    if (data.localhost == null) data.localhost = 0;
 
     let sent = await this.shouldSendHomepage(data);
     await this.session.log_service();

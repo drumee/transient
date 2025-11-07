@@ -27,6 +27,10 @@
     <link rel="icon" href="<%= icon %>" type="image/png">
     <link rel="stylesheet" href="/-/static/styles/loader.css" media="screen"></link>
 
+    <style nonce>
+    <%= renderer.include('fonts.tpl') %>
+    </style>
+    
     <script>
     <%= renderer.include('scripts.tpl') %>
     </script>

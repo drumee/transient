@@ -16,6 +16,7 @@
       endpointName  : "<%= instance_name %>",
       endpointPath  : "<%= endpointPath %>/",
       ident         : "<%= ident %>",
+      icons         : "<%= appRoot %>/static/icons",
       instance      : "<%= instance_name %>",
       instance_name : "<%= instance_name %>",
       keysel        : "<%= keysel %>",
