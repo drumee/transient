@@ -1,12 +1,5 @@
 // service/register.js
 
-<<<<<<< HEAD
-const { Entity } = require('@drumee/server-core');
-const { toArray, Attr, sysEnv } = require('@drumee/server-essentials');
-const { resolve } = require('path');
-const { readFileSync: readJson } = require("jsonfile");
-
-=======
 const { toArray, Attr, Cache, sysEnv } = require('@drumee/server-essentials'); 
 const { resolve } = require('path');
 const { Messenger } = require('@drumee/server-core');
@@ -15,15 +8,11 @@ const { readFileSync } = require('fs');
 const { OAuth2Client } = require('google-auth-library'); 
 const jwt = require('jsonwebtoken'); 
 const axios = require('axios');
->>>>>>> 04b99ac (updated all changes)
 const __butler = require('./butler.js');
 
 class Register extends __butler {
   initialize(opt) {
     super.initialize(opt);
-<<<<<<< HEAD
-    console.log("Register Service Initialized.");
-=======
     
     try {
       const { credential_dir } = sysEnv();
@@ -65,70 +54,28 @@ class Register extends __butler {
     } catch (e) {
       this.warn("[Auth] CRITICAL: Failed to load OAuth credentials!", e.message);
     }
->>>>>>> 04b99ac (updated all changes)
   }
-
+  
   /**
-   * Get the OAuth mock data to test
-   * Will change to call the real API of Google/Apple
-   * @param {string} provider - 'google' or 'apple'
-   * @param {string} code - provider code
+   * Mock OAuth profile for testing
    */
   async _getMockOAuthProfile(provider, code) {
-<<<<<<< HEAD
-    console.log(`[Auth] Code received '${code}' from ${provider}. Skip the real API (no credentials yet).`);
-
-    const timestamp = Date.now().toString().slice(-6);
-
-=======
     this.debug(`[Auth] Code '${code}' received from ${provider}. USING MOCK DATA.`);
     const timestamp = Date.now().toString().slice(-6); 
->>>>>>> 04b99ac (updated all changes)
     return {
       email: `user.${timestamp}@${provider}-mock.com`,
-      provider_id: `${provider}-id-${timestamp}`, // 'sub' (Subject ID)
+      provider_id: `${provider}-id-${timestamp}`,
       first_name: provider === 'google' ? 'GoogleUser' : 'AppleUser',
-      last_name: 'Test'
+      last_name: 'Test',
+      access_token: 'mock_access_token',
+      refresh_token: 'mock_refresh_token'
     };
-
-    /*
-    // Further:
-    // const { CLIENT_ID, CLIENT_SECRET } = getCredentialsFor(provider);
-    // const { id_token, access_token, refresh_token } = await OAuth.exchangeCodeForToken(code, CLIENT_ID, CLIENT_SECRET);
-    // const { email, sub, given_name, family_name } = await OAuth.verifyToken(id_token, CLIENT_ID);
-    // return { email, provider_id: sub, first_name: given_name, last_name: family_name, access_token, refresh_token };
-    */
-
-
-    const { credential_dir } = sysEnv();
-    /**
-     * Google 
-     * let gkey = resolve(credential_dir, `google/info.json`);
-     * const {id,secret} = readJson(gkey)
-     */
-
-    /**
-     * Apple
-     * let akey = resolve(credential_dir, `apple/info.json`);
-     * const {team_id,service_id,key_id} = readJson(akey);
-     * let pkey = resolve(credential_dir, `apple`, key_id, '.p8');
-     * const private_key_file = readFileSync(pkey)
-     */
-
-
   }
 
   /**
-   * callback for Google and Apple.
-   * @param {string} provider - 'google' or 'apple'
+   * Main OAuth callback handler for both Google and Apple
    */
   async _handleOAuthCallback(provider) {
-<<<<<<< HEAD
-    const code = this.input.get(Attr.code);
-    if (!code) {
-      this.warn("[Auth] OAuth code is missing.");
-      throw new Error("OAuth authorization code is missing.");
-=======
     try {
       const code = this.input.get(Attr.code); 
       if (!code) {
@@ -284,40 +231,28 @@ class Register extends __butler {
         error: 'exception',
         message: error.message || 'An error occurred during OAuth authentication.'
       });
->>>>>>> 04b99ac (updated all changes)
     }
   }
 
-    // --- 1. GET USER INFORMATION FROM PROVIDER ---
-    // (This is mock data)
-    const profile = await this._getMockOAuthProfile(provider, code);
-    const { email, provider_id, first_name, last_name } = profile;
+  async google_start() {
+    try {
+      if (!this.googleClient) {
+        return this.output.data({
+          status: 'error',
+          error: 'credentials_missing',
+          message: 'Google OAuth credentials not configured.'
+        });
+      }
 
-    const session_id = this.input.sid();
-    const domain_name = this.input.host();
+      const authUrl = this.googleClient.generateAuthUrl({
+        access_type: 'offline',
+        scope: [
+          'https://www.googleapis.com/auth/userinfo.email',
+          'https://www.googleapis.com/auth/userinfo.profile'
+        ],
+        prompt: 'consent'
+      });
 
-<<<<<<< HEAD
-    console.log(`[Auth] OAuth information received (Mocked): email=${email}, provider_id=${provider_id}`);
-
-    // --- 2. SIGN IN / LINK ---
-    let sessionData = await this.yp.await_proc(
-      'session_login_with_oauth',
-      provider,
-      provider_id,
-      email,
-      session_id,
-      domain_name
-    );
-    sessionData = toArray(sessionData)[0];
-
-    // --- 3. PROCESS THE RESULTS ---
-
-    // ----- CASE A: SUCCESS SIGN IN -----
-    if (sessionData && sessionData.status === 'ok') {
-      console.log(`[Auth] Success to Signin/Link user ${email}.`);
-      this.output.data(sessionData);
-      return;
-=======
       this.debug('[Auth] Returning Google OAuth URL:', authUrl);
       
       this.output.data({ 
@@ -332,7 +267,6 @@ class Register extends __butler {
         error: 'oauth_init_failed',
         message: error.message
       });
->>>>>>> 04b99ac (updated all changes)
     }
   }
 
@@ -360,22 +294,6 @@ class Register extends __butler {
         `&scope=name email` +
         `&state=${state}`;
 
-<<<<<<< HEAD
-    // ----- CASE B: NEW SIGN UP -----
-    console.log(`[Auth] User ${email} doesn't exist. Sign up new account...`);
-
-    const createData = {
-      email: email,
-      firstname: `${first_name} ${last_name}`,
-      password: null
-    };
-
-    const creationResult = await this._create_account(createData);
-
-    if (creationResult.error !== 0 || creationResult.status !== 'ok') {
-      this.warn("[Auth] _create_account thất bại", creationResult);
-      throw new Error(`Failed to create account: ${creationResult.status || 'unknown_error'}`);
-=======
       this.debug('[Auth] Returning Apple OAuth URL:', authUrl);
       
       this.output.data({ 
@@ -391,45 +309,13 @@ class Register extends __butler {
         error: 'oauth_init_failed',
         message: error.message
       });
->>>>>>> 04b99ac (updated all changes)
     }
-
-    console.log(`[Auth] Succes Sign up for ${email}.`);
-
-    const newUserId = this.session.uid();
-    if (!newUserId) {
-      this.warn("[Auth] Can not find newUserId in session after _create_account");
-      throw new Error("Failed to get new user ID from session after creation.");
-    }
-
-    await this.yp.await_query(
-      'INSERT INTO oauth_accounts (user_id, provider, provider_user_id, email, ctime, mtime) VALUES (?, ?, ?, ?, UNIX_TIMESTAMP(), UNIX_TIMESTAMP())',
-      newUserId,
-      provider,
-      provider_id,
-      email
-    );
-
-    console.log(`[Auth] Already linked ${provider} ID with user ${newUserId}.`);
-
-
-    this.output.data({
-      success: true,
-      status: "created_and_linked",
-      message: "Account created and linked successfully."
-    });
   }
 
-  /**
-   * callback processing from Google
-   */
   async google_callback() {
     return this._handleOAuthCallback('google');
   }
 
-  /**
-   * callback processing from Apple
-   */
   async apple_callback() {
     return this._handleOAuthCallback('apple');
   }
