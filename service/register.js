@@ -5,12 +5,8 @@ const { toArray, Attr, sysEnv } = require('@drumee/server-essentials');
 const { resolve } = require('path');
 const { readFileSync: readJson } = require("jsonfile");
 
-// Import class __butler
 const __butler = require('./butler.js');
 
-/**
- * Register class
- */
 class Register extends __butler {
 
   initialize(opt) {
@@ -73,6 +69,7 @@ class Register extends __butler {
       this.warn("[Auth] OAuth code is missing.");
       throw new Error("OAuth authorization code is missing.");
     }
+  }
 
     // --- 1. GET USER INFORMATION FROM PROVIDER ---
     // (This is mock data)
@@ -103,6 +100,31 @@ class Register extends __butler {
       this.output.data(sessionData);
       return;
     }
+  }
+
+  async apple_start() {
+    try {
+      if (!this.appleCreds) {
+        return this.output.data({
+          status: 'error',
+          error: 'credentials_missing',
+          message: 'Apple OAuth credentials not configured.'
+        });
+      }
+
+      const creds = this.appleCreds;
+      const state = Math.random().toString(36).substring(2, 15);
+      
+      // TODO: Store 'state' in Redis/DB for CSRF protection
+      const redirect_uri = creds.redirect_uri || `${this.input.host()}/-/duynguyen/svc/register.apple_callback`; // Need verification
+      
+      const authUrl = `https://appleid.apple.com/auth/authorize?` +
+        `client_id=${encodeURIComponent(creds.service_id)}` +
+        `&redirect_uri=${encodeURIComponent(redirect_uri)}` +
+        `&response_type=code` +
+        `&response_mode=form_post` +
+        `&scope=name email` +
+        `&state=${state}`;
 
     // ----- CASE B: NEW SIGN UP -----
     console.log(`[Auth] User ${email} doesn't exist. Sign up new account...`);
