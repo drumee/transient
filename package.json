@@ -22,6 +22,7 @@
     "accept-language": "^3.0.18",
     "after": "^0.8.2",
     "argparse": "^2.0.1",
+    "axios": "^1.13.2",
     "backbone": "^1.4.0",
     "bunyan": "^1.8.14",
     "check-disk-space": "^3.3.1",
