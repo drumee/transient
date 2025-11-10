@@ -63,11 +63,6 @@
     </div>
     <div class="margin-auto" id="--wrapper"></div>
     <script type="text/javascript" src="<%= app.location %>/app/<%= app.entry %>" crossorigin="true"></script> 
-    <% if (typeof(plugins) !== "undefined" && plugins.length) { %>
-      <% _.each(plugins, function(m) { %>
-        <script type="text/javascript" src="<%= m.location %><%= m.entry %>" crossorigin="true"></script> 
-    <% }); %>
-    <% } %>
     <% if (typeof(debugUi) !== "undefined" && debugUi) { %>
       <script src="https://cdn.jsdelivr.net/npm/eruda"></script>
       <script>eruda.init();</script>

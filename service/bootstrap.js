@@ -48,8 +48,8 @@ class __bootstrap extends RuntimeEnv {
     let ext = new RegExp(extname(name) + '$');
     name = name.replace(ext, '')
     const { ui_home, endpoint_path } = sysEnv();
-    let plugin_base = join(ui_home, '..', 'ui', 'plugins', name);
-    let plugin_info = join(plugin_base, 'index.json');
+    let plugin_base = join(ui_home, '..', 'plugins', 'ui');
+    let plugin_info = join(plugin_base, name, 'index.json');
     let info;
     if (existsSync(plugin_info)) {
       info = readJson(plugin_info)
@@ -58,7 +58,6 @@ class __bootstrap extends RuntimeEnv {
     if (info && info.entry) {
       path = join(endpoint_path, 'plugins', name, info.entry)
     }
-    this.debug("AAA:48", ui_home, plugin_base, name, info, this.input.get(Attr.name))
     this.output.data({ path });
   }
 
