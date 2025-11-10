@@ -15,26 +15,22 @@
  * =============================================================================
  */
 const {
-  Attr, Constants, Cache, toArray, RedisStore, sysEnv, TFauth
+  Attr, Constants, toArray, RedisStore, sysEnv
 } = require("@drumee/server-essentials");
 
 const {
   INVALID_DATA,
   VIGNETTE,
-  ID_NOBODY
 } = Constants;
 const { Entity, FileIo } = require("@drumee/server-core");
 const { existsSync, readFileSync } = require("fs");
-const { isEmpty, isString, isArray, isObject, keys } = require("lodash");
+const { isEmpty, isArray } = require("lodash");
 const { get_env, platform } = require('./lib/env');
-const { getPlugins, getServices } = require("../router/rest");
 const { resolve } = require("path");
 const { credential_dir } = sysEnv();
 let keyFile = resolve(credential_dir, `crypto/public.pem`);
 const publicKey = readFileSync(keyFile);
-const TfaMethods = TFauth.Methods.map((e) => {
-  return e.type
-});
+
 
 //########################################
 class __yp extends Entity {
@@ -49,7 +45,7 @@ class __yp extends Entity {
    *
    */
   async get_env() {
-    let data = await this._get_env()
+    let data = await this._get_env();
     this.output.data(data);
   }
 

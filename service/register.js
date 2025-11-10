@@ -1,9 +1,6 @@
 // service/register.js
 
-const { Entity } = require('@drumee/server-core');
 const { toArray, Attr, sysEnv } = require('@drumee/server-essentials');
-const { resolve } = require('path');
-const { readFileSync: readJson } = require("jsonfile");
 
 const __butler = require('./butler.js');
 
@@ -79,7 +76,7 @@ class Register extends __butler {
     const session_id = this.input.sid();
     const domain_name = this.input.host();
 
-    console.log(`[Auth] OAuth information received (Mocked): email=${email}, provider_id=${provider_id}`);
+    this.debug(`[Auth] OAuth information received (Mocked): email=${email}, provider_id=${provider_id}`);
 
     // --- 2. SIGN IN / LINK ---
     let sessionData = await this.yp.await_proc(
@@ -90,6 +87,7 @@ class Register extends __butler {
       session_id,
       domain_name
     );
+    this.debug("sessionData", sessionData);
     sessionData = toArray(sessionData)[0];
 
     // --- 3. PROCESS THE RESULTS ---
@@ -100,6 +98,7 @@ class Register extends __butler {
       this.output.data(sessionData);
       return;
     }
+    this.output.data(sessionData)
   }
 
   /**
@@ -164,7 +163,6 @@ class Register extends __butler {
 
     console.log(`[Auth] Already linked ${provider} ID with user ${newUserId}.`);
 
-
     this.output.data({
       success: true,
       status: "created_and_linked",
@@ -185,6 +183,7 @@ class Register extends __butler {
   async apple_callback() {
     return this._handleOAuthCallback('apple');
   }
+
 }
 
 module.exports = Register;
