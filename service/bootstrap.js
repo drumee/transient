@@ -15,10 +15,11 @@
  * =============================================================================
  */
 const { readFileSync, existsSync } = require('fs');
-const { resolve } = require('path');
+const { readFileSync: readJson } = require('jsonfile');
+const { join, resolve, extname, dirname, basename } = require('path');
 const keyFile = '/etc/drumee/credential/crypto/public.pem';
 const { RuntimeEnv } = require('@drumee/server-core');
-const { uniqueId, Attr } = require("@drumee/server-essentials");
+const { uniqueId, Attr, sysEnv } = require("@drumee/server-essentials");
 const TPL_BASE = "client/templates";
 
 class __bootstrap extends RuntimeEnv {
@@ -39,6 +40,27 @@ class __bootstrap extends RuntimeEnv {
     this.output.javascript(content);
   }
 
+  /**
+   * 
+   */
+  async plugin() {
+    let name = this.input.get(Attr.name) || '';
+    let ext = new RegExp(extname(name) + '$');
+    name = name.replace(ext, '')
+    const { ui_home, endpoint_path } = sysEnv();
+    let plugin_base = join(ui_home, '..', 'ui', 'plugins', name);
+    let plugin_info = join(plugin_base, 'index.json');
+    let info;
+    if (existsSync(plugin_info)) {
+      info = readJson(plugin_info)
+    }
+    let path = ''
+    if (info && info.entry) {
+      path = join(endpoint_path, 'plugins', name, info.entry)
+    }
+    this.debug("AAA:48", ui_home, plugin_base, name, info, this.input.get(Attr.name))
+    this.output.data({ path });
+  }
 
   /**
    * 

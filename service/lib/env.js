@@ -126,7 +126,7 @@ function platform() {
     platform.isPublic = 1;
   }
 
-  platform.plugins = getPlugins();
+  platform.plugins = Cache.getSysConf("plugins");
   platform.services = getServices();    
   platform.endpoint = this.input.basepath();
   return platform;
