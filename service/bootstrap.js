@@ -47,17 +47,23 @@ class __bootstrap extends RuntimeEnv {
     let name = this.input.get(Attr.name) || '';
     let ext = new RegExp(extname(name) + '$');
     name = name.replace(ext, '')
-    const { ui_home, endpoint_path } = sysEnv();
-    let plugin_base = join(ui_home, '..', 'plugins', 'ui');
+    const { ui_home, endpoint_path, runtime_dir, endpoint_name} = sysEnv();
+    let plugin_base = join(ui_home, '../..', 'plugins', 'ui', endpoint_name);
     let plugin_info = join(plugin_base, name, 'index.json');
     let info;
     if (existsSync(plugin_info)) {
       info = readJson(plugin_info)
+    } else {
+      plugin_info = join(runtime_dir, 'plugins', 'ui', name, 'index.json');
+      if (existsSync(plugin_info)) {
+        info = readJson(plugin_info)
+      }
     }
     let path = ''
     if (info && info.entry) {
       path = join(endpoint_path, 'plugins', name, info.entry)
     }
+    this.debug("AEEE:61", { runtime_dir, endpoint_name, plugin_info, plugin_base, ui_home, path, __dirname })
     this.output.data({ path });
   }
 

@@ -254,6 +254,7 @@ class Register extends __butler {
 
       this.output.data({
         success: true,
+        status: 'prompt',
         authUrl: authUrl
       });
 
@@ -300,6 +301,7 @@ class Register extends __butler {
 
       this.output.data({
         success: true,
+        status: 'prompt',
         authUrl: authUrl,
         state: state
       });
