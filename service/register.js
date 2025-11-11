@@ -19,7 +19,7 @@ class Register extends __butler {
       // Load Google credentials
       let gkey = resolve(credential_dir, `google/info.json`);
       const { id, secret } = readJson(gkey);
-      const { svc_location} = sysEnv();
+      const { svc_location } = sysEnv();
       if (id && secret) {
         this.googleClient = new OAuth2Client(
           id,
@@ -238,88 +238,7 @@ class Register extends __butler {
       }
 
       if (sessionData && sessionData.error_code === 'oauth_user_not_found') {
-        this.debug(`[Auth] User ${email} not found. Starting sign-up flow...`);
-
-        let existingUser = await this.yp.await_proc("drumate_exists", email);
-        if (existingUser && existingUser.email) {
-          this.debug(`[Auth] ⚠ Email ${email} already exists but OAuth not linked`);
-          return this.output.data({
-            status: 'error',
-            error: 'user_exists',
-            message: 'This email is already registered. Please sign in with password.',
-            email: email
-          });
-        }
-
-        const fullname = `${first_name} ${last_name}`.trim();
-        const createData = {
-          email: email,
-          firstname: fullname || first_name,
-          password: `oauth_${provider}_${Date.now()}`
-        };
-
-        const creationResult = await this._create_account(createData);
-
-        if (creationResult.error !== 0 || creationResult.status !== 'ok') {
-          this.warn(`[Auth] ✗ Failed to create account for ${email}:`, creationResult);
-          return this.output.data({
-            status: 'error',
-            error: 'account_creation_failed',
-            message: `Failed to create account: ${creationResult.status || 'unknown_error'}`,
-            details: creationResult
-          });
-        }
-
-        this.debug(`[Auth] ✓ Account created successfully for ${email}`);
-
-        let newUserId = this.uid;
-        if (!newUserId || newUserId === 'ffffffffffffffff') {
-
-          let newUser = await this.yp.await_proc("drumate_exists", email);
-          if (!newUser || !newUser.id) {
-            this.warn(`[Auth] ✗ Cannot find newUserId (by email) after _create_account`);
-            throw new Error("Failed to get new user ID from created account.");
-          }
-          newUserId = newUser.id;
-          this.debug(`[Auth] ✓ Found new user ID via email (fallback): ${newUserId}`);
-        }
-
-        await this.yp.await_query(
-          `INSERT INTO oauth_accounts 
-           (user_id, provider, provider_user_id, email, access_token, refresh_token, ctime, mtime) 
-           VALUES (?, ?, ?, ?, ?, ?, UNIX_TIMESTAMP(), UNIX_TIMESTAMP())`,
-          newUserId,
-          provider,
-          provider_id,
-          email,
-          access_token,
-          refresh_token
-        );
-
-        this.debug(`[Auth] ✓ OAuth account linked: user_id=${newUserId}, provider=${provider}`);
-
-        let finalSessionData = await this.yp.await_proc(
-          'session_login_with_oauth',
-          provider,
-          provider_id,
-          email,
-          session_id,
-          domain_name
-        );
-        finalSessionData = toArray(finalSessionData)[0];
-
-        if (finalSessionData && finalSessionData.status === 'ok') {
-          this.debug(`[Auth] ✓ Sign-up complete for ${email}`);
-          return this.output.data(finalSessionData);
-        } else {
-          this.warn(`[Auth] ✗ Failed to fetch session after sign-up:`, finalSessionData);
-          return this.output.data({
-            status: 'error',
-            error: 'session_fetch_failed',
-            message: 'Account created but failed to log in automatically.',
-            details: finalSessionData
-          });
-        }
+        return this._process_new_user(email)
       }
 
       this.warn(`[Auth] ✗ Unexpected error during OAuth callback:`, sessionData);
@@ -336,6 +255,106 @@ class Register extends __butler {
     }
   }
 
+  /**
+   * 
+   */
+  async _process_new_user(email) {
+    this.debug(`[Auth] User ${email} not found. Starting sign-up flow...`);
+
+    let existingUser = await this.yp.await_proc("drumate_exists", email);
+    if (existingUser && existingUser.email) {
+      this.debug(`[Auth] ⚠ Email ${email} already exists but OAuth not linked`);
+      return this.output.data({
+        status: 'error',
+        error: 'user_exists',
+        message: 'This email is already registered. Please sign in with password.',
+        email: email
+      });
+    }
+
+    const fullname = `${first_name} ${last_name}`.trim();
+    const createData = {
+      email: email,
+      firstname: fullname || first_name,
+      password: `oauth_${provider}_${Date.now()}`
+    };
+
+    const creationResult = await this._create_account(createData);
+
+    if (creationResult.error !== 0 || creationResult.status !== 'ok') {
+      this.warn(`[Auth] ✗ Failed to create account for ${email}:`, creationResult);
+      return this.output.data({
+        status: 'error',
+        error: 'account_creation_failed',
+        message: `Failed to create account: ${creationResult.status || 'unknown_error'}`,
+        details: creationResult
+      });
+    }
+
+    this.debug(`[Auth] ✓ Account created successfully for ${email}`);
+
+    let newUserId = this.uid;
+    if (!newUserId || newUserId === 'ffffffffffffffff') {
+
+      let newUser = await this.yp.await_proc("drumate_exists", email);
+      if (!newUser || !newUser.id) {
+        this.warn(`[Auth] ✗ Cannot find newUserId (by email) after _create_account`);
+        throw new Error("Failed to get new user ID from created account.");
+      }
+      newUserId = newUser.id;
+      this.debug(`[Auth] ✓ Found new user ID via email (fallback): ${newUserId}`);
+    }
+
+    await this.yp.await_query(
+      `INSERT INTO oauth_accounts 
+           (user_id, provider, provider_user_id, email, access_token, refresh_token, ctime, mtime) 
+           VALUES (?, ?, ?, ?, ?, ?, UNIX_TIMESTAMP(), UNIX_TIMESTAMP())`,
+      newUserId,
+      provider,
+      provider_id,
+      email,
+      access_token,
+      refresh_token
+    );
+
+    this.debug(`[Auth] ✓ OAuth account linked: user_id=${newUserId}, provider=${provider}`);
+
+    let finalSessionData = await this.yp.await_proc(
+      'session_login_with_oauth',
+      provider,
+      provider_id,
+      email,
+      session_id,
+      domain_name
+    );
+    finalSessionData = toArray(finalSessionData)[0];
+
+    if (finalSessionData && finalSessionData.status === 'ok') {
+      this.debug(`[Auth] ✓ Sign-up complete for ${email} ${session_id}`);
+
+      return this.sendSuccesPage(finalSessionData);
+    } else {
+      this.warn(`[Auth] ✗ Failed to fetch session after sign-up:`, finalSessionData);
+      return this.output.data({
+        status: 'error',
+        error: 'session_fetch_failed',
+        message: 'Account created but failed to log in automatically.',
+        details: finalSessionData
+      });
+    }
+  }
+
+  /**
+   * 
+   */
+  sendPage(){
+
+  }
+
+  /**
+   * 
+   * @returns 
+   */
   async google_start() {
     try {
       if (!this.googleClient) {
@@ -373,6 +392,10 @@ class Register extends __butler {
     }
   }
 
+  /**
+   * 
+   * @returns 
+   */
   async apple_start() {
     try {
       if (!this.appleCreds) {
@@ -415,10 +438,18 @@ class Register extends __butler {
     }
   }
 
+  /**
+   * 
+   * @returns 
+   */
   async google_callback() {
     return this._handleOAuthCallback('google');
   }
 
+  /**
+   * 
+   * @returns 
+   */
   async apple_callback() {
     return this._handleOAuthCallback('apple');
   }

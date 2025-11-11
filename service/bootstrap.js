@@ -64,7 +64,7 @@ class __bootstrap extends RuntimeEnv {
       path = join(endpoint_path, 'plugins', name, info.entry)
     }
     let callback = `${this.input.host()}${svc_location}/register.google_callback`;
-    this.debug("AEEE:61", sysEnv(), { endpoint_path, callback, pathname: this.input.pathname(), endpoint_name, plugin_info, plugin_base, ui_home, path, __dirname })
+    this.debug("AEEE:61", this.input.authorization(), { endpoint_path, callback, pathname: this.input.pathname(), endpoint_name, plugin_info, plugin_base, ui_home, path, __dirname })
     this.output.data({ path });
   }
 
