@@ -355,6 +355,7 @@ class Acl {
     }
     const { plugins_dir, endpoint_name } = sysEnv();
     let file = join(plugins_dir, `${endpoint_name}.json`);
+    console.log("AAA:358", { plugins_dir, endpoint_name }, file)
     if (!existsSync(file)) {
       return;
     }
