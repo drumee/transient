@@ -336,7 +336,7 @@ class Register extends __butler {
       this.warn(`[Auth] ✗ Exception in OAuth callback:`, error);
       throw error;
     }
-
+  }
 
   async google_start() {
     try {
@@ -372,13 +372,8 @@ class Register extends __butler {
         message: error.message
       });
     }
-    this.output.data(sessionData)
   }
 
-  /**
-   * 
-   * @returns 
-   */
   async apple_start() {
     try {
       if (!this.appleCreds) {
@@ -427,7 +422,6 @@ class Register extends __butler {
   async apple_callback() {
     return this._handleOAuthCallback('apple');
   }
-
 }
 
 module.exports = Register;
