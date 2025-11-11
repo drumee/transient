@@ -1,9 +1,8 @@
 // service/register.js
 
-const { Entity } = require('@drumee/server-core');
-const { toArray, Attr, Cache, sysEnv } = require('@drumee/server-essentials');
+const { toArray, Attr, sysEnv } = require('@drumee/server-essentials');
 const { resolve } = require('path');
-const { Messenger } = require('@drumee/server-core');
+// const { Messenger } = require('@drumee/server-core');
 const { readFileSync: readJson } = require('jsonfile');
 const { readFileSync } = require('fs');
 const { OAuth2Client } = require('google-auth-library');
@@ -11,9 +10,9 @@ const jwt = require('jsonwebtoken');
 const jwksClient = require('jwks-rsa');
 const axios = require('axios');
 const { randomUUID } = require('crypto');
-const __butler = require('./butler.js');
+const Butler = require('./butler.js');
 
-class Register extends __butler {
+class Register extends Butler {
   initialize(opt) {
     super.initialize(opt);
 
@@ -32,7 +31,11 @@ class Register extends __butler {
 
       // Load Google credentials
       const gkey = resolve(credential_dir, `google/info.json`);
+      this.debug("[Auth] Google Credentials loaded.", gkey);
       const gCreds = readJson(gkey);
+      const { svc_location } = sysEnv();
+      const callback = `https://${this.input.host()}${svc_location}/register.google_callback`;
+      gCreds.redirect_uri = callback;
       if (gCreds && gCreds.id && gCreds.secret && gCreds.redirect_uri) {
         this.googleCreds = gCreds;
         this.googleClient = new OAuth2Client(
@@ -41,7 +44,7 @@ class Register extends __butler {
         this.googleClientId = gCreds.id;
         this.debug("[Auth] Google Credentials loaded.");
       } else {
-        this.warn("[Auth] CRITICAL: Failed to load 'google/info.json' or missing redirect_uri.");
+        this.warn("[Auth] CRITICAL: Failed to load 'google/info.json' or missing redirect_uri.", gCreds);
       }
 
       // Load Apple credentials
@@ -49,7 +52,7 @@ class Register extends __butler {
       const aCreds = readJson(akey);
       const pkey = resolve(credential_dir, `apple`, `${aCreds.key_id}.p8`);
       const private_key = readFileSync(pkey, 'utf8');
-
+      aCreds.redirect_uri = callback;
       if (aCreds && aCreds.team_id && aCreds.service_id && aCreds.key_id && private_key && aCreds.redirect_uri) {
         this.appleCreds = {
           team_id: aCreds.team_id,
