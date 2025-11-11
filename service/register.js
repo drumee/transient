@@ -1,7 +1,6 @@
 // service/register.js
 
 const { Entity } = require('@drumee/server-core');
-const { toArray, Attr, sysEnv } = require('@drumee/server-essentials');
 const { toArray, Attr, Cache, sysEnv } = require('@drumee/server-essentials');
 const { resolve } = require('path');
 const { Messenger } = require('@drumee/server-core');
@@ -34,24 +33,15 @@ class Register extends __butler {
       // Load Google credentials
       const gkey = resolve(credential_dir, `google/info.json`);
       const gCreds = readJson(gkey);
-
       if (gCreds && gCreds.id && gCreds.secret && gCreds.redirect_uri) {
         this.googleCreds = gCreds;
         this.googleClient = new OAuth2Client(
           gCreds.id, gCreds.secret, gCreds.redirect_uri
-      let gkey = resolve(credential_dir, `google/info.json`);
-      const { id, secret } = readJson(gkey);
-      const { svc_location} = sysEnv();
-      if (id && secret) {
-        this.googleClient = new OAuth2Client(
-          id,
-          secret,
-          `https://${this.input.host()}${svc_location}/register.google_callback`
         );
         this.googleClientId = gCreds.id;
         this.debug("[Auth] Google Credentials loaded.");
       } else {
-        this.warn("[Auth] CRITICAL: Failed to load 'google/info.json'.");
+        this.warn("[Auth] CRITICAL: Failed to load 'google/info.json' or missing redirect_uri.");
       }
 
       // Load Apple credentials
@@ -61,7 +51,6 @@ class Register extends __butler {
       const private_key = readFileSync(pkey, 'utf8');
 
       if (aCreds && aCreds.team_id && aCreds.service_id && aCreds.key_id && private_key && aCreds.redirect_uri) {
-      if (team_id && service_id && key_id && private_key) {
         this.appleCreds = {
           team_id: aCreds.team_id,
           service_id: aCreds.service_id,
@@ -71,7 +60,7 @@ class Register extends __butler {
         };
         this.debug("[Auth] Apple Credentials loaded.");
       } else {
-        this.warn("[Auth] CRITICAL: Failed to load Apple credentials.");
+        this.warn("[Auth] CRITICAL: Failed to load Apple credentials or missing redirect_uri.");
       }
     } catch (e) {
       this.warn("[Auth] CRITICAL: Failed to load OAuth credentials!", e.message);
@@ -91,7 +80,7 @@ class Register extends __butler {
     }
 
     const iat = now;
-    const exp = iat + (60 * 4);
+    const exp = iat + (60 * 4); 
     const claims = {
       iss: creds.team_id,
       aud: 'https://appleid.apple.com',
@@ -99,8 +88,8 @@ class Register extends __butler {
       iat: iat,
       exp: exp
     };
+
     this.appleClientSecret = jwt.sign(claims, creds.private_key, {
-    return jwt.sign(claims, creds.private_key, {
       algorithm: 'ES256',
       keyid: creds.key_id
     });
@@ -116,17 +105,9 @@ class Register extends __butler {
 
     const { tokens } = await this.googleClient.getToken(code);
     const id_token = tokens.id_token;
-
     if (!id_token) {
       throw new Error("Failed to retrieve ID Token from Google.");
     }
-
-    if (!this.googleClient) { throw new Error("Google credentials are not loaded."); }
-
-    const { tokens } = await this.googleClient.getToken(code);
-    const id_token = tokens.id_token;
-
-    if (!id_token) { throw new Error("Failed to retrieve ID Token from Google."); }
 
     const ticket = await this.googleClient.verifyIdToken({
       idToken: id_token,
@@ -200,14 +181,6 @@ class Register extends __butler {
       throw new Error("Invalid ID Token payload from Apple.");
     }
 
-    if (!id_token) { throw new Error("Failed to retrieve ID Token from Apple."); }
-
-    const payload = jwt.decode(id_token);
-    if (!payload || !payload.sub || !payload.email) {
-      throw new Error("Invalid ID Token payload from Apple.");
-    }
-
-    const userParam = this.input.get('user');
     let first_name = 'AppleUser';
     let last_name = 'Test';
     const userParam = this.input.get('user');
@@ -233,27 +206,6 @@ class Register extends __butler {
     };
   }
 
-
-  /**
-   * Mock OAuth profile for testing
-   */
-  async _getMockOAuthProfile(provider, code) {
-    this.debug(`[Auth] Code '${code}' received from ${provider}. USING MOCK DATA.`);
-    const timestamp = Date.now().toString().slice(-6);
-    return {
-      email: payload.email,
-      provider_id: payload.sub,
-      first_name: first_name,
-      last_name: last_name,
-      access_token: tokenResponse.data.access_token,
-      refresh_token: tokenResponse.data.refresh_token
-    };
-  }
-
-  /**
-   * Callback 
-   * @param {string} provider
-   */
   async _handleOAuthCallback(provider) {
     try {
       const code = this.input.get(Attr.code);
@@ -267,25 +219,6 @@ class Register extends __butler {
         this.warn(`[Auth] Missing state parameter from ${provider}`);
         throw new Error('Invalid state parameter (CSRF protection).');
       }
-      if (!code) {
-        this.warn(`[Auth] Missing OAuth code from ${provider}`);
-        return this.output.data({
-          status: 'error',
-          error: 'missing_code',
-          message: 'Authorization code is missing.'
-        });
-      }
-
-      // SWITCH HERE: MOCK VS REAL
-      const profile = provider === 'google'
-        ? await this._getGoogleProfile(code)   // REAL GOOGLE
-        : await this._getAppleProfile(code);    // REAL APPLE
-      // const profile = await this._getMockOAuthProfile(provider, code);  // MOCK
-
-      const { email, provider_id, first_name, last_name, access_token, refresh_token } = profile;
-
-      const session_id = this.input.sid();
-      const domain_name = this.input.host();
 
       const validState = await this.yp.await_query(
         'SELECT 1 FROM oauth_state WHERE state = ? AND ctime > (UNIX_TIMESTAMP() - 600)',
@@ -316,8 +249,6 @@ class Register extends __butler {
 
       if (sessionData && sessionData.status === 'ok') {
         this.debug(`[Auth] Sign-in successful for ${email}`);
-        this.debug(`[Auth] ✓ Sign-in successful for ${email}`);
-
         await this.yp.await_query(
           'UPDATE oauth_accounts SET access_token = ?, refresh_token = ?, mtime = UNIX_TIMESTAMP() WHERE user_id = ? AND provider = ?',
           access_token, refresh_token, sessionData.id, provider
@@ -327,7 +258,6 @@ class Register extends __butler {
 
       if (sessionData && sessionData.error_code === 'oauth_not_linked') {
         this.debug(`[Auth] Email ${email} exists but not linked to ${provider}`);
-        this.debug(`[Auth] ⚠ Email ${email} exists but not linked to ${provider}`);
         return this.output.data({
           status: 'error',
           error: 'oauth_not_linked',
@@ -343,15 +273,6 @@ class Register extends __butler {
         if (existingUser && existingUser.email) {
           this.debug(`[Auth] Email ${email} already exists but OAuth not linked`);
           return this.output.data({ status: 'error', error: 'user_exists' });
-        let existingUser = await this.yp.await_proc("drumate_exists", email);
-        if (existingUser && existingUser.email) {
-          this.debug(`[Auth] ⚠ Email ${email} already exists but OAuth not linked`);
-          return this.output.data({
-            status: 'error',
-            error: 'user_exists',
-            message: 'This email is already registered. Please sign in with password.',
-            email: email
-          });
         }
 
         const fullname = `${first_name} ${last_name}`.trim();
@@ -362,7 +283,6 @@ class Register extends __butler {
         };
 
         const creationResult = await this._create_account(createData);
-
         if (creationResult.error !== 0 || creationResult.status !== 'ok') {
           this.warn(`[Auth] Failed to create account for ${email}:`, creationResult);
           return this.output.data({ status: 'error', error: 'account_creation_failed' });
@@ -385,51 +305,15 @@ class Register extends __butler {
           );
         } catch (linkError) {
           this.warn(`[Auth] CRITICAL: Failed to link OAuth account. Rolling back...`, linkError.message);
-          await this.yp.await_proc('drumate_delete', newUserId);
+          try {
+            await this.yp.await_proc('drumate_delete', newUserId);
+          } catch (e) {
+            this.warn('Rollback failed: drumate_delete SP error', e);
+          }
           throw new Error(`Failed to link OAuth account: ${linkError.message}`);
         }
 
         this.debug(`[Auth] OAuth account linked: user_id=${newUserId}`);
-
-        const creationResult = await this._create_account(createData);
-
-        if (creationResult.error !== 0 || creationResult.status !== 'ok') {
-          this.warn(`[Auth] ✗ Failed to create account for ${email}:`, creationResult);
-          return this.output.data({
-            status: 'error',
-            error: 'account_creation_failed',
-            message: `Failed to create account: ${creationResult.status || 'unknown_error'}`,
-            details: creationResult
-          });
-        }
-
-        this.debug(`[Auth] ✓ Account created successfully for ${email}`);
-
-        let newUserId = this.uid;
-        if (!newUserId || newUserId === 'ffffffffffffffff') {
-
-          let newUser = await this.yp.await_proc("drumate_exists", email);
-          if (!newUser || !newUser.id) {
-            this.warn(`[Auth] ✗ Cannot find newUserId (by email) after _create_account`);
-            throw new Error("Failed to get new user ID from created account.");
-          }
-          newUserId = newUser.id;
-          this.debug(`[Auth] ✓ Found new user ID via email (fallback): ${newUserId}`);
-        }
-
-        await this.yp.await_query(
-          `INSERT INTO oauth_accounts 
-           (user_id, provider, provider_user_id, email, access_token, refresh_token, ctime, mtime) 
-           VALUES (?, ?, ?, ?, ?, ?, UNIX_TIMESTAMP(), UNIX_TIMESTAMP())`,
-          newUserId,
-          provider,
-          provider_id,
-          email,
-          access_token,
-          refresh_token
-        );
-
-        this.debug(`[Auth] ✓ OAuth account linked: user_id=${newUserId}, provider=${provider}`);
 
         let finalSessionData = await this.yp.await_proc(
           'session_login_with_oauth',
@@ -475,14 +359,7 @@ class Register extends __butler {
       });
 
       this.debug('[Auth] Returning Google OAuth URL:', authUrl);
-      this.output.data({ success: true, authUrl: authUrl });
-
-      this.output.data({
-        success: true,
-        status: 'prompt',
-        authUrl: authUrl
-      });
-
+      this.output.data({ success: true, authUrl: authUrl, status: 'prompt' });
     } catch (error) {
       this.warn('[Auth] Error initiating Google OAuth:', error);
       return this.output.data({ status: 'error', error: 'oauth_init_failed' });
@@ -503,10 +380,6 @@ class Register extends __butler {
       );
 
       const redirect_uri = creds.redirect_uri;
-      const state = Math.random().toString(36).substring(2, 15);
-
-      const redirect_uri = creds.redirect_uri || `${this.input.host()}${this.input.pathname().replace('apple_start', 'apple_callback')}`;
-
       const authUrl = `https://appleid.apple.com/auth/authorize?` +
         `client_id=${encodeURIComponent(creds.service_id)}` +
         `&redirect_uri=${encodeURIComponent(redirect_uri)}` +
@@ -516,15 +389,7 @@ class Register extends __butler {
         `&state=${state}`;
 
       this.debug('[Auth] Returning Apple OAuth URL:', authUrl);
-      this.output.data({ success: true, authUrl: authUrl, state: state });
-
-      this.output.data({
-        success: true,
-        status: 'prompt',
-        authUrl: authUrl,
-        state: state
-      });
-
+      this.output.data({ success: true, authUrl: authUrl, state: state, status: 'prompt' });
     } catch (error) {
       this.warn('[Auth] Error initiating Apple OAuth:', error);
       return this.output.data({ status: 'error', error: 'oauth_init_failed' });
