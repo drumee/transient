@@ -35,7 +35,7 @@ class Register extends Butler {
       
       if (gCreds && gCreds.id && gCreds.secret) {
         // Dynamic callback: works for all developer endpoints
-        const googleCallback = `https://${this.input.host()}${svc_location}/register.google_callback`;
+        const googleCallback = `https://${this.input.host()}${svc_location}/register.google_callback?`;
         gCreds.redirect_uri = googleCallback;
         
         this.googleCreds = gCreds;
@@ -51,9 +51,8 @@ class Register extends Butler {
       // Apple credentials with dynamic callback URI
       const akey = resolve(credential_dir, `apple/info.json`);
       const aCreds = readJson(akey);
-      const pkey = resolve(credential_dir, `apple`, `${aCreds.key_id}.p8`);
+      const pkey = resolve(credential_dir, `apple`, `${aCreds.key_file}`);
       const private_key = readFileSync(pkey, 'utf8');
-      
       if (aCreds && aCreds.team_id && aCreds.service_id && aCreds.key_id && private_key) {
         const appleCallback = `https://${this.input.host()}${svc_location}/register.apple_callback`;
         aCreds.redirect_uri = appleCallback;
@@ -62,7 +61,7 @@ class Register extends Butler {
           team_id: aCreds.team_id,
           service_id: aCreds.service_id,
           key_id: aCreds.key_id,
-          private_key: private_key,
+          private_key,
           redirect_uri: aCreds.redirect_uri
         };
         this.debug("[Auth] Apple Credentials loaded. Callback:", appleCallback);
@@ -232,7 +231,7 @@ class Register extends Butler {
     try {
       const code = this.input.get(Attr.code);
       if (!code || !/^[A-Za-z0-9-_./]+$/.test(code)) {
-        this.warn(`[Auth] Missing or invalid OAuth code from ${provider}`);
+        this.warn(`[Auth] Missing or invalid OAuth code from ${provider}`, Attr.code, code);
         return this.output.data({ status: 'error', error: 'invalid_code' });
       }
 
@@ -417,17 +416,15 @@ class Register extends Butler {
         'INSERT IGNORE INTO oauth_state (state, ctime) VALUES (?, UNIX_TIMESTAMP())',
         state
       );
-
       const authUrl = `https://appleid.apple.com/auth/authorize?` +
         `client_id=${encodeURIComponent(creds.service_id)}` +
         `&redirect_uri=${encodeURIComponent(creds.redirect_uri)}` +
         `&response_type=code` +
         `&response_mode=form_post` +
-        `&scope=name email` +
+        `&scope=${encodeURIComponent("name email")}` +
         `&state=${state}`;
 
-      this.debug('[Auth] Apple OAuth URL generated with state:', state);
-      this.output.data({ success: true, authUrl: authUrl, state: state, status: 'prompt' });
+      this.output.data({ success: true, authUrl, state: state, status: 'prompt' });
     } catch (error) {
       this.warn('[Auth] Error initiating Apple OAuth:', error);
       return this.output.data({ status: 'error', error: 'oauth_init_failed' });

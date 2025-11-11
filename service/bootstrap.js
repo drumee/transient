@@ -47,7 +47,7 @@ class __bootstrap extends RuntimeEnv {
     let name = this.input.get(Attr.name) || '';
     let ext = new RegExp(extname(name) + '$');
     name = name.replace(ext, '')
-    const { ui_home, endpoint_path, svc_location, runtime_dir, endpoint_name } = sysEnv();
+    const { ui_home, endpoint_path, runtime_dir, endpoint_name } = sysEnv();
     let plugin_base = join(ui_home, '../..', 'plugins', 'ui', endpoint_name);
     let plugin_info = join(plugin_base, name, 'index.json');
     let info;
@@ -63,8 +63,6 @@ class __bootstrap extends RuntimeEnv {
     if (info && info.entry) {
       path = join(endpoint_path, 'plugins', name, info.entry)
     }
-    let callback = `${this.input.host()}${svc_location}/register.google_callback`;
-    this.debug("AEEE:61", this.input.authorization(), { endpoint_path, callback, pathname: this.input.pathname(), endpoint_name, plugin_info, plugin_base, ui_home, path, __dirname })
     this.output.data({ path });
   }
 
