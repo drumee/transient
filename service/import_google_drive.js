@@ -1,15 +1,10 @@
 // service/import_google_drive.js
 
-const { Entity } = require('@drumee/server-core');
-const { toArray, Attr, sysEnv, uniqueId, Network } = require('@drumee/server-essentials');
-const { existsSync, mkdirSync, cpSync, statSync, rmSync } = require("fs");
-const { join, extname, basename } = require("path");
-const { createHash } = require("crypto");
-const { tmp_dir } = sysEnv();
+const { Attr } = require('@drumee/server-essentials');
 const axios = require('axios');
-const { Mfs } = require("@drumee/server-core"); 
+const ImportBase = require('./import_base');
 
-class ImportGoogleDrive extends Mfs {
+class ImportGoogleDrive extends ImportBase {
 
   initialize(opt) {
     super.initialize(opt);
@@ -17,95 +12,14 @@ class ImportGoogleDrive extends Mfs {
   }
 
   /**
-   *
+   * Get Google OAuth access token
    */
   async _getAccessToken() {
-    const userId = this.uid;
-    if (!userId) {
-      throw new Error("User is not authenticated (this.uid is null).");
-    }
-    
-    const tokenData = toArray(await this.yp.await_query(
-      'SELECT access_token FROM oauth_accounts WHERE user_id = ? AND provider = ?',
-      userId, 'google'
-    ))[0];
-    
-    if (!tokenData || !tokenData.access_token) {
-      this.warn(`[Import] User ${userId} has not linked Google account or token is missing.`);
-      throw new Error("User has not linked Google account or token is missing.");
-    }
-    return tokenData.access_token;
+    return super._getAccessToken('google');
   }
 
   /**
-   *
-   * 
-   */
-  async _importFileInternal(url, filename, destFolder, attr = {}, oauthToken = null) {
-    const TMPDIR = `/${tmp_dir}/${uniqueId()}`;
-    mkdirSync(TMPDIR, { recursive: true });
-    
-    const ext = extname(filename).replace(/^\.+/, '');
-    const source = join(TMPDIR, `download.${ext}`);
-    
-    this.debug(`[Import] Importing from ${url} -> ${filename}`);
-    
-    const downloadOptions = {
-      method: 'GET',
-      outfile: source,
-      url: url,
-      headers: {}
-    };
-
-    if (oauthToken) {
-      downloadOptions.headers['Authorization'] = `Bearer ${oauthToken}`;
-    }
-    
-    await Network.request(downloadOptions); 
-    const stat = statSync(source);
-    
-    let { filetype, mimetype } = attr;
-    if (!filetype || !mimetype) {
-      let r = await this.yp.await_query(
-        `SELECT category filetype, mimetype FROM filecap WHERE extension = ?`, ext
-      );
-      ({ filetype, mimetype } = toArray(r)[0] || {});
-    }
-    if (!mimetype) mimetype = `application/${ext}`;
-    if (!filetype) filetype = 'other'; 
-
-    const args = {
-      owner_id: destFolder.owner_id,
-      filename: filename.replace(new RegExp(`\.(${ext})$`, 'i'), ''),
-      pid: destFolder.nid,
-      category: filetype,
-      ext: ext,
-      mimetype: mimetype,
-      filesize: attr.filesize || stat.size,
-      showResults: 1
-    };
-    
-    const item = await this.db.await_proc("mfs_create_node", args, {}, { isOutput: 1 });
-    if (!item || !item.id) {
-      this.warn("Failed to create MFS node with", item, args);
-      throw new Error("Failed to create MFS node.");
-    }
-    
-    const base = join(destFolder.home_dir.replace(/(\/__storage__.*)$/, ''), '__storage__', item.id);
-    const orig = join(base, `orig.${ext}`);
-    mkdirSync(base, { recursive: true });
-    
-    this.debug(`[Import] Copying ${source} -> ${orig}`);
-    cpSync(`${source}`, orig, { force: true });
-    
-    rmSync(TMPDIR, { recursive: true, force: true });
-    
-    this.debug(`[Import] ✓ Successfully imported ${filename} to ${item.file_path}`);
-    return item;
-  }
-
-  /**
-   * 
+   * List files from Google Drive
    */
   async list_files() {
     const accessToken = await this._getAccessToken();
@@ -116,7 +30,7 @@ class ImportGoogleDrive extends Mfs {
         headers: { 'Authorization': `Bearer ${accessToken}` },
         params: {
           q: `'${folderId}' in parents and trashed = false`,
-          pageSize: 50, 
+          pageSize: 50,
           fields: 'files(id, name, mimeType, iconLink, size, fileExtension, webViewLink, webContentLink)'
         }
       });
@@ -131,11 +45,11 @@ class ImportGoogleDrive extends Mfs {
   }
 
   /**
-   *
+   * Import file from Google Drive
    */
   async import_file() {
-    const googleFileId = this.input.get('file_id'); 
-    const destNodeId = this.input.get(Attr.nid);  
+    const googleFileId = this.input.get('file_id');
+    const destNodeId = this.input.get(Attr.nid);
 
     if (!googleFileId || !destNodeId) {
       throw new Error("Missing 'file_id' or 'nid' (destination folder ID) parameter.");
@@ -143,33 +57,49 @@ class ImportGoogleDrive extends Mfs {
 
     const accessToken = await this._getAccessToken();
 
+    // Get file metadata from Google Drive
     let googleFile;
     try {
       const response = await axios.get(`https://www.googleapis.com/drive/v3/files/${googleFileId}`, {
         headers: { 'Authorization': `Bearer ${accessToken}` },
         params: {
-          fields: 'id, name, mimeType, webContentLink, size, fileExtension' 
+          fields: 'id, name, mimeType, webContentLink, size, fileExtension'
         }
       });
       googleFile = response.data;
-      
+
+      // Handle Google Workspace files (Docs, Sheets, etc.) - need export
       if (!googleFile.webContentLink) {
-        if (googleFile.mimeType.includes('google-apps.document')) {
-          googleFile.webContentLink = `https://www.googleapis.com/drive/v3/files/${googleFileId}/export?mimeType=application/pdf`;
-          googleFile.name = `${googleFile.name}.pdf`;
-        } else if (googleFile.mimeType.includes('google-apps.spreadsheet')) {
-          googleFile.webContentLink = `https://www.googleapis.com/drive/v3/files/${googleFileId}/export?mimeType=application/vnd.openxmlformats-officedocument.spreadsheetml.sheet`;
-          googleFile.name = `${googleFile.name}.xlsx`;
+        const GOOGLE_EXPORT_TYPES = {
+          'google-apps.document': { mime: 'application/pdf', ext: 'pdf' },
+          'google-apps.spreadsheet': { mime: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', ext: 'xlsx' },
+          'google-apps.presentation': { mime: 'application/vnd.openxmlformats-officedocument.presentationml.presentation', ext: 'pptx' },
+          'google-apps.drawing': { mime: 'image/png', ext: 'png' }
+        };
+
+        let exportType = null;
+        for (const [gType, exportInfo] of Object.entries(GOOGLE_EXPORT_TYPES)) {
+          if (googleFile.mimeType.includes(gType)) {
+            exportType = exportInfo;
+            break;
+          }
+        }
+
+        if (exportType) {
+          googleFile.webContentLink = `https://www.googleapis.com/drive/v3/files/${googleFileId}/export?mimeType=${encodeURIComponent(exportType.mime)}`;
+          googleFile.name = `${googleFile.name}.${exportType.ext}`;
+          this.debug(`[Import] Exporting Google Workspace file as ${exportType.ext}`);
         } else {
           this.warn(`[Import] File ${googleFile.name} (mime: ${googleFile.mimeType}) is not downloadable.`);
-          throw new Error("This file type (e.g., Google Doc, Sheet) is not directly downloadable or exportable.");
+          throw new Error("This file type is not directly downloadable or exportable.");
         }
       }
     } catch (e) {
       this.warn(`[Import] Failed to get Google file metadata:`, e.response?.data || e.message);
       throw new Error("Failed to get Google file metadata.");
     }
-    
+
+    // Get destination folder
     const destFolder = await this.db.await_proc('mfs_node_attr', destNodeId);
     if (!destFolder || !destFolder.home_dir) {
       throw new Error("Invalid destination folder ID (nid).");
@@ -179,12 +109,13 @@ class ImportGoogleDrive extends Mfs {
       mimetype: googleFile.mimeType,
       filesize: googleFile.size
     };
-    
+
+    // Import file using base class method
     const newNode = await this._importFileInternal(
-      googleFile.webContentLink, 
-      googleFile.name,         
-      destFolder,                
-      nodeAttributes,          
+      googleFile.webContentLink,
+      googleFile.name,
+      destFolder,
+      nodeAttributes,
       accessToken
     );
 
