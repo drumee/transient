@@ -45,7 +45,7 @@ class ImportBase extends Mfs {
   async _importFileInternal(url, filename, destFolder, attr = {}, oauthToken = null) {
     let { home_dir, owner_id, nid } = destFolder;
     
-    // Generate cache key from URL (like sếp's code)
+    // Generate cache key from URL
     const { pathname: urlPath, host } = new URL(url);
     let hash = createHash("md5");
     hash.update(`${host}-${urlPath}`);
