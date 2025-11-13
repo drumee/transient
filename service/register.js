@@ -68,6 +68,21 @@ class Register extends Butler {
       } else {
         this.warn("[Auth] CRITICAL: Failed to load Apple credentials.");
       }
+
+      // Load Dropbox credentials
+      const dkey = resolve(credential_dir, `dropbox/info.json`);
+      const dCreds = readJson(dkey);
+      if (dCreds && dCreds.app_key && dCreds.app_secret) {
+        const dropboxCallback = `https://${this.input.host()}${svc_location}/register.dropbox_callback`;
+        this.dropboxCreds = {
+          app_key: dCreds.app_key,
+          app_secret: dCreds.app_secret,
+          redirect_uri: dropboxCallback
+        };
+        this.debug("[Auth] Dropbox Credentials loaded. Callback:", dropboxCallback);
+      } else {
+        this.warn("[Auth] CRITICAL: Failed to load Dropbox credentials.");
+      }
     } catch (e) {
       this.warn("[Auth] CRITICAL: Failed to load OAuth credentials!", e.message);
     }
@@ -431,12 +446,45 @@ class Register extends Butler {
     }
   }
 
+  /**
+  * Start Dropbox OAuth flow
+  */
+  async dropbox_start() {
+    try {
+      const dropboxAppKey = 'YOUR_DROPBOX_APP_KEY';
+      const { svc_location } = sysEnv();
+      const redirectUri = `https://${this.input.host()}${svc_location}/register.dropbox_callback`;
+    
+      const state = `d_${randomUUID()}`;
+      await this.yp.await_query(
+        'INSERT IGNORE INTO oauth_state (state, ctime) VALUES (?, UNIX_TIMESTAMP())',
+        state
+      );
+
+      const authUrl = `https://www.dropbox.com/oauth2/authorize?` +
+        `client_id=${encodeURIComponent(dropboxAppKey)}` +
+        `&redirect_uri=${encodeURIComponent(redirectUri)}` +
+        `&response_type=code` +
+        `&state=${state}`;
+
+      this.debug('[Auth] Dropbox OAuth URL generated with state:', state);
+      this.output.data({ success: true, authUrl: authUrl, status: 'prompt' });
+    } catch (error) {
+      this.warn('[Auth] Error initiating Dropbox OAuth:', error);
+      return this.output.data({ status: 'error', error: 'oauth_init_failed' });
+    }
+  }
+
   async google_callback() {
     return this._handleOAuthCallback('google');
   }
 
   async apple_callback() {
     return this._handleOAuthCallback('apple');
+  }
+
+  async dropbox_callback() {
+    return this._handleOAuthCallback('dropbox');
   }
 }
 
