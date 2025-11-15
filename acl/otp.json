@@ -1,0 +1,29 @@
+{
+  "services": {
+    "set_password": {
+      "scope": "hub",
+      "permission": {
+        "src": "anonymous",
+        "fast_check": "public-api"
+      }
+    },
+    "verify": {
+      "scope": "hub",
+      "permission": {
+        "src": "anonymous",
+        "fast_check": "public-api"
+      }
+    },
+    "send": {
+      "scope": "hub",
+      "permission": {
+        "src": "anonymous",
+        "fast_check": "public-api"
+      }
+    }
+  },
+  "modules": {
+    "public": "service/private/otp",
+    "private": "service/otp"
+  }
+}

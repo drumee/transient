@@ -173,6 +173,14 @@ class __yp extends Entity {
   /**
    *
    */
+  async signin() {
+    let res = await this.session.signin(this.input.use("vars"));
+    this.output.data(res)
+  }
+
+  /**
+   *
+   */
   async guest_login() {
     let token = this.input.need(Attr.token);
     let res = await this.session.dmz_login(token, this.input.get(Attr.password));

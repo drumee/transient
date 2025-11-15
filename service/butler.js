@@ -21,7 +21,6 @@ const {
 const { platform } = require('./lib/env');
 const { resolve } = require('path');
 const { isEmpty, isString } = require("lodash");
-const { getPlugins, getServices } = require("../router/rest");
 const {
   PASS_CHECKER,
   ID_NOBODY,
@@ -524,6 +523,7 @@ class __butler extends Mfs {
     await this.yp.await_proc("token_delete", secret);
     this.output.data(user);
   }
+  
   /**
    * The account schema is picked from the pool of hubs that are already created by offline process 
    */
