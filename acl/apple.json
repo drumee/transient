@@ -1,0 +1,25 @@
+{
+  "services": {
+    "initiate": {
+      "doc": "Initiates Apple Sign-In authorization flow.",
+      "scope": "hub",
+      "permission": {
+        "src": "anonymous",
+        "fast_check": "public-api"
+
+      }
+    },
+    "callback": {
+      "doc": "Handles the OAuth 2.0 callback from Apple Sign-In.",
+      "scope": "hub",
+      "permission": {
+        "src": "anonymous",
+        "fast_check": "public-api"
+      }
+    }
+  },
+  "modules": {
+    "private": "service/apple",
+    "public": "service/apple"
+  }
+}
