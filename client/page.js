@@ -25,7 +25,6 @@ class MainPage extends RuntimeEnv {
     this.on(GRANTED, async () => {
       await this.start({ access: GRANTED });
     });
-
   }
 
   /**

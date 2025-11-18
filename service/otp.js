@@ -94,7 +94,7 @@ class Otp extends Entity {
     try {
       let tpl = resolve(__dirname, "./templates/otp.html")
       let html = msg.renderFrom(tpl, data)
-      await msg.send({ html });
+      msg.send({ html });
       sent = 1;
     } catch (e) {
       this.warn(e)
