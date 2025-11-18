@@ -79,8 +79,8 @@ class Goggle extends Loby {
     return {
       email: payload.email,
       provider_id: payload.sub,
-      first_name: payload.given_name || '',
-      last_name: payload.family_name || '',
+      firstname: payload.given_name || '',
+      lastname: payload.family_name || '',
       access_token: tokens.access_token,
       refresh_token: tokens.refresh_token
     };
@@ -127,12 +127,13 @@ class Goggle extends Loby {
     if (!code) return;
     const home = `https://${this.input.host()}${endpoint_path}/`;
     const profile = await this._getGoogleProfile(code);
+    this.debug("AAAA:130", profile)
     profile.provider = 'google';
     let res = await this.handleOAuthCallback(profile, home);
-    this.debug("AAAA:138", res)
+    this.debug("AAAA:133", res)
     if (!res.error) {
       const tpl = resolve(__dirname, './templates/signup-completed.html');
-      this.sendHtml({ home }, tpl)
+      this.sendHtml({ ...res, home }, tpl)
     }
   }
 

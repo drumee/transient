@@ -4,7 +4,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Auto-Reload Page</title>
+  <title>DrumeeOS is now ready</title>
   <style nonce>
     @font-face {
       font-family: 'Armin Grotesk';
@@ -99,6 +99,17 @@
       align-items: center;
       gap: 16px;
       display: inline-flex;
+      width: 455px;
+      padding: 32px;
+      background: var(--Gray-White, white);
+      border-radius: 24px;
+      outline: 1px var(--Neutral-200, #EBECF0) solid;
+      outline-offset: -1px;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      gap: 32px;
+      display: inline-flex
     }
 
     .frame-1 {
@@ -125,14 +136,108 @@
       font-weight: 400;
       line-height: 30px;
     }
+
+    .button {
+      height: 48px;
+      padding-top: 8px;
+      padding-bottom: 8px;
+      padding-left: 24px;
+      padding-right: 4px;
+      background: var(--Primary-500, #B251FB);
+      border-radius: 1000px;
+      justify-content: flex-start;
+      align-items: center;
+      gap: 12px;
+      display: flex;
+      width: 100%;
+    }
+
+    .button-icon {
+      width: 40px;
+      height: 40px;
+      padding: 8px;
+      background: var(--Gray-White, white);
+      border-radius: 1000px;
+      justify-content: center;
+      align-items: center;
+      gap: 8px;
+      display: flex;
+    }
+
+    .button-anchor {
+      text-align: center;
+      justify-content: center;
+      display: flex;
+      flex-direction: row;
+      color: var(--Gray-White, white);
+      font-size: 16px;
+      font-family: Armin Grotesk;
+      font-weight: 600;
+      line-height: 26px;
+      letter-spacing: 0.16px;
+      word-wrap: break-word;
+      width: 100%;
+    }
+
+    .button-text {
+      display: flex;
+      white-space: nowrap;
+      line-height: 34px;
+      flex-direction: row;
+      justify-content: flex-start;
+      align-content: center;
+      flex-wrap: wrap;
+      padding: 10px;
+    }
+
+    .button-container {
+      align-self: stretch;
+      justify-content: center;
+      align-items: center;
+      gap: 12px;
+      display: flex;
+      flex-wrap: wrap;
+      flex-direction: row;
+      width: 100%;
+    }
+
+    .button-content {
+      justify-content: center;
+      align-items: center;
+      gap: 24px;
+      display: flex;
+      width: 100%;
+      align-self: stretch;
+      justify-content: center;
+      align-items: center;
+      flex-direction: row;
+      align-content: center;
+      flex-wrap: wrap;
+    }
+
+    .icon {
+      width: 40px;
+      height: 40px;
+      padding: 8px;
+      background: var(--Gray-White, white);
+      border-radius: 1000px;
+      justify-content: center;
+      align-items: center;
+      gap: 8px;
+      display: flex;
+      flex-direction: row;
+      justify-items: center;
+      align-content: center;
+      flex-wrap: wrap;
+    }
   </style>
 
 </head>
 
 <body>
-  <div data-layer="1" class="frame-1">
-    <div data-layer="1" class="frame-1_01">
-      <div data-layer="1" class="frame-1_02">
+  <div class="frame-1">
+    <div class="frame-1_01">
+      <div class="frame-1_02">
         <div data-svg-wrapper data-layer="Symbol" class="symbol">
           <svg width="81" height="64" viewBox="0 0 81 64" fill="none" xmlns="http://www.w3.org/2000/svg">
             <path
@@ -141,7 +246,36 @@
           </svg>
         </div>
       </div>
-      <a class="frame-1_01" href="<%= home %>">Start Drumee OS</a>
+      <div
+        style="align-self: stretch; flex-direction: column; justify-content: flex-start; align-items: center; gap: 24px; display: flex">
+        <div
+          style="align-self: stretch; flex-direction: column; justify-content: flex-start; align-items: flex-start; gap: 4px; display: flex">
+          <div
+            style="align-self: stretch; text-align: center; color: var(--Neutral-900, #222732); font-size: 32px; font-family: Armin Grotesk; font-weight: 600; line-height: 40px; word-wrap: break-word">
+            Great job! <br />You’re ready to dive in</div>
+          <div
+            style="align-self: stretch; text-align: center; justify-content: center; display: flex; flex-direction: column; color: var(--Neutral-600, #8C929C); font-size: 16px; font-family: Armin Grotesk; font-weight: 400; line-height: 26px; letter-spacing: 0.16px; word-wrap: break-word">
+            DrumeeOS is now ready.<br />Let’s begin exploring and shaping your experience.</div>
+        </div>
+        <div class="button-container">
+          <div class="button-content">
+            <div data-layer="Button" data-hierarchy="Website" data-icon="None" data-size="48px" data-state="Normal"
+              class="button">
+              <a href="<%= home %>" class="button-anchor">
+                <div class="button-text">Go to DrumeeOS</div>
+                <div data-layer="2" class="button-icon">
+                  <div data-svg-wrapper data-layer="Icon" data-name="Right" class="icon" style="position: relative">
+                    <svg width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
+                      <path
+                        d="M11.9123 16.2892L17.5373 10.6642C17.6247 10.5771 17.694 10.4736 17.7414 10.3597C17.7887 10.2457 17.813 10.1236 17.813 10.0002C17.813 9.87677 17.7887 9.7546 17.7414 9.64064C17.694 9.52669 17.6247 9.4232 17.5373 9.3361L11.9123 3.7111C11.7362 3.53498 11.4973 3.43604 11.2482 3.43604C10.9992 3.43604 10.7603 3.53498 10.5842 3.7111C10.4081 3.88722 10.3091 4.12609 10.3091 4.37516C10.3091 4.62423 10.4081 4.8631 10.5842 5.03922L14.6084 9.06344L3.12402 9.06344C2.87538 9.06344 2.63693 9.16221 2.46111 9.33803C2.2853 9.51385 2.18652 9.7523 2.18652 10.0009C2.18652 10.2496 2.2853 10.488 2.46111 10.6639C2.63693 10.8397 2.87538 10.9384 3.12402 10.9384L14.6084 10.9384L10.5834 14.9627C10.4073 15.1388 10.3083 15.3777 10.3083 15.6267C10.3083 15.8758 10.4073 16.1147 10.5834 16.2908C10.7595 16.4669 10.9984 16.5659 11.2475 16.5659C11.4965 16.5659 11.7354 16.4669 11.9115 16.2908L11.9123 16.2892Z"
+                        fill="var(--Primary-500, #B251FB)" />
+                    </svg>
+                  </div>
+                </div>
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
   </div>
 </body>

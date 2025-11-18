@@ -27,14 +27,17 @@ class Account extends Entity {
   /**
    * The account schema is picked from the pool of hubs that are already created by offline process 
    */
-  async create_account(data) {
-    this.debug("AAA:30", data)
+  async create_account(data, autosignin = 1) {
     const { main_domain: domain } = sysEnv();
     let {
       email,
       firstname = "",
       password,
     } = data;
+    let onboarded = 1;
+    if (!firstname) {
+      onboarded = 0;
+    }
     let username = firstname || email.split('@')[0];
     username = await this.yp.await_func("ensure_username", { username: username.toLowerCase(), domain });
     let a = firstname.split(/ +/)
@@ -50,6 +53,7 @@ class Account extends Entity {
       sharebox: uniqueId(),
       otp: 0,
       category: "trial",
+      onboarded,
       profile_type: "trial",
       lang: this.user.language() || this.input.app_language(),
       firstname,
@@ -67,16 +71,20 @@ class Account extends Entity {
     }
     let { permission, failed } = user[0];
     let { drumate } = user[2] || {};
-    if (drumate && permission) {
-      try {
-        let status = await this.session.signin({ email, password });
-        return status;
-      } catch (e) {
-        this.warn("Auto login failed", e)
-        return { error: 1, failed, status: "internal_error" }
-      }
+    if (!drumate || !permission || failed) {
+      this.warn("[create_account] failed", user)
+      return { error: 1, failed, status: "internal_error" }
     }
-    return { error: 1, failed, status: "unexpected_error" }
+    if (!autosignin) {
+      return drumate;
+    }
+    try {
+      let status = await this.session.signin({ email, password });
+      return status;
+    } catch (e) {
+      this.warn("Auto login failed", e)
+      return { error: 1, failed, status: "internal_error" }
+    }
   }
 
 
@@ -96,7 +104,7 @@ class Account extends Entity {
 
   /** */
   async addUser(profile) {
-    const { email, provider_id, provider, first_name, last_name, access_token, refresh_token } = profile;
+    let { email, provider_id, provider, firstname, lastname, access_token, refresh_token } = profile;
     this.debug(`[Auth] addUser...`);
     let session_id = this.input.sid()
 
@@ -107,15 +115,23 @@ class Account extends Entity {
       return { status: 'error', error: 'user_exists' };
     }
     // Create new account
-    const fullname = `${first_name} ${last_name}`.trim();
+    if (!firstname) {
+      firstname = email.split('@')[0];
+    }
+    if (!lastname) {
+      let a = firstname.split('.');
+      firstname = a[0] || '';
+      lastname = a[1] || '';
+    }
+    const fullname = `${firstname} ${lastname}`.trim();
     const createData = {
-      email: email,
-      firstname: fullname || first_name,
+      email,
+      firstname: fullname || firstname,
       password: uniqueId() // OAuth users don't have password, set default
     };
 
-    const creationResult = await this.create_account(createData) || {};
-    if (!creationResult.user || creationResult.status !== 'ok') {
+    const creationResult = await this.create_account(createData, 0) || {};
+    if (!creationResult.home_id || !creationResult.db_name) {
       this.warn(`[Auth] Failed to create account for ${email}:`, creationResult);
       return { status: 'error', error: 'account_creation_failed' };
     }
@@ -212,6 +228,7 @@ class Account extends Entity {
           'UPDATE oauth_accounts SET access_token = ?, refresh_token = ?, mtime = UNIX_TIMESTAMP() WHERE user_id = ? AND provider = ?',
           access_token, refresh_token, sessionData.id, provider
         );
+        sessionData.method = 'signin';
         return sessionData;
       }
 
@@ -228,7 +245,8 @@ class Account extends Entity {
 
       // CASE C: New user - sign up
       if (sessionData && sessionData.error_code === 'oauth_user_not_found') {
-        let res = await this.addUser(profile)
+        let res = await this.addUser(profile);
+        res.method = 'signup';
         return res;
       }
 
@@ -239,6 +257,21 @@ class Account extends Entity {
       this.warn(`[Auth] OAuth callback exception:`, error);
       throw error;
     }
+  }
+
+  /**
+ * 
+ * @returns 
+ */
+  _authorization() {
+    let auth = this.input.authorization() || {};
+    let c = {
+      type: auth.type,
+      session_type: auth.type,
+      sid: auth.id,
+      device_id: this.input.get(Attr.device_id)
+    }
+    return c;
   }
 
 
@@ -254,6 +287,18 @@ class Account extends Entity {
       "Cache-Control",
       "no-cache, no-store, must-revalidate"
     );
+
+    let auth = this._authorization();
+    let keysel = Attr.regsid;
+    auth[keysel] = data.session_id;
+    const params = {
+      host: this.input.host(),
+      session_type: Attr.regular,
+      keysel,
+      auth,
+      id: data.session_id
+    }
+    this.output.setAuthorization(params);
     this.output.set_header("Access-Control-Allow-Origin", `*.${main_domain}`);
     this.output.set_header("Pragma", "no-cache");
     this.output.html(content);

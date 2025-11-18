@@ -146,15 +146,16 @@ class Register extends Loby {
     }
 
     // Apple sends name only on first sign-in via 'user' parameter
-    let first_name = 'AppleUser';
-    let last_name = 'Test';
+    let firstname = '';
+    let lastname = '';
     const userParam = this.input.get('user');
+    this.debug("AAAA:151", userParam, payload, this.input.toJSON(), this.input.data())
     if (userParam) {
       try {
         const userData = JSON.parse(userParam);
         if (userData.name) {
-          first_name = userData.name.firstName || first_name;
-          last_name = userData.name.lastName || last_name;
+          firstname = userData.name.firstName || userData.fullName?.givenName || ''
+          lastname = userData.name.lastName || userData.fullName?.familyName || '';
         }
       } catch (e) {
         this.warn('[Auth] Failed to parse Apple user data:', e);
@@ -164,14 +165,23 @@ class Register extends Loby {
     return {
       email: payload.email,
       provider_id: payload.sub,
-      first_name: first_name,
-      last_name: last_name,
+      firstname,
+      lastname,
       access_token: tokenResponse.data.access_token,
       refresh_token: tokenResponse.data.refresh_token
     };
   }
 
+  // Handle response
+  handleAppleResponse(response) {
+    if (response.authorization) {
+      const authorization = response.authorization;
+      const user = authorization.user;
 
+      // Name might be in the id_token or user object
+      console.log("User:", user);
+    }
+  }
 
   /**
    * Start Apple OAuth flow
@@ -209,17 +219,19 @@ class Register extends Loby {
    * 
    * @returns 
    */
-  async callback() {
+  async callback(response) {
+    console.log("User:", response);
     const code = this.getOAuthCode();
     if (!code) return;
     const home = `https://${this.input.host()}${endpoint_path}/`;
     const profile = await this._getAppleProfile(code);
     profile.provider = 'apple';
+    this.debug("AAAA:219", profile)
     let res = await this.handleOAuthCallback(profile, home);
-    this.debug("AAAA:138", res)
+    this.debug("AAAA:221", res)
     if (!res.error) {
       const tpl = resolve(__dirname, './templates/signup-completed.html');
-      this.sendHtml({ home }, tpl)
+      this.sendHtml({ ...res, home }, tpl)
     }
   }
 
