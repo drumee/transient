@@ -1,0 +1,22 @@
+{
+  "services": {
+    "manifest": {
+      "doc": "Get manifest of files/folders for MFS export (token authenticated)",
+      "scope": "public",
+      "permission": {
+        "src": "read"
+      }
+    },
+    "orig": {
+      "doc": "Download original file for MFS export (token authenticated)",
+      "scope": "public",
+      "permission": {
+        "src": "read"
+      }
+    }
+  },
+  "modules": {
+    "private": "service/media_export",
+    "public": "service/media_export"
+  }
+}
