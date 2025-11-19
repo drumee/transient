@@ -10,7 +10,7 @@
     cursor: pointer;
     overflow: hidden;
     &[data-default="1"]{
-      color: $ewhite;     
+      color: var(--egrey-2f);     
       padding: 8px;
       opacity:0.6;
       &[data-device=mobile]{

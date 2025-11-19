@@ -21,7 +21,7 @@
       &:before {
         background-color: var(--red-500);
         border-radius: 50%;
-        box-shadow: 0 0 0 1px $white;
+        box-shadow: 0 0 0 1px var(--white);
         content: " ";
         height: 8px;
         left: 24px;
@@ -74,7 +74,7 @@
     text-transform: uppercase;
 
     .note-content {
-      @include mixins.typo($size: 13px, $line: 15px, $weight: 400, $color: $ewhite);
+      @include mixins.typo($size: 13px, $line: 15px, $weight: 400, $color: var(--ewhite));
       margin: auto;
     }
   }

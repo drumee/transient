@@ -1,16 +1,11 @@
-/** ================================================================== *
-#   Copyright Xialia.com  2011-2020
-#   FILE : /src/drumee/libs/reader/progress/bar/js/skin/index.scss
-#   TYPE : Component style
-# ===================================================================**/
-@import 'mixins/drumee';
+@use '@drumee/ui-styles/src/mixins';
 
 .progress-bar{
   &__ui{
     width : 100%;
     align-items: center;
     background-color: inherit;
-    @include typo($size:14px,$line:24px,$color:$btn-rollback-text,$weight:300);
+    @include mixins.typo($size:14px,$line:24px,$color:var(--btn-rollback-text),$weight:300);
   }
   &__main{
     width : 100%;
@@ -23,9 +18,8 @@
     align-items: center;
     .bar{
       height: 2px;
-      //flex:1;
       width: calc(100% - 160px);
-      background-color: $progress-line-text;
+      background-color: var(--progress-line-text);
       &-value{
         &[data-transition="0"]{
           transition:none;
@@ -33,7 +27,7 @@
         transition: width 0.5s;
         height: 4px;
         width: 0%;
-        background-color: $progress-line-text;
+        background-color:  var(--progress-line-text);
       }
     }
     .loaded{
