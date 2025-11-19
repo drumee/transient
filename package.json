@@ -1,6 +1,6 @@
 {
   "name": "@drumee/ui-core",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Drumee Rendering Engine Core Library",
   "main": "index.js",
   "repository": {
