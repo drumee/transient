@@ -1,0 +1,22 @@
+{
+  "services": {
+    "import_folder": {
+      "doc": "Import entire folder recursively from another Drumee instance",
+      "scope": "hub",
+      "permission": {
+        "src": "write"
+      }
+    },
+    "import_file": {
+      "doc": "Import single file from another Drumee instance",
+      "scope": "hub",
+      "permission": {
+        "src": "write"
+      }
+    }
+  },
+  "modules": {
+    "private": "service/mfs_import",
+    "public": "service/mfs_import"
+  }
+}
