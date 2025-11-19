@@ -85,7 +85,7 @@ class Otp extends Entity {
       why_this_otp: lex._why_this_otp,
     }
     const msg = new Messenger({
-      subject: lex._welcome_on_drumee,
+      subject: lex._your_otp,
       recipient: user.email,
       handler: this.exception.email,
     });
