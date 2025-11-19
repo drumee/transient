@@ -1,12 +1,11 @@
-@import 'mixins/drumee';
-
+@use '@drumee/ui-styles/src/mixins';
 .user-avatar{
   &__ui{
     padding: 0;
     border: none;
     width: 40px;
     height: 40px;
-    border-radius: $default-border-radius;//3px;
+    border-radius: var(--corner-radius-2);
     user-select: none;
     cursor: pointer;
     overflow: hidden;
@@ -19,10 +18,9 @@
         height:35px;
         padding:7px;
         right:10px;
-        //top:3px;
       }
       svg{
-        fill: $core-default-icon-reverse;  
+        fill: var(--neutral-50);  
       }
     }
   }
