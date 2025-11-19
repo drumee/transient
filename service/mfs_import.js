@@ -1,11 +1,10 @@
 // File: server-team/service/mfs_import.js
 // Purpose: MFS Import service - Import files/folders from another Drumee instance
-// This is the Drumee Runtime service (not CLI tool)
 
 const { Mfs } = require('@drumee/server-core');
 const { Attr, toArray, Network, sysEnv } = require('@drumee/server-essentials');
 const { existsSync, mkdirSync, cpSync } = require('fs');
-const { join, extname } = require('path');
+const { join } = require('path');
 const { createHash } = require('crypto');
 
 class MfsImport extends Mfs {
@@ -15,18 +14,9 @@ class MfsImport extends Mfs {
     this.debug("[MFS_IMPORT] Service initialized");
   }
 
-  /**
-   * Fetch manifest from source Drumee instance
-   * 
-   * @param {string} sourceUrl - Source Drumee URL (e.g., https://drumee.in)
-   * @param {string} hubId - Hub ID on source
-   * @param {string} nodeId - Node ID on source
-   * @param {string} token - MFS export token
-   * @returns {Promise<object>} - Manifest data
-   */
   async _fetchManifest(sourceUrl, hubId, nodeId, token) {
     try {
-      const manifestUrl = `${sourceUrl}/-/svc/media_export.manifest?hub_id=${hubId}&nid=${nodeId}`;
+      const manifestUrl = `${sourceUrl}/-/svc/media.manifest?hub_id=${hubId}&nid=${nodeId}`;
       
       this.debug(`[MFS_IMPORT] Fetching manifest from: ${manifestUrl}`);
 
@@ -52,22 +42,9 @@ class MfsImport extends Mfs {
     }
   }
 
-  /**
-   * Download and import a single file from source Drumee
-   * 
-   * @param {string} sourceUrl - Source Drumee URL
-   * @param {string} hubId - Hub ID on source
-   * @param {string} nodeId - Node ID on source
-   * @param {string} token - MFS export token
-   * @param {object} parentFolder - Destination parent folder (from mfs_node_attr)
-   * @param {string} filename - File name
-   * @param {string} extension - File extension
-   * @param {object} attr - File attributes (mimetype, filesize)
-   * @returns {Promise<object>} - Created MFS node
-   */
   async _importFile(sourceUrl, hubId, nodeId, token, parentFolder, filename, extension, attr = {}) {
     try {
-      const downloadUrl = `${sourceUrl}/-/svc/media_export.orig?hub_id=${hubId}&nid=${nodeId}`;
+      const downloadUrl = `${sourceUrl}/-/svc/media.orig?hub_id=${hubId}&nid=${nodeId}`;
       
       this.debug(`[MFS_IMPORT] Importing file: ${filename}.${extension}`);
 
@@ -110,7 +87,6 @@ class MfsImport extends Mfs {
 
       const { home_dir } = await this.db.await_proc('mfs_home');
 
-      // Create MFS node
       const args = {
         owner_id: parentFolder.owner_id,
         filename: filename,
@@ -128,7 +104,6 @@ class MfsImport extends Mfs {
         throw new Error('Failed to create MFS node');
       }
 
-      // Copy file to storage
       const base = join(home_dir, '__storage__', item.id);
       const orig = join(base, `orig.${extension}`);
       mkdirSync(base, { recursive: true });
@@ -146,21 +121,6 @@ class MfsImport extends Mfs {
     }
   }
 
-  /**
-   * Import folder recursively from source Drumee
-   * Adapted from sandbox-server importFolder method
-   * 
-   * Request parameters:
-   * - source_url: Source Drumee URL (e.g., https://drumee.in) OR hub_id
-   * - hub_id: Hub ID on source
-   * - nid: Node ID on source (folder to import)
-   * - token: MFS export token
-   * - dest_nid: Destination folder ID (optional, default to home)
-   * 
-   * Returns:
-   * - status: ok or error
-   * - stats: Import statistics (folders, files, errors)
-   */
   async import_folder() {
     try {
       const sourceUrl = this.input.get('source_url');
@@ -195,7 +155,6 @@ class MfsImport extends Mfs {
           });
         }
       } else {
-        // Use home directory as default destination
         const { home_id } = await this.db.await_proc('mfs_home');
         destFolder = await this.db.await_proc('mfs_node_attr', home_id);
       }
@@ -213,18 +172,16 @@ class MfsImport extends Mfs {
 
       for (const node of nodes) {
         try {
-          // Skip folders and hubs (we create them on-demand)
           if (/^(hub|folder)$/i.test(node.filetype)) {
             continue;
           }
 
           let ownpath = node.ownpath.replace(re, '');
           let pathParts = ownpath.split(/\/+/);
-          pathParts.pop(); // Remove filename
-          pathParts = pathParts.filter(f => f); // Remove empty parts
+          pathParts.pop();
+          pathParts = pathParts.filter(f => f);
           let dir = '/' + pathParts.join('/');
 
-          // Get or create parent folder
           let parent;
           let id = await this.db.await_func('node_id_from_path', dir);
           
@@ -285,21 +242,6 @@ class MfsImport extends Mfs {
     }
   }
 
-  /**
-   * Import single file from source Drumee
-   * 
-   * Request parameters:
-   * - source_url: Source Drumee URL OR hub_id
-   * - hub_id: Hub ID on source
-   * - nid: Node ID on source (file to import)
-   * - token: MFS export token
-   * - dest_nid: Destination folder ID (optional, default to home)
-   * - filename: Override filename (optional)
-   * 
-   * Returns:
-   * - status: ok or error
-   * - node: Created MFS node
-   */
   async import_file() {
     try {
       const sourceUrl = this.input.get('source_url');
