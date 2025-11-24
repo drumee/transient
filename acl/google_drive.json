@@ -23,7 +23,6 @@
     }
   },
   "modules": {
-    "private": "service/google_drive",
-    "public": "service/google_drive"
+    "private": "service/private/google_drive"
   }
 }

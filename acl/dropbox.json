@@ -23,7 +23,6 @@
     }
   },
   "modules": {
-    "private": "service/dropbox",
-    "public": "service/dropbox"
+    "private": "service/private/dropbox"
   }
 }

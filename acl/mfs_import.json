@@ -16,7 +16,6 @@
     }
   },
   "modules": {
-    "private": "service/mfs_import",
-    "public": "service/mfs_import"
+    "private": "service/private/mfs_import"
   }
 }

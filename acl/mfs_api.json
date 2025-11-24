@@ -23,7 +23,6 @@
     }
   },
   "modules": {
-    "private": "service/mfs_api",
-    "public": "service/mfs_api"
+    "private": "service/private/mfs_api"
   }
 }
