@@ -95,7 +95,7 @@ class MfsActivity extends Entity {
           status: 'ok',
           message: 'All notifications marked as read',
           last_read_id: data.last_read_id,
-          updated_at: data.mtime
+          mtime: data.mtime
         });
       } else {
         throw new Error('Failed to update acknowledgement');
@@ -188,7 +188,6 @@ class MfsActivity extends Entity {
    * 
    * Output:
    * - last_read_id: Last changelog ID marked as read
-   * - updated_at: Timestamp of last update
    */
   async get_last_read() {
     try {
@@ -215,13 +214,13 @@ class MfsActivity extends Entity {
         return this.output.data({
           status: 'ok',
           last_read_id: data.last_read_id,
-          updated_at: data.mtime
+          mtime: data.mtime
         });
       } else {
         return this.output.data({
           status: 'ok',
           last_read_id: 0,
-          updated_at: 0
+          mtime: 0
         });
       }
 
