@@ -234,6 +234,73 @@ class MfsActivity extends Entity {
     }
   }
 
+  /**
+  * Acknowledge/mark a specific file as seen
+  * 
+  * This replaces the old media.mark_as_seen which used JSON metadata
+  * New approach: Uses mfs_changelog + mfs_ack for better performance
+  * 
+  */
+  async acknowledge_file() {
+    try {
+      const userId = this.uid;
+      const nodeId = this.input.need(Attr.nid);
+
+      if (!userId) {
+        return this.output.data({
+          status: 'error',
+          error: 'not_authenticated',
+          message: 'User not authenticated'
+        });
+      }
+
+      if (!nodeId) {
+        return this.output.data({
+          status: 'error',
+          error: 'missing_node_id',
+          message: 'Node ID is required'
+        });
+      }
+
+      this.debug(`[MFS_ACTIVITY] Acknowledging file: ${nodeId} for user: ${userId}`);
+
+      const result = await this.db.await_proc('mfs_acknowledge_file', userId, nodeId);
+      const data = toArray(result)[0];
+
+      if (data && data.status === 'ok') {
+        const recipients = await this.yp.await_proc('user_sockets', userId);
+        const keys = { entity_id: Attr.hub_id };
+      
+        await RedisStore.sendData(
+          this.payload(data, { keys }), 
+          recipients
+        );
+      
+        await RedisStore.sendData(
+          this.payload({}, { service: 'notification.resync' }),
+          recipients
+        );
+
+        return this.output.data({
+          status: 'ok',
+          message: 'File acknowledged',
+          last_read_id: data.last_read_id,
+          mtime: data.mtime
+        });
+      } else {
+        throw new Error('Failed to acknowledge file');
+      }
+
+    } catch (error) {
+      this.warn('[MFS_ACTIVITY] Error in acknowledge_file:', error.message);
+      return this.output.data({
+        status: 'error',
+        error: 'internal_error',
+        message: error.message
+      });
+    }
+  }
+
 }
 
 module.exports = MfsActivity;
