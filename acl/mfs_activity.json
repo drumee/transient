@@ -27,6 +27,13 @@
       "permission": {
         "src": "read"
       }
+    },
+    "acknowledge_file": {
+      "doc": "Mark a specific file/folder as seen",
+      "scope": "hub",
+      "permission": {
+        "src": "write"
+      }
     }
   },
   "modules": {
