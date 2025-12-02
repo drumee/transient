@@ -51,15 +51,7 @@
     data-hash="<%= app.hash %>" 
     data-timestamp="<%= app.timestamp %>">
     <div class="margin-auto <%= ident %>-top" id="--router">
-      <div class="drumee-loading-wrapper">
-        <div class="loader-wrapper">
-          <div class="loader"></div>
-          <div class="loader"></div>
-          <div class="loader"></div>
-          <div class="loader"></div>
-          <div class="loader"></div>
-        </div>
-      </div>
+    <%= renderer.include('warmup.html') %>
     </div>
     <div class="margin-auto" id="--wrapper"></div>
     <script type="text/javascript" src="<%= app.location %>/app/<%= app.entry %>" crossorigin="true"></script> 
