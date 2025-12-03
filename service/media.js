@@ -123,6 +123,7 @@ class __media extends Mfs {
     const parent = this.source_granted();
     const pid = parent.id || this.home_id;
     let ownpath = decodeURI(this.input.get(Attr.ownpath));
+    const metadata = this.input.get('metadata');
     let node;
     //let exclude = this.input.need(Attr.socket_id);
     //if (exclude) exclude = [exclude];
@@ -152,6 +153,13 @@ class __media extends Mfs {
         return;
       }
       node = await this.db.await_proc("mfs_access_node", uid, dir.id);
+    }
+
+    // Update metadata if provided
+    if (metadata && node && node.nid) {
+      await this.db.await_proc("mfs_update_metadata", node.nid, JSON.stringify(metadata));
+      // Refresh node data after metadata update
+      node = await this.db.await_proc("mfs_access_node", uid, node.nid);
     }
 
     await this.changelog_write({ src: node, event: "media.new" });
