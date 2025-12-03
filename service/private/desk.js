@@ -300,6 +300,20 @@ class __private_desk extends Media {
     this.output.list(res)
   }
 
+  /**
+   * Get combined list of user + system wallpapers
+   * 
+   * Returns paginated array of wallpaper objects:
+   * - User wallpapers first (from folders tagged with folder_type='wallpapers')
+   * - System wallpapers second (from System hub Wallpapers folder)
+   * 
+   */
+  async my_wallpapers() {
+    const page = this.input.use(Attr.page, 1);
+    const data = await this.db.await_proc('desk_my_wallpapers', this.uid, page);
+    this.output.list(data);
+  }
+
 
   /**
    * 
