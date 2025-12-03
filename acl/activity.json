@@ -37,6 +37,6 @@
     }
   },
   "modules": {
-    "private": "service/mfs_activity"
+    "private": "service/private/activity"
   }
 }
