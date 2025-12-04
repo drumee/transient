@@ -1,4 +1,4 @@
-// File: service/mfs_activity.js
+// File: service/private/activity.js
 // Purpose: MFS activity notification service - handle read/unread status
 
 const { Entity } = require('@drumee/server-core');
