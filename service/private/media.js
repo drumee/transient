@@ -781,11 +781,10 @@ class __private_media extends Media {
     let lock = {
       uid: this.uid,
       date: new Date().getTime(),
-      //md5_hash
     };
     await this.db.await_proc("mfs_set_metadata", node.id, { lock }, 0);
   }
-
+  
   /**
    * Mutex. Get lock before writing into the file.
    */

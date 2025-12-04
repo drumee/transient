@@ -56,6 +56,12 @@
         "src": "owner"
       }
     },
+    "my_wallpapers": {
+      "scope": "hub",
+      "permission": {
+        "src": "owner"
+      }
+    },
     "home": {
       "scope": "hub",
       "permission": {

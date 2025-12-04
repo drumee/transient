@@ -123,7 +123,7 @@ class __media extends Mfs {
     const parent = this.source_granted();
     const pid = parent.id || this.home_id;
     let ownpath = decodeURI(this.input.get(Attr.ownpath));
-    const metadata = this.input.get('metadata');
+    const metadata = this.input.get(Attr.metadata);
     let node;
     //let exclude = this.input.need(Attr.socket_id);
     //if (exclude) exclude = [exclude];
