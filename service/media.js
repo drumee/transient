@@ -161,7 +161,6 @@ class __media extends Mfs {
       // Refresh node data after metadata update
       node = await this.db.await_proc("mfs_access_node", uid, node.nid);
     }
-
     await this.changelog_write({ src: node, event: "media.new" });
 
     if (/^(.|.+\/.+| )$/.test(dirname)) {

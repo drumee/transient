@@ -1,4 +1,4 @@
-// File: service/mfs_activity.js
+// File: service/private/activity.js
 // Purpose: MFS activity notification service - handle read/unread status
 
 const { Entity } = require('@drumee/server-core');
@@ -9,6 +9,35 @@ class MfsActivity extends Entity {
   initialize(opt) {
     super.initialize(opt);
     this.debug('[MFS_ACTIVITY] Service initialized');
+  }
+
+  /**
+   * Call stored procedure in user's database
+   * Ensures procedures run in user context, not hub context
+   * 
+   * @param {string} procName - Procedure name
+   * @param {...any} args - Procedure arguments
+   */
+  async _callUserProc(procName, ...args) {
+    const argsStr = args.map(arg => {
+      if (typeof arg === 'string') return `'${arg}'`;
+      if (typeof arg === 'object') return `'${JSON.stringify(arg)}'`;
+      return String(arg);
+    }).join(', ');
+
+    this.debug(`[MFS_ACTIVITY] Calling ${procName} in user DB with args: ${argsStr}`);
+
+    // Call via forward_proc to ensure it runs in user's database
+    const result = await this.yp.await_proc(
+      'forward_proc',
+      this.uid,
+      procName,
+      argsStr
+    );
+
+    this.debug(`[MFS_ACTIVITY] Result from ${procName}:`, result);
+    
+    return result;
   }
 
   /**
@@ -67,6 +96,7 @@ class MfsActivity extends Entity {
     }
     return this.output.data({
       status: 'error',
+      message: 'Failed to mark as read',
       last_read_id: 0,
     });
   }
@@ -97,11 +127,41 @@ class MfsActivity extends Entity {
    * - last_read_id: Last changelog ID marked as read
    */
   async get_last_read() {
+    // Get user's database name
+    const userDb = await this.yp.await_query(
+      'SELECT db_name FROM yp.entity WHERE id = ?',
+      this.uid
+    );
+    const userDbName = toArray(userDb)[0]?.db_name;
+
+    if (!userDbName) {
+      this.warn(`[MFS_ACTIVITY] User database not found for ${this.uid}`);
+      return this.output.data({
+        user_id: this.uid,
+        last_read_id: 0,
+        mtime: 0
+      });
+    }
+
+    this.debug(`[MFS_ACTIVITY] Querying mfs_ack from ${userDbName}`);
+
+    // Query mfs_ack from user's database
     const result = await this.db.await_query(
       'SELECT user_id, last_read_id, mtime FROM mfs_ack WHERE user_id = ?',
       this.uid
     );
-    this.output.data(result);
+
+    const data = toArray(result)[0];
+    
+    if (data) {
+      this.output.data(data);
+    } else {
+      this.output.data({
+        user_id: this.uid,
+        last_read_id: 0,
+        mtime: 0
+      });
+    }
 
   }
 
@@ -143,6 +203,7 @@ class MfsActivity extends Entity {
       });
 
     }
+    this.warn('[MFS_ACTIVITY] acknowledge_file failed:', data);
     this.output.data({
       status: 'error',
       message: 'File not acknowledged',
