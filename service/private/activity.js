@@ -121,6 +121,7 @@ class MfsActivity extends Entity {
     this.output.list(result);
   }
 
+  
   /**
    * Get unified activity log (contacts + MFS)
    * Endpoint: GET /activity.log
