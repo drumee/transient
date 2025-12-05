@@ -48,7 +48,7 @@ class MfsActivity extends Entity {
    * - unread_count: Number of unread notifications
    */
   async get_unread_count() {
-    const result = await this.db.await_proc('mfs_get_unread_count', this.uid);
+    const result = await this._callUserProc('mfs_get_unread_count', this.uid);
     const data = toArray(result)[0] || { unread_count: 0 };
 
     return this.output.data({
@@ -83,7 +83,7 @@ class MfsActivity extends Entity {
 
     this.debug(`[MFS_ACTIVITY] Marking all read for user ${this.uid}, last_id: ${lastId}`);
 
-    const result = await this.db.await_proc('mfs_mark_all_read', this.uid, lastId);
+    const result = await this._callUserProc('mfs_mark_all_read', this.uid, lastId);
     const data = toArray(result)[0];
 
     if (data && data.status === 'ok') {
@@ -94,6 +94,8 @@ class MfsActivity extends Entity {
         mtime: data.mtime
       });
     }
+
+    this.warn('[MFS_ACTIVITY] mark_all_read failed:', data);
     return this.output.data({
       status: 'error',
       message: 'Failed to mark as read',
@@ -115,7 +117,23 @@ class MfsActivity extends Entity {
    */
   async get_feed() {
     const page = this.input.use(Attr.page) || 1;
-    const result = await this.db.await_proc('mfs_get_activity_feed', this.uid, page);
+    const result = await this._callUserProc('mfs_get_activity_feed', this.uid, page);
+    this.output.list(result);
+  }
+
+  /**
+   * Get unified activity log (contacts + MFS)
+   * Endpoint: GET /activity.log
+   * 
+   * Priority: ALL contact events first, then ALL MFS events
+   */
+  async log() {
+    const page = this.input.use(Attr.page) || 1;
+    
+    this.debug(`[ACTIVITY] Getting unified log for user ${this.uid}, page: ${page}`);
+    
+    const result = await this._callUserProc('activity_get_log', this.uid, page);
+    
     this.output.list(result);
   }
 
@@ -147,7 +165,7 @@ class MfsActivity extends Entity {
 
     // Query mfs_ack from user's database
     const result = await this.db.await_query(
-      'SELECT user_id, last_read_id, mtime FROM mfs_ack WHERE user_id = ?',
+      'SELECT user_id, last_read_id, mtime FROM ${userDbName}.mfs_ack WHERE user_id = ?',
       this.uid
     );
 
@@ -178,7 +196,7 @@ class MfsActivity extends Entity {
 
     this.debug(`[MFS_ACTIVITY] Acknowledging file: ${nodeId} for user: ${userId}`);
 
-    const result = await this.db.await_proc('mfs_acknowledge_file', userId, nodeId);
+    const result = await this._callUserProc('mfs_acknowledge_file', userId, nodeId);
     const data = toArray(result)[0];
 
     if (data && data.status === 'ok') {
