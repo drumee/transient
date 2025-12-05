@@ -16,7 +16,6 @@
  */
 
 const { isArray, after, union, filter, isEmpty } = require('lodash');
-const { toASCII } = require('punycode/');
 const Media = require('../media');
 
 const {
@@ -32,12 +31,12 @@ class __private_desk extends Media {
    */
   constructor(...args) {
     super(...args);
-    this.pre_create = this.pre_create.bind(this);
+    this.check_quota = this.check_quota.bind(this);
     this.pre_copy = this.pre_copy.bind(this);
     this.get_env = this.get_env.bind(this);
     this.home = this.home.bind(this);
     this.create_hub = this.create_hub.bind(this);
-    this.create_website = this.create_website.bind(this);
+    // this.create_website = this.create_website.bind(this);
     this.leave_hub = this.leave_hub.bind(this);
     this.create_account = this.create_account.bind(this);
     this.get_workers = this.get_workers.bind(this);
@@ -82,7 +81,7 @@ class __private_desk extends Media {
   async _createHub(args, opt = {}) {
     const domain = this.user.get(Attr.domain);
     const owner_id = this.uid;
-    let { area, filename, hostname } = args;
+    let { area, filename, hostname, pid } = args;
     if (!domain || !area) {
       this.warn("MAL_FORMED_DATA", { args }, { domain, area });
       return this.exception.user("MAL_FORMED_DATA");
@@ -92,15 +91,17 @@ class __private_desk extends Media {
       hostname = uniqueId()
       filename = hostname;
     } else {
-      hostname = hostname || filename;
-      hostname = hostname.replace(/[ \.,;:!&~#'|@*\$><\?]/, '');
+      hostname = filename;
+      hostname = hostname.replace(/[ \.,;:!&~#'|@*\$><\?\(\)\[\]\{\}\"\/]/g, '');
+      this.debug("AAA:96", hostname)
       hostname = await this.yp.await_func("strip_accents", hostname);
       hostname = hostname.replace(/\-$/, '');
       hostname = hostname.trim().toLowerCase();
-      hostname = toASCII(hostname);
+      hostname = new URL(`http://${hostname}`).hostname;
     }
 
     opt.lang = this.input.use(Attr.lang) || "en";
+    filename = await this.db.await_func("unique_filename", pid, filename, "");
     args = { hostname, area, filename, owner_id, domain };
     this.debug("AAA:102", JSON.stringify(args), JSON.stringify(opt))
     const rows = await this.db.await_proc(`desk_create_hub`, args, opt);
@@ -120,7 +121,7 @@ class __private_desk extends Media {
         hub_db = hub_db || r.db_name;
       }
     }
-    return { hub_id, hub_db, home_id }
+    return { filename, hostname, hub_id, hub_db, home_id }
 
   }
 
@@ -128,7 +129,7 @@ class __private_desk extends Media {
    * 
    * @returns 
    */
-  async pre_create() {
+  async check_quota() {
     const area = this.input.need(Attr.area, Attr.private);
     const folders = [];
     if (isArray(this.input.use('folders'))) {
@@ -136,7 +137,6 @@ class __private_desk extends Media {
         folders.push({ path });
       }
     }
-
 
     let remain = 0
     let { private_hub, share_hub, public_hub } = await this.yp.await_proc("get_quota", this.uid) || {};
@@ -157,8 +157,9 @@ class __private_desk extends Media {
         break;
     }
     if (remain <= 0) {
-      this.warn("HUB LIMIT REACHED", hub_limit);
-      this.exception.user(message);
+      this.output.data({
+        error: "QUOTA_EXCEEDED"
+      })
       return;
     }
     this._done();
@@ -414,41 +415,41 @@ class __private_desk extends Media {
    * 
    * @returns 
    */
-  async create_website() {
-    const pid = this.input.use(Attr.pid) || this.home_id;
-    const filename = this.input.need(Attr.filename);
-    const hostname = this.user.get(Attr.hostname);
-    let hubname = this.input.get(Attr.hubname) || filename || uniqueId();
+  // async create_website() {
+  //   const pid = this.input.use(Attr.pid) || this.home_id;
+  //   const filename = this.input.need(Attr.filename);
+  //   const hostname = this.user.get(Attr.hostname);
+  //   let hubname = this.input.get(Attr.hubname) || filename || uniqueId();
 
-    const args = { hostname, area: Attr.public, filename };
-    let { home_id, hub_id } = await this._createHub(args);
-    if (!hub_id) {
-      return this.output.data({ status: 'CREATION_FAILED' })
-    }
+  //   const args = { pid, hostname, area: Attr.public, filename };
+  //   let { home_id, hub_id } = await this._createHub(args);
+  //   if (!hub_id) {
+  //     return this.output.data({ status: 'CREATION_FAILED' })
+  //   }
 
-    const hub = await this.yp.await_proc("get_hub", hub_id);
-    if (isEmpty(hub)) {
-      this.exception.server("Corrupted hub");
-      return;
-    }
+  //   const hub = await this.yp.await_proc("get_hub", hub_id);
+  //   if (isEmpty(hub)) {
+  //     this.exception.server("Corrupted hub");
+  //     return;
+  //   }
 
-    if (pid && pid != this.get(Attr.home_id)) {
-      await this.db.await_proc("mfs_move", hub.id, pid)
-    }
-    let media = await this.db.await_proc("mfs_access_node", this.uid, hub.id);
-    media.hub_id = media.id;
-    media.hubname = hubname;
-    media.filename = filename;
-    media.privilege = media.permission;
-    media.actual_home_id = home_id;
-    media.isalink = 1;
-    let service = "media.new";
-    let keys = { pid: Attr.nid, vhost: 'vhost' };
-    let sockets = await this.yp.await_proc('entity_sockets', media.hub_id);
-    await RedisStore.sendData(this.payload(media, { service, keys }), sockets);
-    await this.changelog_write({ src: media, event: "media.new" });
-    this.output.data(media);
-  }
+  //   if (pid && pid != this.get(Attr.home_id)) {
+  //     await this.db.await_proc("mfs_move", hub.id, pid)
+  //   }
+  //   let media = await this.db.await_proc("mfs_access_node", this.uid, hub.id);
+  //   media.hub_id = media.id;
+  //   media.hubname = hubname;
+  //   media.filename = filename;
+  //   media.privilege = media.permission;
+  //   media.actual_home_id = home_id;
+  //   media.isalink = 1;
+  //   let service = "media.new";
+  //   let keys = { pid: Attr.nid, vhost: 'vhost' };
+  //   let sockets = await this.yp.await_proc('entity_sockets', media.hub_id);
+  //   await RedisStore.sendData(this.payload(media, { service, keys }), sockets);
+  //   await this.changelog_write({ src: media, event: "media.new" });
+  //   this.output.data(media);
+  // }
 
 
   /**
@@ -456,13 +457,11 @@ class __private_desk extends Media {
    * @returns 
    */
   async create_hub() {
-    const pid = this.input.use(Attr.pid);
+    const pid = this.input.use(Attr.pid) || this.home_id;
     const filename = this.input.need(Attr.filename);
     const area = this.input.need(Attr.area, Attr.private);
-    let hubname = this.input.get(Attr.hubname) || filename || uniqueId();
-    const args = { hubname, area, filename };
 
-    let { home_id, hub_id } = await this._createHub(args);
+    let { filename: actual_filename, hostname, hub_id } = await this._createHub({ area, filename, pid });
     if (!hub_id) {
       return this.output.data({ status: 'CREATION_FAILED' })
     }
@@ -478,9 +477,10 @@ class __private_desk extends Media {
     //await this.yp.await_proc('hub_update_name', hub.id, filename);
     let media = await this.db.await_proc("mfs_access_node", this.uid, hub.id);
     media.hub_id = hub_id;
+    media.area = area;
     media.vhost = hub.vhost;
-    media.filename = filename;
-    media.hubname = hubname;
+    media.filename = actual_filename;
+    media.hostname = hostname;
     media.privilege = media.permission;
     media.actual_home_id = hub.home_id;
     media.isalink = 1;

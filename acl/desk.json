@@ -9,22 +9,17 @@
     "create_external_room": {
       "scope": "hub",
       "permission": {
-        "src": "owner"
+        "src": "owner",
+        "preproc": "check_quota"
       }
     },
     "create_hub": {
       "scope": "hub",
       "permission": {
         "src": "owner",
-        "preproc": "pre_create"
+        "preproc": "check_quota"
       },
       "log": true
-    },
-    "create_website": {
-      "scope": "domain",
-      "permission": {
-        "src": "admin"
-      }
     },
     "create_wicket": {
       "scope": "hub",
