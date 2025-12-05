@@ -258,6 +258,22 @@ class MfsActivity extends Entity {
   }
 
   /**
+   * Get unified activity log (contacts + MFS)
+   * Endpoint: GET /activity.log
+   * 
+   * Priority: ALL contact events first, then ALL MFS events
+   */
+  async log() {
+    const page = this.input.use(Attr.page) || 1;
+    
+    this.debug(`[ACTIVITY] Getting unified log for user ${this.uid}, page: ${page}`);
+    
+    const result = await this._callUserProc('activity_get_log', this.uid, page);
+    
+    this.output.list(result);
+  }
+
+  /**
    * Get last read information
    * Endpoint: GET /mfs_activity.get_last_read
    * 
