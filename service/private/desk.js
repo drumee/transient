@@ -93,7 +93,6 @@ class __private_desk extends Media {
     } else {
       hostname = filename;
       hostname = hostname.replace(/[ \.,;:!&~#'|@*\$><\?\(\)\[\]\{\}\"\/]/g, '');
-      this.debug("AAA:96", hostname)
       hostname = await this.yp.await_func("strip_accents", hostname);
       hostname = hostname.replace(/\-$/, '');
       hostname = hostname.trim().toLowerCase();
@@ -103,7 +102,6 @@ class __private_desk extends Media {
     opt.lang = this.input.use(Attr.lang) || "en";
     filename = await this.db.await_func("unique_filename", pid, filename, "");
     args = { hostname, area, filename, owner_id, domain };
-    this.debug("AAA:102", JSON.stringify(args), JSON.stringify(opt))
     const rows = await this.db.await_proc(`desk_create_hub`, args, opt);
     let hub_id, hub_db, home_id;
     for (let r of rows) {
@@ -121,6 +119,10 @@ class __private_desk extends Media {
         hub_db = hub_db || r.db_name;
       }
     }
+
+    /** place the folder at the end on the user desk */
+    let { count } = await this.db.await_query("SELECT count(*) count FROM media");
+    await this.db.await_query("UPDATE media media SET rank=? WHERE id=?", count, hub_id);
     return { filename, hostname, hub_id, hub_db, home_id }
 
   }
@@ -377,9 +379,6 @@ class __private_desk extends Media {
         `'${hub.id}', '${guest.id}'`);
     }
     let media = await this.db.await_proc("mfs_access_node", this.uid, hub.id);
-    media.hub_id = media.id;
-    media.privilege = media.permission;
-    media.actual_home_id = home_id;
     await this.notify_user(this.uid, media);
     res.link = `${this.input.homepath(hub.vhost)}/#/dmz/inbound/token=${share_id}`;
     this.output.data(res)
@@ -461,7 +460,7 @@ class __private_desk extends Media {
     const filename = this.input.need(Attr.filename);
     const area = this.input.need(Attr.area, Attr.private);
 
-    let { filename: actual_filename, hostname, hub_id } = await this._createHub({ area, filename, pid });
+    let { filename: actual_filename, hub_id } = await this._createHub({ area, filename, pid });
     if (!hub_id) {
       return this.output.data({ status: 'CREATION_FAILED' })
     }
@@ -474,15 +473,12 @@ class __private_desk extends Media {
     if (pid && pid != this.get(Attr.home_id)) {
       await this.db.await_proc("mfs_move", hub.id, pid)
     }
-    //await this.yp.await_proc('hub_update_name', hub.id, filename);
-    let media = await this.db.await_proc("mfs_access_node", this.uid, hub.id);
+    let media = await this.db.await_proc("mfs_access_node", this.uid, hub_id);
     media.hub_id = hub_id;
     media.area = area;
-    media.vhost = hub.vhost;
     media.filename = actual_filename;
-    media.hostname = hostname;
     media.privilege = media.permission;
-    media.actual_home_id = hub.home_id;
+    media.home_id = media.actual_home_id;
     media.isalink = 1;
     media.ownpath = '/';
     let sockets = await this.yp.await_proc('entity_sockets', media.hub_id);
