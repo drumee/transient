@@ -1275,6 +1275,40 @@ class __private_contact extends Contact {
       res.status = 'EMAIL_NOT_SENT';
       res.failed = sent.error;
     }
+
+    // Log contact activities
+    if (!isEmpty(drumate) && res.status !== 'EMAIL_NOT_SENT') {
+      try {
+        // Log invite_sent (for sender)
+        await this.yp.await_proc(
+          'contact_log_activity',
+          this.uid,
+          drumate.id,
+          'invite_sent',
+          {
+            email: email,
+            message: message,
+            contact_id: newcontact.id
+          }
+        );
+
+        // Log invite_received (for receiver)
+        await this.yp.await_proc(
+          'contact_log_activity',
+          this.uid,
+          drumate.id,
+          'invite_received',
+          {
+            email: email,
+            message: message,
+            from_fullname: this.user.get('fullname')
+          }
+        );
+      } catch (error) {
+        this.warn('[CONTACT] Failed to log invite activity:', error.message);
+      }
+    }
+
     this.output.data(res);
   }
 
@@ -1343,6 +1377,22 @@ class __private_contact extends Contact {
     res = { ...res, ...data };
     let sockets = await this.yp.await_proc('user_sockets', drumate.id);
     await RedisStore.sendData(this.payload(res), sockets);
+
+    // Log invite_refused activity
+    try {
+      await this.yp.await_proc(
+        'contact_log_activity',
+        this.uid,              // Who refused
+        drumate.id,            // Who will see this notification
+        'invite_refused',
+        {
+          email: drumate.email,
+          refuser_fullname: this.user.get('fullname')
+        }
+      );
+    } catch (error) {
+      this.warn('[CONTACT] Failed to log refuse activity:', error.message);
+    }
 
     this.output.data(r);
 
@@ -1432,6 +1482,23 @@ class __private_contact extends Contact {
 
     let sockets = await this.yp.await_proc('user_sockets', drumate.id);
     await RedisStore.sendData(this.payload(data), sockets);
+
+    // Log invite_accepted activity
+    try {
+      await this.yp.await_proc(
+        'contact_log_activity',
+        this.uid,              // Who accepted 
+        drumate.id,            // Who will see this notification
+        'invite_accepted',
+        {
+          email: drumate.email,
+          accepter_fullname: this.user.get('fullname')
+        }
+      );
+    } catch (error) {
+      this.warn('[CONTACT] Failed to log accept activity:', error.message);
+    }
+
     this.output.data(res);
     this.output.data(res);
   }
