@@ -274,6 +274,22 @@ class MfsActivity extends Entity {
   }
 
   /**
+   * Get activity log for a specific folder
+   * Endpoint: GET /activity.folder_log
+   * Shows MFS events related to a specific folder/node
+   */
+  async folder_log() {
+    const nid = this.input.need(Attr.nid);
+    const page = this.input.use(Attr.page) || 1;
+    
+    this.debug(`[ACTIVITY] Getting folder log for nid: ${nid}, user: ${this.uid}, page: ${page}`);
+    
+    const result = await this._callUserProc('activity_get_folder_log', this.uid, nid, page);
+    
+    this.output.list(result);
+  }
+
+  /**
    * Get last read information
    * Endpoint: GET /mfs_activity.get_last_read
    * 
