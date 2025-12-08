@@ -1615,15 +1615,15 @@ class __private_contact extends Contact {
   }
 
   /**
-   * Get contact folder summary
+   * Get contact summary from contact table
    * Permission: Owner only
    * Input:
    * - hub_id
    * - nid
    * 
    * Output:
-   * - contact_count: Number of contacts
-   * - last_updated: Most recent update timestamp
+   * - contact_count: Number of active contacts (from contact table)
+   * - last_updated: Most recent contact mtime
    */
   async summary() {
     const hubId = this.input.need(Attr.hub_id);
@@ -1657,12 +1657,7 @@ class __private_contact extends Contact {
     }
     
     // Get summary from hub database
-    const result = await this.yp.await_proc(
-      'forward_proc',
-      hubId,
-      'mfs_contact_summary',
-      `'${hubId}', '${nid}'`
-    );
+    const result = await this.db.await_proc('contact_summary', hubId, nid);
     
     const data = toArray(result)[0];
     
@@ -1670,8 +1665,8 @@ class __private_contact extends Contact {
       this.output.data(data);
     } else {
       this.output.data({
-        status: 'error',
-        message: 'Failed to get summary'
+        contact_count: 0,
+        last_updated: 0
       });
     }
   }
