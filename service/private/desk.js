@@ -322,67 +322,67 @@ class __private_desk extends Media {
    * 
    * @returns 
    */
-  async create_external_room() {
-    let emails = this.input.need(Attr.email);
-    const filename = this.input.need(Attr.filename);
-    const permission = this.input.get(Attr.permission) || Privilege.UPLOAD;
-    const pw = this.input.get(Attr.password) || '';
-    const days = this.input.get(Attr.days) || 10;
-    const hours = this.input.get(Attr.hours) || 0;
-    const expiry = days * 24 + hours;
+  // async create_external_room() {
+  //   let emails = this.input.need(Attr.email);
+  //   const filename = this.input.need(Attr.filename);
+  //   const permission = this.input.get(Attr.permission) || Privilege.UPLOAD;
+  //   const pw = this.input.get(Attr.password) || '';
+  //   const days = this.input.get(Attr.days) || 10;
+  //   const hours = this.input.get(Attr.hours) || 0;
+  //   const expiry = days * 24 + hours;
 
-    let drumate;
-    let email;
-    let guest;
-    let res = {};
-    let home;
-    let share_id = this.randomString();
+  //   let drumate;
+  //   let email;
+  //   let guest;
+  //   let res = {};
+  //   let home;
+  //   let share_id = this.randomString();
 
-    if (!isArray(emails)) {
-      emails = [emails];
-    }
+  //   if (!isArray(emails)) {
+  //     emails = [emails];
+  //   }
 
-    for (email of emails) {
-      drumate = await this.yp.await_proc('drumate_exists', email);
-      if (!isEmpty(drumate)) {
-        res.status = 'DRUMATE_EMAIL';
-        return this.output.data(res)
-      }
-    }
+  //   for (email of emails) {
+  //     drumate = await this.yp.await_proc('drumate_exists', email);
+  //     if (!isEmpty(drumate)) {
+  //       res.status = 'DRUMATE_EMAIL';
+  //       return this.output.data(res)
+  //     }
+  //   }
 
-    const args = { area: 'dmz', filename };
-    let { home_id, hub_id } = await this._createHub(args);
-    if (!hub_id) {
-      res.status = 'CREATION_FAILED';
-      return this.output.data(res)
-    }
+  //   const args = { area: 'dmz', filename };
+  //   let { home_id, hub_id } = await this._createHub(args);
+  //   if (!hub_id) {
+  //     res.status = 'CREATION_FAILED';
+  //     return this.output.data(res)
+  //   }
 
-    const hub = await this.yp.await_proc("get_hub", hub_id);
+  //   const hub = await this.yp.await_proc("get_hub", hub_id);
 
-    if (isEmpty(hub)) {
-      res.status = 'CORRUPTED_HUB';
-      return this.output.data(res);
-    }
+  //   if (isEmpty(hub)) {
+  //     res.status = 'CORRUPTED_HUB';
+  //     return this.output.data(res);
+  //   }
 
-    await this.db.await_proc("mfs_move", hub.id, this.get(Attr.home_id))
-    home = await this.yp.await_proc('forward_proc', hub.id, 'mfs_home', ``)
+  //   await this.db.await_proc("mfs_move", hub.id, this.get(Attr.home_id))
+  //   home = await this.yp.await_proc('forward_proc', hub.id, 'mfs_home', ``)
 
-    let p = await this.yp.await_proc('forward_proc', hub.id, 'permission_grant',
-      `'${home.home_id}', '*', ${expiry}, ${permission}, 'link', '${share_id}'`);
+  //   let p = await this.yp.await_proc('forward_proc', hub.id, 'permission_grant',
+  //     `'${home.home_id}', '*', ${expiry}, ${permission}, 'link', '${share_id}'`);
 
-    res = await this.yp.await_proc('forward_proc', hub.id, 'dmz_add_share',
-      `'${share_id}', '${p.id}','${this.uid}','${hub.id}','${pw}'`);
+  //   res = await this.yp.await_proc('forward_proc', hub.id, 'dmz_add_share',
+  //     `'${share_id}', '${p.id}','${this.uid}','${hub.id}','${pw}'`);
 
-    for (email of emails) {
-      guest = await this.yp.await_proc('yp_add_guest', email, '', '', 0);
-      await this.yp.await_proc('forward_proc', hub.id, 'dmz_add_map_share',
-        `'${hub.id}', '${guest.id}'`);
-    }
-    let media = await this.db.await_proc("mfs_access_node", this.uid, hub.id);
-    await this.notify_user(this.uid, media);
-    res.link = `${this.input.homepath(hub.vhost)}/#/dmz/inbound/token=${share_id}`;
-    this.output.data(res)
-  }
+  //   for (email of emails) {
+  //     guest = await this.yp.await_proc('yp_add_guest', email, '', '', 0);
+  //     await this.yp.await_proc('forward_proc', hub.id, 'dmz_add_map_share',
+  //       `'${hub.id}', '${guest.id}'`);
+  //   }
+  //   let media = await this.db.await_proc("mfs_access_node", this.uid, hub.id);
+  //   await this.notify_user(this.uid, media);
+  //   res.link = `${this.input.homepath(hub.vhost)}/#/dmz/inbound/token=${share_id}`;
+  //   this.output.data(res)
+  // }
 
   /**
    * 
