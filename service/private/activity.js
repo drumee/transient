@@ -6,10 +6,6 @@ const { Attr, toArray } = require('@drumee/server-essentials');
 
 class MfsActivity extends Entity {
 
-  initialize(opt) {
-    super.initialize(opt);
-    this.debug('[MFS_ACTIVITY] Service initialized');
-  }
 
   /**
    * Call stored procedure in user's database
@@ -19,24 +15,19 @@ class MfsActivity extends Entity {
    * @param {...any} args - Procedure arguments
    */
   async _callUserProc(procName, ...args) {
-    const argsStr = args.map(arg => {
-      if (typeof arg === 'string') return `'${arg}'`;
-      if (typeof arg === 'object') return `'${JSON.stringify(arg)}'`;
-      return String(arg);
-    }).join(', ');
-
-    this.debug(`[MFS_ACTIVITY] Calling ${procName} in user DB with args: ${argsStr}`);
+    // const argsStr = args.map(arg => {
+    //   if (typeof arg === 'string') return `'${arg}'`;
+    //   if (typeof arg === 'object') return `'${JSON.stringify(arg)}'`;
+    //   return String(arg);
+    // }).join(', ');
+    const proc = `${this.user.get(Attr.db_name)}.${procName}`;
+    this.debug(`[MFS_ACTIVITY] Calling ${proc}`, ...args);
 
     // Call via forward_proc to ensure it runs in user's database
-    const result = await this.yp.await_proc(
-      'forward_proc',
-      this.uid,
-      procName,
-      argsStr
-    );
+    const result = await this.yp.await_proc(`${proc}`, ...args);
 
-    this.debug(`[MFS_ACTIVITY] Result from ${procName}:`, result);
-    
+    // this.debug(`[MFS_ACTIVITY] Result from ${procName}:`, result);
+
     return result;
   }
 
@@ -72,7 +63,7 @@ class MfsActivity extends Entity {
   async mark_all_read() {
 
     let lastId = parseInt(this.input.get('last_id'));
-
+    this.debug(`[MFS_ACTIVITY]`, this.user.toJSON());
     if (!lastId || lastId <= 0) {
       const latestResult = await this.yp.await_query(
         'SELECT MAX(id) as max_id FROM mfs_changelog'
@@ -121,7 +112,7 @@ class MfsActivity extends Entity {
     this.output.list(result);
   }
 
-  
+
   /**
    * Get unified activity log (contacts + MFS)
    * Endpoint: GET /activity.log
@@ -130,7 +121,6 @@ class MfsActivity extends Entity {
    */
   async log() {
     const page = this.input.use(Attr.page) || 1;
-    
     this.debug(`[ACTIVITY] Getting unified log for user ${this.uid}, page: ${page}`);
     
     const result = await this._callUserProc('activity_get_log', this.uid, page);
@@ -171,7 +161,7 @@ class MfsActivity extends Entity {
     );
 
     const data = toArray(result)[0];
-    
+
     if (data) {
       this.output.data(data);
     } else {

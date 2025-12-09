@@ -578,6 +578,12 @@
         "src": "write"
       }
     },
+    "summary": {
+      "scope": "hub",
+      "permission": {
+        "src": "read"
+      }
+    },
     "server_export": {
       "scope": "domain",
       "permission": {

@@ -784,7 +784,7 @@ class __private_media extends Media {
     };
     await this.db.await_proc("mfs_set_metadata", node.id, { lock }, 0);
   }
-  
+
   /**
    * Mutex. Get lock before writing into the file.
    */
@@ -1367,7 +1367,6 @@ class __private_media extends Media {
     let { node } = this.source_granted();
     let { nid, hub_id } = node;
     let filename = decodeURI(this.input.need(FILENAME));
-
     if (/^(.|.+\/.+| )$/.test(filename)) {
       this.exception.user("INVALID_FILENAME");
       return;
@@ -1419,6 +1418,10 @@ class __private_media extends Media {
         }
         res = await this.db.await_proc("mfs_rename", nid, filename);
         let attr = newItems[this.uid] || (await this.db.await_proc("mfs_access_node", this.uid, nid));
+        attr.hub_id = attr.actual_hub_id;
+        attr.filename = attr.actual_filename;
+        attr.privilege = attr.permission;
+        attr.home_id = attr.actual_home_id;
         newItems[this.uid] = attr;
         let old = oldItems[this.uid];
         if (old) {
@@ -1691,9 +1694,6 @@ class __private_media extends Media {
 
     readdirSync(folderPath).forEach((file) => {
       var ext = extname(file);
-      //.split('.').pop();  // If . need to be removed
-
-      // var mimeT = mime.lookup(file);
       let pathLocal = basename(path, file);
 
       fileList.push({
@@ -1705,6 +1705,15 @@ class __private_media extends Media {
     });
     this.output.add_data({ info: { path: path } });
     this.output.data(fileList);
+  }
+
+  /**
+   * 
+   */
+  async summary() {
+    const nid = this.input.need(Attr.nid);
+    let data = await this.db.await_proc("mfs_node_summary", nid);
+    this.output.data(data);
   }
 }
 
