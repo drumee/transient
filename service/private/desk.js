@@ -300,6 +300,80 @@ class __private_desk extends Media {
     this.output.list(res)
   }
 
+  /**
+   * Get disk usage statistics for user
+   * 
+   * Shows storage used by:
+   * - User's personal files
+   * - Files in hubs OWNED by user
+   * 
+   * Excludes:
+   * - Files in hubs where user is member but NOT owner
+   */
+  async disk_usage() {
+    const category = this.input.use(Attr.category) || null;
+    const page = this.input.use(Attr.page) || 1;
+    
+    this.debug(`[DESK] Getting disk usage for user: ${this.uid}, category: ${category}, page: ${page}`);
+    
+    // Get user's quota
+    const userInfo = await this.yp.await_query(
+      'SELECT quota FROM yp.drumate WHERE id = ?',
+      this.uid
+    );
+    const quotaStr = toArray(userInfo)[0]?.quota;
+    let quota = 16106127360; // Default: 15GB
+    
+    if (quotaStr) {
+      try {
+        const quotaObj = JSON.parse(quotaStr);
+        quota = quotaObj.storage || quota;
+      } catch (e) {
+        this.warn('[DESK] Failed to parse quota:', e.message);
+      }
+    }
+    
+    // Get disk usage from procedure
+    const results = await this.db.await_proc('desk_disk_usage', this.uid, category, page);
+    
+    const categoryStats = toArray(results[0]) || [];
+    const totalStats = toArray(results[1])[0] || { total_used: 0, total_count: 0 };
+    const files = toArray(results[2]) || [];
+    
+    // Build breakdown by category
+    const breakdown = {};
+    let totalUsed = totalStats.total_used || 0;
+    
+    for (let stat of categoryStats) {
+      const percentage = totalUsed > 0 ? (stat.size / totalUsed * 100).toFixed(2) : 0;
+      breakdown[stat.category] = {
+        size: stat.size,
+        count: stat.count,
+        percentage: parseFloat(percentage)
+      };
+    }
+    
+    const itemsPerPage = 10;
+    const totalPages = Math.ceil(totalStats.total_count / itemsPerPage);
+    
+    // Build response
+    const response = {
+      total_used: totalUsed,
+      quota: quota,
+      percentage: quota > 0 ? ((totalUsed / quota) * 100).toFixed(2) : 0,
+      breakdown: breakdown,
+      files: files,
+      pagination: {
+        page: page,
+        total_items: totalStats.total_count,
+        total_pages: totalPages,
+        items_per_page: itemsPerPage
+      }
+    };
+    
+    this.output.data(response);
+  }
+
 
   /**
    * 
