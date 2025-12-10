@@ -234,6 +234,13 @@
         "src": "owner"
       }
     },
+    "summary": {
+      "doc": "Get contact summary from contact table",
+      "scope": "hub",
+      "permission": {
+        "src": "owner"
+      }
+    },
     "unblock": {
       "scope": "hub",
       "permission": {
