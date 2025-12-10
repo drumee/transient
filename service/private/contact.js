@@ -1614,6 +1614,62 @@ class __private_contact extends Contact {
     }).catch(this.fallback);
   }
 
+  /**
+   * Get contact summary from contact table
+   * Permission: Owner only
+   * Input:
+   * - hub_id
+   * - nid
+   * 
+   * Output:
+   * - contact_count: Number of active contacts (from contact table)
+   * - last_updated: Most recent contact mtime
+   */
+  async summary() {
+    const hubId = this.input.need(Attr.hub_id);
+    const nid = this.input.need(Attr.nid);
+    
+    this.debug(`[CONTACT] Getting summary for hub: ${hubId}, nid: ${nid}`);
+    
+    // Verify user has access and is owner
+    const node = await this.yp.await_proc(
+      'forward_proc',
+      hubId,
+      'mfs_access_node',
+      `'${this.uid}', '${nid}'`
+    );
+    
+    const nodeData = toArray(node)[0];
+    
+    if (!nodeData) {
+      return this.output.data({
+        status: 'error',
+        message: 'Folder not found'
+      });
+    }
+    
+    // Check if user is owner
+    if (nodeData.owner_id !== this.uid) {
+      return this.output.data({
+        status: 'error',
+        message: 'Permission denied: owner only'
+      });
+    }
+    
+    // Get summary from hub database
+    const result = await this.db.await_proc('contact_summary', hubId, nid);
+    
+    const data = toArray(result)[0];
+    
+    if (data) {
+      this.output.data(data);
+    } else {
+      this.output.data({
+        contact_count: 0,
+        last_updated: 0
+      });
+    }
+  }
 }
 
 

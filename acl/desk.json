@@ -92,6 +92,13 @@
       "permission": {
         "src": "owner"
       }
+    },
+    "disk_usage": {
+      "doc": "Get disk usage statistics for user (owned files + owned hubs)",
+      "scope": "hub",
+      "permission": {
+        "src": "owner"
+      }
     }
   },
   "modules": {
