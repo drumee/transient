@@ -148,7 +148,7 @@ class mfs extends Mfs {
     const result = await this.yp.await_proc(
       'forward_proc',
       hubId,
-      'mfs_node_info',
+      'mfs_node_summary',
       `'${hubId}', '${nid}'`
     );
     
