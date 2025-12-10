@@ -6,11 +6,10 @@
         "src": "owner"
       }
     },
-    "create_external_room": {
+    "disk_usage": {
       "scope": "hub",
       "permission": {
-        "src": "owner",
-        "preproc": "check_quota"
+        "src": "owner"
       }
     },
     "create_hub": {

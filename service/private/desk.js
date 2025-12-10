@@ -317,72 +317,19 @@ class __private_desk extends Media {
     this.output.list(data);
   }
 
-
   /**
    * 
-   * @returns 
    */
-  // async create_external_room() {
-  //   let emails = this.input.need(Attr.email);
-  //   const filename = this.input.need(Attr.filename);
-  //   const permission = this.input.get(Attr.permission) || Privilege.UPLOAD;
-  //   const pw = this.input.get(Attr.password) || '';
-  //   const days = this.input.get(Attr.days) || 10;
-  //   const hours = this.input.get(Attr.hours) || 0;
-  //   const expiry = days * 24 + hours;
-
-  //   let drumate;
-  //   let email;
-  //   let guest;
-  //   let res = {};
-  //   let home;
-  //   let share_id = this.randomString();
-
-  //   if (!isArray(emails)) {
-  //     emails = [emails];
-  //   }
-
-  //   for (email of emails) {
-  //     drumate = await this.yp.await_proc('drumate_exists', email);
-  //     if (!isEmpty(drumate)) {
-  //       res.status = 'DRUMATE_EMAIL';
-  //       return this.output.data(res)
-  //     }
-  //   }
-
-  //   const args = { area: 'dmz', filename };
-  //   let { home_id, hub_id } = await this._createHub(args);
-  //   if (!hub_id) {
-  //     res.status = 'CREATION_FAILED';
-  //     return this.output.data(res)
-  //   }
-
-  //   const hub = await this.yp.await_proc("get_hub", hub_id);
-
-  //   if (isEmpty(hub)) {
-  //     res.status = 'CORRUPTED_HUB';
-  //     return this.output.data(res);
-  //   }
-
-  //   await this.db.await_proc("mfs_move", hub.id, this.get(Attr.home_id))
-  //   home = await this.yp.await_proc('forward_proc', hub.id, 'mfs_home', ``)
-
-  //   let p = await this.yp.await_proc('forward_proc', hub.id, 'permission_grant',
-  //     `'${home.home_id}', '*', ${expiry}, ${permission}, 'link', '${share_id}'`);
-
-  //   res = await this.yp.await_proc('forward_proc', hub.id, 'dmz_add_share',
-  //     `'${share_id}', '${p.id}','${this.uid}','${hub.id}','${pw}'`);
-
-  //   for (email of emails) {
-  //     guest = await this.yp.await_proc('yp_add_guest', email, '', '', 0);
-  //     await this.yp.await_proc('forward_proc', hub.id, 'dmz_add_map_share',
-  //       `'${hub.id}', '${guest.id}'`);
-  //   }
-  //   let media = await this.db.await_proc("mfs_access_node", this.uid, hub.id);
-  //   await this.notify_user(this.uid, media);
-  //   res.link = `${this.input.homepath(hub.vhost)}/#/dmz/inbound/token=${share_id}`;
-  //   this.output.data(res)
-  // }
+  async disk_usage() {
+    const page = this.input.use(Attr.page, 1);
+    const category = this.input.use(Attr.category);
+    const list = this.input.use(Attr.list);
+    const data = await this.db.await_proc('desk_disk_usage', this.uid, category, page) || [];
+    if (list) {
+      return this.output.list(data[2]);
+    }
+    this.output.list(data);
+  }
 
   /**
    * 
@@ -410,45 +357,6 @@ class __private_desk extends Media {
     this.output.data({ ...media, wicket_id: hub_id });
   }
 
-  /**
-   * 
-   * @returns 
-   */
-  // async create_website() {
-  //   const pid = this.input.use(Attr.pid) || this.home_id;
-  //   const filename = this.input.need(Attr.filename);
-  //   const hostname = this.user.get(Attr.hostname);
-  //   let hubname = this.input.get(Attr.hubname) || filename || uniqueId();
-
-  //   const args = { pid, hostname, area: Attr.public, filename };
-  //   let { home_id, hub_id } = await this._createHub(args);
-  //   if (!hub_id) {
-  //     return this.output.data({ status: 'CREATION_FAILED' })
-  //   }
-
-  //   const hub = await this.yp.await_proc("get_hub", hub_id);
-  //   if (isEmpty(hub)) {
-  //     this.exception.server("Corrupted hub");
-  //     return;
-  //   }
-
-  //   if (pid && pid != this.get(Attr.home_id)) {
-  //     await this.db.await_proc("mfs_move", hub.id, pid)
-  //   }
-  //   let media = await this.db.await_proc("mfs_access_node", this.uid, hub.id);
-  //   media.hub_id = media.id;
-  //   media.hubname = hubname;
-  //   media.filename = filename;
-  //   media.privilege = media.permission;
-  //   media.actual_home_id = home_id;
-  //   media.isalink = 1;
-  //   let service = "media.new";
-  //   let keys = { pid: Attr.nid, vhost: 'vhost' };
-  //   let sockets = await this.yp.await_proc('entity_sockets', media.hub_id);
-  //   await RedisStore.sendData(this.payload(media, { service, keys }), sockets);
-  //   await this.changelog_write({ src: media, event: "media.new" });
-  //   this.output.data(media);
-  // }
 
 
   /**

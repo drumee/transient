@@ -63,7 +63,6 @@ class MfsActivity extends Entity {
   async mark_all_read() {
 
     let lastId = parseInt(this.input.get('last_id'));
-    this.debug(`[MFS_ACTIVITY]`, this.user.toJSON());
     if (!lastId || lastId <= 0) {
       const latestResult = await this.yp.await_query(
         'SELECT MAX(id) as max_id FROM mfs_changelog'
