@@ -139,7 +139,7 @@ class mfs extends Mfs {
    * - ctime: Creation timestamp (upload_time)
    * - mtime: Most recent modification timestamp (publish_time)
    */
-  async node_info() {
+  async node_summary() {
     const hubId = this.input.need(Attr.hub_id);
     const nid = this.input.need(Attr.nid);
     
