@@ -11,6 +11,13 @@
       "permission": {
         "src": "delete"
       }
+    },
+    "node_summary": {
+      "doc": "Get comprehensive node/folder information (file count, members, size, timestamps)",
+      "scope": "hub",
+      "permission": {
+        "src": "read"
+      }
     }
   },
   "modules": {
