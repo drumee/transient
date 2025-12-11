@@ -317,6 +317,7 @@ class __private_desk extends Media {
     this.output.list(data);
   }
 
+  /**  */
   /**
   * Get disk usage statistics for user
   * 
@@ -397,7 +398,7 @@ class __private_desk extends Media {
    */
   async disk_usage() {
     const page = this.input.use(Attr.page, 1);
-    const category = this.input.use(Attr.category);
+    const category = this.input.use(Attr.category) || '*';
     const list = this.input.use(Attr.list);
     const data = await this.db.await_proc('desk_disk_usage', this.uid, category, page) || [];
     if (list) {

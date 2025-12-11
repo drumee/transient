@@ -148,11 +148,11 @@ class __private_drumate extends Entity {
     const new_password = this.input.need(Attr.new_password);
     let r = await this.yp.await_proc('check_password_next', this.uid, old_password);
     if (isEmpty(r)) {
-      this.exception.forbiden('wrong_password');
+      this.output.data({ error: 'wrong_password' });
       return
     }
     if (!new_password.match(/(.+){8,}/)) { //(/(.+){2,} +(.+){4,}/)
-      this.exception.reject('uncompliant_password');
+      this.output.data({ error: 'uncompliant_password' });
     } else {
       r = await this.yp.await_proc('set_password', this.uid, new_password);
       this.output.data(r)
@@ -307,10 +307,10 @@ class __private_drumate extends Entity {
     })
   }
 
-  /** check_otp
+  /** check_otp_and_change
    *  Check if there pending OTP
    */
-  async check_otp() {
+  async check_otp_and_change() {
     let secret = this.input.use(Attr.secret);
     let code = this.input.use(Attr.code);
     if (secret && code) {
@@ -373,7 +373,7 @@ class __private_drumate extends Entity {
     } catch {
       cur_profile = {};
     }
-    if (await this.check_otp()) return;
+    if (await this.check_otp_and_change()) return;
     for (let key in profile) {
       if (['otp'].includes(key)) {
         if (cur_profile.otp != null) {
