@@ -26,10 +26,7 @@
     </title>
     <link rel="icon" href="<%= icon %>" type="image/png">
     <link rel="stylesheet" href="/-/static/styles/loader.css" media="screen"></link>
-
-    <style nonce>
-    <%= renderer.include('fonts.tpl') %>
-    </style>
+    <link rel="stylesheet" href="/-/static/fonts/Armin-Grotesk/stylesheet.css" media="screen"></link>
     
     <script>
     <%= renderer.include('scripts.tpl') %>
