@@ -321,6 +321,16 @@ class __yp extends Entity {
   /**
    * 
    */
+  async host_exists() {
+    const host = this.input.use(Attr.host);
+    let h = await this.yp.await_proc("get_hub", host);
+    this.debug("AAA:327", host, h)
+    this.output.data(h)
+  }
+
+  /**
+   * 
+   */
   ident_exists() {
     const value = this.input.use(Attr.value);
     this.yp.call_proc("ident_exists", value, this.output.data);

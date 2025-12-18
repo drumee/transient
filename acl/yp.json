@@ -215,6 +215,13 @@
         "fast_check": "public-api"
       }
     },
+    "host_exists": {
+      "scope": "hub",
+      "permission": {
+        "src": "anonymous",
+        "fast_check": "public-api"
+      }
+    },
     "public_key": {
       "scope": "hub",
       "permission": {

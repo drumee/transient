@@ -529,6 +529,7 @@ class __private_hub extends Hub {
         members = [members];
       }
     }
+    this.debug("AAA:532", members)
     res.members = members;
     this.debug(res)
     res.link = this._getShareLink(res.link);
