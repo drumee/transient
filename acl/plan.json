@@ -1,0 +1,13 @@
+{
+  "services": {
+    "upgrade": {
+      "scope": "hub",
+      "permission": {
+        "src": "owner"
+      }
+    }
+  },
+  "modules": {
+    "private": "service/plan"
+  }
+}
