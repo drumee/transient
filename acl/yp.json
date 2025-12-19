@@ -179,7 +179,8 @@
       "permission": {
         "src": "anonymous",
         "fast_check": "public-api"
-      }
+      },
+      "method": "login"
     },
     "tutorial": {
       "scope": "hub",

@@ -163,20 +163,30 @@ class __yp extends Entity {
     this.output.data({ status: "NOT_IN_USE" });
   }
 
-  /**
-   *
-   */
-  async login() {
-    await this.session.login(this.input.use("vars"), this.input.use("resent"));
-  }
 
   /**
-   *
+   * 
    */
-  async signin() {
-    let res = await this.session.signin(this.input.use("vars"));
-    this.output.data(res)
+  async login() {
+    let vars = this.input.use("vars") || {};
+    vars.uid = (vars.uid || vars.ident).trim();
+    vars.password = vars.password.trim();
+    if (!vars.uid.isEmail()) {
+      vars.username = vars.uid;
+      vars.host = this.input.get(Attr.vhost) || this.input.host();
+    }
+    let r = await this.session.signin(vars);
+    this.output.data(r);
   }
+
+
+  // /**
+  //  *
+  //  */
+  // async signin() {
+  //   let res = await this.session.signin(this.input.use("vars"));
+  //   this.output.data(res)
+  // }
 
   /**
    *
