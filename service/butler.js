@@ -535,6 +535,7 @@ class __butler extends Mfs {
       password,
     } = data;
     let username = firstname || email.split('@')[0];
+    username = username.replace(/[^a-zA-Z0-9]/g, '');// Accept only ascci alphanum
     username = await this.yp.await_func("ensure_username", { username: username.toLowerCase(), domain });
     let a = firstname.split(/ +/)
     let lastname = "";
@@ -543,7 +544,6 @@ class __butler extends Mfs {
       a.shift()
       lastname = a.join(' ')
     }
-    username = username.replace(/[^a-zA-Z0-9]/g, '');
     let profile = {
       username,
       sharebox: uniqueId(),

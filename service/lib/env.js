@@ -22,15 +22,18 @@ const {
   ID_NOBODY
 } = Constants;
 const { isEmpty, isString, isArray } = require("lodash");
-const { getPlugins, getServices } = require("../../router/rest");
-const { existsSync, readFileSync } = require("fs");
-const { resolve } = require("path");
-const { credential_dir } = sysEnv();
-let keyFile = resolve(credential_dir, `crypto/public.pem`);
-let publicKey;
-if (existsSync(keyFile)) {
-  let publicKey = readFileSync(keyFile);
-}
+const { getServices } = require("../../router/rest");
+const { main_domain } = sysEnv();
+
+// const { existsSync, readFileSync } = require("fs");
+// const { resolve } = require("path");
+// const { credential_dir } = sysEnv();
+// let keyFile = resolve(credential_dir, `crypto/public.pem`);
+// let publicKey;
+// if (existsSync(keyFile)) {
+//   let publicKey = readFileSync(keyFile);
+// }
+
 const TfaMethods = TFauth.Methods.map((e) => {
   return e.type
 });
@@ -127,9 +130,10 @@ function platform() {
   }
 
   platform.plugins = Cache.getSysConf("plugins");
-  platform.services = getServices();    
+  platform.services = getServices();
   platform.endpoint = this.input.basepath();
   return platform;
 }
 
-module.exports = { get_env, platform};
+
+module.exports = { get_env, platform };
