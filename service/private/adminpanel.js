@@ -199,12 +199,12 @@ class __private_adminpanel extends Mfs {
 
     if (isEmpty(mimic)) return this.output.status('NO_MIMIC');
     if (mimic.mimicker != this.mimicker) return this.output.status('INVALID_MIMIC');
-    if (mimic.status != 'active') return this.output.status('INVALID_STATUS');
+    if (mimic.status != Attr.active) return this.output.status('INVALID_STATUS');
     if (mimic.remaining_time > 0) return this.output.status('INVALID_TIME');
 
     res.status = 'INVALID_STATUS';
     let final = await this.yp.await_proc('mimic_set_by_status', mimic_id, 'endbytime')
-    if (final.status != 'active') {
+    if (final.status != Attr.active) {
       await this.yp.await_proc('uncast_user', mimic.mimicker, mimic.uid)
       res = await this.yp.await_proc('mimic_get', mimic_id)
       let recipients = await this.yp.await_proc('user_sockets', [mimic.uid, mimic.mimicker]);
@@ -225,10 +225,10 @@ class __private_adminpanel extends Mfs {
 
     if (mimic.mimicker != this.mimicker) return this.output.status('INVALID_MIMIC');
 
-    if (mimic.status != 'active') return this.output.status('INVALID_STATUS');
+    if (mimic.status != Attr.active) return this.output.status('INVALID_STATUS');
     res.status = 'INVALID_STATUS';
     let final = await this.yp.await_proc('mimic_set_by_status', mimic_id, 'endbymimic')
-    if (final.status != 'active') {
+    if (final.status != Attr.active) {
       await this.yp.await_proc('uncast_user', mimic.mimicker, mimic.uid)
       res = await this.yp.await_proc('mimic_get', mimic_id)
       let recipients = await this.yp.await_proc('user_sockets', [mimic.uid, mimic.mimicker]);
@@ -249,7 +249,7 @@ class __private_adminpanel extends Mfs {
 
     if (mimic.uid != this.uid) return this.output.status('INVALID_MIMIC');
 
-    if (mimic.status != 'active') return this.output.status('INVALID_STATUS');
+    if (mimic.status != Attr.active) return this.output.status('INVALID_STATUS');
 
     await this.yp.await_proc('mimic_set_by_status', mimic_id, 'endbyuser')
     await this.yp.await_proc('uncast_user', mimic.mimicker, mimic.uid)
@@ -284,7 +284,7 @@ class __private_adminpanel extends Mfs {
       return this.output.status('NOT_ONLINE');
     }
 
-    await this.yp.await_proc('mimic_set_by_status', mimic_id, 'active')
+    await this.yp.await_proc('mimic_set_by_status', mimic_id, Attr.active)
     await this.yp.await_proc('cast_user', mimic.mimicker, mimic.uid)
     res = await this.yp.await_proc('mimic_get', mimic_id)
     let recipients = await this.yp.await_proc('user_sockets', [mimic.uid, mimic.mimicker]);
@@ -325,24 +325,24 @@ class __private_adminpanel extends Mfs {
 
     let hismimic = await this.yp.await_proc('mimic_get_by_status', user_id, 'new')
     if (!isEmpty(hismimic)) return this.output.status('MIMIC_ALREADY');
-    hismimic = await this.yp.await_proc('mimic_get_by_status', user_id, 'active')
+    hismimic = await this.yp.await_proc('mimic_get_by_status', user_id, Attr.active)
     if (!isEmpty(hismimic)) return this.output.status('MIMIC_ALREADY');
     let mymimic = await this.yp.await_proc('mimic_get_by_status', this.uid, 'new')
     if (!isEmpty(mymimic)) return this.output.status('MIMIC_ALREADY');
-    mymimic = await this.yp.await_proc('mimic_get_by_status', this.uid, 'active')
+    mymimic = await this.yp.await_proc('mimic_get_by_status', this.uid, Attr.active)
     if (!isEmpty(mymimic)) return this.output.status('MIMIC_ALREADY');
 
     let member = await this.yp.await_proc('show_member_detail', user_id, orgid);
 
     let online = await this.yp.await_proc('socket_user_connections', user_id)
-    if (isEmpty(online) && ['active'].includes(member.status)) {
+    if (isEmpty(online) && [Attr.active].includes(member.status)) {
       res.member = member
       return this.output.status('NOT_ONLINE');
     }
 
-    if (['locked', 'archived'].includes(member.status)) {
+    if ([Attr.locked, Attr.archived].includes(member.status)) {
       mymimic = await this.yp.await_proc('mimic_new', user_id, this.uid)
-      await this.yp.await_proc('mimic_set_by_status', mymimic.mimic_id, 'active')
+      await this.yp.await_proc('mimic_set_by_status', mymimic.mimic_id, Attr.active)
       await this.yp.await_proc('cast_user', mymimic.mimicker, mymimic.uid)
       res = await this.yp.await_proc('mimic_get', mymimic.mimic_id)
     }
@@ -365,7 +365,7 @@ class __private_adminpanel extends Mfs {
     let status = this.input.need(Attr.status)
     if (this.uid == user_id) return this.output.status('INVALID_USER');
 
-    if (!['archived', 'active', 'locked'].includes(status)) return this.output.status('INVALID_STATUS0');
+    if (![Attr.archived, Attr.active, Attr.locked].includes(status)) return this.output.status('INVALID_STATUS0');
 
     let org = await this.yp.await_proc('organisation_get', this.user.domain_id())
     orgid = org.id;
@@ -393,26 +393,26 @@ class __private_adminpanel extends Mfs {
 
     if (isEmpty(member)) return this.output.status('NO_MEMBER');
 
-    if (status == 'locked') {
-      if (!['active', 'archived'].includes(member.status)) {
+    if (status == Attr.locked) {
+      if (![Attr.active, Attr.archived].includes(member.status)) {
         return this.output.status('INVALID_STATUS1');
       }
     }
 
-    if (status == 'archived') {
-      if (member.status != 'locked') {
+    if (status == Attr.archived) {
+      if (member.status != Attr.locked) {
         return this.output.status('INVALID_STATUS2');
       }
     }
 
-    if (status == 'active') {
-      if (member.status != 'locked') {
+    if (status == Attr.active) {
+      if (member.status != Attr.locked) {
         return this.output.status('INVALID_STATUS3');
       }
     }
 
     res = await this.yp.await_proc('update_member_status', user_id, status)
-    if (status == 'archived') {
+    if (status == Attr.archived) {
       let users = [];
       await this.yp.await_proc('contact_assignment_update', user_id, stringify(users));
       await this.yp.await_proc('forward_proc', user_id, 'my_contact_sync', `'${user_id}'`)
@@ -739,7 +739,7 @@ class __private_adminpanel extends Mfs {
       email,
       firstname = "",
       password = this.randomString(),
-      category = "trial",
+      category = "free",
       domain
     } = data;
     let username = firstname || email.split('@')[0];
@@ -764,7 +764,7 @@ class __private_adminpanel extends Mfs {
       domain,
       email
     }
-
+    this.debug("AAA:767", profile)
     let user = await this.yp.await_proc("drumate_create", password, profile);
     if (!user || !user[0]) {
       return { ...profile, error: 1, status: "unknown_error" }
@@ -774,7 +774,7 @@ class __private_adminpanel extends Mfs {
       return { ...profile, error: 1, status: "db_error", ...user[0] }
     }
     // TO DO SEND LINK
-    return user[0];
+    return user;
   }
 
   /**
@@ -1525,6 +1525,7 @@ class __private_adminpanel extends Mfs {
     if (!parseInt(org?.quota?.seat)) {
       return this.output.status('Invalid plan');
     }
+    org.domain = org.url;
     return { org }
   }
 
@@ -1535,106 +1536,54 @@ class __private_adminpanel extends Mfs {
   async member_add() {
     let orgid //= this.input.need(Attr.orgid);
     let email = this.input.need(Attr.email)
-    let ident = this.input.use(Attr.ident);
-    if (!isEmpty(ident)) {
-      ident = ident.toLowerCase().trim();
-    }
-    let users = this.input.need(Attr.users) || [];
-    let role = this.input.use(Attr.role) || this.input.use(Attr.list) || [];
+    let firstname = this.input.get(Attr.firstname);
+    let lastname = this.input.get(Attr.lastname);
+    let mobile = this.input.use(Attr.mobile) || ""
+    let areacode = this.input.use(Attr.areacode) || ""
+
     let res = {};
-    let profile = {};
-    let list = []
-    if (!this.checkProfileSanity(profile)) {
-      return
-    }
-    let org = await this.yp.await_proc('organisation_get', this.user.domain_id())
-    orgid = org.id;
-    if (isEmpty(org)) {
-      return this.output.status('NO_ORG')
-    };
+    const { org } = await this.checkPrivilege() || {}
+    if (!org) return;
 
-    let my_org = await this.user.organization();
-    if (isEmpty(my_org)) {
-      return this.output.status('NO_ORG')
-    };
+    let chk = await this.yp.await_proc('email_exists', email)
+    if (!isEmpty(chk)) return this.output.status('EMAIL_NOT_AVAILABLE');
 
-    if (my_org.id != org.id) {
-      return this.output.status('INVALID_ORG');
-    }
+    // let domain = await this.yp.await_proc('domain_exists', org.id);
+    // profile.domain = domain.name;
+    let profile = { mobile, areacode, email, firstname, lastname, domain: org.url };
 
-    let my_privilege = await this.yp.await_proc('domain_privilege', my_org.domain_id, this.uid);
-    if (my_privilege.privilege < Remit.dom_admin_memeber) {
-      return this.output.status('NOT_ENOUGH_PRIVILEGE')
-    };
-
-    let domain = await this.yp.await_proc('domain_exists', my_org.domain_id);
-    profile.domain = domain.name;
-    this.debug("AAA:1571", domain, profile)
-    if (!isEmpty(role)) {
-      for (let id of role) {
-        let data = await this.yp.await_proc('role_exists', id, orgid);
-        if (isEmpty(data)) {
-          return this.output.status('ROLE_NOT_EXISTS');
-        }
-      }
-    }
-
-    let isinvaliddrumate = 0;
-    let isinvalidorg = 0;
-    for (let entity_id of users) {
-      let drumate = await this.yp.await_proc('drumate_exists', entity_id);
-
-      if (isEmpty(drumate)) {
-        isinvaliddrumate = isinvaliddrumate + 1
-      }
-      if (!isEmpty(drumate)) {
-        let his_org = await this.yp.await_proc('my_organisation', drumate.id)
-        if (!isEmpty(his_org)) {
-          if (his_org.id != org.id) {
-            isinvalidorg = isinvalidorg + 1
-          }
-        }
-      }
-    }
-
-    if (isinvaliddrumate > 0) {
-      return this.output.status('NOT_VALID_DRUMATE')
-    };
-
-    if (isinvalidorg > 0) {
-      return this.output.status('NOT_VALID_ORG');
-    }
 
     let user = await this.create_account(profile);
-    this.debug("AAA:1599", user)
-    if (!user || user.error) {
-      return this.output.status(user.error || "INTERNAL_ERROR")
+    if (!user[0] || user[0].error) {
+      return this.output.status(user[0].error || "INTERNAL_ERROR")
     }
-
+    let drumate = await this.yp.await_proc('get_user', email)// user[1]
     let message = await this.invite_link(email);
-    if (isEmpty(users)) {
 
-      list = await this.yp.await_proc('member_list_all', user.id, orgid);
-      if (!isArray(list)) {
-        list = [list]
-      }
-      for (let entity of list) { users.push(entity.drumate_id) }
+    let users = [];
+    let list = toArray(await this.yp.await_proc('member_list_all', drumate.id, orgid));
+    for (let entity of list) {
+      users.push(entity.drumate_id)
     }
-    await this.yp.await_proc('contact_assignment_update', user.id, stringify(users));
-    await this.yp.await_proc('ticket_grant_permission', user.id);
+    await this.yp.await_proc('contact_assignment_update', drumate.id, users);
+    await this.yp.await_proc('ticket_grant_permission', drumate.id);
 
-    let data = await this.yp.await_proc('show_member_detail', user.id, orgid);
+    let data = await this.yp.await_proc('show_member_detail', drumate.id, orgid);
     if (!isEmpty(data)) {
       res = data;
+    } else {
+      res = drumate
     }
-    data = await this.yp.await_proc('org_user_role', user.id, orgid);
-    data = toArray(data);
-    if (data.length) {
-      res.role = data;
+    let role = await this.yp.await_proc('org_user_role', drumate.id, orgid);
+    role = toArray(role);
+    if (role.length) {
+      res.role = role;
     }
+    res.drumate_id = drumate.id
+    res.status = Attr.active
     if (message) res.email = message;
-    if (!isEmpty(res.address)) res.address = this.parseJSON(res.address);
-    this.output.data(res);
+    let admin = await this.yp.await_proc('get_user', this.uid)
+    this.output.data({ member: res, admin });
   }
 
 
@@ -1841,7 +1790,7 @@ class __private_adminpanel extends Mfs {
 
     if (isEmpty(member)) return this.output.status('NO_MEMBER');
 
-    if ('archived' != member.status) return this.output.status('INVALID_STATUS');
+    if (Attr.archived != member.status) return this.output.status('INVALID_STATUS');
 
 
     if (member.is_able_delete != 'yes') return this.output.status('INVALID_TIME');
@@ -1889,7 +1838,8 @@ class __private_adminpanel extends Mfs {
     }
     let user = await this.yp.await_proc(`drumate_delete`, user_id);
     remove_dir(user.home_dir);
-    this.output.data(user);
+    const admin = await this.yp.await_proc(`get_user`, this.uid);
+    this.output.data({ member: user, admin });
   }
 
 
@@ -1951,7 +1901,8 @@ class __private_adminpanel extends Mfs {
     }
     let user = await this.yp.await_proc(`drumate_vanish`, user_id);
     remove_dir(user.home_dir);
-    this.output.data(user);
+    const admin = await this.yp.await_proc('get_user', this.uid)
+    this.output.data({ member: user, admin });
   }
 
 

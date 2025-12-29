@@ -51,7 +51,7 @@
     <%= renderer.include('warmup.html') %>
     </div>
     <div class="margin-auto" id="--wrapper"></div>
-    <script type="text/javascript" src="<%= app.location %>/app/<%= app.entry %>" crossorigin="true"></script> 
+    <script type="text/javascript" id="rendering-engine" src="<%= app.location %>/app/<%= app.entry %>" crossorigin="true"></script> 
     <% if (typeof(debugUi) !== "undefined" && debugUi) { %>
       <script src="https://cdn.jsdelivr.net/npm/eruda"></script>
       <script>eruda.init();</script>
