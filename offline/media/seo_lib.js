@@ -1,0 +1,447 @@
+#!/usr/bin/env node
+
+/**
+ * @license
+ * Copyright 2024 Thidima SA. All Rights Reserved.
+ * Licensed under the GNU AFFERO GENERAL PUBLIC LICENSE, Version 3 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * https://www.gnu.org/licenses/agpl-3.0.html
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ * =============================================================================
+ */
+
+/**
+ * SEO Indexing Library
+ * 
+ * Extracted from seo.js for use in Bull Queue workers
+ * Contains all text extraction and indexing logic
+ */
+
+const { resolve, join } = require('path');
+const { existsSync, writeFileSync, readFileSync } = require("fs");
+const { readFileSync: readJson, writeFileSync: writeJson } = require('jsonfile');
+const { promisify } = require('util');
+const execAsync = promisify(require('child_process').exec);
+
+// Text processing
+const SEPARATOR = /[ ,.:;?!\/\-\_\$\&\'\"\\|\@=+\t\n\r\f\)\(\[\]\'\`]+/;
+const stopword = require('stopword');
+
+// OCR
+const tesseract = require("node-tesseract-ocr");
+
+// PDF processing
+const pdfParse = require('pdf-parse');
+
+const { remove_item } = require('@drumee/server-core').MfsTools;
+const { Mariadb } = require('@drumee/server-essentials');
+
+/**
+ * SEO Indexing Class
+ */
+class SeoIndexer {
+  constructor(node, options = {}) {
+    this.node = node;
+    this.options = options;
+    this.tempFiles = [];
+    
+    // Setup database connection
+    let db_name = node.actual_db || node.db_name;
+    if (!db_name) {
+      throw new Error('No database name provided');
+    }
+    
+    this.db = new Mariadb({ name: db_name });
+  }
+
+  /**
+   * Log message (compatible with Bull job.log)
+   */
+  log(message, ...args) {
+    const msg = `[SeoIndexer] ${message}`;
+    if (this.options.jobLog) {
+      this.options.jobLog(msg);
+    }
+    console.log(msg, ...args);
+  }
+
+  /**
+   * Cleanup temporary files
+   */
+  cleanup() {
+    if (!this.node) return;
+
+    const mfs_dir = resolve(this.node.mfs_root, this.node.id);
+    const tempFiles = [
+      join(mfs_dir, 'index.txt'),
+      join(mfs_dir, 'preview.pdf'),
+      join(mfs_dir, 'jpgout'),
+      join(mfs_dir, 'pdf_pages')
+    ];
+
+    for (let file of tempFiles) {
+      try {
+        if (existsSync(file)) {
+          remove_item(file, 1);
+        }
+      } catch (e) {
+        this.log(`Cleanup failed for ${file}:`, e.message);
+      }
+    }
+  }
+
+  /**
+   * Execute shell command with timeout
+   */
+  async execCommand(cmd, timeout = 60000) {
+    try {
+      const { stdout, stderr } = await execAsync(cmd, { timeout });
+      if (stderr && !stderr.includes('Warning')) {
+        this.log('Command stderr:', stderr);
+      }
+      return stdout;
+    } catch (e) {
+      throw new Error(`Command failed: ${cmd}\n${e.message}`);
+    }
+  }
+
+  /**
+   * Extract text from image using OCR
+   */
+  async extractFromImage(src, index) {
+    if (!existsSync(src)) {
+      throw new Error(`Source file not found: ${src}`);
+    }
+
+    this.log(`Extracting text from image: ${src}`);
+
+    const config = {
+      lang: "eng+fra",
+      oem: 1,
+      psm: 3
+    };
+
+    try {
+      const text = await tesseract.recognize(src, config);
+      
+      if (!text || text.trim().length === 0) {
+        this.log('OCR produced no text');
+        return '';
+      }
+
+      writeFileSync(index, text, 'utf8');
+      this.log(`OCR extracted ${text.length} characters`);
+      return text;
+      
+    } catch (e) {
+      throw new Error(`OCR failed: ${e.message}`);
+    }
+  }
+
+  /**
+   * Extract text from PDF using pdf-parse
+   */
+  async extractFromPdf(src, index) {
+    if (!existsSync(src)) {
+      throw new Error(`PDF file not found: ${src}`);
+    }
+
+    this.log(`Extracting text from PDF: ${src}`);
+
+    try {
+      // Try pdf-parse first
+      const dataBuffer = readFileSync(src);
+      const data = await pdfParse(dataBuffer);
+      
+      if (data.text && data.text.trim().length > 50) {
+        writeFileSync(index, data.text, 'utf8');
+        this.log(`PDF extracted ${data.text.length} characters from ${data.numpages} pages`);
+        return data.text;
+      }
+
+      // Fallback to pdftotext
+      this.log('PDF has no text layer, trying pdftotext...');
+      
+      const cmd = `/usr/bin/pdftotext -layout "${src}" "${index}"`;
+      await this.execCommand(cmd);
+
+      if (existsSync(index)) {
+        const text = readFileSync(index, 'utf8');
+        if (text.trim().length > 50) {
+          this.log(`pdftotext extracted ${text.length} characters`);
+          return text;
+        }
+      }
+
+      // Last resort: OCR
+      this.log('PDF has no text, using OCR...');
+      return await this.pdfToImageOCR(src, index);
+
+    } catch (e) {
+      throw new Error(`PDF extraction failed: ${e.message}`);
+    }
+  }
+
+  /**
+   * Convert PDF to images and OCR (placeholder - requires pdf2image)
+   */
+  async pdfToImageOCR(src, index) {
+    try {
+      const mfs_dir = resolve(this.node.mfs_root, this.node.id);
+      const outputDir = join(mfs_dir, 'pdf_pages');
+
+      // This requires pdf2image Python library
+      // For now, return empty if not available
+      this.log('PDF OCR requires pdf2image Python library');
+      return '';
+
+    } catch (e) {
+      throw new Error(`PDF OCR failed: ${e.message}`);
+    }
+  }
+
+  /**
+   * Convert Office file to PDF
+   */
+  async convertToPdf(node) {
+    const mfs_dir = resolve(node.mfs_root, node.id);
+    const pdfPath = join(mfs_dir, 'preview.pdf');
+
+    if (existsSync(pdfPath)) {
+      this.log('Using existing preview.pdf');
+      return pdfPath;
+    }
+
+    this.log('Converting to PDF...');
+
+    const cmd = resolve(__dirname, 'to-pdf.js');
+    const args = {
+      node,
+      uid: this.options.uid,
+      noSocket: 1
+    };
+
+    try {
+      await this.execCommand(`${cmd} '${JSON.stringify(args)}'`, 180000);
+
+      // Wait for file to appear
+      let attempts = 0;
+      while (!existsSync(pdfPath) && attempts < 30) {
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        attempts++;
+      }
+
+      if (!existsSync(pdfPath)) {
+        throw new Error('PDF conversion timeout');
+      }
+
+      this.log('PDF conversion complete');
+      return pdfPath;
+
+    } catch (e) {
+      throw new Error(`Office conversion failed: ${e.message}`);
+    }
+  }
+
+  /**
+   * Tokenize and clean words
+   */
+  processWords(text, minLength = 3) {
+    if (!text) return [];
+
+    let normalized = text.toLowerCase();
+    let words = normalized.split(SEPARATOR).filter(w => {
+      if (!w) return false;
+      if (w.length < minLength) return false;
+      if (!/\w/.test(w)) return false;
+      return true;
+    });
+
+    // Remove stop words
+    words = stopword.removeStopwords(words, [...stopword.en, ...stopword.fr]);
+
+    // Remove duplicates
+    words = [...new Set(words)];
+
+    this.log(`Processed ${words.length} unique words`);
+    return words;
+  }
+
+  /**
+   * Main indexing function
+   */
+  async index() {
+    const node = this.node;
+    const mfs_dir = resolve(node.mfs_root, node.id);
+    const index = join(mfs_dir, `index.txt`);
+    const src = resolve(mfs_dir, `orig.${node.extension}`);
+
+    let text = '';
+    const startTime = Date.now();
+
+    try {
+      // Get file attributes
+      const attr = await this.db.await_proc('mfs_access_node', node.uid, node.id);
+      if (!attr) {
+        throw new Error('File not found in database');
+      }
+
+      // Extract text based on file type
+      const ext = node.extension.toLowerCase();
+      
+      switch (ext) {
+        // PDF
+        case 'pdf':
+          text = await this.extractFromPdf(src, index);
+          break;
+
+        // Office Documents
+        case 'doc':
+        case 'docx':
+        case 'xls':
+        case 'xlsx':
+        case 'ppt':
+        case 'pptx':
+        case 'odt':
+          const pdfPath = await this.convertToPdf(node);
+          text = await this.extractFromPdf(pdfPath, index);
+          break;
+
+        // Plain Text
+        case 'txt':
+        case 'html':
+        case 'csv':
+        case 'json':
+        case 'log':
+        case 'md':
+          if (existsSync(src)) {
+            text = readFileSync(src, 'utf8');
+            writeFileSync(index, text, 'utf8');
+          } else {
+            throw new Error(`Source file not found: ${src}`);
+          }
+          break;
+
+        // Images (OCR)
+        case 'png':
+        case 'jpg':
+        case 'jpeg':
+        case 'gif':
+        case 'bmp':
+          text = await this.extractFromImage(src, index);
+          break;
+
+        default:
+          throw new Error(`Unsupported file extension: ${ext}`);
+      }
+
+      // Validate extraction
+      if (!text || text.trim().length === 0) {
+        throw new Error('No text extracted from file');
+      }
+
+      // Process words
+      let words = this.processWords(text);
+
+      if (words.length === 0) {
+        throw new Error('No meaningful words found');
+      }
+
+      // Add filepath words
+      if (attr.file_path) {
+        const pathWords = attr.file_path
+          .split(/[\/\\]+/)
+          .flatMap(segment => this.processWords(segment, 2));
+        words = [...new Set([...words, ...pathWords])];
+      }
+
+      // Prepare data for database
+      let data = words.map(w => ({
+        word: w,
+        hub_id: node.hub_id,
+        nid: node.id
+      }));
+
+      this.log(`Indexing ${data.length} words...`);
+
+      // Store in database
+      await this.db.await_proc("seo_index", JSON.stringify(data));
+      await this.db.await_proc("seo_register", node.hub_id, node.id, JSON.stringify(attr));
+
+      // Update info.json
+      const info = join(mfs_dir, 'info.json');
+      if (existsSync(info)) {
+        try {
+          let json = readJson(info);
+          json.index = new Date().getTime();
+          json.words = words.length;
+          writeJson(info, json);
+        } catch (e) {
+          this.log('Failed to update info.json:', e.message);
+        }
+      }
+
+      const duration = Date.now() - startTime;
+      this.log(`Successfully indexed ${node.filename}: ${data.length} words in ${duration}ms`);
+
+      return {
+        success: true,
+        filename: node.filename,
+        words: data.length,
+        duration,
+        extension: ext
+      };
+
+    } catch (e) {
+      this.log('Indexing error:', e.message);
+      throw e;
+    } finally {
+      this.cleanup();
+    }
+  }
+
+  /**
+   * Close database connection
+   */
+  async close() {
+    try {
+      if (this.db && this.db.connection) {
+        await this.db.connection.end();
+      }
+    } catch (e) {
+      this.log('Error closing database:', e.message);
+    }
+  }
+}
+
+/**
+ * Standalone function for worker use
+ * 
+ * @param {Object} node - File node from MFS
+ * @param {Object} options - Options (uid, jobLog, etc)
+ * @returns {Promise<Object>} - Result object
+ */
+async function indexFile(node, options = {}) {
+  const indexer = new SeoIndexer(node, options);
+  
+  try {
+    const result = await indexer.index();
+    await indexer.close();
+    return result;
+  } catch (error) {
+    await indexer.close();
+    throw error;
+  }
+}
+
+module.exports = {
+  SeoIndexer,
+  indexFile
+};
