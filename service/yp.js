@@ -169,7 +169,7 @@ class __yp extends Entity {
    */
   async login() {
     let vars = this.input.use("vars") || {};
-    vars.uid = (vars.uid || vars.ident).trim();
+    vars.uid = (vars.username || vars.uid || vars.ident).trim();
     vars.password = vars.password.trim();
     if (!vars.uid.isEmail()) {
       vars.username = vars.uid;
