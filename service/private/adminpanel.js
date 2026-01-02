@@ -1600,8 +1600,8 @@ class __private_adminpanel extends Mfs {
     let email = this.input.need(Attr.email)
     let mobile = this.input.use(Attr.mobile)
     let areacode = this.input.use(Attr.areacode)
-    let ident = this.input.need(Attr.ident);
-    ident = ident.toLowerCase();
+    // let ident = this.input.need(Attr.ident);
+    // ident = ident.toLowerCase();
     let users = [];
     let role = this.input.use(Attr.role) || this.input.use(Attr.list) || [];
     let option = this.input.need(Attr.option) || '0';
@@ -1637,11 +1637,11 @@ class __private_adminpanel extends Mfs {
 
     if (isEmpty(drumate)) return this.output.status('DRUMATE_NOT_EXISTS');
 
-    let domain = await this.yp.await_proc('domain_exists', my_org.domain_id);
-    if (drumate.ident.toLowerCase() != ident) {
-      chk = await this.yp.await_proc('get_user_in_domain', ident, domain.name)
-      if (chk.exists == 1) return this.output.status('IDENT_NOT_AVAILABLE');
-    }
+    // let domain = await this.yp.await_proc('domain_exists', my_org.domain_id);
+    // if (drumate.ident.toLowerCase() != ident) {
+    //   chk = await this.yp.await_proc('get_user_in_domain', ident, domain.name)
+    //   if (chk.exists == 1) return this.output.status('IDENT_NOT_AVAILABLE');
+    // }
 
     if (drumate.email != email) {
       chk = await this.yp.await_proc('email_exists', email)
@@ -1711,18 +1711,18 @@ class __private_adminpanel extends Mfs {
     profile.mobile = mobile || '';
     profile.areacode = areacode || '';
 
-    if (!isEmpty(ident)) {
-      profile.ident = ident
-      profile.username = ident
-    }
+    // if (!isEmpty(ident)) {
+    //   profile.ident = ident
+    //   profile.username = ident
+    // }
     profile.otp = otp;
 
     if (!isEmpty(role)) {
       await this.yp.await_proc('role_map', user_id, stringify(role), orgid);
     }
-    if (drumate.ident != ident) {
-      await this.yp.await_proc('drumate_change_username', user_id, ident);
-    }
+    // if (drumate.ident != ident) {
+    //   await this.yp.await_proc('drumate_change_username', user_id, ident);
+    // }
     await this.yp.call_proc('drumate_update_profile', user_id, stringify(profile));
     await this.yp.call_proc('contact_sync_update', user_id);
     await this.yp.await_proc('contact_assignment_update', user_id, stringify(users));
@@ -1968,7 +1968,7 @@ class __private_adminpanel extends Mfs {
 
     let data = await this.yp.await_proc('role_exists', role_id, orgid);
     if (isEmpty(data)) return this.output.status('ROLE_NOT_EXISTS');
-    res = this.yp.await_proc('role_delete', role_id, orgid);
+    res = await this.yp.await_proc('role_delete', role_id, orgid);
     this.output.data(res);
   }
 
@@ -1986,7 +1986,7 @@ class __private_adminpanel extends Mfs {
     let my_privilege = await this.yp.await_proc('domain_privilege', org.domain_id, this.uid);
     if (my_privilege.privilege < Remit.dom_admin_view) return this.output.status('NOT_ENOUGH_PRIVILEGE');
 
-    res = this.yp.await_proc('role_get', orgid, page);
+    res = await this.yp.await_proc('role_get', orgid, page);
     this.output.list(res);
   }
 
@@ -2024,7 +2024,7 @@ class __private_adminpanel extends Mfs {
       return this.output.status('ROLE_NOT_EXISTS');
     }
     if (data.name != name) {
-      res = this.yp.await_proc('role_rename', role_id, orgid, name);
+      res = await this.yp.await_proc('role_rename', role_id, orgid, name);
     } else {
       res = data
     }
@@ -2052,7 +2052,7 @@ class __private_adminpanel extends Mfs {
     if (my_privilege.privilege < Remit.dom_admin_memeber) {
       return this.output.status('NOT_ENOUGH_PRIVILEGE');
     }
-    res = this.yp.await_proc('role_add', name, orgid);
+    res = await this.yp.await_proc('role_add', name, orgid);
     this.output.data(res);
   }
 

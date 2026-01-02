@@ -33,7 +33,6 @@ const { remove_dir } = MfsTools;
 const { toArray } = utils;
 const { stringify } = JSON;
 const { server_location } = sysEnv();
-const { toUnicode } = require('punycode/');
 
 const Hub = require("../hub");
 class __private_hub extends Hub {
