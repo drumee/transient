@@ -2252,6 +2252,39 @@ class __private_adminpanel extends Mfs {
   }
 
 
+  /**
+ * 
+ * @returns 
+ */
+  async create_organisation() {
+    // check payement validity
+    let name = this.input.need(Attr.name);
+    let ident = this.input.need(Attr.ident);
+    ident = ident.toLowerCase();
+    let recds = { ident, name };
+
+    let chk = await this.user.organization();
+    if (chk && chk.domain_id > 1) return this.output.status('already_in_other_domain');
+
+    chk = await this.yp.await_proc('ident_exists', ident)
+    if (!isEmpty(chk)) return this.output.status('domain_not_available');
+
+    let domain = await this.yp.await_proc('domain_create', ident);
+    await this.yp.await_proc('domain_grant', domain.id, Remit.dom_owner, this.uid, 0);
+    recds.domain_id = domain.id;
+    recds.owner_id = this.uid;
+    recds.link = domain.name
+    let org = await this.yp.await_proc('organisation_add',
+      this.uid, name, domain.name, ident, domain.id, recds
+    );
+    let sql = 'SELECT quota FROM quota WHERE payer_id=? AND domain_id=?'
+    let { quota } = await this.yp.await_query(sql, this.uid, this.user.get(Attr.domain_id));
+    this.debug("AAAA:123", quota)
+    quota.domain_id = domain.id;
+    await this.yp.await_proc('update_quota', quota.id, quota)
+
+    this.output.data(org);
+  }
 }
 
 

@@ -251,6 +251,12 @@
       "permission": {
         "src": "write"
       }
+    },
+    "create_organisation": {
+      "scope": "hub",
+      "permission": {
+        "src": "owner"
+      }
     }
   },
   "modules": {
