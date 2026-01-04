@@ -764,7 +764,6 @@ class __private_adminpanel extends Mfs {
       domain,
       email
     }
-    this.debug("AAA:767", profile)
     let user = await this.yp.await_proc("drumate_create", password, profile);
     if (!user || !user[0]) {
       return { ...profile, error: 1, status: "unknown_error" }
@@ -890,7 +889,6 @@ class __private_adminpanel extends Mfs {
       users = [users];
     }
     let res = {};
-
     let org = await this.yp.await_proc('organisation_get', this.user.domain_id())
     orgid = org.id;
     if (isEmpty(org)) return this.output.status('NO_ORG');
@@ -1260,7 +1258,6 @@ class __private_adminpanel extends Mfs {
 
     let drumate = new Drumate({ yp: this.yp });
     let user = await drumate.create(profile);
-    this.debug("AAA:1203", user)
     this.set({ email });
 
     drumate.firstname = firstname;
@@ -1600,12 +1597,8 @@ class __private_adminpanel extends Mfs {
     let email = this.input.need(Attr.email)
     let mobile = this.input.use(Attr.mobile)
     let areacode = this.input.use(Attr.areacode)
-    // let ident = this.input.need(Attr.ident);
-    // ident = ident.toLowerCase();
     let users = [];
     let role = this.input.use(Attr.role) || this.input.use(Attr.list) || [];
-    let option = this.input.need(Attr.option) || '0';
-    this.debug("ZZZ:1999*********************************");
     let otp = this.input.get('otp') || 0;
     if (![1, 0, '1', '0'].includes(otp)) {
       otp = 0;
@@ -2279,7 +2272,6 @@ class __private_adminpanel extends Mfs {
     );
     let sql = 'SELECT quota FROM quota WHERE payer_id=? AND domain_id=?'
     let { quota } = await this.yp.await_query(sql, this.uid, this.user.get(Attr.domain_id));
-    this.debug("AAAA:123", quota)
     quota.domain_id = domain.id;
     await this.yp.await_proc('update_quota', quota.id, quota)
 
