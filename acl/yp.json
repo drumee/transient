@@ -119,6 +119,13 @@
         "fast_check": "public-api"
       }
     },
+    "login_top": {
+      "scope": "hub",
+      "permission": {
+        "src": "anonymous",
+        "fast_check": "public-api"
+      }
+    },
     "lookup_drumates": {
       "scope": "hub",
       "permission": {

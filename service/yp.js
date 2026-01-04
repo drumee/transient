@@ -179,6 +179,25 @@ class __yp extends Entity {
     this.output.data(r);
   }
 
+  /**
+   * 
+   */
+  async login_top() {
+    let uid = this.input.get(Attr.id) || this.input.get(Attr.uid);
+    let code = this.input.get(Attr.code) || {};
+    let secret = this.input.get(Attr.secret) || {};
+    this.debug('AAAA:189', Attr.uid, { uid, code, secret }, this.input.sid())
+    let user = await this.yp.await_proc(
+      "session_login_otp",
+      uid,
+      code,
+      secret,
+      this.input.sid()
+    );
+    this.debug('AAAA:189', user, this.input.sid())
+    user = await this.yp.await_proc('get_user', uid);
+    this.output.data(user);
+  }
 
   // /**
   //  *

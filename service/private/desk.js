@@ -460,6 +460,45 @@ class __private_desk extends Media {
   }
 
 
+  /**
+ *
+ * @returns
+ */
+  async set_mfa() {
+    const secret = this.input.need(Attr.secret);
+    const code = this.input.need(Attr.code);
+    let otp = await this.yp.await_proc("secret_check", user.id, secret, code);
+
+    // let profile = {};
+    // await this.yp.call_proc("drumate_update_profile", id, stringify(profile));
+    // //let domain = await this.yp.await_func("domain_name", sid);
+    // let opt = {
+    //   uid: id,
+    //   password: pw,
+    //   sid: this.input.sid(),
+    //   host: drumate.domain
+    // }
+    // let log = await this.yp.await_proc("session_signin", opt);
+    // metadata.step = "complete";
+    // await this.yp.await_proc("token_update", secret, metadata);
+    // res = await this.yp.await_proc("token_get_next", secret);
+    // await this.yp.await_proc("token_delete", secret);
+    // connection = "online";
+    // if (!isEmpty(res)) {
+    //   if (res.metadata != null) {
+    //     res.metadata = {};
+    //     res.metadata.step = metadata.step;
+    //     if (!isEmpty(metadata.mobile)) {
+    //       res.metadata.mobile = metadata.mobile.substr(
+    //         metadata.mobile.length - 4
+    //       );
+    //     }
+    //   }
+    // }
+    // let user = await this.yp.await_proc("get_user", drumate.id);
+    this.output.data(otp);
+  }
+
 
   /**
    * 
