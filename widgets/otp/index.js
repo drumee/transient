@@ -72,7 +72,7 @@ export default class dtk_otp extends dtk_common {
       if (res.length >= 6) {
         if (api) {
           return this.postService(api, { ...payload, code: res.join('') }, { async: 1 }).then((data) => {
-            if(data.error){
+            if (data.error) {
               return this.displayMessage(LOCALE.INVALID_CODE, 1)
             }
             let service = this.mget(_a.service) || 'otp-verified';
@@ -102,6 +102,7 @@ export default class dtk_otp extends dtk_common {
   onUiEvent(cmd, args = {}) {
     const service = args.service || cmd.get(_a.service);
     let status = cmd.status;
+    let { email, method } = this.mget('payload') || {}
     switch (service) {
       case _a.input:
         cmd.focus();
@@ -130,10 +131,10 @@ export default class dtk_otp extends dtk_common {
         })
         break;
       case "resend-code":
-        let { email } = this.mget('payload')
-        this.postService(SERVICE.otp.send, { email }).then((data) => {
+        this.postService(SERVICE.otp.send, { email, method }).then((data) => {
           this.mset({ payload: data })
           this.displayMessage(LOCALE.NEW_CODE_RESENT)
+          this.triggerHandlers({ service: "new-code", data })
         }).catch((e) => {
           this.displayMessage(LOCALE.UNKNOWN_ERROR, 1)
           this.warn("AAA:104 Error sending OTP", e)
