@@ -2270,10 +2270,10 @@ class __private_adminpanel extends Mfs {
     let org = await this.yp.await_proc('organisation_add',
       this.uid, name, domain.name, ident, domain.id, recds
     );
-    let sql = 'SELECT quota FROM quota WHERE payer_id=? AND domain_id=?'
-    let { quota } = await this.yp.await_query(sql, this.uid, this.user.get(Attr.domain_id));
+    let sql = 'SELECT id, quota FROM quota WHERE payer_id=? AND domain_id=?'
+    let { id, quota } = await this.yp.await_query(sql, this.uid, 1);
     quota.domain_id = domain.id;
-    await this.yp.await_proc('update_quota', quota.id, quota)
+    await this.yp.await_proc('update_quota', id, domain.id, quota)
 
     this.output.data(org);
   }
