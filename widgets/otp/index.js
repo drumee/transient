@@ -131,7 +131,8 @@ export default class dtk_otp extends dtk_common {
         })
         break;
       case "resend-code":
-        this.postService(SERVICE.otp.send, { email, method }).then((data) => {
+        let api = this.mget('resendApi') ||  SERVICE.otp.send
+        this.postService(api, { email, method }).then((data) => {
           this.mset({ payload: data })
           this.displayMessage(LOCALE.NEW_CODE_RESENT)
           this.triggerHandlers({ service: "new-code", data })
