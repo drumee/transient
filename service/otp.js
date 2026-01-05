@@ -74,7 +74,7 @@ class Otp extends Entity {
     }
     let token = uniqueId();
     let { code, secret } = await this.yp.await_proc(`secret_create`, user.id, token);
-    if (this.input.need(Attr.method) == "otp") {
+    if (this.input.get(Attr.method) == "otp") {
       ({ code, secret } = await this.yp.await_proc(`otp_create`, user.id, token));
     }
     const ulang = this.input.ua_language();
