@@ -599,7 +599,7 @@ class __media extends Mfs {
           node = await this.db.await_proc("mfs_create_node", args, metadata, results);
           break;
         default:
-          failed = `${UNEXPECTED_ERROR} ${node[1].sqlstate}`;
+          failed = `UNEXPECTED_ERROR ${node[1].sqlstate}`;
       }
       i++;
     }

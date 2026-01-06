@@ -518,7 +518,15 @@ class __private_hub extends Hub {
    */
   async get_external_room_attr() {
     let rows = await this.db.await_proc("dmz_settings") || [];
+
     let res = rows.shift();
+    this.debug("AAA:21", res)
+    if (isEmpty(res)) {
+      await this._update_external_room()
+      rows = await this.db.await_proc("dmz_settings") || [];
+      res = rows.shift();
+      this.debug("AAA:528", res)
+    }
     res.details = rows;
     res.members = [];
 
@@ -787,15 +795,19 @@ class __private_hub extends Hub {
   }
 
   /**
-   *
+   * 
+   * @returns 
    */
-  async update_external_room() {
-    let emails = this.input.use(Attr.emails) || this.input.use(Attr.email) || [];
-    let permission = this.input.use(Attr.permission) || Privilege.GUEST;
-    const pw = this.input.get(Attr.password);
-    const validityMode = this.input.get("validity_mode") || "infinity";
-    const days = this.input.get(Attr.days) || 0;
-    const hours = this.input.get(Attr.hours) || 0;
+  async _update_external_room(opt = {}) {
+    let {
+      emails = [],
+      permission = Privilege.WRITE,
+      pw,
+      validityMode = "infinity",
+      days = 0,
+      hours = 0
+    } = opt;
+
     let expiry = hours * 1 + days * 24;
 
     if (validityMode == "infinity") expiry = 0;
@@ -849,9 +861,30 @@ class __private_hub extends Hub {
       );
     }
 
+  }
+
+
+  /**
+   *
+   */
+  async update_external_room() {
+    let emails = this.input.use(Attr.emails) || this.input.use(Attr.email) || [];
+    let permission = this.input.use(Attr.permission) || Privilege.GUEST;
+    const pw = this.input.get(Attr.password);
+    const validityMode = this.input.get("validity_mode") || "infinity";
+    const days = this.input.get(Attr.days) || 0;
+    const hours = this.input.get(Attr.hours) || 0;
+    await this._update_external_room({
+      emails, permission, pw, validityMode, days, hours
+    })
+
     this.output.data({ emails });
   }
 
+  /**
+   * 
+   * @param {*} email 
+   */
   async add_contact(email) {
     let entity = email;
     let firstname;
