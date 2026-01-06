@@ -521,12 +521,7 @@ class __private_hub extends Hub {
 
     let res = rows.shift();
     this.debug("AAA:21", res)
-    if (isEmpty(res)) {
-      await this._update_external_room()
-      rows = await this.db.await_proc("dmz_settings") || [];
-      res = rows.shift();
-      this.debug("AAA:528", res)
-    }
+    if(isEmp)
     res.details = rows;
     res.members = [];
 
@@ -800,12 +795,12 @@ class __private_hub extends Hub {
    */
   async _update_external_room(opt = {}) {
     let {
-      emails = [],
-      permission = Privilege.WRITE,
+      emails,
+      permission,
       pw,
-      validityMode = "infinity",
-      days = 0,
-      hours = 0
+      validityMode,
+      days,
+      hours
     } = opt;
 
     let expiry = hours * 1 + days * 24;
