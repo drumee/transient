@@ -9,6 +9,7 @@ const { resolve } = require('path');
 const indexQueue = require('../queues/indexQueue');
 const { indexFile } = require('../offline/media/seo_lib');
 const { RedisStore, Attr } = require('@drumee/server-essentials');
+const { Mariadb, RedisStore, Attr } = require('@drumee/server-essentials');
 
 // Worker configuration
 const CONCURRENCY = parseInt(process.env.WORKER_CONCURRENCY || '5');
@@ -45,7 +46,6 @@ async function sendNotification(data, result) {
 
   try {
     // Get user sockets
-    const Mariadb = require('@drumee/server-essentials').Mariadb;
     const yp = new Mariadb({ name: 'yp' });
     
     let recipients = [];
