@@ -140,14 +140,28 @@ async function addFile(node, options = {}) {
   // Calculate priority
   let jobPriority = priority;
   if (jobPriority === null) {
-    // Small files get higher priority
     const filesize = node.filesize || 0;
-    if (filesize < 1024 * 1024) {  // < 1MB
-      jobPriority = 7;  // High priority
-    } else if (filesize < 10 * 1024 * 1024) {  // < 10MB
-      jobPriority = 5;  // Normal priority
-    } else {
-      jobPriority = 3;  // Low priority
+    const category = node.filetype || node.category;
+  
+    // Images: Always high priority
+    if (category === 'image') {
+      jobPriority = 8;
+    }
+    // PDFs with text: Medium priority
+    else if (node.extension === 'pdf' && filesize < 5 * 1024 * 1024) {
+      jobPriority = 6;
+    }
+    // Small documents: High priority
+    else if (filesize < 1024 * 1024) {
+      jobPriority = 7;
+    }
+    // Medium files: Normal priority
+    else if (filesize < 10 * 1024 * 1024) {
+      jobPriority = 5;
+    }
+    // Large files: Low priority
+    else {
+      jobPriority = 3;
     }
   }
 
