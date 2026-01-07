@@ -83,6 +83,8 @@ const Spawn = require("child_process").spawn;
 const DATA_ROOT = new RegExp(`^${data_dir}`);
 const SPAWN_OPT = { detached: true, stdio: ["ignore", "ignore", "ignore"] };
 const OFFLINE_DIR = resolve(server_home, "offline", "media");
+const indexQueue = require('../queues/indexQueue');
+
 class __media extends Mfs {
   /**
    *
@@ -700,14 +702,22 @@ class __media extends Mfs {
       myData: res
     });
 
-    /** May reuqires CPU power -- stand by */
-    // if ([Attr.document, Attr.image].includes(data[CATEGORY])) {
-    //   if (data[FILESIZE] < 1024 * 1024) {
-    //     Document.buildIndex(node);
-    //   } else {
-    //     TO DO : add yp.crontab
-    //   }
-    // }
+    /** SEO Indexing via Bull Queue */
+    if ([Attr.document, Attr.image].includes(data[CATEGORY])) {
+      try {
+        // Add to indexing queue
+        await indexQueue.addFile(res, {
+          uid: this.uid,
+          socket_id: this.input.get(Attr.socket_id),
+          hub_id: this.hub.get(Attr.id)
+        });
+        
+        this.debug(`[MEDIA] Queued for indexing: ${res.filename}`);
+      } catch (error) {
+        // Don't fail upload if indexing queue fails
+        this.warn(`[MEDIA] Failed to queue for indexing: ${error.message}`);
+      }
+    }
 
     if (isFunction(callback)) {
       return callback(node);
