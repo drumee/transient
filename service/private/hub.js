@@ -333,7 +333,6 @@ class __private_hub extends Hub {
     opt.hubname = this.hub.get(Attr.name);
     let visitor = await this.db.await_proc("member_show_privilege", this.uid);
     opt.visitor = visitor;
-    //@output.data opt
     let users = await this.db.await_proc(
       "hub_get_members_by_type",
       this.uid,
@@ -346,6 +345,7 @@ class __private_hub extends Hub {
       return (el.privilege & 32) == 0;
     });
 
+    this.debug("AAAA:367", opt)
     this.output.data(opt);
   }
 
@@ -582,48 +582,45 @@ class __private_hub extends Hub {
    */
   async update_external_settings() {
     const permission = this.input.use(Attr.permission) || Privilege.GUEST;
-    const pw = this.input.get(Attr.password) || "";
+    const password = this.input.get(Attr.password) || "";
     const days = this.input.get(Attr.days) || 0;
     const hours = this.input.get(Attr.hours) || 0;
-    const flag = this.input.need(Attr.flag);
     const validityMode = this.input.get("validity_mode") || "infinity";
     const expiry = hours * 1 + days * 24;
     let res = {};
     let nid = this.home_id;
     let hub_id = this.hub.get(Attr.id);
-
-    switch (flag) {
-      case Attr.password:
-        await this.yp.await_proc("dmz_update_password", hub_id, nid, pw);
-        res.password = pw;
-        break;
-      case Attr.permission:
-        await this.yp.await_proc(
-          "dmz_update_permission_next",
-          hub_id,
-          nid,
-          permission
-        );
-        res.permission = permission;
-        break;
-      case Attr.expiry:
-        await this.yp.await_proc(
-          "dmz_update_expiry_new",
-          hub_id,
-          nid,
-          validityMode,
-          expiry
-        );
-        res.hours = hours;
-        res.days = days;
-        res.dmz_expiry = "active";
-        if (expiry == 0) {
-          res.dmz_expiry = "expired";
-        }
-        if (validityMode == "infinity") {
-          res.dmz_expiry = "infinity";
-        }
-        break;
+    this.debug("AAAA:53", { permission, validityMode, days, expiry })
+    if (permission) {
+      await this.yp.await_proc(
+        "dmz_update_permission_next",
+        hub_id,
+        nid,
+        permission
+      );
+      res.permission = permission;
+    }
+    if (password) {
+      await this.yp.await_proc("dmz_update_password", hub_id, nid, pw);
+      res.password = password;
+    }
+    if (validityMode) {
+      await this.yp.await_proc(
+        "dmz_update_expiry_new",
+        hub_id,
+        nid,
+        validityMode,
+        expiry
+      );
+      res.hours = hours;
+      res.days = days;
+      res.dmz_expiry = "active";
+      if (expiry == 0) {
+        res.dmz_expiry = "expired";
+      }
+      if (validityMode == "infinity") {
+        res.dmz_expiry = "infinity";
+      }
     }
 
     this.output.data(res);
