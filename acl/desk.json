@@ -93,8 +93,8 @@
         "src": "owner"
       }
     },
-    "disk_usage": {
-      "doc": "Get disk usage statistics for user (owned files + owned hubs)",
+    "set_mfa": {
+      "doc": "Set multi factor authentication",
       "scope": "hub",
       "permission": {
         "src": "owner"

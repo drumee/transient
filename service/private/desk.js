@@ -460,6 +460,24 @@ class __private_desk extends Media {
   }
 
 
+  /**
+ *
+ * @returns
+ */
+  async set_mfa() {
+    const secret = this.input.need(Attr.secret);
+    const code = this.input.need(Attr.code);
+    const mfa = this.input.get("mfa");
+    let otp = await this.yp.await_proc("secret_check", this.uid, secret, code);
+    if (otp && otp.code == code) {
+      let profile = { otp: mfa, mfa };
+      await this.yp.call_proc("drumate_update_profile", this.uid, profile);
+      await this.yp.await_proc("secret_clear", this.uid, 'all');
+    }
+    let user = await this.yp.await_proc('get_user', this.uid)
+    this.output.data(user);
+  }
+
 
   /**
    * 

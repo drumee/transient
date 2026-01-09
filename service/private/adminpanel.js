@@ -24,10 +24,12 @@ const { main_domain } = sysEnv();
 const { stringify } = JSON;
 const { isEmpty, isArray, isString, uniqueId } = require('lodash');
 const Crypto = require("crypto");
-const xlsxj = require("xlsx-to-json");
+// const xlsxj = require("xlsx-to-json");
+const Csv = require('csv-parser');
 const Uniqid = require('uniqid');
 const { Mfs, MfsTools } = require('@drumee/server-core');
-const { Mfs: MfsApi, Drumate } = require('@drumee/setup-schemas');
+const { Mfs: Drumate } = require('@drumee/setup-schemas');
+const { createReadStream } = require('fs');
 const { remove_dir } = MfsTools;
 
 class __private_adminpanel extends Mfs {
@@ -35,67 +37,67 @@ class __private_adminpanel extends Mfs {
   // ========================
   // initialize
   // ========================
-  constructor(...args) {
-    super(...args);
+  // constructor(...args) {
+  //   super(...args);
 
-    this.my_subscription = this.my_subscription.bind(this);
-    this.my_organisation = this.my_organisation.bind(this);
-    this.my_privilege = this.my_privilege.bind(this);
+  //   this.my_subscription = this.my_subscription.bind(this);
+  //   this.my_organisation = this.my_organisation.bind(this);
+  //   this.my_privilege = this.my_privilege.bind(this);
 
-    this.organisation_add = this.organisation_add.bind(this);
-    this.organisation_update = this.organisation_update.bind(this);
-    this.organisation_update_password_level = this.organisation_update_password_level.bind(this);
-    this.organisation_update_double_auth = this.organisation_update_double_auth.bind(this);
-    this.organisation_update_dir_visiblity = this.organisation_update_dir_visiblity.bind(this);
-    this.organisation_update_dir_info = this.organisation_update_dir_info.bind(this);
+  //   this.organisation_add = this.organisation_add.bind(this);
+  //   this.organisation_update = this.organisation_update.bind(this);
+  //   this.organisation_update_password_level = this.organisation_update_password_level.bind(this);
+  //   this.organisation_update_double_auth = this.organisation_update_double_auth.bind(this);
+  //   this.organisation_update_dir_visiblity = this.organisation_update_dir_visiblity.bind(this);
+  //   this.organisation_update_dir_info = this.organisation_update_dir_info.bind(this);
 
-    this.role_add = this.role_add.bind(this);
-    this.role_rename = this.role_rename.bind(this);
-    this.role_delete = this.role_delete.bind(this);
-    this.role_show = this.role_show.bind(this);
-    this.role_assigned = this.role_assigned.bind(this);
-    this.role_assign = this.role_assign.bind(this);
-    this.role_reposition = this.role_reposition.bind(this);
-
-
-    this.member_add = this.member_add.bind(this);
-    this.member_update = this.member_update.bind(this);
-    this.member_delete = this.member_delete.bind(this);
-    this.member_disconnect = this.member_disconnect.bind(this);
-    this.member_show = this.member_show.bind(this);
-    this.member_list = this.member_list.bind(this);
-    this.member_loginlog = this.member_loginlog.bind(this);
-
-    this.member_admin_add = this.member_admin_add.bind(this);
-    this.member_admin_remove = this.member_admin_remove.bind(this);
-    this.member_admin_list = this.member_admin_list.bind(this);
-
-    this.send_password_link = this.send_password_link.bind(this);
-    this.password_link = this.password_link.bind(this);
+  //   this.role_add = this.role_add.bind(this);
+  //   this.role_rename = this.role_rename.bind(this);
+  //   this.role_delete = this.role_delete.bind(this);
+  //   this.role_show = this.role_show.bind(this);
+  //   this.role_assigned = this.role_assigned.bind(this);
+  //   this.role_assign = this.role_assign.bind(this);
+  //   this.role_reposition = this.role_reposition.bind(this);
 
 
-    this.import_validate = this.import_validate.bind(this);
-    this.import_process = this.import_process.bind(this);
-    this.import_load = this.import_load.bind(this);
+  //   this.member_add = this.member_add.bind(this);
+  //   this.member_update = this.member_update.bind(this);
+  //   this.member_delete = this.member_delete.bind(this);
+  //   this.member_disconnect = this.member_disconnect.bind(this);
+  //   this.member_show = this.member_show.bind(this);
+  //   this.member_list = this.member_list.bind(this);
+  //   this.member_loginlog = this.member_loginlog.bind(this);
 
-    this.member_change_status = this.member_change_status.bind(this)
-    this.member_block = this.member_block.bind(this);
-    this.member_unblock = this.member_unblock.bind(this);
-    this.member_authentification = this.member_authentification.bind(this);
+  //   this.member_admin_add = this.member_admin_add.bind(this);
+  //   this.member_admin_remove = this.member_admin_remove.bind(this);
+  //   this.member_admin_list = this.member_admin_list.bind(this);
 
-    this.members_import = this.members_import.bind(this);
+  //   this.send_password_link = this.send_password_link.bind(this);
+  //   this.password_link = this.password_link.bind(this);
 
-    this.members_whocansee = this.members_whocansee.bind(this);
-    this.members_whocansee_update = this.members_whocansee_update.bind(this);
 
-    this.mimic_new = this.mimic_new.bind(this);
-    this.mimic_reject = this.mimic_reject.bind(this);
-    this.mimic_active = this.mimic_active.bind(this);
-    this.mimic_end_bytime = this.mimic_end_bytime.bind(this);
-    this.mimic_end_byuser = this.mimic_end_byuser.bind(this);
-    this.mimic_end_bymimic = this.mimic_end_bymimic.bind(this);
+  //   this.import_validate = this.import_validate.bind(this);
+  //   this.import_process = this.import_process.bind(this);
+  //   // this.import_load = this.import_load.bind(this);
 
-  }
+  //   this.member_change_status = this.member_change_status.bind(this)
+  //   this.member_block = this.member_block.bind(this);
+  //   this.member_unblock = this.member_unblock.bind(this);
+  //   this.member_authentification = this.member_authentification.bind(this);
+
+  //   this.members_import = this.members_import.bind(this);
+
+  //   this.members_whocansee = this.members_whocansee.bind(this);
+  //   this.members_whocansee_update = this.members_whocansee_update.bind(this);
+
+  //   this.mimic_new = this.mimic_new.bind(this);
+  //   this.mimic_reject = this.mimic_reject.bind(this);
+  //   this.mimic_active = this.mimic_active.bind(this);
+  //   this.mimic_end_bytime = this.mimic_end_bytime.bind(this);
+  //   this.mimic_end_byuser = this.mimic_end_byuser.bind(this);
+  //   this.mimic_end_bymimic = this.mimic_end_bymimic.bind(this);
+
+  // }
 
 
   /**
@@ -197,12 +199,12 @@ class __private_adminpanel extends Mfs {
 
     if (isEmpty(mimic)) return this.output.status('NO_MIMIC');
     if (mimic.mimicker != this.mimicker) return this.output.status('INVALID_MIMIC');
-    if (mimic.status != 'active') return this.output.status('INVALID_STATUS');
+    if (mimic.status != Attr.active) return this.output.status('INVALID_STATUS');
     if (mimic.remaining_time > 0) return this.output.status('INVALID_TIME');
 
     res.status = 'INVALID_STATUS';
     let final = await this.yp.await_proc('mimic_set_by_status', mimic_id, 'endbytime')
-    if (final.status != 'active') {
+    if (final.status != Attr.active) {
       await this.yp.await_proc('uncast_user', mimic.mimicker, mimic.uid)
       res = await this.yp.await_proc('mimic_get', mimic_id)
       let recipients = await this.yp.await_proc('user_sockets', [mimic.uid, mimic.mimicker]);
@@ -223,10 +225,10 @@ class __private_adminpanel extends Mfs {
 
     if (mimic.mimicker != this.mimicker) return this.output.status('INVALID_MIMIC');
 
-    if (mimic.status != 'active') return this.output.status('INVALID_STATUS');
+    if (mimic.status != Attr.active) return this.output.status('INVALID_STATUS');
     res.status = 'INVALID_STATUS';
     let final = await this.yp.await_proc('mimic_set_by_status', mimic_id, 'endbymimic')
-    if (final.status != 'active') {
+    if (final.status != Attr.active) {
       await this.yp.await_proc('uncast_user', mimic.mimicker, mimic.uid)
       res = await this.yp.await_proc('mimic_get', mimic_id)
       let recipients = await this.yp.await_proc('user_sockets', [mimic.uid, mimic.mimicker]);
@@ -247,7 +249,7 @@ class __private_adminpanel extends Mfs {
 
     if (mimic.uid != this.uid) return this.output.status('INVALID_MIMIC');
 
-    if (mimic.status != 'active') return this.output.status('INVALID_STATUS');
+    if (mimic.status != Attr.active) return this.output.status('INVALID_STATUS');
 
     await this.yp.await_proc('mimic_set_by_status', mimic_id, 'endbyuser')
     await this.yp.await_proc('uncast_user', mimic.mimicker, mimic.uid)
@@ -282,7 +284,7 @@ class __private_adminpanel extends Mfs {
       return this.output.status('NOT_ONLINE');
     }
 
-    await this.yp.await_proc('mimic_set_by_status', mimic_id, 'active')
+    await this.yp.await_proc('mimic_set_by_status', mimic_id, Attr.active)
     await this.yp.await_proc('cast_user', mimic.mimicker, mimic.uid)
     res = await this.yp.await_proc('mimic_get', mimic_id)
     let recipients = await this.yp.await_proc('user_sockets', [mimic.uid, mimic.mimicker]);
@@ -323,24 +325,24 @@ class __private_adminpanel extends Mfs {
 
     let hismimic = await this.yp.await_proc('mimic_get_by_status', user_id, 'new')
     if (!isEmpty(hismimic)) return this.output.status('MIMIC_ALREADY');
-    hismimic = await this.yp.await_proc('mimic_get_by_status', user_id, 'active')
+    hismimic = await this.yp.await_proc('mimic_get_by_status', user_id, Attr.active)
     if (!isEmpty(hismimic)) return this.output.status('MIMIC_ALREADY');
     let mymimic = await this.yp.await_proc('mimic_get_by_status', this.uid, 'new')
     if (!isEmpty(mymimic)) return this.output.status('MIMIC_ALREADY');
-    mymimic = await this.yp.await_proc('mimic_get_by_status', this.uid, 'active')
+    mymimic = await this.yp.await_proc('mimic_get_by_status', this.uid, Attr.active)
     if (!isEmpty(mymimic)) return this.output.status('MIMIC_ALREADY');
 
     let member = await this.yp.await_proc('show_member_detail', user_id, orgid);
 
     let online = await this.yp.await_proc('socket_user_connections', user_id)
-    if (isEmpty(online) && ['active'].includes(member.status)) {
+    if (isEmpty(online) && [Attr.active].includes(member.status)) {
       res.member = member
       return this.output.status('NOT_ONLINE');
     }
 
-    if (['locked', 'archived'].includes(member.status)) {
+    if ([Attr.locked, Attr.archived].includes(member.status)) {
       mymimic = await this.yp.await_proc('mimic_new', user_id, this.uid)
-      await this.yp.await_proc('mimic_set_by_status', mymimic.mimic_id, 'active')
+      await this.yp.await_proc('mimic_set_by_status', mymimic.mimic_id, Attr.active)
       await this.yp.await_proc('cast_user', mymimic.mimicker, mymimic.uid)
       res = await this.yp.await_proc('mimic_get', mymimic.mimic_id)
     }
@@ -363,7 +365,7 @@ class __private_adminpanel extends Mfs {
     let status = this.input.need(Attr.status)
     if (this.uid == user_id) return this.output.status('INVALID_USER');
 
-    if (!['archived', 'active', 'locked'].includes(status)) return this.output.status('INVALID_STATUS0');
+    if (![Attr.archived, Attr.active, Attr.locked].includes(status)) return this.output.status('INVALID_STATUS0');
 
     let org = await this.yp.await_proc('organisation_get', this.user.domain_id())
     orgid = org.id;
@@ -391,26 +393,26 @@ class __private_adminpanel extends Mfs {
 
     if (isEmpty(member)) return this.output.status('NO_MEMBER');
 
-    if (status == 'locked') {
-      if (!['active', 'archived'].includes(member.status)) {
+    if (status == Attr.locked) {
+      if (![Attr.active, Attr.archived].includes(member.status)) {
         return this.output.status('INVALID_STATUS1');
       }
     }
 
-    if (status == 'archived') {
-      if (member.status != 'locked') {
+    if (status == Attr.archived) {
+      if (member.status != Attr.locked) {
         return this.output.status('INVALID_STATUS2');
       }
     }
 
-    if (status == 'active') {
-      if (member.status != 'locked') {
+    if (status == Attr.active) {
+      if (member.status != Attr.locked) {
         return this.output.status('INVALID_STATUS3');
       }
     }
 
     res = await this.yp.await_proc('update_member_status', user_id, status)
-    if (status == 'archived') {
+    if (status == Attr.archived) {
       let users = [];
       await this.yp.await_proc('contact_assignment_update', user_id, stringify(users));
       await this.yp.await_proc('forward_proc', user_id, 'my_contact_sync', `'${user_id}'`)
@@ -611,54 +613,64 @@ class __private_adminpanel extends Mfs {
           skip = true;
         }
       }
-
       if (isEmpty(e.email)) {
         status.push("EMPTY_EMAIL")
         skip = true;
-      }
-
-      if (isEmpty(e.mobile)) {
-        status.push("EMPTY_MOBLIE")
-        skip = true;
-      }
-
-      if (isEmpty(e.areacode)) {
-        status.push("EMPTY_AREACODE")
-        skip = true;
-      }
-
-      if (!isEmpty(e.email)) {
-        if (!Constants.EMAIL_CHECKER.test(e.email)) {
+      } else {
+        if (!e.email.isEmail()) {
           status.push("INVALID_EMAIL_FORMAT")
           skip = true;
+        } else {
+          chk = await this.yp.await_proc('email_exists', e.email)
+          if (!isEmpty(chk)) {
+            status.push("EMAIL_NOT_AVAILABLE")
+            skip = true;
+          }
         }
       }
 
-      if (!isEmpty(e.mobile)) {
-        if (!Constants.PHONE_CHECKER.test(e.mobile)) {
-          status.push("INVALID_PHONE_FORMAT")
-          skip = true;
-        }
-      }
-      if (isEmpty(e.ident)) {
-        status.push("EMPTY_IDENT")
-        skip = true;
-      }
-      if (!isEmpty(e.email)) {
-        chk = await this.yp.await_proc('email_exists', e.email)
-        if (!isEmpty(chk)) {
-          status.push("EMAIL_NOT_AVAILABLE")
-          skip = true;
-        }
-      }
+      // if (isEmpty(e.mobile)) {
+      //   status.push("EMPTY_MOBLIE")
+      //   skip = true;
+      // }
 
-      if (!isEmpty(e.ident)) {
-        chk = await this.yp.await_proc('get_user_in_domain', e.ident, domain_name)
-        if (chk.exists == 1) {
-          status.push("IDENT_NOT_AVAILABLE")
-          skip = true;
-        }
-      }
+      // if (isEmpty(e.areacode)) {
+      //   status.push("EMPTY_AREACODE")
+      //   skip = true;
+      // }
+
+      // if (!isEmpty(e.email)) {
+      //   if (!Constants.EMAIL_CHECKER.test(e.email)) {
+      //     status.push("INVALID_EMAIL_FORMAT")
+      //     skip = true;
+      //   }
+      // }
+
+      // if (!isEmpty(e.mobile)) {
+      //   if (!Constants.PHONE_CHECKER.test(e.mobile)) {
+      //     status.push("INVALID_PHONE_FORMAT")
+      //     skip = true;
+      //   }
+      // }
+      // if (isEmpty(e.ident)) {
+      //   status.push("EMPTY_IDENT")
+      //   skip = true;
+      // }
+      // if (!isEmpty(e.email)) {
+      //   chk = await this.yp.await_proc('email_exists', e.email)
+      //   if (!isEmpty(chk)) {
+      //     status.push("EMAIL_NOT_AVAILABLE")
+      //     skip = true;
+      //   }
+      // }
+
+      // if (!isEmpty(e.ident)) {
+      //   chk = await this.yp.await_proc('get_user_in_domain', e.ident, domain_name)
+      //   if (chk.exists == 1) {
+      //     status.push("IDENT_NOT_AVAILABLE")
+      //     skip = true;
+      //   }
+      // }
       for (var m of importdata.members) {
         if (m.ident == e.ident && (!isEmpty(e.ident))) {
           skip = true;
@@ -690,12 +702,12 @@ class __private_adminpanel extends Mfs {
    * @param {*} orgid 
    * @returns 
    */
-  async import_load(result, option, domain_name, orgid) {
+  async import_members(users) {
     let importdata = {};
     let members = [];
     importdata.valid = true
     for (let member of result) {
-      let user = await this.createMember(member);
+      let user = await this.create_account(member);
       if (user.error) {
         member.errorstatus = user.error;
         members.push(member);
@@ -717,6 +729,51 @@ class __private_adminpanel extends Mfs {
     }
     importdata.members = members;
     return importdata
+  }
+
+  /**
+   * The account schema is picked from the pool of hubs that are already created by offline process 
+   */
+  async create_account(data) {
+    let {
+      email,
+      firstname = "",
+      password = this.randomString(),
+      category = "free",
+      domain
+    } = data;
+    let username = firstname || email.split('@')[0];
+    username = username.replace(/[^a-zA-Z0-9]/g, ''); // Accept only ascci alphanum
+    username = await this.yp.await_func("ensure_username", { username: username.toLowerCase(), domain });
+    let a = firstname.split(/ +/)
+    let lastname = "";
+    if (a.length > 1) {
+      firstname = a[0]
+      a.shift()
+      lastname = a.join(' ')
+    }
+    let profile = {
+      username,
+      sharebox: uniqueId(),
+      otp: 0,
+      category,
+      profile_type: category,
+      lang: this.user.language() || this.input.app_language(),
+      firstname,
+      lastname,
+      domain,
+      email
+    }
+    let user = await this.yp.await_proc("drumate_create", password, profile);
+    if (!user || !user[0]) {
+      return { ...profile, error: 1, status: "unknown_error" }
+    }
+
+    if (user[0].failed) {
+      return { ...profile, error: 1, status: "db_error", ...user[0] }
+    }
+    // TO DO SEND LINK
+    return user;
   }
 
   /**
@@ -758,86 +815,67 @@ class __private_adminpanel extends Mfs {
 
   /**
    * 
+   * @param {*} filePath 
    * @returns 
    */
-  async members_import() {
-    let res = {}
-    let uploaded_file_id = this.input.get(Attr.uploaded_id)
-    let file_id = this.input.get(Attr.secret);
+  parseCsv(filePath) {
+    return new Promise((resolve, reject) => {
+      const results = [];
 
-    if (isEmpty(file_id) && isEmpty(uploaded_file_id)) return this.output.status('NO_FILE');
-
-    if (!isEmpty(file_id) && !isEmpty(uploaded_file_id)) return this.output.status('INVALID_INPUT');
-
-    if (!isEmpty(file_id) && isEmpty(uploaded_file_id)) {
-      option = 'load'
-    }
-
-    if (!isEmpty(uploaded_file_id)) {
-      file_id = uploaded_file_id
-    }
-
-
-    let org = await this.yp.await_proc('organisation_get', this.user.domain_id())
-    orgid = org.id;
-    if (isEmpty(org)) return this.output.status('NO_ORG');
-
-    let my_org = await this.user.organization();
-    if (isEmpty(my_org)) return this.output.status('NO_ORG');
-
-    if (my_org.id != org.id) return this.output.status('INVALID_ORG');
-
-    let my_privilege = await this.yp.await_proc('domain_privilege', my_org.domain_id, this.uid);
-    if (my_privilege.privilege < Remit.dom_admin_memeber) return this.output.status('NOT_ENOUGH_PRIVILEGE');
-
-    let domain = await this.yp.await_proc('domain_exists', my_org.domain_id);
-
-    try {
-      let input = Path.resolve(process.env.DRUMEE_TMP_DIR, file_id);
-      xlsxj({ input, output: null }, function (err, result) {
-        if (err) {
-          res = err;
-          return this.output.status('XLTOJSON_ERR')
-        }
-        let count = 0;
-        let idx = 0;
-        let finalresult = []
-        for (var e of result) {
-          count = 0;
-          if (isEmpty(e["First Name"])) { count++ }
-          if (isEmpty(e["Last Name"])) { count++ }
-          if (isEmpty(e["Mail"])) { count++ }
-          if (isEmpty(e["Ident"])) { count++ }
-          if (isEmpty(e["Phone Number"])) { count++ }
-          if (isEmpty(e["Area Code"])) { count++ }
-          idx++;
-          if (count < 6) {
-            finalresult.push(e)
-          }
-        }
-        this.import_process(finalresult, option, domain.name, file_id, orgid)
-      });
-    } catch (e) {
-      res = e;
-      this.output.status('FILE_ERR')
-    }
-  }
-
-
-  /* Need to delete */
-  async members_import1() {
-    let file_id = this.input.get(Attr.uploaded_id);
-    let input = Path.resolve(process.env.DRUMEE_TMP_DIR, file_id);
-    xlsxj({ input, output: null }, function (err, result) {
-      if (err) {
-        res = err;
-        this.output.status('XLTOJSON_ERR')
-      } else {
-        this.output.data(result);
-      }
+      createReadStream(filePath)
+        .pipe(Csv({
+          separator: ';',
+          mapHeaders: ({ header }) => header.trim(),
+          mapValues: ({ value }) => value.trim()
+        }))
+        .on('data', (data) => results.push(data))
+        .on('end', () => resolve(results))
+        .on('error', (error) => reject(error));
     });
-
   }
+
+  /**
+   * 
+   * @returns 
+   */
+  async prepare_import() {
+    const incoming_file = this.input.need(Attr.uploaded_file);
+    const { org } = await this.checkPrivilege() || {}
+
+    if (!org) return;
+    let users = await this.parseCsv(incoming_file);
+    let seats = parseInt(org?.quota?.seat);
+    let list = []
+    let emails = {}
+    this.debug("AAA:818", seats, incoming_file)
+    for (let user of users) {
+      if (seats > 0) {
+        user.domain = org.link
+        user.category = org.category;
+        user.status = 'Ok'
+        seats--;
+      } else {
+        user.status = "Quota exceeded"
+      }
+      let exists = await this.yp.await_func("email_exists", user.email);
+      if (exists) {
+        user.status = "Email already exists"
+      } else {
+        if (emails[user.email]) {
+          user.status = "Duplicated email"
+        }
+        emails[user.email] = 1
+      }
+      if (user.status == 'Ok') {
+        user.error = 0;
+      } else {
+        user.error = 1;
+      }
+      list.push(user)
+    }
+    this.output.list(list)
+  }
+
 
   /**
    * 
@@ -851,7 +889,6 @@ class __private_adminpanel extends Mfs {
       users = [users];
     }
     let res = {};
-
     let org = await this.yp.await_proc('organisation_get', this.user.domain_id())
     orgid = org.id;
     if (isEmpty(org)) return this.output.status('NO_ORG');
@@ -1001,6 +1038,10 @@ class __private_adminpanel extends Mfs {
     this.output.data(result);
   }
 
+  /**
+   * 
+   * @returns 
+   */
   async member_admin_add() {
     let orgid //= this.input.need(Attr.orgid);
     let users = this.input.need(Attr.users);
@@ -1217,7 +1258,6 @@ class __private_adminpanel extends Mfs {
 
     let drumate = new Drumate({ yp: this.yp });
     let user = await drumate.create(profile);
-    this.debug("AAA:1203", user)
     this.set({ email });
 
     drumate.firstname = firstname;
@@ -1466,111 +1506,81 @@ class __private_adminpanel extends Mfs {
 
   /**
    * 
+   */
+  async checkPrivilege() {
+    let org = await this.yp.await_proc('organisation_get', this.user.domain_id())
+    let my_org = await this.user.organization();
+    if (isEmpty(org) || isEmpty(my_org)) return this.output.status('NO_ORG');
+    if (my_org.id != org.id) return this.output.status('INVALID_ORG');
+
+    let my_privilege = await this.yp.await_proc('domain_privilege', my_org.domain_id, this.uid);
+    if (my_privilege.privilege < Remit.dom_admin_memeber) {
+      return this.output.status('NOT_ENOUGH_PRIVILEGE');
+    }
+    let quota = await this.yp.await_func('get_quota', this.uid);
+    org.quota = JSON.parse(quota)
+    if (!parseInt(org?.quota?.seat)) {
+      return this.output.status('Invalid plan');
+    }
+    org.domain = org.url;
+    return { org }
+  }
+
+  /**
+   * 
    * @returns 
    */
   async member_add() {
     let orgid //= this.input.need(Attr.orgid);
     let email = this.input.need(Attr.email)
-    let ident = this.input.use(Attr.ident);
-    if (!isEmpty(ident)) {
-      ident = ident.toLowerCase().trim();
-    }
-    let users = this.input.need(Attr.users) || [];
-    let role = this.input.use(Attr.role) || this.input.use(Attr.list) || [];
+    let firstname = this.input.get(Attr.firstname);
+    let lastname = this.input.get(Attr.lastname);
+    let mobile = this.input.use(Attr.mobile) || ""
+    let areacode = this.input.use(Attr.areacode) || ""
+
     let res = {};
-    let profile = {};
-    let list = []
-    if (!this.checkProfileSanity(profile)) {
-      return
+    const { org } = await this.checkPrivilege() || {}
+    if (!org) return;
+
+    let chk = await this.yp.await_proc('email_exists', email)
+    if (!isEmpty(chk)) return this.output.status('EMAIL_NOT_AVAILABLE');
+
+    // let domain = await this.yp.await_proc('domain_exists', org.id);
+    // profile.domain = domain.name;
+    let profile = { mobile, areacode, email, firstname, lastname, domain: org.url };
+
+
+    let user = await this.create_account(profile);
+    if (!user[0] || user[0].error) {
+      return this.output.status(user[0].error || "INTERNAL_ERROR")
     }
-
-    let org = await this.yp.await_proc('organisation_get', this.user.domain_id())
-    orgid = org.id;
-    if (isEmpty(org)) {
-      return this.output.status('NO_ORG')
-    };
-
-    let my_org = await this.user.organization();
-    if (isEmpty(my_org)) {
-      return this.output.status('NO_ORG')
-    };
-
-    if (my_org.id != org.id) {
-      return this.output.status('INVALID_ORG');
-    }
-
-    let my_privilege = await this.yp.await_proc('domain_privilege', my_org.domain_id, this.uid);
-    if (my_privilege.privilege < Remit.dom_admin_memeber) {
-      return this.output.status('NOT_ENOUGH_PRIVILEGE')
-    };
-
-    let domain = await this.yp.await_proc('domain_exists', my_org.domain_id);
-    profile.domain = domain.name;
-
-    if (!isEmpty(role)) {
-      for (let id of role) {
-        let data = await this.yp.await_proc('role_exists', id, orgid);
-        if (isEmpty(data)) {
-          return this.output.status('ROLE_NOT_EXISTS');
-        }
-      }
-    }
-
-    let isinvaliddrumate = 0;
-    let isinvalidorg = 0;
-    for (let entity_id of users) {
-      let drumate = await this.yp.await_proc('drumate_exists', entity_id);
-
-      if (isEmpty(drumate)) {
-        isinvaliddrumate = isinvaliddrumate + 1
-      }
-      if (!isEmpty(drumate)) {
-        let his_org = await this.yp.await_proc('my_organisation', drumate.id)
-        if (!isEmpty(his_org)) {
-          if (his_org.id != org.id) {
-            isinvalidorg = isinvalidorg + 1
-          }
-        }
-      }
-    }
-
-    if (isinvaliddrumate > 0) {
-      return this.output.status('NOT_VALID_DRUMATE')
-    };
-
-    if (isinvalidorg > 0) {
-      return this.output.status('NOT_VALID_ORG');
-    }
-
-    let user = await this.createMember(profile);
-    if (!user || user.error) {
-      return this.output.status(user.error || "INTERNAL_ERROR")
-    }
-
+    let drumate = await this.yp.await_proc('get_user', email)// user[1]
     let message = await this.invite_link(email);
-    if (isEmpty(users)) {
 
-      list = await this.yp.await_proc('member_list_all', user.id, orgid);
-      if (!isArray(list)) {
-        list = [list]
-      }
-      for (let entity of list) { users.push(entity.drumate_id) }
+    let users = [];
+    let list = toArray(await this.yp.await_proc('member_list_all', drumate.id, orgid));
+    for (let entity of list) {
+      users.push(entity.drumate_id)
     }
-    await this.yp.await_proc('contact_assignment_update', user.id, stringify(users));
-    await this.yp.await_proc('ticket_grant_permission', user.id);
+    await this.yp.await_proc('contact_assignment_update', drumate.id, users);
+    await this.yp.await_proc('ticket_grant_permission', drumate.id);
 
-    let data = await this.yp.await_proc('show_member_detail', user.id, orgid);
+    let data = await this.yp.await_proc('show_member_detail', drumate.id, orgid);
     if (!isEmpty(data)) {
       res = data;
+    } else {
+      res = drumate
     }
-    data = await this.yp.await_proc('org_user_role', user.id, orgid);
-    data = toArray(data);
-    if (data.length) {
-      res.role = data;
+    let role = await this.yp.await_proc('org_user_role', drumate.id, orgid);
+    role = toArray(role);
+    if (role.length) {
+      res.role = role;
     }
+    res.drumate_id = drumate.id
+    res.status = Attr.active
     if (message) res.email = message;
-    if (!isEmpty(res.address)) res.address = this.parseJSON(res.address);
-    this.output.data(res);
+    let admin = await this.yp.await_proc('get_user', this.uid)
+    this.output.data({ member: res, admin });
   }
 
 
@@ -1587,12 +1597,8 @@ class __private_adminpanel extends Mfs {
     let email = this.input.need(Attr.email)
     let mobile = this.input.use(Attr.mobile)
     let areacode = this.input.use(Attr.areacode)
-    let ident = this.input.need(Attr.ident);
-    ident = ident.toLowerCase();
     let users = [];
     let role = this.input.use(Attr.role) || this.input.use(Attr.list) || [];
-    let option = this.input.need(Attr.option) || '0';
-    this.debug("ZZZ:1999*********************************");
     let otp = this.input.get('otp') || 0;
     if (![1, 0, '1', '0'].includes(otp)) {
       otp = 0;
@@ -1624,11 +1630,11 @@ class __private_adminpanel extends Mfs {
 
     if (isEmpty(drumate)) return this.output.status('DRUMATE_NOT_EXISTS');
 
-    let domain = await this.yp.await_proc('domain_exists', my_org.domain_id);
-    if (drumate.ident.toLowerCase() != ident) {
-      chk = await this.yp.await_proc('get_user_in_domain', ident, domain.name)
-      if (chk.exists == 1) return this.output.status('IDENT_NOT_AVAILABLE');
-    }
+    // let domain = await this.yp.await_proc('domain_exists', my_org.domain_id);
+    // if (drumate.ident.toLowerCase() != ident) {
+    //   chk = await this.yp.await_proc('get_user_in_domain', ident, domain.name)
+    //   if (chk.exists == 1) return this.output.status('IDENT_NOT_AVAILABLE');
+    // }
 
     if (drumate.email != email) {
       chk = await this.yp.await_proc('email_exists', email)
@@ -1698,18 +1704,18 @@ class __private_adminpanel extends Mfs {
     profile.mobile = mobile || '';
     profile.areacode = areacode || '';
 
-    if (!isEmpty(ident)) {
-      profile.ident = ident
-      profile.username = ident
-    }
+    // if (!isEmpty(ident)) {
+    //   profile.ident = ident
+    //   profile.username = ident
+    // }
     profile.otp = otp;
 
     if (!isEmpty(role)) {
       await this.yp.await_proc('role_map', user_id, stringify(role), orgid);
     }
-    if (drumate.ident != ident) {
-      await this.yp.await_proc('drumate_change_username', user_id, ident);
-    }
+    // if (drumate.ident != ident) {
+    //   await this.yp.await_proc('drumate_change_username', user_id, ident);
+    // }
     await this.yp.call_proc('drumate_update_profile', user_id, stringify(profile));
     await this.yp.call_proc('contact_sync_update', user_id);
     await this.yp.await_proc('contact_assignment_update', user_id, stringify(users));
@@ -1777,7 +1783,7 @@ class __private_adminpanel extends Mfs {
 
     if (isEmpty(member)) return this.output.status('NO_MEMBER');
 
-    if ('archived' != member.status) return this.output.status('INVALID_STATUS');
+    if (Attr.archived != member.status) return this.output.status('INVALID_STATUS');
 
 
     if (member.is_able_delete != 'yes') return this.output.status('INVALID_TIME');
@@ -1825,7 +1831,8 @@ class __private_adminpanel extends Mfs {
     }
     let user = await this.yp.await_proc(`drumate_delete`, user_id);
     remove_dir(user.home_dir);
-    this.output.data(user);
+    const admin = await this.yp.await_proc(`get_user`, this.uid);
+    this.output.data({ member: user, admin });
   }
 
 
@@ -1887,7 +1894,8 @@ class __private_adminpanel extends Mfs {
     }
     let user = await this.yp.await_proc(`drumate_vanish`, user_id);
     remove_dir(user.home_dir);
-    this.output.data(user);
+    const admin = await this.yp.await_proc('get_user', this.uid)
+    this.output.data({ member: user, admin });
   }
 
 
@@ -1953,7 +1961,7 @@ class __private_adminpanel extends Mfs {
 
     let data = await this.yp.await_proc('role_exists', role_id, orgid);
     if (isEmpty(data)) return this.output.status('ROLE_NOT_EXISTS');
-    res = this.yp.await_proc('role_delete', role_id, orgid);
+    res = await this.yp.await_proc('role_delete', role_id, orgid);
     this.output.data(res);
   }
 
@@ -1971,7 +1979,7 @@ class __private_adminpanel extends Mfs {
     let my_privilege = await this.yp.await_proc('domain_privilege', org.domain_id, this.uid);
     if (my_privilege.privilege < Remit.dom_admin_view) return this.output.status('NOT_ENOUGH_PRIVILEGE');
 
-    res = this.yp.await_proc('role_get', orgid, page);
+    res = await this.yp.await_proc('role_get', orgid, page);
     this.output.list(res);
   }
 
@@ -2009,7 +2017,7 @@ class __private_adminpanel extends Mfs {
       return this.output.status('ROLE_NOT_EXISTS');
     }
     if (data.name != name) {
-      res = this.yp.await_proc('role_rename', role_id, orgid, name);
+      res = await this.yp.await_proc('role_rename', role_id, orgid, name);
     } else {
       res = data
     }
@@ -2037,7 +2045,7 @@ class __private_adminpanel extends Mfs {
     if (my_privilege.privilege < Remit.dom_admin_memeber) {
       return this.output.status('NOT_ENOUGH_PRIVILEGE');
     }
-    res = this.yp.await_proc('role_add', name, orgid);
+    res = await this.yp.await_proc('role_add', name, orgid);
     this.output.data(res);
   }
 
@@ -2237,6 +2245,38 @@ class __private_adminpanel extends Mfs {
   }
 
 
+  /**
+ * 
+ * @returns 
+ */
+  async create_organisation() {
+    // check payement validity
+    let name = this.input.need(Attr.name);
+    let ident = this.input.need(Attr.ident);
+    ident = ident.toLowerCase();
+    let recds = { ident, name };
+
+    let chk = await this.user.organization();
+    if (chk && chk.domain_id > 1) return this.output.status('already_in_other_domain');
+
+    chk = await this.yp.await_proc('ident_exists', ident)
+    if (!isEmpty(chk)) return this.output.status('domain_not_available');
+
+    let domain = await this.yp.await_proc('domain_create', ident);
+    await this.yp.await_proc('domain_grant', domain.id, Remit.dom_owner, this.uid, 0);
+    recds.domain_id = domain.id;
+    recds.owner_id = this.uid;
+    recds.link = domain.name
+    let org = await this.yp.await_proc('organisation_add',
+      this.uid, name, domain.name, ident, domain.id, recds
+    );
+    let sql = 'SELECT id, quota FROM quota WHERE payer_id=? AND domain_id=?'
+    let { id, quota } = await this.yp.await_query(sql, this.uid, 1);
+    quota.domain_id = domain.id;
+    await this.yp.await_proc('update_quota', id, domain.id, quota)
+
+    this.output.data(org);
+  }
 }
 
 

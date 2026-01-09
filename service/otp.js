@@ -31,19 +31,16 @@ class Otp extends Entity {
     const socket_id = this.input.need(Attr.socket_id);
 
     let socket_ok = await this.yp.await_func("is_socket_bound", socket_id, this.input.sid());
-    this.debug("AAA:34", socket_ok)
     if (!socket_ok) {
       return { error: 1, status: "no-socket" }
     }
 
     let user = await this.yp.await_proc("drumate_exists", ident);
-    this.debug("AAA:40", user)
     if (!user && !user.id) {
       return { error: 1, status: "no-user", user };
     }
 
     let otp = await this.yp.await_proc("secret_check", user.id, secret, code);
-    this.debug("AAA:44", otp)
     if (!otp || otp.code != code) {
       return { error: 1, status: "wrong-code", user };
     }
@@ -75,8 +72,11 @@ class Otp extends Entity {
     if (!user || !user.email) {
       return this.output.data({ status: "no-user", email });
     }
-
-    let { code, secret } = await this.yp.await_proc(`secret_create`, user.id, uniqueId());
+    let token = uniqueId();
+    let { code, secret } = await this.yp.await_proc(`secret_create`, user.id, token);
+    if (this.input.get(Attr.method) == "otp") {
+      ({ code, secret } = await this.yp.await_proc(`otp_create`, user.id, token));
+    }
     const ulang = this.input.ua_language();
     let lex = Cache.lex(ulang)
     let data = {
@@ -99,7 +99,7 @@ class Otp extends Entity {
     } catch (e) {
       this.warn(e)
     }
-    this.output.data({ status: 'ok', sent, secret, email });
+    this.output.data({ status: 'ok', sent, ...user, secret, email });
   }
 }
 

@@ -118,12 +118,14 @@ class __butler extends Mfs {
     try {
       a = data.email.split("@");
     } catch (e) {
-      this.exception.user("invalid_token");
+      this.output.data({ error: "INVALID_LINK" });
+      // this.exception.user("invalid_token");
       return;
     }
 
     if (data.status != "active") {
-      this.exception.user("invalid_token");
+      this.output.data({ error: 'LINK_EXPIRES' });
+      // this.exception.user("invalid_token");
       return;
     }
 
@@ -255,13 +257,13 @@ class __butler extends Mfs {
       profile.connected = "1";
       await this.yp.call_proc("drumate_update_profile", id, stringify(profile));
       //let domain = await this.yp.await_func("domain_name", sid);
-      await this.yp.await_proc(
-        "session_login_next",
-        id,
-        pw,
-        this.input.sid(),
-        drumate.domain
-      );
+      let opt = {
+        uid: id,
+        password: pw,
+        sid: this.input.sid(),
+        host: drumate.domain
+      }
+      let log = await this.yp.await_proc("session_signin", opt);
       metadata.step = "complete";
       await this.yp.await_proc("token_update", secret, metadata);
       res = await this.yp.await_proc("token_get_next", secret);
@@ -440,16 +442,16 @@ class __butler extends Mfs {
     }
     let hub = await this.yp.await_proc("get_hub", org.url);
     let user = await this.yp.await_proc("get_user", this.uid);
-    if(!user?.id){
+    if (!user?.id) {
       user = {
-        uid:this.uid,
-        id:this.uid,
-        profile:{},
+        uid: this.uid,
+        id: this.uid,
+        profile: {},
         ident: this.session.ident(),
-        username:this.session.ident(),
-        signed_in:0,
+        username: this.session.ident(),
+        signed_in: 0,
         settings: {},
-        organisation:org
+        organisation: org
       }
     }
     user.main_domain = main_domain;
@@ -523,7 +525,7 @@ class __butler extends Mfs {
     await this.yp.await_proc("token_delete", secret);
     this.output.data(user);
   }
-  
+
   /**
    * The account schema is picked from the pool of hubs that are already created by offline process 
    */
@@ -535,6 +537,7 @@ class __butler extends Mfs {
       password,
     } = data;
     let username = firstname || email.split('@')[0];
+    username = username.replace(/[^a-zA-Z0-9]/g, '');// Accept only ascci alphanum
     username = await this.yp.await_func("ensure_username", { username: username.toLowerCase(), domain });
     let a = firstname.split(/ +/)
     let lastname = "";
@@ -543,7 +546,6 @@ class __butler extends Mfs {
       a.shift()
       lastname = a.join(' ')
     }
-    username = username.replace(/[^a-zA-Z0-9]/g, '');
     let profile = {
       username,
       sharebox: uniqueId(),

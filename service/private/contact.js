@@ -1271,10 +1271,10 @@ class __private_contact extends Contact {
     }
     res = await this._show(newcontact.id);
     res.input = email;
-    if (sent.error) {
-      res.status = 'EMAIL_NOT_SENT';
-      res.failed = sent.error;
-    }
+    // if (sent.error) {
+    //   res.status = 'EMAIL_NOT_SENT';
+    //   res.failed = sent.error;
+    // }
 
     // Log contact activities
     if (!isEmpty(drumate) && res.status !== 'EMAIL_NOT_SENT') {

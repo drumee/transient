@@ -192,7 +192,7 @@
         "src": "admin"
       }
     },
-    "members_import": {
+    "prepare_import": {
       "scope": "domain",
       "permission": {
         "src": "write"
@@ -250,6 +250,12 @@
       "scope": "domain",
       "permission": {
         "src": "write"
+      }
+    },
+    "create_organisation": {
+      "scope": "hub",
+      "permission": {
+        "src": "owner"
       }
     }
   },
