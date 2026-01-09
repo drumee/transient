@@ -1615,6 +1615,29 @@ class __private_media extends Media {
       data.user_filename = data.filename.replace(`.${data.extension}`, "");
     }
     node = await this.db.await_proc("mfs_set_node_attr", node.nid, data, 1);
+
+    // Update disk_usage when filesize changes
+    const old_filesize = node.filesize || 0;
+    const new_filesize = data.filesize || 0;
+    const delta = new_filesize - old_filesize;
+  
+    if (delta !== 0) {
+      try {
+        const hub_id = node.hub_id || this.hub.get(Attr.id);
+        await this.yp.await_run(`
+          UPDATE disk_usage 
+          SET size = GREATEST(0, IFNULL(size, 0) + ${delta}) 
+          WHERE hub_id = '${hub_id}'
+        `);
+      
+        this.debug(`[QUOTA] Updated disk_usage on replace_content: delta=${delta} bytes`);
+        // Trigger will auto-sync quota_usage
+      
+      } catch (e) {
+        this.warn('[QUOTA] Failed to update disk_usage on replace_content:', e.message);
+      }
+    }
+
     node.extension = data.extension;
     this._mustReplace = 1;
     let attr = await this.after_store(
