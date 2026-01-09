@@ -18,7 +18,7 @@ const {
   isEmpty, filter, isArray, difference, map
 } = require("lodash");
 const {
-  utils, RedisStore, Cache, Constants, Attr, Privilege, sysEnv
+  utils, RedisStore, Cache, Constants, Attr, Privilege, sysEnv, server_location
 } = require("@drumee/server-essentials");
 const {
   INTERNAL_ERROR,
@@ -32,7 +32,6 @@ const { MfsTools } = require("@drumee/server-core");
 const { remove_dir } = MfsTools;
 const { toArray } = utils;
 const { stringify } = JSON;
-const { server_location } = sysEnv();
 
 const Hub = require("../hub");
 class __private_hub extends Hub {
@@ -56,7 +55,6 @@ class __private_hub extends Hub {
     this.delete_contributor = this.delete_contributor.bind(this);
     this.get_space_usage = this.get_space_usage.bind(this);
     this.set_privilege = this.set_privilege.bind(this);
-    this.set_members_privilege = this.set_members_privilege.bind(this);
     this.change_owner = this.change_owner.bind(this);
     this.lookup_hubers = this.lookup_hubers.bind(this);
     this.add_font_link = this.add_font_link.bind(this);
@@ -163,8 +161,7 @@ class __private_hub extends Hub {
 
     let members = await this.yp.await_proc('forward_proc', hub_id, 'dmz_notify_list', `'${flag}'`);
     if (isEmpty(members)) { return }
-    if (!isArray(members)) { members = [members]; }
-
+    members = toArray(members);
     // initiated the child process
     const username = this.user_id.get(Attr.firstname) || this.user_id.get(Attr.username);
     const lang = this.input.language();
@@ -345,7 +342,6 @@ class __private_hub extends Hub {
       return (el.privilege & 32) == 0;
     });
 
-    this.debug("AAAA:367", opt)
     this.output.data(opt);
   }
 
@@ -369,10 +365,11 @@ class __private_hub extends Hub {
     let users = this.input.need(Attr.users);
     const username = this.user.get("fullname");
     const hubname = this.hub.get(Attr.name);
-    const privilege =
-      this.input.use(Attr.privilege) ||
-      this.hub.get(Attr.settings).default_privilege;
-    const expiry = this.input.use(Attr.expiry) || 0;
+    const privilege = this.input.use(Attr.privilege) || this.hub.get(Attr.settings).default_privilege;
+    const hours = this.input.use(Attr.hours, 0)
+    const days = this.input.use(Attr.days, 0);
+    // const expiry = this.input.use(Attr.expiry) || 0;
+    const expiry = hours * 1 + days * 24;
     const type = this.input.use(Attr.type) || Attr.all;
     const lang = this.user.language() || this.input.app_language();
     let mfs_home = await this.db.await_proc("mfs_home");
@@ -381,10 +378,7 @@ class __private_hub extends Hub {
       hubname
     );
     let message = this.input.use(Attr.message) || msg;
-    if (!isArray(users)) {
-      users = [users];
-    }
-
+    users = toArray(users);
     let res = {};
     let members = [];
     let rows = [];
@@ -480,17 +474,23 @@ class __private_hub extends Hub {
       await RedisStore.sendData(this.payload(data), sockets);
     }
 
-    res = await this.db.await_proc(
+    // res = await this.db.await_proc(
+    //   "hub_get_members_by_type",
+    //   this.uid,
+    //   type,
+    //   1
+    // );
+    // res = toArray(res);
+    // res = filter(res, (el) => {
+    //   return (el.privilege & 32) == 0;
+    // });
+    users = await this.db.await_proc(
       "hub_get_members_by_type",
       this.uid,
-      type,
+      "not_owner",
       1
     );
-    res = toArray(res);
-    res = filter(res, (el) => {
-      return (el.privilege & 32) == 0;
-    });
-    this.output.data(res);
+    this.output.data(users);
   }
 
   /**
@@ -529,12 +529,7 @@ class __private_hub extends Hub {
     res.members = [];
 
     let members = await this.db.await_proc("dmz_get_members", this.uid);
-    if (!isEmpty(members)) {
-      if (!isArray(members)) {
-        members = [members];
-      }
-    }
-    this.debug("AAA:532", members)
+    members = toArray(members);
     res.members = members;
     this.debug(res)
     res.link = this._getShareLink(res.link);
@@ -565,9 +560,7 @@ class __private_hub extends Hub {
     const data = { id: this.hub.get(Attr.id) };
 
     if (!isEmpty(emails)) {
-      if (!isArray(emails)) {
-        emails = [emails];
-      }
+      emails = toArray(emails);
       for (email of emails) {
         let g = await this.yp.await_proc("dmz_add_user", email, null);
         await this.db.await_proc("dmz_remove_member", g.id, hub_id, nid);
@@ -585,12 +578,12 @@ class __private_hub extends Hub {
     const password = this.input.get(Attr.password) || "";
     const days = this.input.get(Attr.days) || 0;
     const hours = this.input.get(Attr.hours) || 0;
-    const validityMode = this.input.get("validity_mode") || "infinity";
     const expiry = hours * 1 + days * 24;
     let res = {};
     let nid = this.home_id;
     let hub_id = this.hub.get(Attr.id);
-    this.debug("AAAA:53", { permission, validityMode, days, expiry })
+    const validityMode = expiry === 0 ? "infinity" : "limited";
+    this.debug("AAAA:53", { password, permission, validityMode, days, expiry })
     if (permission) {
       await this.yp.await_proc(
         "dmz_update_permission_next",
@@ -601,26 +594,25 @@ class __private_hub extends Hub {
       res.permission = permission;
     }
     if (password) {
-      await this.yp.await_proc("dmz_update_password", hub_id, nid, pw);
+      await this.yp.await_proc("dmz_update_password", hub_id, nid, password);
       res.password = password;
     }
-    if (validityMode) {
-      await this.yp.await_proc(
-        "dmz_update_expiry_new",
-        hub_id,
-        nid,
-        validityMode,
-        expiry
-      );
-      res.hours = hours;
-      res.days = days;
-      res.dmz_expiry = "active";
-      if (expiry == 0) {
-        res.dmz_expiry = "expired";
-      }
-      if (validityMode == "infinity") {
-        res.dmz_expiry = "infinity";
-      }
+
+    await this.yp.await_proc(
+      "dmz_update_expiry_new",
+      hub_id,
+      nid,
+      validityMode,
+      expiry
+    );
+    res.hours = hours;
+    res.days = days;
+    res.dmz_expiry = "active";
+    if (expiry == 0) {
+      res.dmz_expiry = "expired";
+    }
+    if (validityMode == "infinity") {
+      res.dmz_expiry = "infinity";
     }
 
     this.output.data(res);
@@ -630,16 +622,11 @@ class __private_hub extends Hub {
    * 
    */
   async update_external_members() {
-    let emails = this.input.use(Attr.emails) || this.input.use(Attr.email) || [];
-    if (!isArray(emails)) {
-      emails = [emails];
-    }
+    let emails = this.input.use(Attr.emails) || this.input.use(Attr.email);
+    emails = toArray(emails);
     let members = await this.db.await_proc("dmz_get_members", this.uid);
-    if (!isEmpty(members)) {
-      if (!isArray(members)) {
-        members = [members];
-      }
-    }
+    members = toArray(members);
+
     let members_mail = map(members, "email");
     let delete_mails = difference(members_mail, emails);
     let new_mails = difference(emails, members_mail);
@@ -760,9 +747,7 @@ class __private_hub extends Hub {
     const expiry = settings.expiry_time || 0;
     const fingerprint = settings.fingerprint || "";
 
-    if (!isArray(emails)) {
-      emails = [emails];
-    }
+    emails = toArray(emails);
 
     for (var email of emails) {
       let g = await this.yp.await_proc("dmz_add_user", email, null);
@@ -831,9 +816,7 @@ class __private_hub extends Hub {
       ""
     );
 
-    if (!isArray(emails)) {
-      emails = [emails];
-    }
+    emails = toArray(emails);
     for (var email of emails) {
       await this.add_contact(email);
       g = await this.yp.await_proc("dmz_add_user", email, null);
@@ -932,10 +915,7 @@ class __private_hub extends Hub {
    */
   async delete_contributor() {
     let users = this.input.need(Attr.users);
-    if (!isArray(users)) {
-      users = [users];
-    }
-
+    users = toArray(users);
     let members = [];
     for (let uid of users) {
       if (uid != this.uid) {
@@ -944,15 +924,26 @@ class __private_hub extends Hub {
     }
 
     let service = "media.remove";
+    let hub_id = this.hub.get(Attr.id);
+    this.debug("AAA:987", hub_id, members)
     for (let uid of members) {
-      await this.db.await_proc("remove_member", uid);
+      let r = await this.yp.await_proc("get_entity", uid)
+      this.debug("AAA:987", r, uid)
+      let { db_name } = await this.yp.await_proc("get_entity", uid);
+      await this.yp.await_proc(`${db_name}.leave_hub`, hub_id);
       let node = this.granted_node();
-      node.nid = node.id = this.hub.get(Attr.id);
+      node.nid = node.id = hub_id;
       let sockets = await this.yp.await_proc("user_sockets", uid);
       let payload = this.payload(node, { service });
       await RedisStore.sendData(payload, sockets);
     }
-    this.output.list(members);
+    users = await this.db.await_proc(
+      "hub_get_members_by_type",
+      this.uid,
+      "not_owner",
+      1
+    );
+    this.output.list(users);
   }
 
   /**
@@ -984,9 +975,7 @@ class __private_hub extends Hub {
 
     let mfs_home = await this.db.await_proc("mfs_home");
 
-    if (!isArray(users)) {
-      users = [users];
-    }
+    users = toArray(users);
     let hub;
 
     for (let uid of users) {
@@ -1016,16 +1005,32 @@ class __private_hub extends Hub {
    * 
    * @returns 
    */
-  set_members_privilege() {
+  async set_member_privilege() {
+    const uid = this.input.need(Attr.uid);
+    const days = this.input.use(Attr.days, 0);
+    const hours = this.input.use(Attr.hours, 0);
+    const expiry = hours * 1 + days * 24;
     const privilege =
       this.input.use(Attr.privilege) ||
+      this.input.use(Attr.permission) ||
       this.hub.get(Attr.settings).default_privilege ||
-      2;
-    return this.db.call_proc(
-      "members_set_privilege",
+      1;
+    await this.db.await_proc(
+      "permission_grant",
+      '*',
+      uid,
+      expiry,
       privilege,
-      this.output.data
+      "system",
+      `Granted by ${this.user.get(Attr.email)}`
+    )
+    let users = await this.db.await_proc(
+      "hub_get_members_by_type",
+      this.uid,
+      "not_owner",
+      1
     );
+    this.output.list(users);
   }
 
   /**

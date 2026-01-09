@@ -141,7 +141,7 @@
         "fast_check": "user_permission"
       }
     },
-    "set_members_privilege": {
+    "set_member_privilege": {
       "scope": "hub",
       "permission": {
         "src": "admin"
