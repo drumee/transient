@@ -395,10 +395,10 @@ class privateChat extends Entity {
 
         /** Update sibling sessions */
         let myDest = await this.yp.await_proc("user_sockets", this.uid);
-        myDest = toArray(myDest).filter(e =>{
+        myDest = toArray(myDest).filter(e => {
           return (e && socket_id && e.socket_id != socket_id)
         });
-        if(!isEmpty(myDest)){
+        if (!isEmpty(myDest)) {
           await RedisStore.sendData(this.payload(mydata), myDest);
         }
         temp_result.push(mydata);

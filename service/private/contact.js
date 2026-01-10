@@ -14,6 +14,7 @@
  * limitations under the License.
  * =============================================================================
  */
+
 const { Attr, Constants, Messenger, utils, RedisStore, Cache, nullValue } = require("@drumee/server-essentials");
 const { EMAIL_CHECKER } = Constants;
 
@@ -1449,52 +1450,53 @@ class __private_contact extends Contact {
     let email = this.input.need(Attr.email);
 
     let res = {};
-    let drumate = await this.yp.await_proc('drumate_exists', email);
-    if (isEmpty(drumate)) {
+    let peer = await this.yp.await_proc('drumate_exists', email);
+    if (isEmpty(peer)) {
       return this.output.data({ status: 'NOT_A_DRUMATE' });
     }
 
-    let received = await this.db.await_proc('contact_invite_chk', drumate.id, "received");
-    let invitation = await this.db.await_proc('contact_invite_chk', drumate.id, "invitation");
+    let received = await this.db.await_proc('contact_invite_chk', peer.id, "received");
+    let invitation = await this.db.await_proc('contact_invite_chk', peer.id, "invitation");
     if (isEmpty(received)) {
       if (isEmpty(invitation)) {
         return this.output.data({ status: 'NO_INVITE' });
       }
     }
 
-    let data = await this.db.await_proc('contact_invite_accept', drumate.id);
+    let data = await this.db.await_proc('contact_invite_accept', peer.id);
 
     let node = {}
-    node.email = drumate.email;
+    node.email = peer.email;
     node.category = 'priv';
     node.is_default = '1';
     await this.db.await_proc('my_contact_mail_add', data.contact_id, stringify([node]))
 
     res = { ...res, ...data };
-    data = await this.yp.await_proc('forward_proc', drumate.id, 'contact_notification_by_entity', `'${this.uid}'`)
-    data.service = this.input.get(Attr.service)
+    data = await this.yp.await_proc('forward_proc', peer.id, 'contact_notification_by_entity', `'${this.uid}'`)
 
     const lang = this.user.language() || this.input.app_language();
     let msg_from = Cache.message('_contact_invite_chat_msg', lang)
     let msg_to = Cache.message('_contact_accept_chat_msg', lang)
-    await this.handshake(msg_from, drumate.id, this.uid)
-    await this.handshake(msg_to, this.uid, drumate.id)
+    await this.handshake(msg_from, peer.id, this.uid)
+    await this.handshake(msg_to, this.uid, peer.id)
 
-    let sockets = await this.yp.await_proc('user_sockets', drumate.id);
-    await RedisStore.sendData(this.payload(data), sockets);
+    let sockets = await this.yp.await_proc('user_sockets', peer.id);
+    await RedisStore.sendData(this.payload(data, { service: this.input.get(Attr.service) }), sockets);
 
     // Log invite_accepted activity
     try {
       await this.yp.await_proc(
         'contact_log_activity',
         this.uid,              // Who accepted 
-        drumate.id,            // Who will see this notification
+        peer.id,            // Who will see this notification
         'invite_accepted',
         {
-          email: drumate.email,
+          email: peer.email,
           accepter_fullname: this.user.get('fullname')
         }
       );
+      /** Make the peer automatically informed  */
+      await this.yp.await_proc(`${peer.db_name}.contact_invite_informed`, this.uid);
     } catch (error) {
       this.warn('[CONTACT] Failed to log accept activity:', error.message);
     }
@@ -1532,18 +1534,18 @@ class __private_contact extends Contact {
   async accept_informed() {
     let email = this.input.need(Attr.email);
     let res = {};
-    let drumate = await this.yp.await_proc('drumate_exists', email);
-    if (isEmpty(drumate)) {
+    let source = await this.yp.await_proc('drumate_exists', email);
+    if (isEmpty(source)) {
       return this.output.data({ status: 'NOT_A_DRUMATE' });
     }
 
-    let data = await this.db.await_proc('contact_invite_chk', drumate.id, "informed");
+    let data = await this.db.await_proc('contact_invite_chk', source.id, "informed");
     if (isEmpty(data)) {
       return this.output.data({ status: 'NO_INVITE' });
     }
 
-    data = await this.db.await_proc('contact_invite_informed', drumate.id);
-    let sockets = await this.yp.await_proc('user_sockets', [drumate.id, this.uid]);
+    data = await this.db.await_proc('contact_invite_informed', source.id);
+    let sockets = await this.yp.await_proc('user_sockets', [source.id, this.uid]);
     await RedisStore.sendData(this.payload(data), sockets);
     res = { ...res, ...data };
     this.output.data(res);
@@ -1628,9 +1630,9 @@ class __private_contact extends Contact {
   async summary() {
     const hubId = this.input.need(Attr.hub_id);
     const nid = this.input.need(Attr.nid);
-    
+
     this.debug(`[CONTACT] Getting summary for hub: ${hubId}, nid: ${nid}`);
-    
+
     // Verify user has access and is owner
     const node = await this.yp.await_proc(
       'forward_proc',
@@ -1638,16 +1640,16 @@ class __private_contact extends Contact {
       'mfs_access_node',
       `'${this.uid}', '${nid}'`
     );
-    
+
     const nodeData = toArray(node)[0];
-    
+
     if (!nodeData) {
       return this.output.data({
         status: 'error',
         message: 'Folder not found'
       });
     }
-    
+
     // Check if user is owner
     if (nodeData.owner_id !== this.uid) {
       return this.output.data({
@@ -1655,12 +1657,12 @@ class __private_contact extends Contact {
         message: 'Permission denied: owner only'
       });
     }
-    
+
     // Get summary from hub database
     const result = await this.db.await_proc('contact_summary', hubId, nid);
-    
+
     const data = toArray(result)[0];
-    
+
     if (data) {
       this.output.data(data);
     } else {
