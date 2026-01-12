@@ -8,7 +8,7 @@ const { OAuth2Client } = require('google-auth-library');
 const { randomUUID } = require('crypto');
 const Loby = require('./lib/loby');
 
-const { credential_dir, svc_location, endpoint_path } = sysEnv();
+const { credential_dir, svc_location, main_domain, endpoint_path } = sysEnv();
 
 let CREDENTIALS = {};
 
@@ -18,7 +18,7 @@ try {
   const gkey = resolve(credential_dir, `google/info.json`);
   CREDENTIALS = readJson(gkey);
   if (CREDENTIALS.id && CREDENTIALS.secret) {
-    console.log("[Auth] Google Credentials loaded", CREDENTIALS);
+    console.log("[Auth] Google Credentials loaded");
   } else {
     console.error("[Auth] CRITICAL: Failed to load 'google/info.json'.");
   }
@@ -42,7 +42,7 @@ class Goggle extends Loby {
       let { id, secret } = CREDENTIALS;
       if (id && secret) {
         // Dynamic callback: works for all developer endpoints
-        const redirect_uri = `https://${this.input.host()}${svc_location}/google.callback?`;
+        const redirect_uri = `https://${main_domain}${svc_location}/google.callback?`;
         this.googleClient = new OAuth2Client(id, secret, redirect_uri);
         this.googleClientId = id;
         this.debug("[Auth] Google Credentials loaded. Callback:", redirect_uri);
@@ -108,7 +108,7 @@ class Goggle extends Loby {
         state
       });
 
-      this.debug('[Auth] Google OAuth URL generated with state:', state);
+      this.debug('[Auth] Google OAuth URL generated with state:', this.input.sid(), state, { success: true, authUrl: authUrl, status: 'prompt' });
       this.output.data({ success: true, authUrl: authUrl, status: 'prompt' });
     } catch (error) {
       this.warn('[Auth] Error initiating Google OAuth:', error);
@@ -127,10 +127,8 @@ class Goggle extends Loby {
     if (!code) return;
     const home = `https://${this.input.host()}${endpoint_path}/`;
     const profile = await this._getGoogleProfile(code);
-    this.debug("AAAA:130", profile)
     profile.provider = 'google';
     let res = await this.handleOAuthCallback(profile, home);
-    this.debug("AAAA:133", res)
     if (!res.error) {
       const tpl = resolve(__dirname, './templates/signup-completed.html');
       this.sendHtml({ ...res, home }, tpl)

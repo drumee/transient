@@ -79,7 +79,7 @@ class Account extends Entity {
       return drumate;
     }
     try {
-      let status = await this.session.signin({ email, password });
+      let status = await this.session.signin({ uid: email, password, host: domain });
       return status;
     } catch (e) {
       this.warn("Auto login failed", e)
@@ -196,8 +196,8 @@ class Account extends Entity {
         return { status: 'error', error: 'missing_state' };
       }
 
-      const { validState } = await this.yp.await_query(
-        'SELECT 1 validState FROM oauth_state WHERE state = ? AND ctime > UNIX_TIMESTAMP() - 600 LIMIT 1',
+      const { validState, session_id } = await this.yp.await_query(
+        'SELECT 1 validState, session_id FROM oauth_state WHERE state = ? AND ctime > UNIX_TIMESTAMP() - 600 LIMIT 1',
         state
       ) || {};
 
@@ -206,13 +206,13 @@ class Account extends Entity {
         return { status: 'error', error: 'invalid_state' };
       }
 
-      const session_id = this.input.sid()
+      // const session_id = this.input.sid()
 
       // Delete used state
       await this.yp.await_query('DELETE FROM oauth_state WHERE state = ?', state);
 
       const domain_name = this.input.host();
-      this.debug(`[Auth] OAuth callback: email=${email}, provider=${provider}, provider_id=${provider_id}`);
+      this.debug(`[Auth] OAuth callback: email=${email},session_id=${session_id}, provider=${provider}, provider_id=${provider_id}`);
 
       // Try to sign in
       let sessionData = await this.yp.await_proc(
@@ -279,7 +279,7 @@ class Account extends Entity {
  *
  */
   async sendHtml(data, tpl) {
-    const main_domain = sysEnv()
+    const { main_domain } = sysEnv()
     let html = readFileSync(tpl);
     html = String(html).trim().toString();
     const content = template(html)(data);
@@ -292,15 +292,18 @@ class Account extends Entity {
     let keysel = Attr.regsid;
     auth[keysel] = data.session_id;
     const params = {
-      host: this.input.host(),
+      host: main_domain,
       session_type: Attr.regular,
       keysel,
-      auth,
+      sid: data.session_id,
       id: data.session_id
     }
+    this.output.set_header(
+      "Cache-Control",
+      "no-cache, no-store, must-revalidate"
+    );
     this.output.setAuthorization(params);
     this.output.set_header("Access-Control-Allow-Origin", `*.${main_domain}`);
-    this.output.set_header("Pragma", "no-cache");
     this.output.html(content);
   }
 
