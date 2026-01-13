@@ -194,13 +194,33 @@ class SeoIndexer {
    */
   async pdfToImageOCR(src, index) {
     try {
+      // Check if pdf2image is available
+      try {
+        await this.execCommand('python3 -c "import pdf2image"', 5000);
+      } catch (e) {
+        throw new Error('PDF OCR requires pdf2image Python library. Install: pip3 install pdf2image');
+      }
+    
       const mfs_dir = resolve(this.node.mfs_root, this.node.id);
       const outputDir = join(mfs_dir, 'pdf_pages');
+      mkdirSync(outputDir, { recursive: true });
 
-      // This requires pdf2image Python library
-      // For now, return empty if not available
-      this.log('PDF OCR requires pdf2image Python library');
-      return '';
+      // Convert PDF to images
+      const cmd = `python3 -c "
+  from pdf2image import convert_from_path
+  images = convert_from_path('${src}', dpi=300, output_folder='${outputDir}', fmt='jpg')
+  print(f'Converted {len(images)} pages')
+  "`;
+
+      await this.execCommand(cmd, 120000);
+
+      // OCR first page only
+      const firstPage = join(outputDir, '0000001.jpg');
+      if (existsSync(firstPage)) {
+        return await this.extractFromImage(firstPage, index);
+      }
+
+      throw new Error('PDF to image conversion produced no output');
 
     } catch (e) {
       throw new Error(`PDF OCR failed: ${e.message}`);

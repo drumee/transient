@@ -19,6 +19,7 @@ const {
   Attr, Events, Script, toArray, nullValue,
   RedisStore, Cache, sleep, Constants, sysEnv, getFileinfo
 } = require("@drumee/server-essentials");
+const indexQueue = require('../queues/indexQueue');
 const { DENIED } = Events;
 const {
   BATCH_FILE,
@@ -83,6 +84,7 @@ const Spawn = require("child_process").spawn;
 const DATA_ROOT = new RegExp(`^${data_dir}`);
 const SPAWN_OPT = { detached: true, stdio: ["ignore", "ignore", "ignore"] };
 const OFFLINE_DIR = resolve(server_home, "offline", "media");
+
 class __media extends Mfs {
   /**
    *
@@ -445,24 +447,120 @@ class __media extends Mfs {
       return true;
     }
 
-    let { storage } = await this.yp.await_proc("get_quota", this.uid) || {};
-    if (storage == Infinity) {
+    // Get quota info
+    let quotaResult = await this.yp.await_proc("get_quota", this.uid);
+
+    // Handle different result formats from driver
+    let quotaInfo = quotaResult;
+    if (quotaResult && quotaResult.length > 0) {
+      quotaInfo = quotaResult[0];
+    }
+
+    // Parse if string
+    if (typeof quotaInfo === 'string') {
+      try {
+        quotaInfo = JSON.parse(quotaInfo);
+      } catch (e) {
+        this.warn('[QUOTA] Failed to parse quota JSON:', e.message);
+        return true; // Fail open - don't block upload on parse error
+      }
+    }
+  
+    let { storage, domain_id } = quotaInfo || {};
+  
+    // No storage limit or infinite
+    if (!storage || storage == Infinity || storage === '9223372036854775807') {
       return true;
     }
 
     let curr_filesize = this.input.use(FILESIZE, 0);
-    let { usage } = await this.yp.await_proc("disk_usage", this.uid) || {};
-    let disk_used = parseInt(usage.total);
+    let disk_used = 0;
+  
+    // Different logic for free vs paid plans
+    if (!domain_id || domain_id === 1) {
+      // FREE PLAN: Individual user quota
+      // Each free user has separate quota
+      // Will not sum all free users - they all share domain_id=1
+      let usageResult = await this.yp.await_proc("disk_usage", this.uid) || {};
+    
+      // Handle different result formats
+      if (usageResult.usage) {
+        // Format 1: { usage: { total: 123 } }
+        let usage = usageResult.usage;
+        if (typeof usage === 'string') {
+          usage = JSON.parse(usage);
+        }
+        disk_used = parseInt(usage.total || 0);
+      } else if (usageResult[0] && usageResult[0].usage) {
+        // Format 2: [{ usage: "JSON" }]
+        let usage = usageResult[0].usage;
+        if (typeof usage === 'string') {
+          usage = JSON.parse(usage);
+        }
+        disk_used = parseInt(usage.total || 0);
+      } else {
+        disk_used = 0;
+      }
 
+      this.debug(`[QUOTA] Free plan check: user=${this.uid}, used=${disk_used}/${storage}`);
+    
+    } else {
+      // PAID PLAN: Domain shared quota
+      // All users in organization share quota
+      // Cache is auto-synced by database trigger
+      let usageResult = await this.yp.await_proc("get_domain_usage", domain_id) || {};
+    
+      // Handle different result formats
+      if (usageResult.usage) {
+        let usage = usageResult.usage;
+        if (typeof usage === 'string') {
+          usage = JSON.parse(usage);
+        }
+
+        // Check for error (shouldn't happen for domain_id > 1)
+        if (usage.error) {
+          this.warn('[QUOTA] Domain usage error:', usage.error);
+          // Fallback to individual check
+          let fallback = await this.yp.await_proc("disk_usage", this.uid) || {};
+          if (fallback.usage) {
+            let fb = typeof fallback.usage === 'string' ? JSON.parse(fallback.usage) : fallback.usage;
+            disk_used = parseInt(fb.total || 0);
+          }
+        } else {
+          disk_used = parseInt(usage.total || 0);
+        }
+      } else if (usageResult[0] && usageResult[0].usage) {
+        let usage = usageResult[0].usage;
+        if (typeof usage === 'string') {
+          usage = JSON.parse(usage);
+        }
+        disk_used = parseInt(usage.total || 0);
+      } else {
+        disk_used = 0;
+      }
+
+      this.debug(`[QUOTA] Paid plan check: domain=${domain_id}, used=${disk_used}/${storage}`);
+    }
+
+    // Check if upload would exceed limit
     if (disk_used + curr_filesize > storage) {
-      let error = Cache.message("your_limit_exceeded");
-      if (this.uid != owner_id) {
+      this.warn(`[QUOTA] Limit exceeded: used=${disk_used}, new=${curr_filesize}, limit=${storage}`);
+    
+      let error;
+      if (!domain_id || domain_id === 1) {
+        // Free plan: your personal limit
+        error = Cache.message("your_limit_exceeded");
+      } else {
+        // Paid plan: organization limit
         error = Cache.message("limit_exceeded");
       }
+    
       this.exception.user(error);
       return false;
     }
-    return true;
+
+    this.debug(`[QUOTA] Check passed: used=${disk_used}, new=${curr_filesize}, remaining=${storage - disk_used - curr_filesize}`);
+    return true;  
   }
 
   /**
@@ -700,14 +798,22 @@ class __media extends Mfs {
       myData: res
     });
 
-    /** May reuqires CPU power -- stand by */
-    // if ([Attr.document, Attr.image].includes(data[CATEGORY])) {
-    //   if (data[FILESIZE] < 1024 * 1024) {
-    //     Document.buildIndex(node);
-    //   } else {
-    //     TO DO : add yp.crontab
-    //   }
-    // }
+    /** SEO Indexing via Bull Queue */
+    if ([Attr.document, Attr.image].includes(data[CATEGORY])) {
+      try {
+        // Add to indexing queue
+        await indexQueue.addFile(res, {
+          uid: this.uid,
+          socket_id: this.input.get(Attr.socket_id),
+          hub_id: this.hub.get(Attr.id)
+        });
+        
+        this.debug(`[MEDIA] Queued for indexing: ${res.filename}`);
+      } catch (error) {
+        // Don't fail upload if indexing queue fails
+        this.warn(`[MEDIA] Failed to queue for indexing: ${error.message}`);
+      }
+    }
 
     if (isFunction(callback)) {
       return callback(node);
