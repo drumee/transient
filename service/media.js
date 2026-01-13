@@ -1206,6 +1206,84 @@ class __media extends Mfs {
   }
 
   /**
+  * Unified search: filenames + indexed content
+  * Service: media.search_all
+  * 
+  * Searches both:
+  * - Filenames
+  * - File extensions
+  * - Indexed content (words extracted from documents/images)
+  * 
+  * Returns results ranked by relevance:
+  * - Exact filename match: highest priority
+  * - Filename contains term: high priority  
+  * - Extension match: medium priority
+  * - Content match: lower priority
+  */
+  async search_all() {
+    const query = this.input.safe_string(Attr.string) || 
+                  this.input.safe_string(Attr.query);
+
+    const hub_id = this.hub.get(Attr.id);
+    const page = this.input.use(Attr.page, 1);
+    const limit = this.input.use(Attr.limit, 20);
+  
+    if (isEmpty(query)) {
+      this.output.list([]);
+      return;
+    }
+  
+    const normalized_query = query.trim().replace(/ +/g, ' ');
+  
+    if (normalized_query.length < 2) {
+      this.output.list([]);
+      return;
+    }
+  
+    try {
+      this.debug(`[SEARCH] Query: "${normalized_query}" | Hub: ${hub_id} | Page: ${page}`);
+    
+      const results = await this.db.await_proc(
+        'seo_search_unified',
+        hub_id,
+        this.uid,
+        normalized_query,
+        page,
+        limit
+      );
+    
+      if (!results) {
+        this.output.list([]);
+        return;
+      }
+    
+      const result_array = isArray(results) ? results : [results];
+    
+      // Log search for analytics (don't fail if logging fails)
+      try {
+        await this.yp.await_proc(
+          'log_search',
+          this.uid,
+          hub_id,
+          normalized_query,
+          result_array.length
+        );
+      } catch (e) {
+        // Silently ignore logging errors
+        this.debug('[SEARCH] Failed to log search:', e.message);
+      }
+    
+      this.output.list(result_array);
+    
+    } catch (error) {
+      this.warn('[SEARCH] Search failed:', error.message);
+    
+      // Return empty list on error instead of throwing exception
+      this.output.list([]);
+    }
+  }
+
+  /**
    * 
    */
   galery() { }

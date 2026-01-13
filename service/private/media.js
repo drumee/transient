@@ -1504,24 +1504,35 @@ class __private_media extends Media {
   async save() {
     const content = this.input.need(Attr.content);
     let { createHash } = require("crypto");
+
     let md5Hash = createHash("md5");
     let chunk = Buffer.from(content, "utf8");
     md5Hash.update(chunk);
+
     const parent = this.source_granted();
     const filename = this.randomString() + "-" + this.input.need(Attr.filename);
     let filepath = resolve(tmp_dir, `${filename}`);
     const user_filename = this.input.need(Attr.filename);
     const nid = this.input.get(Attr.id);
+
     writeFileSync(filepath, content, { encoding: "utf-8" });
     let pid = this.input.get(Attr.pid) || parent.id;
+
     if (nid) {
       let attr = await this.db.await_proc("mfs_access_node", this.uid, nid);
+
       if (isEmpty(attr)) {
         await this.store(pid, filepath, user_filename);
       } else {
         let metadata = this.input.get(Attr.metadata) || {};
         metadata = this.cleanJson(metadata);
         metadata.md5Hash = md5Hash.digest("hex");
+
+        // Save old values before replacement
+        const old_filesize = attr.filesize || 0;
+        const old_category = attr.category || attr.filetype;
+        const hub_id = attr.hub_id;
+
         await this.db.await_proc("mfs_set_metadata", nid, metadata, 0);
         await this.replace_content(
           attr,
@@ -1529,6 +1540,72 @@ class __private_media extends Media {
           user_filename,
           metadata.md5Hash
         );
+
+        // Update filesize after content replacement
+        try {
+          // Get actual file path in MFS (file has been moved by replace_content)
+          const mfs_path = resolve(attr.mfs_root, attr.id, `orig.${attr.extension}`);
+        
+          if (!existsSync(mfs_path)) {
+            throw new Error(`File not found after replace: ${mfs_path}`);
+          }
+        
+          const new_filesize = statSync(mfs_path).size;
+        
+          if (old_filesize !== new_filesize) {
+            const delta = new_filesize - old_filesize;
+          
+            // Update file record
+            await this.db.await_proc("mfs_set_attr", nid, "filesize", new_filesize);
+          
+            // Update disk_usage (trigger will sync quota_usage)
+            await this.yp.await_run(
+              `UPDATE yp.disk_usage 
+              SET size = GREATEST(0, IFNULL(size, 0) + ?) 
+              WHERE hub_id = ?`,
+              [delta, hub_id]
+            );
+          
+            this.debug(`[SAVE] Updated filesize: ${old_filesize} → ${new_filesize} (${delta > 0 ? '+' : ''}${delta})`);
+          }
+        } catch (error) {
+          this.warn('[SAVE] Failed to update filesize:', error.message);
+        }
+
+        // Reindex if document/image
+        if ([Attr.document, Attr.image].includes(old_category)) {
+          try {
+            // Delete old index first
+            await this.db.await_proc('seo_delete_index', hub_id, nid);
+          
+            this.debug(`[SEO] Deleted old index for: ${attr.filename}`);
+          
+            // Small delay to ensure file is fully written to disk
+            await new Promise(resolve => setTimeout(resolve, 100));
+          
+            // Refresh node data after save (get updated filesize, mtime, etc)
+            const updated_node = await this.db.await_proc("mfs_access_node", this.uid, nid);
+          
+            if (isEmpty(updated_node)) {
+              throw new Error('Failed to refresh node data after save');
+            }
+
+            // Queue for reindexing with fresh content
+            const indexQueue = require('../queues/indexQueue');
+          
+            await indexQueue.addFile(updated_node, {
+              uid: this.uid,
+              socket_id: this.input.get(Attr.socket_id),
+              hub_id: hub_id,
+              priority: 8 // High priority for content updates
+            });
+          
+            this.debug(`[SEO] Queued for reindexing: ${attr.filename}`);
+          
+          } catch (error) {
+            this.warn(`[SEO] Failed to reindex after save: ${error.message}`);
+          }
+        }
       }
     } else {
       await this.store(pid, filepath, user_filename);
