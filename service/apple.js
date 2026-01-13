@@ -8,7 +8,7 @@ const jwksClient = require('jwks-rsa');
 const axios = require('axios');
 const { randomUUID } = require('crypto');
 const Loby = require('./lib/loby');
-const { credential_dir, svc_location, endpoint_path } = sysEnv();
+const { credential_dir, svc_location, endpoint_path, main_domain } = sysEnv();
 
 let APPLECREDS = {}
 // Apple credentials with dynamic callback URI aCreds
@@ -121,7 +121,7 @@ class Register extends Loby {
 
     const client_secret = this._getAppleClientSecret();
     const { service_id } = APPLECREDS;
-    const redirect_uri = `https://${this.input.host()}${svc_location}/apple.callback`;
+    const redirect_uri = `https://${main_domain}${svc_location}/apple.callback`;
     const params = new URLSearchParams();
     params.append('client_id', service_id);
     params.append('client_secret', client_secret);
@@ -193,12 +193,13 @@ class Register extends Loby {
       }
 
       const { service_id } = APPLECREDS;
-      const redirect_uri = `https://${this.input.host()}${svc_location}/apple.callback`;
+      // const redirect_uri = `https://${main_domain}${svc_location}/apple.callback?`;
+      const redirect_uri = `https://${main_domain}${svc_location}/apple.callback?`;
 
       const state = `a_${randomUUID()}`;
       await this.yp.await_query(
-        'INSERT IGNORE INTO oauth_state (state, ctime) VALUES (?, UNIX_TIMESTAMP())',
-        state
+        'INSERT IGNORE INTO oauth_state (state, session_id, ctime) VALUES (?, ?, UNIX_TIMESTAMP())',
+        state, this.input.sid()
       );
       const authUrl = `https://appleid.apple.com/auth/authorize?` +
         `client_id=${encodeURIComponent(service_id)}` +
@@ -207,7 +208,7 @@ class Register extends Loby {
         `&response_mode=form_post` +
         `&scope=${encodeURIComponent("name email")}` +
         `&state=${state}`;
-
+      this.debug("AAAA:210", redirect_uri, authUrl)
       this.output.data({ success: true, authUrl, state: state, status: 'prompt' });
     } catch (error) {
       this.warn('[Auth] Error initiating Apple OAuth:', error);
@@ -223,12 +224,11 @@ class Register extends Loby {
     console.log("User:", response);
     const code = this.getOAuthCode();
     if (!code) return;
-    const home = `https://${this.input.host()}${endpoint_path}/`;
     const profile = await this._getAppleProfile(code);
     profile.provider = 'apple';
-    this.debug("AAAA:219", profile)
-    let res = await this.handleOAuthCallback(profile, home);
+    let res = await this.handleOAuthCallback(profile);
     this.debug("AAAA:221", res)
+    const home = `https://${res.domain}${endpoint_path}/`;
     if (!res.error) {
       const tpl = resolve(__dirname, './templates/signup-completed.html');
       this.sendHtml({ ...res, home }, tpl)

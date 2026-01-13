@@ -223,7 +223,7 @@ class Account extends Entity {
 
       // CASE A: Sign-in successful
       if (sessionData && sessionData.status === 'ok') {
-        this.debug(`[Auth] Sign-in successful for ${email}`);
+        this.debug(`[Auth] Sign-in successful for ${email}`, sessionData);
         await this.yp.await_query(
           'UPDATE oauth_accounts SET access_token = ?, refresh_token = ?, mtime = UNIX_TIMESTAMP() WHERE user_id = ? AND provider = ?',
           access_token, refresh_token, sessionData.id, provider

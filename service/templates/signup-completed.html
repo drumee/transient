@@ -5,7 +5,8 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>DrumeeOS is now ready</title>
-  <link rel="stylesheet" href="/-/static/fonts/Armin-Grotesk/stylesheet.css" media="screen"></link>
+  <link rel="stylesheet" href="/-/static/fonts/Armin-Grotesk/stylesheet.css" media="screen">
+  </link>
   <style>
     .f_03_span {
       color: var(--Neutral-900, #222732);
@@ -205,7 +206,7 @@
           <div class="button-content">
             <div data-layer="Button" data-hierarchy="Website" data-icon="None" data-size="48px" data-state="Normal"
               class="button">
-              <a href="<%= home %>" class="button-anchor">
+              <a id="goto-desk" href="<%= home %>" class="button-anchor">
                 <div class="button-text">Go to DrumeeOS</div>
                 <div data-layer="2" class="button-icon">
                   <div data-svg-wrapper data-layer="Icon" data-name="Right" class="icon" style="position: relative">
@@ -222,6 +223,11 @@
       </div>
     </div>
   </div>
+  <script>
+    setTimeout(function () {
+      document.getElementById('goto-desk').click()
+    }, 300)
+  </script>
 </body>
 
 </html>

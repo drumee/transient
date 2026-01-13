@@ -125,10 +125,10 @@ class Goggle extends Loby {
     this.debug('[Auth] Google OAuth URL CALL BACK:');
     const code = this.getOAuthCode('google');
     if (!code) return;
-    const home = `https://${this.input.host()}${endpoint_path}/`;
     const profile = await this._getGoogleProfile(code);
     profile.provider = 'google';
-    let res = await this.handleOAuthCallback(profile, home);
+    let res = await this.handleOAuthCallback(profile);
+    const home = `https://${res.domain}${endpoint_path}/`;
     if (!res.error) {
       const tpl = resolve(__dirname, './templates/signup-completed.html');
       this.sendHtml({ ...res, home }, tpl)
