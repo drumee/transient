@@ -24,6 +24,7 @@
     "argparse": "^2.0.1",
     "axios": "^1.13.2",
     "backbone": "^1.4.0",
+    "bull": "^4.16.5",
     "bunyan": "^1.8.14",
     "check-disk-space": "^3.3.1",
     "comment-json": "^2.4.2",

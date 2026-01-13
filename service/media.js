@@ -19,7 +19,7 @@ const {
   Attr, Events, Script, toArray, nullValue,
   RedisStore, Cache, sleep, Constants, sysEnv, getFileinfo
 } = require("@drumee/server-essentials");
-const indexQueue = require('../queues/indexQueue');
+const indexQueue = require("../offline/queues/indexQueue");
 const { DENIED } = Events;
 const {
   BATCH_FILE,
@@ -465,9 +465,9 @@ class __media extends Mfs {
         return true; // Fail open - don't block upload on parse error
       }
     }
-  
+
     let { storage, domain_id } = quotaInfo || {};
-  
+
     // No storage limit or infinite
     if (!storage || storage == Infinity || storage === '9223372036854775807') {
       return true;
@@ -475,14 +475,14 @@ class __media extends Mfs {
 
     let curr_filesize = this.input.use(FILESIZE, 0);
     let disk_used = 0;
-  
+
     // Different logic for free vs paid plans
     if (!domain_id || domain_id === 1) {
       // FREE PLAN: Individual user quota
       // Each free user has separate quota
       // Will not sum all free users - they all share domain_id=1
       let usageResult = await this.yp.await_proc("disk_usage", this.uid) || {};
-    
+
       // Handle different result formats
       if (usageResult.usage) {
         // Format 1: { usage: { total: 123 } }
@@ -503,13 +503,13 @@ class __media extends Mfs {
       }
 
       this.debug(`[QUOTA] Free plan check: user=${this.uid}, used=${disk_used}/${storage}`);
-    
+
     } else {
       // PAID PLAN: Domain shared quota
       // All users in organization share quota
       // Cache is auto-synced by database trigger
       let usageResult = await this.yp.await_proc("get_domain_usage", domain_id) || {};
-    
+
       // Handle different result formats
       if (usageResult.usage) {
         let usage = usageResult.usage;
@@ -545,7 +545,7 @@ class __media extends Mfs {
     // Check if upload would exceed limit
     if (disk_used + curr_filesize > storage) {
       this.warn(`[QUOTA] Limit exceeded: used=${disk_used}, new=${curr_filesize}, limit=${storage}`);
-    
+
       let error;
       if (!domain_id || domain_id === 1) {
         // Free plan: your personal limit
@@ -554,13 +554,13 @@ class __media extends Mfs {
         // Paid plan: organization limit
         error = Cache.message("limit_exceeded");
       }
-    
+
       this.exception.user(error);
       return false;
     }
 
     this.debug(`[QUOTA] Check passed: used=${disk_used}, new=${curr_filesize}, remaining=${storage - disk_used - curr_filesize}`);
-    return true;  
+    return true;
   }
 
   /**
@@ -807,7 +807,7 @@ class __media extends Mfs {
           socket_id: this.input.get(Attr.socket_id),
           hub_id: this.hub.get(Attr.id)
         });
-        
+
         this.debug(`[MEDIA] Queued for indexing: ${res.filename}`);
       } catch (error) {
         // Don't fail upload if indexing queue fails
@@ -1221,28 +1221,28 @@ class __media extends Mfs {
   * - Content match: lower priority
   */
   async search_all() {
-    const query = this.input.safe_string(Attr.string) || 
-                  this.input.safe_string(Attr.query);
+    const query = this.input.safe_string(Attr.string) ||
+      this.input.safe_string(Attr.query);
 
     const hub_id = this.hub.get(Attr.id);
     const page = this.input.use(Attr.page, 1);
     const limit = this.input.use(Attr.limit, 20);
-  
+
     if (isEmpty(query)) {
       this.output.list([]);
       return;
     }
-  
+
     const normalized_query = query.trim().replace(/ +/g, ' ');
-  
+
     if (normalized_query.length < 2) {
       this.output.list([]);
       return;
     }
-  
+
     try {
       this.debug(`[SEARCH] Query: "${normalized_query}" | Hub: ${hub_id} | Page: ${page}`);
-    
+
       const results = await this.db.await_proc(
         'seo_search_unified',
         hub_id,
@@ -1251,14 +1251,14 @@ class __media extends Mfs {
         page,
         limit
       );
-    
+
       if (!results) {
         this.output.list([]);
         return;
       }
-    
+
       const result_array = isArray(results) ? results : [results];
-    
+
       // Log search for analytics (don't fail if logging fails)
       try {
         await this.yp.await_proc(
@@ -1272,12 +1272,12 @@ class __media extends Mfs {
         // Silently ignore logging errors
         this.debug('[SEARCH] Failed to log search:', e.message);
       }
-    
+
       this.output.list(result_array);
-    
+
     } catch (error) {
       this.warn('[SEARCH] Search failed:', error.message);
-    
+
       // Return empty list on error instead of throwing exception
       this.output.list([]);
     }
