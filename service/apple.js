@@ -194,7 +194,7 @@ class Register extends Loby {
 
       const { service_id } = APPLECREDS;
       // const redirect_uri = `https://${main_domain}${svc_location}/apple.callback?`;
-      const redirect_uri = `https://${main_domain}${svc_location}/apple.callback?`;
+      const redirect_uri = `https://${main_domain}${svc_location}/apple.callback`;
 
       const state = `a_${randomUUID()}`;
       await this.yp.await_query(
