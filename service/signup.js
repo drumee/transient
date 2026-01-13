@@ -82,11 +82,8 @@ class Signup extends Loby {
     if (data.user && data.user.email && data.firstname) {
       args = { ...data.user, password }
     }
-    this.debug("AAA:103", args)
     let status = await super.create_account(args)
-    this.debug("AAA:104", status)
     let res = await this.session.signin({ username: email, email, password });
-    this.debug("AAA:107", res)
     res.status = "ok";
     if (res.user && res.user.firstname) {
       status.completed = 1
