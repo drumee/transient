@@ -575,6 +575,7 @@ class __private_hub extends Hub {
    */
   async update_external_settings() {
     const permission = this.input.use(Attr.permission) || Privilege.GUEST;
+    const passwordSet = this.input.use("passwordSet") || 0;
     const password = this.input.get(Attr.password) || "";
     const days = this.input.get(Attr.days) || 0;
     const hours = this.input.get(Attr.hours) || 0;
@@ -583,7 +584,7 @@ class __private_hub extends Hub {
     let nid = this.home_id;
     let hub_id = this.hub.get(Attr.id);
     const validityMode = expiry === 0 ? "infinity" : "limited";
-    this.debug("AAAA:53", { password, permission, validityMode, days, expiry })
+    this.debug("AAAA:53", { passwordSet, password, permission, validityMode, days, expiry })
     if (permission) {
       await this.yp.await_proc(
         "dmz_update_permission_next",
@@ -593,9 +594,10 @@ class __private_hub extends Hub {
       );
       res.permission = permission;
     }
-    if (password) {
-      await this.yp.await_proc("dmz_update_password", hub_id, nid, password);
-      res.password = password;
+    if (passwordSet) {
+      if (password) await this.yp.await_proc("dmz_update_password", hub_id, nid, password);
+    } else {
+      await this.yp.await_proc("dmz_update_password", hub_id, nid, '');
     }
 
     await this.yp.await_proc(

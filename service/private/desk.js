@@ -378,7 +378,6 @@ class __private_desk extends Media {
       this.exception.server("Corrupted hub");
       return;
     }
-
     if (pid && pid != this.get(Attr.home_id)) {
       await this.db.await_proc("mfs_move", hub.id, pid)
     }
