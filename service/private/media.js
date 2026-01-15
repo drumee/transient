@@ -1417,9 +1417,14 @@ class __private_media extends Media {
           }
         }
         res = await this.db.await_proc("mfs_rename", nid, filename);
-        let attr = newItems[this.uid] || (await this.db.await_proc("mfs_access_node", this.uid, nid));
+        let attr;
+        if (newItems[this.uid] && newItems[this.uid].filename) {
+          attr = newItems[this.uid]
+        } else {
+          attr = await this.db.await_proc("mfs_access_node", this.uid, nid);
+          newItems[this.uid] = attr;
+        }
         attr.hub_id = attr.actual_hub_id;
-        attr.filename = attr.actual_filename;
         attr.privilege = attr.permission;
         attr.home_id = attr.actual_home_id;
         newItems[this.uid] = attr;
@@ -1429,10 +1434,13 @@ class __private_media extends Media {
         }
     }
     for (let r of toArray(recipients)) {
-      let dest =
-        newItems[r.uid] ||
-        (await this.db.await_proc("mfs_access_node", r.uid, nid));
-      newItems[r.uid] = dest;
+      let dest;
+      if (newItems[r.uid] && newItems[r.uid].filename) {
+        dest = newItems[r.uid]
+      } else {
+        dest = await this.db.await_proc("mfs_access_node", r.uid, nid);
+        newItems[r.uid] = dest;
+      }
       let model = {
         ...oldItems[r.uid],
         args: {
@@ -1545,19 +1553,19 @@ class __private_media extends Media {
         try {
           // Get actual file path in MFS (file has been moved by replace_content)
           const mfs_path = resolve(attr.mfs_root, attr.id, `orig.${attr.extension}`);
-        
+
           if (!existsSync(mfs_path)) {
             throw new Error(`File not found after replace: ${mfs_path}`);
           }
-        
+
           const new_filesize = statSync(mfs_path).size;
-        
+
           if (old_filesize !== new_filesize) {
             const delta = new_filesize - old_filesize;
-          
+
             // Update file record
             await this.db.await_proc("mfs_set_attr", nid, "filesize", new_filesize);
-          
+
             // Update disk_usage (trigger will sync quota_usage)
             await this.yp.await_run(
               `UPDATE yp.disk_usage 
@@ -1565,7 +1573,7 @@ class __private_media extends Media {
               WHERE hub_id = ?`,
               [delta, hub_id]
             );
-          
+
             this.debug(`[SAVE] Updated filesize: ${old_filesize} → ${new_filesize} (${delta > 0 ? '+' : ''}${delta})`);
           }
         } catch (error) {
@@ -1577,31 +1585,31 @@ class __private_media extends Media {
           try {
             // Delete old index first
             await this.db.await_proc('seo_delete_index', hub_id, nid);
-          
+
             this.debug(`[SEO] Deleted old index for: ${attr.filename}`);
-          
+
             // Small delay to ensure file is fully written to disk
             await new Promise(resolve => setTimeout(resolve, 100));
-          
+
             // Refresh node data after save (get updated filesize, mtime, etc)
             const updated_node = await this.db.await_proc("mfs_access_node", this.uid, nid);
-          
+
             if (isEmpty(updated_node)) {
               throw new Error('Failed to refresh node data after save');
             }
 
             // Queue for reindexing with fresh content
             const indexQueue = require('../queues/indexQueue');
-          
+
             await indexQueue.addFile(updated_node, {
               uid: this.uid,
               socket_id: this.input.get(Attr.socket_id),
               hub_id: hub_id,
               priority: 8 // High priority for content updates
             });
-          
+
             this.debug(`[SEO] Queued for reindexing: ${attr.filename}`);
-          
+
           } catch (error) {
             this.warn(`[SEO] Failed to reindex after save: ${error.message}`);
           }
@@ -1697,7 +1705,7 @@ class __private_media extends Media {
     const old_filesize = node.filesize || 0;
     const new_filesize = data.filesize || 0;
     const delta = new_filesize - old_filesize;
-  
+
     if (delta !== 0) {
       try {
         const hub_id = node.hub_id || this.hub.get(Attr.id);
@@ -1706,10 +1714,10 @@ class __private_media extends Media {
           SET size = GREATEST(0, IFNULL(size, 0) + ${delta}) 
           WHERE hub_id = '${hub_id}'
         `);
-      
+
         this.debug(`[QUOTA] Updated disk_usage on replace_content: delta=${delta} bytes`);
         // Trigger will auto-sync quota_usage
-      
+
       } catch (e) {
         this.warn('[QUOTA] Failed to update disk_usage on replace_content:', e.message);
       }
