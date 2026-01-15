@@ -349,12 +349,22 @@ class __private_hub extends Hub {
    * 
    * @returns 
    */
-  show_privilege() {
-    return this.db.call_proc(
+  async show_privilege() {
+    let owner = {};
+    if ([Attr.all, Attr.owner, 'not_owner', 'admin', Attr.other].includes(this.input.get(Attr.type))) {
+      owner = await this.db.await_proc(
+        "hub_get_members_by_type",
+        this.uid,
+        this.input.get(Attr.type),
+        1
+      )
+    }
+    let { filesize } = await this.db.await_query("SELECT sum(filesize) filesize FROM media");
+    let visitor = await this.db.await_proc(
       "member_show_privilege",
-      this.uid,
-      this.output.data
+      this.uid
     );
+    this.output.data({ owner, visitor, filesize});
   }
 
   /**
