@@ -298,7 +298,7 @@ class __private_desk extends Media {
       this.output.list([]);
       return;
     }
-    let pattern = string.trim().replace(/ +/g, '.+');
+    let pattern = string.trim();
     let res = await this.db.await_proc("desk_search", { pattern, page });
     this.output.list(res)
   }
