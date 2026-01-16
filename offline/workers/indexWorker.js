@@ -7,7 +7,7 @@
 
 const { resolve } = require('path');
 const indexQueue = require('../queues/indexQueue');
-const { indexFile } = require('../offline/media/seo_lib');
+const { indexFile } = require('../media/seo_lib');
 const { Mariadb, RedisStore, Attr } = require('@drumee/server-essentials');
 
 // Worker configuration
