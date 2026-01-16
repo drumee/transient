@@ -38,7 +38,7 @@ const stopword = require('stopword');
 const tesseract = require("node-tesseract-ocr");
 
 // PDF processing
-const pdfParse = require('pdf-parse');
+const PDFParser = require('pdf2json');
 
 const { remove_item } = require('@drumee/server-core').MfsTools;
 const { Mariadb } = require('@drumee/server-essentials');
@@ -158,7 +158,7 @@ class SeoIndexer {
     try {
       // Try pdf-parse first
       const dataBuffer = readFileSync(src);
-      const data = await pdfParse(dataBuffer);
+      const data = await PDFParser(dataBuffer);
       
       if (data.text && data.text.trim().length > 50) {
         writeFileSync(index, data.text, 'utf8');
