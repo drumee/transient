@@ -55,6 +55,7 @@ const SPAWN_OPT = { detached: true, stdio: ["ignore", "ignore", "ignore"] };
 const Spawn = require("child_process").spawn;
 const { tmp_dir, quota, server_location } = sysEnv();
 const JSON_OPT = { spaces: 2, EOL: "\r\n" };
+const { emptyTrash } = require('../../offline/queues/trashQueue');
 
 //########################################
 class __private_media extends Media {
@@ -1108,12 +1109,35 @@ class __private_media extends Media {
    * @params null
    */
   async empty_bin() {
-    let data = await this.db.await_proc("mfs_empty_trash");
-    if (!isEmpty(data)) {
-      await this._empty_bin(data);
+    try {
+      if (!this.uid) {
+        throw new Error('User ID is required');
+      }
+      
+      const hub_id = this.hub.get(Attr.id);
+      if (!hub_id) {
+        throw new Error('Hub ID is required');
+      }
+      
+      const job = await emptyTrash(
+        this.uid,
+        hub_id,
+        {
+          socket_id: this.input.get(Attr.socket_id) || null,
+          priority: 5
+        }
+      );
+      
+      this.output.data({ 
+        status: 'queued',
+        job_id: job.id,
+        message: 'Trash cleanup has been queued'
+      });
+      
+    } catch (error) {
+      this.warn('[TRASH] Failed to queue empty_bin:', error.message);
+      this.exception.server('FAILED_TO_QUEUE_TRASH_CLEANUP');
     }
-    let { usage } = await this.yp.await_proc("disk_usage", this.uid);
-    this.output.data({ disk_usage: usage });
   }
 
   /**
