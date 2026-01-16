@@ -68,7 +68,7 @@
     "nodejs-fs-utils": "^1.2.5",
     "ovh": "^2.0.3",
     "parse-http-header": "^1.0.1",
-    "pdf-parse": "^2.4.5",
+    "pdf2json": "^4.0.1",
     "printf": "^0.6.1",
     "query-string": "^6.13.1",
     "redis": "^4.0.3",
