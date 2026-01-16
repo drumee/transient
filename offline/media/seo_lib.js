@@ -38,7 +38,9 @@ const stopword = require('stopword');
 const tesseract = require("node-tesseract-ocr");
 
 // PDF processing
-const PDFParser = require('pdf2json');
+const pdfjsLib = require('pdfjs-dist/legacy/build/pdf.js');
+// Configure for Node.js
+pdfjsLib.GlobalWorkerOptions.workerSrc = null;
 
 const { remove_item } = require('@drumee/server-core').MfsTools;
 const { Mariadb } = require('@drumee/server-essentials');
@@ -146,8 +148,8 @@ class SeoIndexer {
   }
 
   /**
-   * Extract text from PDF using pdf-parse
-   */
+  * Extract text from PDF using pdfjs-dist
+  */
   async extractFromPdf(src, index) {
     if (!existsSync(src)) {
       throw new Error(`PDF file not found: ${src}`);
@@ -156,24 +158,45 @@ class SeoIndexer {
     this.log(`Extracting text from PDF: ${src}`);
 
     try {
-      // Try pdf-parse first
-      const dataBuffer = readFileSync(src);
-      const data = await PDFParser(dataBuffer);
+      // Use pdfjs-dist
+      const data = new Uint8Array(readFileSync(src));
+    
+      const doc = await pdfjsLib.getDocument({
+        data,
+        useSystemFonts: true,
+        standardFontDataUrl: null,
+        disableFontFace: true
+      }).promise;
+    
+      const numPages = doc.numPages;
+      const maxPages = Math.min(numPages, 50); // First 50 pages only
+    
+      let text = '';
+    
+      for (let i = 1; i <= maxPages; i++) {
+        const page = await doc.getPage(i);
+        const content = await page.getTextContent();
       
-      if (data.text && data.text.trim().length > 50) {
-        writeFileSync(index, data.text, 'utf8');
-        this.log(`PDF extracted ${data.text.length} characters from ${data.numpages} pages`);
-        return data.text;
+        text += content.items.map(item => item.str).join(' ') + '\n';
+        page.cleanup();
+      }
+    
+      doc.destroy();
+    
+      if (text && text.trim().length > 50) {
+        writeFileSync(index, text, 'utf8');
+        this.log(`PDF extracted ${text.length} characters from ${maxPages}/${numPages} pages`);
+        return text;
       }
 
-      // Fallback to pdftotext
+      // Fallback to pdftotext if no text extracted
       this.log('PDF has no text layer, trying pdftotext...');
-      
+    
       const cmd = `/usr/bin/pdftotext -layout "${src}" "${index}"`;
       await this.execCommand(cmd);
 
       if (existsSync(index)) {
-        const text = readFileSync(index, 'utf8');
+        text = readFileSync(index, 'utf8');
         if (text.trim().length > 50) {
           this.log(`pdftotext extracted ${text.length} characters`);
           return text;
