@@ -9,7 +9,8 @@ const Queue = require('bull');
 const { resolve } = require('path');
 const { readFileSync } = require('jsonfile');
 const { existsSync } = require('fs');
-
+const { sysEnv } = require('@drumee/server-essentials');
+const { data_dir } = sysEnv();
 // Load Redis configuration
 const credential_dir = process.env.credential_dir || "/etc/drumee/credential";
 const instance = process.env.instance_name || "";
@@ -52,9 +53,9 @@ const indexQueue = new Queue('drumee:seo-indexing', {
       type: 'exponential',
       delay: 2000 // 2s, 4s, 8s
     },
-    
+
     timeout: 300000, // 5 minutes max
-    
+
     // Job retention
     removeOnComplete: 100, // Keep last 100 completed
     removeOnFail: false    // Keep failed for debugging
@@ -87,7 +88,7 @@ indexQueue.on('failed', (job, err) => {
   console.error(`[IndexQueue] Job ${job.id} failed after ${job.attemptsMade} attempts`);
   console.error(`  File: ${job.data.node?.filename || 'unknown'}`);
   console.error(`  Error: ${err.message}`);
-  
+
   try {
     const { Syslog } = require('@drumee/server-essentials');
     Syslog.error('[IndexQueue] Job failed', {
@@ -133,8 +134,8 @@ async function addFile(node, options = {}) {
   } = options;
 
   // Validation
-  if (!node || !node.id || !node.hub_id) {
-    throw new Error('Invalid node: missing id or hub_id');
+  if (!node || !node.id || !node.hub_id || !node.xdb) {
+    throw new Error('Invalid node: missing id or hub_id xdb');
   }
 
   // Calculate priority
@@ -142,7 +143,7 @@ async function addFile(node, options = {}) {
   if (jobPriority === null) {
     const filesize = node.filesize || 0;
     const category = node.filetype || node.category;
-  
+
     // Images: Always high priority
     if (category === 'image') {
       jobPriority = 8;
@@ -169,6 +170,8 @@ async function addFile(node, options = {}) {
   const jobId = `${node.hub_id}-${node.id}`;
 
   try {
+    console.log(`[IndexQueue] Adding node`, node);
+    node.xpath = node.mfs_root.replace(new RegExp(data_dir), '/data_dir/'); /** Prevent filtering by sanitizer */
     const job = await indexQueue.add('index-file', {
       node,
       uid,
@@ -184,7 +187,6 @@ async function addFile(node, options = {}) {
 
     console.log(`[IndexQueue] Queued: ${node.filename} (job ${job.id}, priority ${jobPriority})`);
     return job;
-    
   } catch (error) {
     console.error(`[IndexQueue] Failed to queue ${node.filename}:`, error.message);
     throw error;
@@ -272,7 +274,7 @@ async function retryJob(jobId) {
     if (!job) {
       throw new Error('Job not found');
     }
-    
+
     await job.retry();
     console.log(`[IndexQueue] Retrying job ${jobId}`);
   } catch (error) {
@@ -290,7 +292,7 @@ async function retryAllFailed() {
   try {
     const failed = await indexQueue.getFailed();
     let count = 0;
-    
+
     for (let job of failed) {
       try {
         await job.retry();
@@ -299,7 +301,7 @@ async function retryAllFailed() {
         console.error(`[IndexQueue] Failed to retry job ${job.id}:`, e.message);
       }
     }
-    
+
     console.log(`[IndexQueue] Retried ${count} failed jobs`);
     return count;
   } catch (error) {
@@ -360,18 +362,18 @@ async function getHealth() {
   try {
     const stats = await getStats();
     const isPaused = await indexQueue.isPaused();
-    
+
     // Consider unhealthy if:
     // - Queue is paused
     // - Failed rate > 10%
     // - Too many waiting jobs (> 1000)
     const totalProcessed = stats.completed + stats.failed;
     const failureRate = totalProcessed > 0 ? (stats.failed / totalProcessed) : 0;
-    
-    const healthy = !isPaused && 
-                    failureRate < 0.1 && 
-                    stats.waiting < 1000;
-    
+
+    const healthy = !isPaused &&
+      failureRate < 0.1 &&
+      stats.waiting < 1000;
+
     return {
       healthy,
       paused: isPaused,

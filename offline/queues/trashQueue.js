@@ -4,7 +4,6 @@
  */
 
 const Queue = require('bull');
-const Redis = require('ioredis');
 
 // Redis configuration
 const redisConfig = {
@@ -16,7 +15,6 @@ const redisConfig = {
 
 console.log('[TrashQueue] Connecting to Redis:', `${redisConfig.host}:${redisConfig.port}`);
 
-const redis = new Redis(redisConfig);
 
 const trashQueue = new Queue('trashQueue', {
   redis: redisConfig,

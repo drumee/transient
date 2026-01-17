@@ -1109,16 +1109,21 @@ class __private_media extends Media {
    * @params null
    */
   async empty_bin() {
+    if (!this.user.get(Attr.settings).trash_expiry) {
+      let list = await this.db.await_proc("mfs_empty_trash");
+      await this._empty_bin(list)
+      return this.output.data(list)
+    }
     try {
       if (!this.uid) {
         throw new Error('User ID is required');
       }
-      
+
       const hub_id = this.hub.get(Attr.id);
       if (!hub_id) {
         throw new Error('Hub ID is required');
       }
-      
+
       const job = await emptyTrash(
         this.uid,
         hub_id,
@@ -1127,13 +1132,13 @@ class __private_media extends Media {
           priority: 5
         }
       );
-      
-      this.output.data({ 
+
+      this.output.data({
         status: 'queued',
         job_id: job.id,
         message: 'Trash cleanup has been queued'
       });
-      
+
     } catch (error) {
       this.warn('[TRASH] Failed to queue empty_bin:', error.message);
       this.exception.server('FAILED_TO_QUEUE_TRASH_CLEANUP');

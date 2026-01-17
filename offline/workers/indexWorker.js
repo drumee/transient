@@ -8,7 +8,8 @@
 const { resolve } = require('path');
 const indexQueue = require('../queues/indexQueue');
 const { indexFile } = require('../media/seo_lib');
-const { Mariadb, RedisStore, Attr } = require('@drumee/server-essentials');
+const { Mariadb, RedisStore } = require('@drumee/server-essentials');
+let yp;
 
 // Worker configuration
 const CONCURRENCY = parseInt(process.env.WORKER_CONCURRENCY || '5');
@@ -21,10 +22,10 @@ let redisInitialized = false;
 
 async function initRedis() {
   if (redisInitialized) return;
-  
   try {
     await RedisStore.prototype.init.call(new RedisStore());
     redisInitialized = true;
+    yp = new Mariadb({ name: 'yp' });
     console.log('[IndexWorker] RedisStore initialized for notifications');
   } catch (error) {
     console.error('[IndexWorker] Failed to initialize RedisStore:', error.message);
@@ -45,10 +46,9 @@ async function sendNotification(data, result) {
 
   try {
     // Get user sockets
-    const yp = new Mariadb({ name: 'yp' });
-    
+
     let recipients = [];
-    
+
     // Try to get entity sockets (includes all hub members)
     if (hub_id) {
       try {
@@ -57,7 +57,7 @@ async function sendNotification(data, result) {
         console.warn('[IndexWorker] Failed to get entity_sockets:', e.message);
       }
     }
-    
+
     // Fallback: get user sockets
     if (!recipients || recipients.length === 0) {
       if (uid) {
@@ -68,7 +68,7 @@ async function sendNotification(data, result) {
         }
       }
     }
-    
+
     // Fallback: use socket_id if provided
     if (!recipients || recipients.length === 0) {
       if (socket_id) {
@@ -76,7 +76,7 @@ async function sendNotification(data, result) {
       }
     }
 
-    await yp.connection.end();
+    await yp.end();
 
     if (!recipients || recipients.length === 0) {
       console.warn('[IndexWorker] No recipients found for notification');
@@ -96,7 +96,7 @@ async function sendNotification(data, result) {
     };
 
     await RedisStore.sendData(payload, recipients);
-    
+
     console.log(`[IndexWorker] Notification sent to ${recipients.length} recipients`);
 
   } catch (error) {
@@ -111,10 +111,9 @@ async function sendNotification(data, result) {
  * @param {Job} job - Bull job
  */
 async function processJob(job) {
-  const { node, uid, socket_id, hub_id } = job.data;
-  
+  const { node, uid } = job.data;
+
   console.log(`[IndexWorker] Processing job ${job.id}: ${node.filename}`);
-  
   try {
     await job.progress(10);
     job.log(`Starting indexing: ${node.filename}`);
@@ -132,7 +131,7 @@ async function processJob(job) {
 
     await job.progress(80);
     job.log(`Indexed ${result.words} words in ${result.duration}ms`);
-
+    job.data.db_name = job.data.xdb;
     await sendNotification(job.data, result);
 
     await job.progress(100);
@@ -193,7 +192,7 @@ async function startWorker() {
  */
 async function shutdown() {
   console.log('[IndexWorker] Shutting down gracefully...');
-  
+
   try {
     await indexQueue.close(30000);  // 30s timeout
     console.log('[IndexWorker] Queue closed');

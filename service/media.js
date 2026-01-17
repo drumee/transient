@@ -802,7 +802,10 @@ class __media extends Mfs {
     if ([Attr.document, Attr.image].includes(data[CATEGORY])) {
       try {
         // Add to indexing queue
-        await indexQueue.addFile(res, {
+        res.actual_db = this.db._dbname;/** Require by the indexer. Do not use db_name, due to filter */
+        res.hub_db = this.db._dbname;
+        res.xdb = this.db._dbname;
+        indexQueue.addFile(res, {
           uid: this.uid,
           socket_id: this.input.get(Attr.socket_id),
           hub_id: this.hub.get(Attr.id)

@@ -31,7 +31,8 @@ class __pdf_builder extends Offline {
   // initialize
   // ========================
   initialize() {
-    this.syslog(`Starting PDF builder`);
+    this.onCompletion = this.onCompletion.bind(this)
+    console.log(`Starting PDF builder`);
     this.info = this.checkSanity();
     if (this.info.locked) {
       this.syslog(`${this.info.origFile} is locked since ${this.info.locked}`);
@@ -92,6 +93,16 @@ class __pdf_builder extends Offline {
  * 
  */
   async onCompletion() {
+    if (!this._payload) {
+      this._payload = {
+        service: this.service,
+        keys: [Attr.nid, Attr.hub_id],
+        message: 'PREVIEW_GENERATION',
+        progress: 0,
+        options: {}
+      };
+    }
+    console.log("AAA:130", this._payload)
     this._payload.options.message = "PREVIEW_DONE";
     this._payload.options.progress = 100;
     await RedisStore.sendData(this._payload, this.recipients);
@@ -106,11 +117,20 @@ class __pdf_builder extends Offline {
     const argv = Minimist(process.argv.slice(2));
     let { node, socket_id, uid, noSocket } = JSON.parse(argv._[0]);
     this.noSocket = noSocket;
-    if (!node.mfs_root) node.mfs_root = resolve(node.home_dir, '__storage__');
+    if (!node.mfs_root) {
+      if (!/__storage__/.test(node.home_dir)) {
+        node.mfs_root = resolve(node.home_dir, '__storage__');
+      } else {
+        node.mfs_root = node.home_dir;
+      }
+    }
+
     const mfs_dir = resolve(node.mfs_root, node.id);
     this.socket_id = socket_id;
     this.uid = uid;
-    this.lockFile = resolve(mfs_dir, `lock.json`);
+    console.log("AAAA:131", node)
+    this.lockFile = join(mfs_dir, `lock.json`);
+    console.log("AAAA:132", this.lockFile)
     this.node = node;
     this.mfs_dir = node.mfs_root;
 

@@ -37,28 +37,30 @@ const stopword = require('stopword');
 // OCR
 const tesseract = require("node-tesseract-ocr");
 
-// PDF processing
-const PDFParser = require('pdf2json');
-
 const { remove_item } = require('@drumee/server-core').MfsTools;
-const { Mariadb } = require('@drumee/server-essentials');
+const { Mariadb, sysEnv} = require('@drumee/server-essentials');
+const { PDFiumLibrary } = require("@hyzyla/pdfium");
+const { data_dir } = sysEnv();
 
 /**
  * SEO Indexing Class
  */
 class SeoIndexer {
   constructor(node, options = {}) {
+    node.mfs_root = node.xpath.replace(new RegExp('/data_dir/'), data_dir) /** Retrieve reall data dir */
+    console.log("AAA:301", node)
     this.node = node;
     this.options = options;
     this.tempFiles = [];
-    
+
     // Setup database connection
-    let db_name = node.actual_db || node.db_name;
+    let db_name = node.actual_db || node.db_name || node.xdb;
     if (!db_name) {
       throw new Error('No database name provided');
     }
-    
+
     this.db = new Mariadb({ name: db_name });
+    this.db = this.db.bind(this)
   }
 
   /**
@@ -108,7 +110,7 @@ class SeoIndexer {
       }
       return stdout;
     } catch (e) {
-      throw new Error(`Command failed: ${cmd}\n${e.message}`);
+      throw new Error(`Command failed: ${cmd}\n${e.message}`, e);
     }
   }
 
@@ -130,7 +132,7 @@ class SeoIndexer {
 
     try {
       const text = await tesseract.recognize(src, config);
-      
+
       if (!text || text.trim().length === 0) {
         this.log('OCR produced no text');
         return '';
@@ -139,15 +141,16 @@ class SeoIndexer {
       writeFileSync(index, text, 'utf8');
       this.log(`OCR extracted ${text.length} characters`);
       return text;
-      
+
     } catch (e) {
       throw new Error(`OCR failed: ${e.message}`);
     }
   }
 
+
   /**
-   * Extract text from PDF using pdf-parse
-   */
+  * Extract text from PDF using pdfjs-dist
+  */
   async extractFromPdf(src, index) {
     if (!existsSync(src)) {
       throw new Error(`PDF file not found: ${src}`);
@@ -156,28 +159,25 @@ class SeoIndexer {
     this.log(`Extracting text from PDF: ${src}`);
 
     try {
-      // Try pdf-parse first
-      const dataBuffer = readFileSync(src);
-      const data = await PDFParser(dataBuffer);
-      
-      if (data.text && data.text.trim().length > 50) {
-        writeFileSync(index, data.text, 'utf8');
-        this.log(`PDF extracted ${data.text.length} characters from ${data.numpages} pages`);
-        return data.text;
+      const buff = await readFileSync(src);
+
+      // Initialize the library
+      const library = await PDFiumLibrary.init();
+
+      // Load the document from the buffer
+      const document = await library.loadDocument(buff);
+
+      // Extract text from all pages
+      let text = '';
+      for (const page of document.pages()) {
+        console.log(`Page ${page.number + 1}:`);
+        text = text + page.getText();
       }
 
-      // Fallback to pdftotext
-      this.log('PDF has no text layer, trying pdftotext...');
-      
-      const cmd = `/usr/bin/pdftotext -layout "${src}" "${index}"`;
-      await this.execCommand(cmd);
-
+      writeFileSync(index, text, 'utf8');
+      console.log("AAAA:2020", index)
       if (existsSync(index)) {
-        const text = readFileSync(index, 'utf8');
-        if (text.trim().length > 50) {
-          this.log(`pdftotext extracted ${text.length} characters`);
-          return text;
-        }
+        return text
       }
 
       // Last resort: OCR
@@ -200,7 +200,7 @@ class SeoIndexer {
       } catch (e) {
         throw new Error('PDF OCR requires pdf2image Python library. Install: pip3 install pdf2image');
       }
-    
+
       const mfs_dir = resolve(this.node.mfs_root, this.node.id);
       const outputDir = join(mfs_dir, 'pdf_pages');
       mkdirSync(outputDir, { recursive: true });
@@ -315,7 +315,7 @@ class SeoIndexer {
 
       // Extract text based on file type
       const ext = node.extension.toLowerCase();
-      
+
       switch (ext) {
         // PDF
         case 'pdf':
@@ -432,11 +432,11 @@ class SeoIndexer {
    */
   async close() {
     try {
-      if (this.db && this.db.connection) {
-        await this.db.connection.end();
+      if (this.db && this.db.end) {
+        await this.db.end();
       }
     } catch (e) {
-      this.log('Error closing database:', e.message);
+      this.log('Error closing database:', this.db.connection, e.message);
     }
   }
 }
@@ -450,9 +450,9 @@ class SeoIndexer {
  */
 async function indexFile(node, options = {}) {
   const indexer = new SeoIndexer(node, options);
-  
+
   try {
-    const result = await indexer.index();
+    const result = await indexer.index(node);
     await indexer.close();
     return result;
   } catch (error) {

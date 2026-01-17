@@ -49,7 +49,7 @@ trashQueue.process('empty_trash', CONCURRENCY, async (job) => {
     
     // Close database connection
     if (userDb && userDb.connection) {
-      await userDb.connection.end();
+      await userDb.end();
     }
     
     if (!data || data.length === 0) {
@@ -99,7 +99,7 @@ trashQueue.process('empty_trash', CONCURRENCY, async (job) => {
     // Cleanup
     if (userDb && userDb.connection) {
       try {
-        await userDb.connection.end();
+        await userDb.end();
       } catch (e) {
         console.error(`[TrashWorker] Close error:`, e.message);
       }
@@ -114,7 +114,7 @@ process.on('SIGTERM', async () => {
   console.log('[TrashWorker] SIGTERM received');
   await trashQueue.close();
   if (yp && yp.connection) {
-    await yp.connection.end();
+    await yp.end();
   }
   process.exit(0);
 });
@@ -123,7 +123,7 @@ process.on('SIGINT', async () => {
   console.log('[TrashWorker] SIGINT received');
   await trashQueue.close();
   if (yp && yp.connection) {
-    await yp.connection.end();
+    await yp.end();
   }
   process.exit(0);
 });

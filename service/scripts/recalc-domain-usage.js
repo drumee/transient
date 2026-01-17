@@ -26,7 +26,7 @@ async function main() {
     
     if (!domains || domains.length === 0) {
       console.log('No paid domains found');
-      await yp.connection.end();
+      await yp.end();
       return;
     }
     
@@ -82,7 +82,7 @@ async function main() {
     console.error('Fatal error:', error);
     process.exit(1);
   } finally {
-    await yp.connection.end();
+    await yp.end();
   }
   
   process.exit(0);
