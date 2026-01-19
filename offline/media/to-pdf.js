@@ -135,7 +135,7 @@ class __pdf_builder extends Offline {
     this.mfs_dir = node.mfs_root;
 
     this.yp = new Mariadb({ user: process.env.USER });
-    let origFile = resolve(mfs_dir, `orig.${node.ext}`);
+    let origFile = resolve(mfs_dir, `orig.${node.extension || node.ext}`);
     this.origFile = origFile;
     if (existsSync(this.lockFile)) {
       return readFileSync(this.lockFile);
@@ -226,23 +226,31 @@ class __pdf_builder extends Offline {
     let node = this.node;
     let mfs_root = node.mfs_root || this.mfs_dir;
     const mfs_dir = resolve(mfs_root, node.id);
-    const pdf = join(mfs_dir, 'orig.pdf');
-
-    let preview = join(mfs_dir);
-    let cmd = `${Script.soffice} ${preview} ${this.info.origFile}`;
+    const orig_pdf = join(mfs_dir, 'orig.pdf');
+    const preview = join(mfs_dir, 'preview.pdf');
+  
+    let cmd = `${Script.soffice} ${mfs_dir} ${this.info.origFile}`;
     this.exec(cmd);
-    if (!existsSync(pdf)) {
+  
+    if (!existsSync(orig_pdf)) {
       throw `Failed to build preview with CMD=${cmd}`;
     }
-    let json = getPdfInfo(pdf);
-    json.pdf = pdf;
+  
+    let json = getPdfInfo(orig_pdf);
+    json.pdf = preview;
     json.buildState = 'done';
     this.infoFile = resolve(mfs_dir, `info.json`);
     writeFileSync(this.infoFile, json);
-    if (!existsSync(json.pdf)) {
-      throw `NOENT : buildFromOrig file=${json.pdf}`;
+  
+    // Add rename operation
+    this.syslog(`Renaming ${orig_pdf} to ${preview}`);
+    renameSync(orig_pdf, preview);
+  
+    if (!existsSync(preview)) {
+      throw `NOENT : buildFromOrig file=${preview}`;
     }
-    this._preview = json.pdf;
+  
+    this._preview = preview;
   }
 }
 
