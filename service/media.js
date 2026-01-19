@@ -799,7 +799,8 @@ class __media extends Mfs {
     });
 
     /** SEO Indexing via Bull Queue */
-    if ([Attr.document, Attr.image].includes(data[CATEGORY])) {
+    // if ([Attr.document, Attr.image].includes(data[CATEGORY])) {
+    if ([Attr.document].includes(data[CATEGORY])) {
       try {
         // Add to indexing queue
         res.actual_db = this.db._dbname;/** Require by the indexer. Do not use db_name, due to filter */
@@ -1861,11 +1862,7 @@ class __media extends Mfs {
     switch (node.filetype) {
       case Attr.document:
         info = Document.getInfo(node);
-        if (
-          info.error == "FILE_NOT_FOUND" ||
-          !info.pdf ||
-          !existsSync(info.pdf)
-        ) {
+        if (info.error == "FILE_NOT_FOUND" || nullValue(info.pages) || !info.pdf || !existsSync(info.pdf)) {
           info = Document.rebuildInfo(
             node,
             this.uid,

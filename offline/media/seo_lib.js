@@ -27,9 +27,7 @@
 const { resolve, join } = require('path');
 const { existsSync, writeFileSync, readFileSync } = require("fs");
 const { readFileSync: readJson, writeFileSync: writeJson } = require('jsonfile');
-const { promisify } = require('util');
-const execAsync = promisify(require('child_process').exec);
-
+const { exec } = require("shelljs");
 // Text processing
 const SEPARATOR = /[ ,.:;?!\/\-\_\$\&\'\"\\|\@=+\t\n\r\f\)\(\[\]\'\`]+/;
 const stopword = require('stopword');
@@ -38,7 +36,7 @@ const stopword = require('stopword');
 const tesseract = require("node-tesseract-ocr");
 
 const { remove_item } = require('@drumee/server-core').MfsTools;
-const { Mariadb, sysEnv} = require('@drumee/server-essentials');
+const { Mariadb, sysEnv, nullValue } = require('@drumee/server-essentials');
 const { PDFiumLibrary } = require("@hyzyla/pdfium");
 const { data_dir } = sysEnv();
 
@@ -102,15 +100,16 @@ class SeoIndexer {
   /**
    * Execute shell command with timeout
    */
-  async execCommand(cmd, timeout = 60000) {
+  execCommand(cmd, timeout = 60000) {
     try {
-      const { stdout, stderr } = await execAsync(cmd, { timeout });
+      const { stdout, stderr } = exec(cmd, { timeout });
       if (stderr && !stderr.includes('Warning')) {
         this.log('Command stderr:', stderr);
       }
       return stdout;
     } catch (e) {
-      throw new Error(`Command failed: ${cmd}\n${e.message}`, e);
+      this.log('Failed to run:', cmd);
+      throw new Error(`Command failed: **${e.message}**`, e);
     }
   }
 
@@ -196,7 +195,7 @@ class SeoIndexer {
     try {
       // Check if pdf2image is available
       try {
-        await this.execCommand('python3 -c "import pdf2image"', 5000);
+        this.execCommand('python3 -c "import pdf2image"', 5000);
       } catch (e) {
         throw new Error('PDF OCR requires pdf2image Python library. Install: pip3 install pdf2image');
       }
@@ -212,7 +211,7 @@ class SeoIndexer {
   print(f'Converted {len(images)} pages')
   "`;
 
-      await this.execCommand(cmd, 120000);
+      this.execCommand(cmd, 120000);
 
       // OCR first page only
       const firstPage = join(outputDir, '0000001.jpg');
@@ -249,7 +248,7 @@ class SeoIndexer {
     };
 
     try {
-      await this.execCommand(`${cmd} '${JSON.stringify(args)}'`, 180000);
+      this.execCommand(`${cmd} '${JSON.stringify(args)}'`, 180000);
 
       // Wait for file to appear
       let attempts = 0;
@@ -261,12 +260,10 @@ class SeoIndexer {
       if (!existsSync(pdfPath)) {
         throw new Error('PDF conversion timeout');
       }
-
-      this.log('PDF conversion complete');
       return pdfPath;
 
     } catch (e) {
-      throw new Error(`Office conversion failed: ${e.message}`);
+      throw new Error(`Office conversion failed: ${e.message}`, e);
     }
   }
 
@@ -396,7 +393,7 @@ class SeoIndexer {
       await this.db.await_proc("seo_register", node.hub_id, node.id, JSON.stringify(attr));
 
       // Update info.json
-      const info = join(mfs_dir, 'info.json');
+      const info = join(mfs_dir, 'index_seo.json');
       if (existsSync(info)) {
         try {
           let json = readJson(info);
@@ -409,7 +406,7 @@ class SeoIndexer {
       }
 
       const duration = Date.now() - startTime;
-      this.log(`Successfully indexed ${node.filename}: ${data.length} words in ${duration}ms`);
+      this.log(`Successfully indexed ${node.filename}: ${data.length} words in ${duration}ms`, info);
 
       return {
         success: true,

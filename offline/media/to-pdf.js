@@ -128,9 +128,7 @@ class __pdf_builder extends Offline {
     const mfs_dir = resolve(node.mfs_root, node.id);
     this.socket_id = socket_id;
     this.uid = uid;
-    console.log("AAAA:131", node)
     this.lockFile = join(mfs_dir, `lock.json`);
-    console.log("AAAA:132", this.lockFile)
     this.node = node;
     this.mfs_dir = node.mfs_root;
 

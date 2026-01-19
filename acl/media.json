@@ -373,7 +373,7 @@
       "permission": {
         "src": "read"
       },
-      "method": "media_search"
+      "method": "search_all"
     },
     "set_homepage": {
       "scope": "hub",
