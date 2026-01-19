@@ -46,6 +46,7 @@
 
   const DEBUG =  {};
 
+
   window.onerror = function (msg, url, line, col, error) {
     fetch('<%= svcPath %>bootstrap.report_error', {
       method: 'POST',
