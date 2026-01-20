@@ -1330,10 +1330,11 @@ class __private_adminpanel extends Mfs {
     const username = this.user.get(Attr.fullname);
     await this.yp.await_proc('token_generate_next', email, email, token, Constants.FORGOT_PASSWORD, '');
     let user = await this.yp.await_proc('get_visitor', email);
-    const ulang = this.input.ua_language();
+    const ulang = "en"; //this.input.ua_language();
     const { link: host } = await this.user.organization();
     const link = `${this.input.homepath(host)}#/welcome/reset/${user.id}/${token}/reason=new-account`;
     const subject = `${Cache.message('_admin_network_subject', ulang)}`;
+    //this.debug("AAAA:1346", {link, subject, user, email})
     const msg = new Messenger({
       template: "butler/admin-invitation",
       subject: subject,
@@ -1346,7 +1347,7 @@ class __private_adminpanel extends Mfs {
       },
       handler: this.exception.email
     });
-    let body = msg.send();
+    let body = await msg.send();
     if (isString(body)) {
       return {
         subject,
