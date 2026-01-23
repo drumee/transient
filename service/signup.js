@@ -57,7 +57,7 @@ class Signup extends Loby {
 
     let sent = 0;
     try {
-      let tpl = resolve(__dirname, "./templates/otp.html")
+      let tpl = resolve(__dirname, "./templates/onboarding.js")
       let html = msg.renderFrom(tpl, data)
       await msg.send({ html });
       sent = 1;
