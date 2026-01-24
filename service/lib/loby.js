@@ -16,7 +16,7 @@
  */
 
 const {
-  sysEnv, uniqueId, Attr, toArray
+  sysEnv, uniqueId, Attr, toArray, Cache
 } = require("@drumee/server-essentials");
 const { Entity } = require("@drumee/server-core");
 const { readFileSync } = require("fs");
@@ -305,6 +305,152 @@ class Account extends Entity {
     this.output.setAuthorization(params);
     this.output.set_header("Access-Control-Allow-Origin", `*.${main_domain}`);
     this.output.html(content);
+  }
+
+
+  /**
+ * 
+ * @param {*} args 
+ * @param {*} opt 
+ */
+  async createHub(args, opt = {}) {
+    let { owner_id, domain, area, filename, hostname, pid, user_db } = args;
+    if (!domain || !area) {
+      this.warn("MAL_FORMED_DATA", { args }, { domain, area });
+      return this.exception.user("MAL_FORMED_DATA");
+    }
+
+    if (opt.is_wicket) {
+      hostname = uniqueId()
+      filename = hostname;
+    } else {
+      hostname = filename;
+      hostname = hostname.replace(/[ \.,;:!&~#'|@*\$><\?\(\)\[\]\{\}\"\/]/g, '');
+      hostname = await this.yp.await_func("strip_accents", hostname);
+      hostname = hostname.replace(/\-$/, '');
+      hostname = hostname.trim().toLowerCase();
+      hostname = new URL(`http://${hostname}`).hostname;
+    }
+
+    opt.lang = "en"; //this.input.use(Attr.lang) || "en";
+    filename = await this.yp.await_func(`${user_db}.unique_filename`, pid, filename, "");
+    args = { hostname, area, filename, owner_id, domain };
+    const rows = await this.yp.await_proc(`${user_db}.desk_create_hub`, args, opt);
+    let hub_id, hub_db, home_id;
+    for (let r of rows) {
+      if (r && r.failed) {
+        this.debug("Rows returned", rows)
+        this.warn("Failed to create hub", { args, opt, rows });
+        return {};
+      }
+      if (r.db_name && r.filesize != null && r.actual_home_id) {
+        hub_db = r.db_name;
+        home_id = r.actual_home_id;
+      }
+      if (r.db_name && r.home_dir) {
+        hub_id = r.id;
+        hub_db = hub_db || r.db_name;
+      }
+    }
+
+    /** place the folder at the end on the user desk */
+    let { count } = await this.yp.await_query(`SELECT count(*) count FROM ${user_db}.media`);
+    await this.yp.await_query(`UPDATE ${user_db}.media media SET rank=? WHERE id=?`, count, hub_id);
+    return { filename, hostname, hub_id, hub_db, db_name: hub_db, home_id }
+
+  }
+
+  /**
+   * 
+   */
+  async setWallpaper(uid) {
+    let wp = Cache.getSysConf('default_wallpaper');
+    if (!wp) {
+      this.warn("No wallpapers available");
+      return;
+    }
+    let { nid, hub_id } = JSON.parse(wp);
+    let { settings } = await this.yp.await_proc("entity_touch", uid) || {};
+    settings = JSON.parse(settings);
+    settings.wallpaper = {
+      nid, hub_id
+    }
+    await this.yp.call_proc("drumate_update_settings", uid, settings);
+  }
+
+  /**
+ * 
+ */
+  async createSymLink(target, dest) {
+    const { hub_id } = target;
+    //this.debug("Create symlink 147", { hub_id });
+    let { db_name } = await this.yp.await_proc('get_entity', hub_id);
+    if (!db_name) {
+      this.warn(`Target not found`, target);
+    }
+    //this.debug("Create symlink 152", target.filetype, { db_name });
+    switch (target.filetype) {
+      case Attr.hub:
+        this.warn("Can not link a hub")
+        return
+      case Attr.folder:
+        let args = {
+          owner_id: user_id,
+          filename: target.filename,
+          pid: dest.nid,
+          category: Attr.folder,
+          ext: "",
+          mimetype: Attr.folder,
+          filesize: 0,
+        };
+        let node = await this.db.await_proc(`mfs_create_node`, args, {}, { show_results: 1 });
+        if (db_name) {
+          await this.yp.await_proc(`${db_name}.mfs_create_link_by`,
+            target.nid,
+            dest.uid,
+            node.id,
+            dest.hub_id
+          );
+        }
+        break;
+      default:
+        //this.debug("Create symlink 175", target.nid, dest.uid, dest.nid, dest.hub_id, db_name);
+        if (db_name) {
+          if (!dest.nid || !dest.hub_id) {
+            this.debug("Link desination in empty", dest)
+            break;
+          }
+          await this.yp.await_proc(`${db_name}.mfs_create_link`,
+            target.nid,
+            dest.uid,
+            dest.nid,
+            dest.hub_id
+          );
+        }
+    }
+  }
+
+  /**
+   *
+   * @returns
+   */
+  async make_dir(db_name, pid, dirname) {
+    try {
+      await this.yp.await_proc(`${db_name}.mfs_make_dir`, pid, [dirname], 0)
+    } catch (e) {
+      this.warn("Failed to create dir", e)
+    }
+  }
+
+  /**
+   *
+   * @returns
+   */
+  async make_default_folers(opt) {
+    const { db_name, home_id } = opt;
+    for (let dirname of ["Photos", "Documents", "Videos"]) {
+      await this.make_dir(db_name, home_id, dirname)
+    }
   }
 
 }

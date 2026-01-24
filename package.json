@@ -20,8 +20,8 @@
   "author": "Somanos Sar <somanos@drumee.com>",
   "license": "APACHE V2",
   "dependencies": {
-    "@drumee/server-core": "^1.1.47",
-    "@drumee/server-essentials": "^1.2.12",
+    "@drumee/server-core": "^1.1.49",
+    "@drumee/server-essentials": "^1.2.13",
     "argparse": "^2.0.1",
     "axios": "^1.13.2",
     "google-auth-library": "^10.5.0",
@@ -29,7 +29,8 @@
     "jsonwebtoken": "^9.0.2",
     "jwks-rsa": "^3.2.0",
     "lodash": "^4.17.21",
-    "shelljs": "^0.8.5"
+    "shelljs": "^0.8.5",
+    "unique-names-generator": "^4.7.1"
   },
   "devDependencies": {
     "@drumee/server-dev-tools": "^1.1.29"

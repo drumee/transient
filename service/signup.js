@@ -3,6 +3,21 @@
 const { Cache, Attr, sysEnv, Messenger, uniqueId } = require('@drumee/server-essentials');
 const { resolve } = require('path');
 const Loby = require("./lib/loby")
+const { uniqueNamesGenerator, colors, animals, adjectives } = require('unique-names-generator');
+
+const folderNameConfig = {
+  dictionaries: [colors, animals],
+  length: 2,
+  separator: ' ',
+  style: 'capital'
+}
+
+const hubNameConfig = {
+  dictionaries: [adjectives, animals],
+  length: 2,
+  separator: ' ',
+  style: 'capital'
+}
 
 class Signup extends Loby {
 
@@ -70,6 +85,32 @@ class Signup extends Loby {
   /**
    * 
    */
+  async send_signup_welcome(email) {
+    let lex = Cache.lex("en");
+    const { main_domain } = sysEnv();
+    let data = {
+      heading: lex._your_account_is_all_set,
+      message: lex._mail_signup_drumee,
+      workspace: lex._discover_drumee_desk,
+      home: `https://${main_domain}/-/`,
+      signature: lex._drumee_team,
+      reminder: lex._copyright.format(`${new Date().getFullYear()}`),
+      hello: email
+    }
+    let tpl = resolve(__dirname, "./templates/welcome.html");
+    const msg = new Messenger({
+      subject: lex._welcome_on_drumee,
+      recipient: email,
+      handler: this.exception.email,
+      hello: email
+    });
+
+    let html = msg.renderFrom(tpl, data)
+    await msg.send({ html });
+  }
+  /**
+   * 
+   */
   async create_account() {
     const email = this.input.need(Attr.email);
     const password = this.input.need(Attr.password);
@@ -83,15 +124,38 @@ class Signup extends Loby {
       args = { ...data.user, password }
     }
     let status = await super.create_account(args)
-    let res = await this.session.signin({ username: email, email, password });
+    let res = await this.session.signin({ uid: email, email, password });
     res.status = "ok";
     if (res.user && res.user.firstname) {
       status.completed = 1
     } else {
       status.completed = 0
     }
+    this.user.set(res.user);
+    this.uid = res.user.id;
+    await this.make_default_folers(res.user)
+    let hub = await this.createHub({
+      filename: uniqueNamesGenerator(hubNameConfig),
+      owner_id: res.user.id,
+      domain: res.user.domain,
+      area: Attr.private,
+      user_db: res.user.db_name
+    });
+    await this.make_default_folers(hub)
+    hub = await this.createHub({
+      filename: uniqueNamesGenerator(hubNameConfig),
+      owner_id: res.user.id,
+      domain: res.user.domain,
+      area: Attr.share,
+      user_db: res.user.db_name
+    });
+    await this.make_default_folers(hub)
+    await this.setWallpaper(this.uid)
+    await this.send_signup_welcome(email)
     this.output.data(res);
   }
+
+
 }
 
 module.exports = Signup;
