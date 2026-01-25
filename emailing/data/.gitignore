@@ -1,0 +1,9 @@
+# Ignore actual recipient data
+recipients.csv
+
+# Ignore logs
+sent.csv
+failed.csv
+
+# Keep sample file
+!recipients.sample.csv
