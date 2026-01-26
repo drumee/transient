@@ -1,4 +1,4 @@
-// Send beta announcement to 8k users in batches
+// Send beta announcement to users in batches
 
 const { resolve } = require('path');
 const { readFileSync, writeFileSync, existsSync, appendFileSync } = require('fs');
@@ -69,9 +69,7 @@ function sleep(ms) {
 }
 
 /**
- * Check schema pool availability
- * Following boss's requirement: must check pool before sending emails
- * to ensure users can sign up successfully
+ * Check schema pool availability to ensure users can sign up successfully
  */
 async function checkSchemaPool(yp) {
   try {
@@ -100,8 +98,14 @@ async function checkSchemaPool(yp) {
 
 /**
  * Wait for schema pool to refill if needed
+ * If yp is null (no DB access), skip pool checking
  */
 async function waitForPool(yp, batchNum) {
+  // Skip pool checking if no database connection
+  if (!yp) {
+    return { drumate: 0, hub: 0, available: 0, checked: false };
+  }
+
   const pool = await checkSchemaPool(yp);
   
   console.log(`  Schema Pool: drumate=${pool.drumate}, hub=${pool.hub}`);
@@ -122,7 +126,7 @@ async function waitForPool(yp, batchNum) {
     }
   }
   
-  return pool;
+  return { ...pool, checked: true };
 }
 
 /**
@@ -290,9 +294,9 @@ async function sendBatch(recipients, yp) {
     // Calculate progress and ETA
     const progress = ((i / total) * 100).toFixed(1);
     const elapsed = (Date.now() - startTime) / 1000;
-    const rate = i / elapsed || 0;
+    const rate = (elapsed > 0) ? (i / elapsed) : 0;
     const remaining = total - i;
-    const eta = remaining / rate || 0;
+    const eta = (rate > 0) ? (remaining / rate) : 0;
     const etaMin = Math.floor(eta / 60);
     const etaSec = Math.floor(eta % 60);
 
@@ -344,17 +348,37 @@ async function main() {
 
   // Display configuration
   console.log('Configuration:');
-  console.log(`   - Batch size: ${CONFIG.BATCH_SIZE} emails`);
-  console.log(`   - Pause time: ${CONFIG.BATCH_DELAY}ms (${CONFIG.BATCH_DELAY / 1000}s)`);
-  console.log(`   - Pool threshold: ${CONFIG.POOL_THRESHOLD}`);
-  console.log(`   - Pool wait time: ${CONFIG.POOL_WAIT_TIME}ms (${CONFIG.POOL_WAIT_TIME / 1000}s)\n`);
+  console.log(`- Batch size: ${CONFIG.BATCH_SIZE} emails`);
+  console.log(`- Pause time: ${CONFIG.BATCH_DELAY}ms (${CONFIG.BATCH_DELAY / 1000}s)`);
+  console.log(`- Pool threshold: ${CONFIG.POOL_THRESHOLD}`);
+  console.log(`- Pool wait time: ${CONFIG.POOL_WAIT_TIME}ms (${CONFIG.POOL_WAIT_TIME / 1000}s)\n`);
+
+  let yp = null;
+  let poolCheckingEnabled = false;
+
+  // Try to initialize database connection for pool checking
+  console.log('Connecting to database...');
+  
+  try {
+    yp = new Mariadb();
+    
+    // Test connection with a simple query
+    await yp.await_query("SELECT 1");
+    
+    console.log('✓ Database connected');
+    console.log('✓ Schema pool checking: ENABLED\n');
+    poolCheckingEnabled = true;
+  } catch (dbError) {
+    console.warn('Database connection failed');
+    console.warn('Schema pool checking: DISABLED');
+    console.warn('Script will continue without pool checking.');
+    console.warn('Note: Pool checking requires root/www-data permissions.');
+    console.warn('For production 34k send, run as root to enable pool checking.\n');
+    yp = null;
+    poolCheckingEnabled = false;
+  }
 
   try {
-    // Initialize database connection for pool checking
-    console.log('Connecting to database...');
-    const yp = new Mariadb();
-    console.log('✓ Database connected\n');
-
     // Initialize log files
     initLogFiles();
 
@@ -371,28 +395,30 @@ async function main() {
     }
 
     console.log(`Status:`);
-    console.log(`   - Total in CSV: ${allRecipients.length}`);
-    console.log(`   - Already sent: ${sentEmails.size}`);
-    console.log(`   - To send: ${recipients.length}\n`);
+    console.log(`- Total in CSV: ${allRecipients.length}`);
+    console.log(`- Already sent: ${sentEmails.size}`);
+    console.log(`- To send: ${recipients.length}\n`);
 
-    // Check initial pool status
-    console.log('Checking initial schema pool status...');
-    const initialPool = await checkSchemaPool(yp);
-    console.log(`   - Drumate pool: ${initialPool.drumate}`);
-    console.log(`   - Hub pool: ${initialPool.hub}`);
-    console.log(`   - Available: ${initialPool.available}\n`);
+    // Check initial pool status (if DB available)
+    if (poolCheckingEnabled && yp) {
+      console.log('Checking initial schema pool status...');
+      const initialPool = await checkSchemaPool(yp);
+      console.log(`- Drumate pool: ${initialPool.drumate}`);
+      console.log(`- Hub pool: ${initialPool.hub}`);
+      console.log(`- Available: ${initialPool.available}\n`);
 
-    if (initialPool.available < CONFIG.POOL_THRESHOLD) {
-      console.log(`WARNING: Pool size (${initialPool.available}) is below threshold (${CONFIG.POOL_THRESHOLD})`);
-      console.log(`Users may not be able to sign up immediately after receiving emails!`);
-      console.log(`Recommend waiting for pool to refill or proceeding slowly.\n`);
+      if (initialPool.available < CONFIG.POOL_THRESHOLD) {
+        console.log(`WARNING: Pool size (${initialPool.available}) is below threshold (${CONFIG.POOL_THRESHOLD})`);
+        console.log(`Users may not be able to sign up immediately after receiving emails!`);
+        console.log(`Recommend waiting for pool to refill or proceeding slowly.\n`);
+      }
     }
 
     // Confirm before sending
     console.log('Press Ctrl+C within 5 seconds to cancel...');
     await sleep(5000);
 
-    // Send emails with pool checking
+    // Send emails with pool checking (if enabled)
     const stats = await sendBatch(recipients, yp);
 
     // Summary
@@ -406,12 +432,14 @@ async function main() {
     console.log(`    - ${CONFIG.SENT_LOG}`);
     console.log(`    - ${CONFIG.FAILED_LOG}\n`);
 
-    // Final pool check
-    console.log('📊 Final schema pool status:');
-    const finalPool = await checkSchemaPool(yp);
-    console.log(`   - Drumate pool: ${finalPool.drumate}`);
-    console.log(`   - Hub pool: ${finalPool.hub}`);
-    console.log(`   - Available: ${finalPool.available}\n`);
+    // Final pool check (if enabled)
+    if (poolCheckingEnabled && yp) {
+      console.log('Final schema pool status:');
+      const finalPool = await checkSchemaPool(yp);
+      console.log(`- Drumate pool: ${finalPool.drumate}`);
+      console.log(`- Hub pool: ${finalPool.hub}`);
+      console.log(`- Available: ${finalPool.available}\n`);
+    }
 
   } catch (error) {
     console.error('\nFatal error:', error.message);
