@@ -140,11 +140,11 @@ vite.config.ts.timestamp-*
 .dev-tools.rc/
 
 # Recipient data
-recipients.csv
-recipients.sample.csv
+emailing/data/recipients.csv
+emailing/data/recipients.sample.csv
 
 # Email sending logs
-sent.csv
-failed.csv
+emailing/data/sent.csv
+emailing/data/failed.csv
 
 
