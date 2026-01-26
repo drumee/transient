@@ -138,3 +138,13 @@ dist
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
 .dev-tools.rc/
+
+# Recipient data
+recipients.csv
+recipients.sample.csv
+
+# Email sending logs
+sent.csv
+failed.csv
+
+
