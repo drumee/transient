@@ -5,9 +5,7 @@ const { readFileSync, writeFileSync, existsSync, appendFileSync } = require('fs'
 const { parse } = require('csv-parse/sync');
 const { stringify } = require('csv-stringify/sync');
 const { ArgumentParser } = require('argparse');
-const Messenger = require('@drumee/server-essentials/lib/messenger');
-const { sysEnv } = require('@drumee/server-essentials/lib/sysEnv');
-const { Mariadb } = require('@drumee/server-essentials');
+const { sysEnv, Mariadb, Messenger } = require('@drumee/server-essentials');
 
 /**
  * Parse CLI arguments
@@ -16,31 +14,31 @@ function parseArgs() {
   const parser = new ArgumentParser({
     description: 'Drumee Beta Announcement Mailer'
   });
-  
+
   parser.add_argument('--batch-size', {
     type: 'int',
     default: 50,
     help: 'Number of emails per batch (default: 50)'
   });
-  
+
   parser.add_argument('--pause-time', {
     type: 'int',
     default: 3000,
     help: 'Pause time between batches in milliseconds (default: 3000)'
   });
-  
+
   parser.add_argument('--pool-threshold', {
     type: 'int',
     default: 100,
     help: 'Minimum pool size before pausing (default: 100)'
   });
-  
+
   parser.add_argument('--pool-wait-time', {
     type: 'int',
     default: 30000,
     help: 'Wait time when pool is low in milliseconds (default: 30000)'
   });
-  
+
   return parser.parse_args();
 }
 
@@ -77,14 +75,14 @@ async function checkSchemaPool(yp) {
     const drumatePool = await yp.await_query(
       "SELECT COUNT(*) as count FROM entity WHERE area='pool' AND type='drumate'"
     );
-    const drumateCount = drumatePool?.count || 0;
+    const drumateCount = Number(drumatePool?.count || 0);
 
     // Check hub pool
     const hubPool = await yp.await_query(
       "SELECT COUNT(*) as count FROM entity WHERE area='pool' AND type='hub'"
     );
-    const hubCount = hubPool?.count || 0;
-
+    const hubCount = Number(hubPool?.count || 0);
+    console.log("AAA:85", { drumateCount, hubPool });
     return {
       drumate: drumateCount,
       hub: hubCount,
@@ -107,25 +105,25 @@ async function waitForPool(yp, batchNum) {
   }
 
   const pool = await checkSchemaPool(yp);
-  
+
   console.log(`  Schema Pool: drumate=${pool.drumate}, hub=${pool.hub}`);
-  
+
   if (pool.available < CONFIG.POOL_THRESHOLD) {
     console.log(`  Pool low (${pool.available} < ${CONFIG.POOL_THRESHOLD})`);
     console.log(`  Waiting ${CONFIG.POOL_WAIT_TIME / 1000}s for pool to refill...`);
     await sleep(CONFIG.POOL_WAIT_TIME);
-    
+
     // Re-check after waiting
     const newPool = await checkSchemaPool(yp);
     console.log(`  Pool after wait: drumate=${newPool.drumate}, hub=${newPool.hub}`);
-    
+
     if (newPool.available < CONFIG.POOL_THRESHOLD) {
       console.log(`  Pool still low! Consider stopping and running later.`);
       console.log(`  Press Ctrl+C to stop, or will continue after 10s...`);
       await sleep(10000);
     }
   }
-  
+
   return { ...pool, checked: true };
 }
 
@@ -137,7 +135,7 @@ function initLogFiles() {
   if (!existsSync(CONFIG.SENT_LOG)) {
     writeFileSync(CONFIG.SENT_LOG, 'No,Email,Name,Timestamp\n', 'utf8');
   }
-  
+
   // Create failed.csv header if not exists
   if (!existsSync(CONFIG.FAILED_LOG)) {
     writeFileSync(CONFIG.FAILED_LOG, 'No,Email,Name,Error,Timestamp\n', 'utf8');
@@ -267,7 +265,7 @@ async function sendEmail(record) {
 
     // Send email
     await msg.send({ html });
-    
+
     return { success: true };
   } catch (error) {
     return { success: false, error };
@@ -308,10 +306,10 @@ async function sendBatch(recipients, yp) {
     // Process batch
     for (const record of batch) {
       const { Email, Name } = record;
-      
+
       try {
         const result = await sendEmail(record);
-        
+
         if (result.success) {
           logSent(record);
           sent++;
@@ -343,7 +341,7 @@ async function sendBatch(recipients, yp) {
  */
 async function main() {
   console.log('\n╔════════════════════════════════════════╗');
-  console.log('║  Drumee Beta Announcement Mailer      ║');
+  console.log('║  Drumee Beta Announcement Mailer       ║');
   console.log('╚════════════════════════════════════════╝\n');
 
   // Display configuration
@@ -358,13 +356,13 @@ async function main() {
 
   // Try to initialize database connection for pool checking
   console.log('Connecting to database...');
-  
+
   try {
-    yp = new Mariadb();
-    
+    yp = new Mariadb({ name: 'yp', user: process.env.USER });
+
     // Test connection with a simple query
     await yp.await_query("SELECT 1");
-    
+
     console.log('✓ Database connected');
     console.log('✓ Schema pool checking: ENABLED\n');
     poolCheckingEnabled = true;
