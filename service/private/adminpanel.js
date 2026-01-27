@@ -1556,7 +1556,7 @@ class __private_adminpanel extends Mfs {
     for (let entity of list) {
       users.push(entity.drumate_id)
     }
-    await this.yp.await_proc('contact_assignment_update', drumate.id, users);
+    await this.yp.await_proc('contact_assignment_update', drumate.id, stringify(users));
     await this.yp.await_proc('ticket_grant_permission', drumate.id);
 
     let data = await this.yp.await_proc('show_member_detail', drumate.id, orgid);
