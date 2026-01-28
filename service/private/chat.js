@@ -461,6 +461,10 @@ class privateChat extends Entity {
     let input = {};
     let message_id = await this.yp.await_func("uniqueId");
     let sbox = await this.db.call_proc("mfs_wicket_home", this.uid);
+    if (sbox[5]) { /** Created by desk_create_hub */
+      sbox = { ...sbox[5] }
+    }
+
     if (!isEmpty(attachment)) {
       let desdir = await this.yp.await_proc(
         "forward_proc",
