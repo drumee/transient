@@ -1536,6 +1536,8 @@ class __private_adminpanel extends Mfs {
     const { org } = await this.checkPrivilege() || {}
     if (!org) return;
 
+    orgid = org.id;
+
     let chk = await this.yp.await_proc('email_exists', email)
     if (!isEmpty(chk)) return this.output.status('EMAIL_NOT_AVAILABLE');
 
