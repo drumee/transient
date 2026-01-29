@@ -950,7 +950,7 @@ class __private_media extends Media {
             hub_id: row.dest_hub_id,
             mfs_root: row.des_mfs_root,
           };
-          move_node(src, dest);
+          move_node(src, dest, 1);
           break;
         case "outbound":
           proc = `${row.dest_db_name}.mfs_get_related_sb`;
