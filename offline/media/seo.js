@@ -76,7 +76,7 @@ class __seo_indexer extends Offline {
     // Logger.debug(`START`);
     this.syslog(`START INDEXING ${node.filename} ${node.filetype}`);
 
-     // Supported file types
+    // Supported file types
     const supportedTypes = [Attr.document, Attr.image];
     if (!supportedTypes.includes(node.filetype)) {
       this.syslog('Unsupported file type', node.filetype);
@@ -110,7 +110,7 @@ class __seo_indexer extends Offline {
     super.stop(error);
     process.exit(error ? 1 : 0);
   }
-  
+
   /**
    * Cleanup temporary files
    */
@@ -168,7 +168,7 @@ class __seo_indexer extends Offline {
 
     try {
       const text = await tesseract.recognize(src, config);
-      
+
       if (!text || text.trim().length === 0) {
         this.syslog('OCR produced no text');
         return '';
@@ -177,7 +177,7 @@ class __seo_indexer extends Offline {
       writeFileSync(index, text, 'utf8');
       this.syslog(`OCR extracted ${text.length} characters`);
       return text;
-      
+
     } catch (e) {
       throw new Error(`OCR failed: ${e.message}`);
     }
@@ -197,7 +197,7 @@ class __seo_indexer extends Offline {
       // Try pdf-parse first (handles both text and some scanned PDFs)
       const dataBuffer = readFileSync(src);
       const data = await pdfParse(dataBuffer);
-      
+
       if (data.text && data.text.trim().length > 50) {
         writeFileSync(index, data.text, 'utf8');
         this.syslog(`PDF extracted ${data.text.length} characters from ${data.numpages} pages`);
@@ -206,7 +206,7 @@ class __seo_indexer extends Offline {
 
       // If no text extracted, PDF is likely image-based
       this.syslog('PDF has no text layer, trying pdftotext...');
-      
+
       // Fallback to pdftotext
       const cmd = `/usr/bin/pdftotext -layout "${src}" "${index}"`;
       await this.execCommand(cmd);
@@ -331,7 +331,7 @@ print(f'Converted {len(images)} pages')
     this.syslog(`Processed ${words.length} unique words`);
     return words;
   }
-  
+
   /**
    * 
    * Main parsing logic
@@ -365,6 +365,7 @@ print(f'Converted {len(images)} pages')
         case 'ppt':
         case 'pptx':
         case 'odt':
+        case 'odp':
           // Convert to PDF first
           const pdfPath = await this.convertToPdf(node);
           text = await this.extractFromPdf(pdfPath, index);

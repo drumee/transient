@@ -46,7 +46,6 @@ const { data_dir } = sysEnv();
 class SeoIndexer {
   constructor(node, options = {}) {
     node.mfs_root = node.xpath.replace(new RegExp('/data_dir/'), data_dir) /** Retrieve reall data dir */
-    console.log("AAA:301", node)
     this.node = node;
     this.options = options;
     this.tempFiles = [];
@@ -174,7 +173,6 @@ class SeoIndexer {
       }
 
       writeFileSync(index, text, 'utf8');
-      console.log("AAAA:2020", index)
       if (existsSync(index)) {
         return text
       }
@@ -327,6 +325,7 @@ class SeoIndexer {
         case 'ppt':
         case 'pptx':
         case 'odt':
+        case 'odp':
           const pdfPath = await this.convertToPdf(node);
           text = await this.extractFromPdf(pdfPath, index);
           break;
