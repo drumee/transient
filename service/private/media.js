@@ -922,8 +922,10 @@ class __private_media extends Media {
         case "show":
         case "showone":
           if (!row.dest_db_name) {
-            this.warn("AAA:448 -- GOT NULL DEST DB. Using default", row);
-            r = await this.db.await_proc("mfs_access_node", this.uid, row.nid);
+            let entity = await this.yp.await_proc('get_entity', this.input.get('recipient_id'))
+            // this.warn("AAA:448 -- GOT NULL DEST DB. Using default", entity, row);
+            proc = `${entity.db_name}.mfs_access_node`;
+            r = await this.db.await_proc(proc, this.uid, row.nid);
             r.privilege = r.permission;
             if (r.filetype == Attr.hub) {
               r.hub_id = row.nid; // hub_id is inconsistent after trash
