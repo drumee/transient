@@ -1259,12 +1259,12 @@ class __private_media extends Media {
     }
     let data = await this.db.await_proc(
       "mfs_pre_trash_next",
-      stringify(granted),
+      granted,
       this.uid,
       Permission.MODIFY
     );
-    this.debug("AAA:trash:this.heap.nodes", this.heap.nodes)
-    this.debug("AAA:trash:mfs_pre_trash_next", data)
+    this.debug(`AAA:trash:this.heap.nodes`, this.heap.nodes)
+    this.debug(`AAA:trash:mfs_pre_trash_next dbname=${this.dbname}`, this.uid, granted, Permission.MODIFY, data)
     let keys = [Attr.nid, Attr.hub_id];
     let service = "media.remove";
     let recipients;
