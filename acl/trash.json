@@ -1,0 +1,35 @@
+{
+  "services": {
+    "get_config": {
+      "doc": "Get current trash expiry configuration",
+      "scope": "hub",
+      "permission": {
+        "src": "read"
+      }
+    },
+    "update_config": {
+      "doc": "Update trash expiry configuration (admin only)",
+      "scope": "hub",
+      "permission": {
+        "src": "admin"
+      }
+    },
+    "get_stats": {
+      "doc": "Get trash statistics for current user",
+      "scope": "hub",
+      "permission": {
+        "src": "read"
+      }
+    },
+    "trigger_expiry": {
+      "doc": "Manually trigger expiry run (admin only, for testing)",
+      "scope": "hub",
+      "permission": {
+        "src": "admin"
+      }
+    }
+  },
+  "modules": {
+    "private": "service/private/trash"
+  }
+}
