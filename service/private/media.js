@@ -447,6 +447,9 @@ class __private_media extends Media {
       return;
     }
     let wicket = await this.db.call_proc("mfs_wicket_home", this.uid);
+    if (wicket[5]) { /** Created by desk_create_hub */
+      wicket = { ...wicket[5] }
+    }
     if (wicket.hub_id == this.dest_granted().hub_id) {
       this.exception.user("WICKET_HUB");
       return;
@@ -849,7 +852,6 @@ class __private_media extends Media {
 
     const src = this.source_granted(Attr.all);
     const dest = this.dest_granted();
-
     this.heap.srcgrantlst = [];
     let source_node;
     let denied = [];
@@ -868,6 +870,7 @@ class __private_media extends Media {
         denied.push(source_node);
       }
     }
+    this.debug("AAA:85", this.heap.srcgrantlst, dest)
     if (!isEmpty(denied)) {
       return this.output.add_data({ denied });
     }
@@ -947,7 +950,7 @@ class __private_media extends Media {
             hub_id: row.dest_hub_id,
             mfs_root: row.des_mfs_root,
           };
-          move_node(src, dest);
+          move_node(src, dest, 1);
           break;
         case "outbound":
           proc = `${row.dest_db_name}.mfs_get_related_sb`;

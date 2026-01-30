@@ -627,45 +627,173 @@ class __media extends Mfs {
 
 
   /**
- * In case of massive write, DB dead lock may appear
- * Retry until dead lock left or too much rety 
- */
+   * In case of massive write, DB dead lock may appear
+   * Retry until dead lock left or too much rety 
+   * 
+   * @param {string} id - Hub/node ID
+   * @param {Array<string>} path - Path segments
+   * @param {boolean} showResult - Whether to return result
+   * @returns {Object} Node object
+   * @throws {Error} If operation fails after retries
+   */
   async ensureMakeDir(id, path, showResult) {
+    // Configuration constants
+    const MAX_RETRIES = 5;
+    const MAX_DURATION_MS = 5000;
+    const MIN_BACKOFF_MS = 100;
+    const MAX_BACKOFF_MS = 2000;
+  
+    const START_TIME = Date.now();
+
     let ownpath = join('/', ...path);
     let exists = await this.db.await_func("node_id_from_path", ownpath);
     let node = await this.db.await_proc("mfs_make_dir", id, path, showResult);
+
     let i = 0;
-    let failed;
-    let error;
+    let failed = null;
+    let error = null;
     const Moment = require("moment");
-    while (node[1] && i < 30) {
-      failed = '';
-      error = node[1]
+
+    while (node[1] && i < MAX_RETRIES) {
+      // Timeout protection
+      const elapsed = Date.now() - START_TIME;
+      if (elapsed > MAX_DURATION_MS) {
+        this.error('ensureMakeDir: Operation timeout exceeded', {
+          elapsed_ms: elapsed,
+          max_duration_ms: MAX_DURATION_MS,
+          retries: i,
+          path: ownpath,
+          sqlstate: node[1]?.sqlstate
+        });
+      
+        throw this.exception.server({
+          message: 'MKDIR_OPERATION_TIMEOUT',
+          elapsed_ms: elapsed,
+          retries: i,
+          path: ownpath,
+          sqlstate: node[1]?.sqlstate
+        });
+      }
+      
+      // Save error info
+      error = node[1];
+      failed = null;
+    
+      // Handle specific SQL errors
       switch (node[1].sqlstate) {
-        case '40001':
-          failed = 'DEAD_LOCK_WAIT_TOOL_LONG';
-          await sleep(500);
-          node = await this.db.await_proc("mfs_make_dir", id, path, showResult);
+        case '40001':  // DEADLOCK
+          {
+            failed = 'DEADLOCK_DETECTED';
+          
+            // Exponential backoff: 100ms, 200ms, 400ms, 800ms, 1600ms
+            const backoffDelay = Math.min(
+              MIN_BACKOFF_MS * Math.pow(2, i),
+              MAX_BACKOFF_MS
+            );
+          
+            this.debug(`ensureMakeDir: Deadlock detected, retrying`, {
+              attempt: i + 1,
+              max_retries: MAX_RETRIES,
+              delay_ms: backoffDelay,
+              path: ownpath,
+              elapsed_ms: Date.now() - START_TIME
+            });
+
+            await sleep(backoffDelay);
+            node = await this.db.await_proc("mfs_make_dir", id, path, showResult);
+          }
           break;
-        case '23000':
-          failed = 'DUPLICATE_ENTRY';
-          await sleep(1000);
-          let t = Moment(Moment.now() / 1000, "X").format("YYYY-MM-DD@hh:mm:ss@");
-          args.filename = `${args.filename}-${t}`
-          node = await this.db.await_proc("mfs_make_dir", id, path, showResult);
+        
+        case '23000':  // DUPLICATE_ENTRY
+          {
+            failed = 'DUPLICATE_ENTRY';
+          
+            this.debug(`ensureMakeDir: Duplicate entry, retrying with timestamp`, {
+              attempt: i + 1,
+              max_retries: MAX_RETRIES,
+              path: ownpath
+            });
+          
+            await sleep(1000);
+          
+            // Create timestamped path
+            let t = Moment(Date.now() / 1000, "X").format("YYYY-MM-DD@HH-mm-ss");
+            let timestampedPath = [...path];
+          
+            if (timestampedPath.length > 0) {
+              let lastSegment = timestampedPath[timestampedPath.length - 1];
+              timestampedPath[timestampedPath.length - 1] = `${lastSegment}-${t}`;
+            }
+
+            node = await this.db.await_proc("mfs_make_dir", id, timestampedPath, showResult);
+          }
           break;
-        default:
-          failed = `${UNEXPECTED_ERROR} ${node[1].sqlstate}`;
+        
+        default:  // UNKNOWN ERROR
+          {
+            failed = `UNEXPECTED_SQL_ERROR_${node[1].sqlstate}`;
+          
+            this.error(`ensureMakeDir: Unexpected SQL error`, {
+              sqlstate: node[1].sqlstate,
+              errno: node[1].errno,
+              sqlMessage: node[1].sqlMessage,
+              path: ownpath,
+              attempt: i + 1
+            });
+          
+            // Break immediately
+            break;
+          }
       }
+    
       i++;
-    }
-    if (failed) {
-      this.warn(`${failed}: mfs_create_node waited ${i} times`, error)
-    } else {
-      if (!exists && node.nid) {
-        await this.notifyNewNode(node);
+    
+      // Break out early for unknown errors
+      if (failed && failed.startsWith('UNEXPECTED_SQL_ERROR')) {
+        break;
       }
     }
+
+    // Check if operation ultimately failed
+    if (node[1] || failed) {
+      const elapsed = Date.now() - START_TIME;
+    
+      this.error(`ensureMakeDir: Operation failed after retries`, {
+        failed_reason: failed,
+        retries: i,
+        elapsed_ms: elapsed,
+        path: ownpath,
+        sqlstate: error?.sqlstate,
+        errno: error?.errno,
+        sqlMessage: error?.sqlMessage
+      });
+    
+      // Throw error to propagate failure to caller
+      throw this.exception.server({
+        message: failed || 'MKDIR_FAILED',
+        retries: i,
+        elapsed_ms: elapsed,
+        path: ownpath,
+        sqlstate: error?.sqlstate,
+        errno: error?.errno,
+        originalError: error
+      });
+    }
+
+    // Success case
+    this.debug(`ensureMakeDir: Success`, {
+      path: ownpath,
+      nid: node.nid,
+      existed: !!exists,
+      retries: i,
+      elapsed_ms: Date.now() - START_TIME
+    });
+  
+    // Notify if new node was created
+    if (!exists && node.nid) {
+      await this.notifyNewNode(node);
+    }
+  
     return node;
   }
 

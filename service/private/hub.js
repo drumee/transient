@@ -364,7 +364,7 @@ class __private_hub extends Hub {
       "member_show_privilege",
       this.uid
     );
-    this.output.data({ owner, visitor, filesize});
+    this.output.data({ owner, visitor, filesize });
   }
 
   /**
@@ -378,9 +378,7 @@ class __private_hub extends Hub {
     const privilege = this.input.use(Attr.privilege) || this.hub.get(Attr.settings).default_privilege;
     const hours = this.input.use(Attr.hours, 0)
     const days = this.input.use(Attr.days, 0);
-    // const expiry = this.input.use(Attr.expiry) || 0;
     const expiry = hours * 1 + days * 24;
-    const type = this.input.use(Attr.type) || Attr.all;
     const lang = this.user.language() || this.input.app_language();
     let mfs_home = await this.db.await_proc("mfs_home");
     let msg = Cache.message("_x_add_you_to_team", lang).format(
@@ -396,13 +394,10 @@ class __private_hub extends Hub {
       res = [];
       return res;
     }
+    const { db_name, domain_id } = this.user.toJSON();
+    let proc = `${db_name}.my_contact_exists`;
     for (let entity of users) {
-      let contact = await this.yp.await_proc(
-        "forward_proc",
-        this.uid,
-        "my_contact_exists",
-        `'entity','${entity}', null, null`
-      );
+      let contact = await this.yp.await_proc(proc, 'entity', entity, '', '')
       if (!isEmpty(contact)) {
         if (contact.status == "active") {
           members.push(contact.uid);
@@ -414,6 +409,11 @@ class __private_hub extends Hub {
             expiry,
             entity
           );
+        }
+      } else {
+        let drumate = await this.yp.await_proc("drumate_exists", entity);
+        if (domain_id == drumate.domain_id) {
+          members.push(drumate.id);
         }
       }
     }
@@ -881,12 +881,9 @@ class __private_hub extends Hub {
     let lastname;
     let drumate = await this.yp.await_proc("drumate_exists", entity);
     entity = drumate.id || entity;
-    let mycontact = await this.yp.await_proc(
-      "forward_proc",
-      this.uid,
-      "my_contact_exists",
-      `'entity','${entity}',null,null`
-    );
+    const { db_name } = this.user.toJSON();
+    let proc = `${db_name}.my_contact_exists`;
+    let mycontact = await this.yp.await_proc(proc, 'entity', entity, '', '');
     if (isEmpty(mycontact)) {
       let a = email.split("@");
       a[1] = a[0];
@@ -900,25 +897,14 @@ class __private_hub extends Hub {
         imported: this.session.timestamp,
         from: "exroom",
       };
-      let contact = await this.yp.await_proc(
-        "forward_proc",
-        this.uid,
-        "my_contact_add_next",
-        `'${entity}',null,'${firstname}' ,'${lastname}','independant', null,null ,'${JSON.stringify(
-          metadata
-        )}'`
-      );
-
+      proc = `${db_name}.my_contact_add_next`;
+      let contact = await this.yp.await_proc(proc, entity, null, firstname, lastname, 'independant', null, null, metadata);
       let node = {};
       node.email = email;
       node.category = "priv";
       node.is_default = "1";
-      await this.yp.await_proc(
-        "forward_proc",
-        this.uid,
-        "my_contact_mail_add",
-        `'${contact.id}','${JSON.stringify([node])}'`
-      );
+      proc = `${db_name}.my_contact_mail_add`;
+      await this.yp.await_proc(contact.id, node);
     }
   }
 

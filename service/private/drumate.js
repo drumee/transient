@@ -713,11 +713,6 @@ class __private_drumate extends Entity {
     let entity = 'hub';
     if (isEmpty(entity_id)) {
       entity = 'empty';
-    } else if (entity_id == 'Support Ticket') {
-      entity = 'Support Ticket';
-      let sbox = await this.db.await_proc("mfs_wicket_home", this.uid);
-
-      tickets = await this.yp.await_proc('forward_proc', sbox.hub_id, 'ticket_unreaded', `'${this.uid}'`);
     } else {
       let drumate = await this.yp.await_proc('drumate_exists', entity_id);
       if (!isEmpty(drumate)) { entity = 'drumate' }

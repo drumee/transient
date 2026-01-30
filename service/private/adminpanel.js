@@ -31,73 +31,27 @@ const { Mfs, MfsTools } = require('@drumee/server-core');
 const { Mfs: Drumate } = require('@drumee/setup-schemas');
 const { createReadStream } = require('fs');
 const { remove_dir } = MfsTools;
+const { uniqueNamesGenerator, colors, animals, adjectives } = require('unique-names-generator');
+const hubNameConfig = {
+  dictionaries: [adjectives, animals],
+  length: 2,
+  separator: ' ',
+  style: 'capital'
+}
 
+const { createHub } = require('../lib/env')
 class __private_adminpanel extends Mfs {
 
-  // ========================
-  // initialize
-  // ========================
-  // constructor(...args) {
-  //   super(...args);
 
-  //   this.my_subscription = this.my_subscription.bind(this);
-  //   this.my_organisation = this.my_organisation.bind(this);
-  //   this.my_privilege = this.my_privilege.bind(this);
+  /**
+   * 
+   * @param  {...any} args 
+   */
+  constructor(...args) {
+    super(...args);
+    this.createHub = createHub.bind(this);
 
-  //   this.organisation_add = this.organisation_add.bind(this);
-  //   this.organisation_update = this.organisation_update.bind(this);
-  //   this.organisation_update_password_level = this.organisation_update_password_level.bind(this);
-  //   this.organisation_update_double_auth = this.organisation_update_double_auth.bind(this);
-  //   this.organisation_update_dir_visiblity = this.organisation_update_dir_visiblity.bind(this);
-  //   this.organisation_update_dir_info = this.organisation_update_dir_info.bind(this);
-
-  //   this.role_add = this.role_add.bind(this);
-  //   this.role_rename = this.role_rename.bind(this);
-  //   this.role_delete = this.role_delete.bind(this);
-  //   this.role_show = this.role_show.bind(this);
-  //   this.role_assigned = this.role_assigned.bind(this);
-  //   this.role_assign = this.role_assign.bind(this);
-  //   this.role_reposition = this.role_reposition.bind(this);
-
-
-  //   this.member_add = this.member_add.bind(this);
-  //   this.member_update = this.member_update.bind(this);
-  //   this.member_delete = this.member_delete.bind(this);
-  //   this.member_disconnect = this.member_disconnect.bind(this);
-  //   this.member_show = this.member_show.bind(this);
-  //   this.member_list = this.member_list.bind(this);
-  //   this.member_loginlog = this.member_loginlog.bind(this);
-
-  //   this.member_admin_add = this.member_admin_add.bind(this);
-  //   this.member_admin_remove = this.member_admin_remove.bind(this);
-  //   this.member_admin_list = this.member_admin_list.bind(this);
-
-  //   this.send_password_link = this.send_password_link.bind(this);
-  //   this.password_link = this.password_link.bind(this);
-
-
-  //   this.import_validate = this.import_validate.bind(this);
-  //   this.import_process = this.import_process.bind(this);
-  //   // this.import_load = this.import_load.bind(this);
-
-  //   this.member_change_status = this.member_change_status.bind(this)
-  //   this.member_block = this.member_block.bind(this);
-  //   this.member_unblock = this.member_unblock.bind(this);
-  //   this.member_authentification = this.member_authentification.bind(this);
-
-  //   this.members_import = this.members_import.bind(this);
-
-  //   this.members_whocansee = this.members_whocansee.bind(this);
-  //   this.members_whocansee_update = this.members_whocansee_update.bind(this);
-
-  //   this.mimic_new = this.mimic_new.bind(this);
-  //   this.mimic_reject = this.mimic_reject.bind(this);
-  //   this.mimic_active = this.mimic_active.bind(this);
-  //   this.mimic_end_bytime = this.mimic_end_bytime.bind(this);
-  //   this.mimic_end_byuser = this.mimic_end_byuser.bind(this);
-  //   this.mimic_end_bymimic = this.mimic_end_bymimic.bind(this);
-
-  // }
+  }
 
 
   /**
@@ -130,6 +84,46 @@ class __private_adminpanel extends Mfs {
     this.output.list(res);
   }
 
+  /**
+   *
+   * @returns
+   */
+  async make_dir(db_name, pid, dirname) {
+    try {
+      await this.yp.await_proc(`${db_name}.mfs_make_dir`, pid, [dirname], 0)
+    } catch (e) {
+      this.warn("Failed to create dir", e)
+    }
+  }
+
+  /**
+   *
+   * @returns
+   */
+  async make_default_folers(opt) {
+    const { db_name, home_id } = opt;
+    for (let dirname of ["Photos", "Documents", "Videos"]) {
+      await this.make_dir(db_name, home_id, dirname)
+    }
+  }
+
+  /**
+   * 
+   */
+  async setWallpaper(uid) {
+    let wp = Cache.getSysConf('default_wallpaper');
+    if (!wp) {
+      this.warn("No wallpapers available");
+      return;
+    }
+    let { nid, hub_id } = JSON.parse(wp);
+    let { settings } = await this.yp.await_proc("entity_touch", uid) || {};
+    settings = JSON.parse(settings);
+    settings.wallpaper = {
+      nid, hub_id
+    }
+    await this.yp.call_proc("drumate_update_settings", uid, settings);
+  }
 
   /**
    * 
@@ -708,8 +702,8 @@ class __private_adminpanel extends Mfs {
     importdata.valid = true
     for (let member of result) {
       let user = await this.create_account(member);
-      if (user.error) {
-        member.errorstatus = user.error;
+      if (!user || user[0].failed || user[2]?.failed) {
+        member.errorstatus = user[0].failed;
         members.push(member);
         continue;
       }
@@ -772,7 +766,6 @@ class __private_adminpanel extends Mfs {
     if (user[0].failed) {
       return { ...profile, error: 1, status: "db_error", ...user[0] }
     }
-    // TO DO SEND LINK
     return user;
   }
 
@@ -1543,6 +1536,8 @@ class __private_adminpanel extends Mfs {
     const { org } = await this.checkPrivilege() || {}
     if (!org) return;
 
+    orgid = org.id;
+
     let chk = await this.yp.await_proc('email_exists', email)
     if (!isEmpty(chk)) return this.output.status('EMAIL_NOT_AVAILABLE');
 
@@ -1552,8 +1547,8 @@ class __private_adminpanel extends Mfs {
 
 
     let user = await this.create_account(profile);
-    if (!user[0] || user[0].error) {
-      return this.output.status(user[0].error || "INTERNAL_ERROR")
+    if (!user[0] || user[0].failed) {
+      return this.output.status(user[0].failed || "INTERNAL_ERROR")
     }
     let drumate = await this.yp.await_proc('get_user', email)// user[1]
     let message = await this.invite_link(email);
@@ -1563,7 +1558,7 @@ class __private_adminpanel extends Mfs {
     for (let entity of list) {
       users.push(entity.drumate_id)
     }
-    await this.yp.await_proc('contact_assignment_update', drumate.id, users);
+    await this.yp.await_proc('contact_assignment_update', drumate.id, stringify(users));
     await this.yp.await_proc('ticket_grant_permission', drumate.id);
 
     let data = await this.yp.await_proc('show_member_detail', drumate.id, orgid);
@@ -1581,6 +1576,23 @@ class __private_adminpanel extends Mfs {
     res.status = Attr.active
     if (message) res.email = message;
     let admin = await this.yp.await_proc('get_user', this.uid)
+    await this.make_default_folers(drumate)
+    let hub = await this.createHub({
+      filename: uniqueNamesGenerator(hubNameConfig),
+      owner_id: drumate.id,
+      domain: drumate.domain,
+      area: Attr.private,
+      user_db: drumate.db_name
+    });
+    await this.make_default_folers(hub)
+    hub = await this.createHub({
+      filename: uniqueNamesGenerator(hubNameConfig),
+      owner_id: drumate.id,
+      domain: drumate.domain,
+      area: Attr.share,
+      user_db: drumate.db_name
+    });
+    await this.setWallpaper(drumate.id);
     this.output.data({ member: res, admin });
   }
 

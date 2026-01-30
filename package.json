@@ -1,6 +1,6 @@
 {
   "name": "drumee_server",
-  "version": "2.9.19",
+  "version": "2.9.22",
   "description": "Drumee Infrastructure",
   "main": "index.js",
   "scripts": {
@@ -15,8 +15,8 @@
   },
   "dependencies": {
     "@drumee/schemas-utils": "^1.0.0",
-    "@drumee/server-core": "^1.1.49",
-    "@drumee/server-dev-tools": "^1.1.29",
+    "@drumee/server-core": "^1.1.51",
+    "@drumee/server-dev-tools": "^1.1.32",
     "@drumee/server-essentials": "^1.2.13",
     "@drumee/setup-schemas": "^1.0.26",
     "@hyzyla/pdfium": "^2.1.9",

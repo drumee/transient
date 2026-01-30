@@ -14,6 +14,7 @@
  * limitations under the License.
  * =============================================================================
  */
+
 const {
   Attr, RedisStore, toArray
 } = require("@drumee/server-essentials");
@@ -47,6 +48,17 @@ class __private_channel extends Entity {
     this.db.call_proc('channel_notify_messages', this.uid, this.output.data);
   }
 
+  /**
+   * 
+   * @returns 
+   */
+  async _get_wicket(uid) {
+    let sbox = await this.db.call_proc("mfs_wicket_home", uid);
+    if (sbox && sbox[5]) { /** Created by desk_create_hub */
+      return sbox[5]
+    }
+    return sbox;
+  }
   /**
    * 
    */
@@ -222,7 +234,8 @@ class __private_channel extends Entity {
     if (!isEmpty(search_ticket_id)) {
       filter.search_ticket_id = search_ticket_id
     }
-    let sbox = await this.db.call_proc('mfs_wicket_home', this.uid);
+
+    let sbox = await this._get_wicket(this.uid);
     let data = await this.yp.await_proc('forward_proc', sbox.hub_id, 'ticket_list', `'${this.uid}','${stringify(filter)}','${page}'`)
 
     data = toArray(data);
@@ -282,6 +295,10 @@ class __private_channel extends Entity {
 
     let ticket = await this.yp.await_proc('ticket_detail', ticket_id);
     let sbox = await this.yp.await_proc('forward_proc', ticket.uid, 'mfs_wicket_home', `'${ticket.uid}'`);
+    if (sbox[5]) { /** Created by desk_create_hub */
+      sbox = { ...sbox[5] }
+    }
+
     let data = await this.yp.await_proc('forward_proc', sbox.hub_id, 'ticket_show', `${ticket_id},'${this.uid}','${page}'`)
     data = toArray(data);
 
@@ -393,7 +410,7 @@ class __private_channel extends Entity {
       let metadata = {};
       let input = {};
       let message_id = await this.yp.await_func("uniqueId");
-      let sbox = await this.db.call_proc('mfs_wicket_home', this.uid);
+      let sbox = await this._get_wicket(this.uid);
       if (!isEmpty(attachment)) {
         let desdir = await this.yp.await_proc('forward_proc', sbox.hub_id, 'mfs_make_dir', `'${sbox.ticket_id}','${stringify(message_id)}',1`)
         attachment = await this.move_attachemnt(sbox, desdir, attachment, message_id)
@@ -474,7 +491,7 @@ class __private_channel extends Entity {
         return this.output.data(res);
       }
       let message_id = await this.yp.await_func("uniqueId");
-      let sbox = await this.db.call_proc('mfs_wicket_home', ticket.uid);
+      let sbox = await this._get_wicket(ticket.uid);
 
       if (!isEmpty(attachment)) {
         let desdir = await this.yp.await_proc('forward_proc', sbox.hub_id, 'mfs_make_dir', `'${sbox.ticket_id}','${stringify(message_id)}',1`)
@@ -544,7 +561,7 @@ class __private_channel extends Entity {
     message_id = message_id.id
 
     if (this.hub.get(Attr.id) == this.uid) {
-      sbox = await this.db.call_proc('mfs_wicket_home', this.uid);
+      sbox = await this._get_wicket(this.uid);
     }
     else {
       sbox = await this.db.call_proc('mfs_home')
