@@ -1217,6 +1217,7 @@ class __private_media extends Media {
       this.uid,
       Permission.MODIFY
     );
+    this.debug("AAA:pre_trash:mfs_chk_pre_trash", data)
     if (!isEmpty(data)) {
       this.exception.user("_delete_hub");
       return;
