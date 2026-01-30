@@ -855,7 +855,7 @@ class __private_media extends Media {
     this.heap.srcgrantlst = [];
     let source_node;
     let denied = [];
-    for (var node of src) {
+    for (let node of src) {
       var proc = `${node.db_name}.mfs_access_node`;
       source_node = await this.yp.await_proc(proc, uid, node.id);
       if (source_node.permission & node.privilege) {
@@ -870,8 +870,10 @@ class __private_media extends Media {
         denied.push(source_node);
       }
     }
-    this.debug("AAA:85", this.heap.srcgrantlst, dest)
+    this.debug("AAA:85", denied, this.heap.srcgrantlst, src, dest)
     if (!isEmpty(denied)) {
+      this.warn("Got denied nodes", denied)
+      this._done();
       return this.output.add_data({ denied });
     }
     this._done();
@@ -1260,6 +1262,8 @@ class __private_media extends Media {
       this.uid,
       Permission.MODIFY
     );
+    this.debug("AAA:trash:this.heap.nodes", this.heap.nodes)
+    this.debug("AAA:trash:mfs_pre_trash_next", data)
     let keys = [Attr.nid, Attr.hub_id];
     let service = "media.remove";
     let recipients;
