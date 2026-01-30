@@ -1,3 +1,7 @@
+drumee-schemas (2.6.99) stable; urgency=medium
+  * TMP BUILD FROM REVAMP
+ -- Somanos Sar <somanos.sar@drumee.com>  Thu, 04 Dec 2025 10:00:00 +000
+
 drumee-schemas (2.6.7) stable; urgency=medium
 
   * Handle unknow filetype

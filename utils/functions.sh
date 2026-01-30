@@ -7,7 +7,7 @@ check_status() {
     exit 1
   fi
 }
-
+# gpg-connect-agent 'getinfo socket_name' /bye
 answer() {
   stdin="${1:-/dev/stdin}"
   while read line; do

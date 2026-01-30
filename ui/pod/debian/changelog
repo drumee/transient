@@ -1,3 +1,78 @@
+drumee-ui-pod (3.2.18) stable; urgency=medium
+  * Small fixes
+ -- Somanos Sar <somanos.sar@drumee.com>  Fri, 30 Jan 2026 10:00:00 +000
+
+drumee-ui-pod (3.2.17) testing; urgency=medium
+  * Small fixes
+ -- Somanos Sar <somanos.sar@drumee.com>  Thu, 29 Jan 2026 10:00:00 +000
+
+drumee-ui-pod (3.2.16) testing; urgency=medium
+  * Beta version
+ -- Somanos Sar <somanos.sar@drumee.com>  Wed, 28 Jan 2026 10:00:00 +000
+
+drumee-ui-pod (3.2.15) testing; urgency=medium
+  * Beta version
+ -- Somanos Sar <somanos.sar@drumee.com>  Sat, 24 Jan 2026 10:00:00 +000
+
+drumee-ui-pod (3.2.14) testing; urgency=medium
+  * Beta version
+ -- Somanos Sar <somanos.sar@drumee.com>  Tue, 20 Jan 2026 10:00:00 +000
+
+drumee-ui-pod (3.2.13) testing; urgency=medium
+  * Fine tune 5
+ -- Somanos Sar <somanos.sar@drumee.com>  Mon, 19 Jan 2026 10:00:00 +000
+
+drumee-ui-pod (3.2.12) testing; urgency=medium
+  * Fine tune 4
+ -- Somanos Sar <somanos.sar@drumee.com>  Sat, 17 Jan 2026 10:00:00 +000
+
+drumee-ui-pod (3.2.10) testing; urgency=medium
+  * Fine tune 3
+ -- Somanos Sar <somanos.sar@drumee.com>  Thu, 15 Jan 2026 10:00:00 +000
+
+drumee-ui-pod (3.2.9) testing; urgency=medium
+  * Fine tune 2
+ -- Somanos Sar <somanos.sar@drumee.com>  Mon, 14 Jan 2026 10:00:00 +000
+
+drumee-ui-pod (3.2.8) testing; urgency=medium
+  * Fine tune 2
+ -- Somanos Sar <somanos.sar@drumee.com>  Mon, 12 Jan 2026 10:00:00 +000
+
+drumee-ui-pod (3.2.7) testing; urgency=medium
+  * Fine tune 1
+ -- Somanos Sar <somanos.sar@drumee.com>  Mon, 12 Jan 2026 10:00:00 +000
+drumee-ui-pod (3.2.6) testing; urgency=medium
+  * Prerelease
+ -- Somanos Sar <somanos.sar@drumee.com>  Sat, 10 Jan 2026 10:00:00 +000
+
+drumee-ui-pod (3.2.5) testing; urgency=medium
+  * Prerelease
+ -- Somanos Sar <somanos.sar@drumee.com>  Sat, 10 Jan 2026 10:00:00 +000
+
+drumee-ui-pod (3.2.4) testing; urgency=medium
+  * Prerelease
+ -- Somanos Sar <somanos.sar@drumee.com>  Thu, 08 Jan 2026 10:00:00 +000
+
+drumee-ui-pod (3.2.3) stable; urgency=medium
+  * Prerelease
+ -- Somanos Sar <somanos.sar@drumee.com>  Tue, 04 Jan 2026 10:00:00 +000
+
+drumee-ui-pod (3.2.2) stable; urgency=medium
+  * TMP BUILD FROM REVAMP
+ -- Somanos Sar <somanos.sar@drumee.com>  Tue, 18 Nov 2025 10:00:00 +000
+ 
+drumee-ui-pod (3.2.1) stable; urgency=medium
+  * TMP BUILD FROM REVAMP
+ -- Somanos Sar <somanos.sar@drumee.com>  Tue, 18 Nov 2025 10:00:00 +000
+ 
+drumee-ui-pod (3.2.0) stable; urgency=medium
+  * Merge from revam
+ -- Somanos Sar <somanos.sar@drumee.com>  Sat, 01 Nov 2025 10:00:00 +000
+ 
+ drumee-ui-pod (3.1.8) stable; urgency=medium
+  * SASS migration
+ -- Somanos Sar <somanos.sar@drumee.com>  Thu, 30 Oct 2025 10:00:00 +000
+ 
 drumee-ui-pod (3.1.7) stable; urgency=medium
   * Unify initial env
  -- Somanos Sar <somanos.sar@drumee.com>  Wed, 01 Oct 2025 10:00:00 +000

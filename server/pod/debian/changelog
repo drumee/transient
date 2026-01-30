@@ -1,3 +1,62 @@
+drumee-server-pod (2.9.23) stable; urgency=medium
+  * Update tash expiry
+  -- Somanos Sar <somanos.sar@drumee.com>  Fri, 30 Jan 2026 10:00:00 +000
+
+drumee-server-pod (2.9.22) stable; urgency=medium
+  * Fixed strash + restore
+  -- Somanos Sar <somanos.sar@drumee.com>  Thu, 29 Jan 2026 10:00:00 +000
+
+drumee-server-pod (2.9.21) stable; urgency=medium
+  * Beta
+ -- Somanos Sar <somanos.sar@drumee.com>  Wed, 28 Jan 2026 10:00:00 +000
+
+drumee-server-pod (2.9.20) stable; urgency=medium
+  * Beta
+ -- Somanos Sar <somanos.sar@drumee.com>  Mon, 19 Jan 2026 10:00:00 +000
+
+drumee-server-pod (2.9.19) stable; urgency=medium
+  * Fine tune 5
+ -- Somanos Sar <somanos.sar@drumee.com>  Mon, 19 Jan 2026 10:00:00 +000
+
+drumee-server-pod (2.9.18) stable; urgency=medium
+  * Fine tune 4
+ -- Somanos Sar <somanos.sar@drumee.com>  Sat, 17 Jan 2026 10:00:00 +000
+drumee-server-pod (2.9.16) stable; urgency=medium
+  * Fine tune 2
+ -- Somanos Sar <somanos.sar@drumee.com>  Tue, 14 Jan 2026 10:00:00 +000
+
+drumee-server-pod (2.9.15) stable; urgency=medium
+  * Fine tune 2
+ -- Somanos Sar <somanos.sar@drumee.com>  Tue, 13 Jan 2026 10:00:00 +000
+
+drumee-server-pod (2.9.14) stable; urgency=medium
+  * Prerelease
+ -- Somanos Sar <somanos.sar@drumee.com>  Sat, 10 Jan 2026 10:00:00 +000
+
+drumee-server-pod (2.9.13) stable; urgency=medium
+  * Prerelease
+ -- Somanos Sar <somanos.sar@drumee.com>  Sat, 10 Jan 2026 10:00:00 +000
+
+drumee-server-pod (2.9.12) stable; urgency=medium
+  * Prerelease
+ -- Somanos Sar <somanos.sar@drumee.com>  Thu, 08 Jan 2026 10:00:00 +000
+
+drumee-server-pod (2.9.11) stable; urgency=medium
+  * Prerelease
+ -- Somanos Sar <somanos.sar@drumee.com>  Tue, 04 Jan 2026 10:00:00 +000
+
+drumee-server-pod (2.9.10) stable; urgency=medium
+  * TMP BUILD / revamp
+ -- Somanos Sar <somanos.sar@drumee.com>  Tue, 18 Nov 2025 10:00:00 +0000
+
+drumee-server-pod (2.9.8) stable; urgency=medium
+  * Allow login with vhost
+ -- Somanos Sar <somanos.sar@drumee.com>  Thu, 30 Oct 2025 10:00:00 +0000
+
+drumee-server-pod (2.9.7) stable; urgency=medium
+  * Added fonts Armin Grostesk
+ -- Somanos Sar <somanos.sar@drumee.com>  Thu, 30 Oct 2025 10:00:00 +0000
+
 drumee-server-pod (2.9.6) stable; urgency=medium
   * Unify initial env
  -- Somanos Sar <somanos.sar@drumee.com>  Wed, 01 Oct 2025 10:00:00 +0000

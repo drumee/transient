@@ -2,7 +2,7 @@ Source: drumee-server-pod
 Section: non-free
 Priority: optional
 Maintainer: Somanos Sar <somanos.sar@drumee.com>
-Standards-Version: 2.9.0
+Standards-Version: 2.9.7
 Homepage: https://drumee.org
 
 Package: drumee-server-pod

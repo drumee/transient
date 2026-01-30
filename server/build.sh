@@ -27,7 +27,7 @@ legacy)
   bundle $base "server" "public" "*" $server_target
   ;;
 pod)
-  bundle $base "server-team" "main" "*" $server_target
+  bundle $base "server-team" "revamp" "*" $server_target
   ;;
 evaluation)
   bundle $base "server" "dist/evaluation" "*" $server_target

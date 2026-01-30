@@ -12,7 +12,7 @@ source ${base}/../utils/functions.sh
 
 compile=yes
 type="pod"
-enableApi=yes
+enableApi=no
 for arg in "$@"; do
   case $arg in
   --type=*)
@@ -70,7 +70,7 @@ packages=""
 
 export UI_SRC_PATH=${base}/src/ui-team
 export REPO_BASE=git@github.com:drumee
-bundle $base "ui-team" "main"
+bundle $base "ui-team" "revamp"
 
 echo $UI_SRC_PATH
 export PATH=$UI_SRC_PATH/node_modules/.bin:$PATH

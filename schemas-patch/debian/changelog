@@ -1,3 +1,15 @@
+drumee-patch (1.1.6) stable; urgency=medium
+
+  * Session/secret
+
+ -- Somanos Sar <somanos.sar@drumee.com>  Mon, 17 Nov 2025 10:00:00 +000
+
+drumee-patch (1.1.5) stable; urgency=medium
+
+  * mfs_wicket_home
+
+ -- Somanos Sar <somanos.sar@drumee.com>  Fri, 31 Oct 2025 10:00:00 +000
+
 drumee-patch (1.1.4) stable; urgency=medium
 
   * Fix desk_create_hub

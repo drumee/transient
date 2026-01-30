@@ -28,7 +28,7 @@ build_dir=$(get_build_dir ${base}/build/$version)
 
 REPO_BASE=git@github.com:drumee
 
-bundle $base "schemas" "main" "" ""
+bundle $base "schemas" "revamp" "" ""
 schemas_src=${base}/src/schemas
 cd $schemas_src
 npm i @drumee/server-essentials

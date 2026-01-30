@@ -45,7 +45,7 @@ control="${base}/debian/control"
 version=$(get_version $base)
 email=$(get_email $base)
 build_dir=$(get_build_dir ${base}/build/$version)
-bundle $base "server-static" "main" "" "srv/drumee/server-static"
+bundle $base "static" "main" "" "srv/drumee/static"
 
 
 
