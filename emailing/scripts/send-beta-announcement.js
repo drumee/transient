@@ -1,6 +1,6 @@
 // Send beta announcement to users in batches
 
-const { resolve } = require('path');
+const { resolve, join } = require('path');
 const { readFileSync, writeFileSync, existsSync, appendFileSync } = require('fs');
 const { parse } = require('csv-parse/sync');
 const { stringify } = require('csv-stringify/sync');
@@ -31,6 +31,12 @@ function parseArgs() {
     type: 'int',
     default: 100,
     help: 'Minimum pool size before pausing (default: 100)'
+  });
+
+  parser.add_argument('--template', {
+    type: String,
+    default: join(__dirname, '../templates/index.html'),
+    help: 'Path to the template'
   });
 
   parser.add_argument('--pool-wait-time', {
@@ -244,6 +250,9 @@ async function sendEmail(record) {
 
     // Render HTML from template
     let html;
+    if (args.template && existsSync(args.template)) {
+      CONFIG.TEMPLATE = args.template;
+    }
     if (existsSync(CONFIG.TEMPLATE)) {
       html = msg.renderFrom(CONFIG.TEMPLATE, data);
     } else {
