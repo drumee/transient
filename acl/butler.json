@@ -36,6 +36,12 @@
         "src": "anonymous"
       }
     },
+    "unsubscribe": {
+      "scope": "hub",
+      "permission": {
+        "src": "anonymous"
+      }
+    },
     "set_pass_phrase": {
       "scope": "hub",
       "permission": {

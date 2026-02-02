@@ -642,7 +642,7 @@ class __media extends Mfs {
     const MAX_DURATION_MS = 5000;
     const MIN_BACKOFF_MS = 100;
     const MAX_BACKOFF_MS = 2000;
-  
+
     const START_TIME = Date.now();
 
     let ownpath = join('/', ...path);
@@ -665,7 +665,7 @@ class __media extends Mfs {
           path: ownpath,
           sqlstate: node[1]?.sqlstate
         });
-      
+
         throw this.exception.server({
           message: 'MKDIR_OPERATION_TIMEOUT',
           elapsed_ms: elapsed,
@@ -674,23 +674,23 @@ class __media extends Mfs {
           sqlstate: node[1]?.sqlstate
         });
       }
-      
+
       // Save error info
       error = node[1];
       failed = null;
-    
+
       // Handle specific SQL errors
       switch (node[1].sqlstate) {
         case '40001':  // DEADLOCK
           {
             failed = 'DEADLOCK_DETECTED';
-          
+
             // Exponential backoff: 100ms, 200ms, 400ms, 800ms, 1600ms
             const backoffDelay = Math.min(
               MIN_BACKOFF_MS * Math.pow(2, i),
               MAX_BACKOFF_MS
             );
-          
+
             this.debug(`ensureMakeDir: Deadlock detected, retrying`, {
               attempt: i + 1,
               max_retries: MAX_RETRIES,
@@ -703,23 +703,23 @@ class __media extends Mfs {
             node = await this.db.await_proc("mfs_make_dir", id, path, showResult);
           }
           break;
-        
+
         case '23000':  // DUPLICATE_ENTRY
           {
             failed = 'DUPLICATE_ENTRY';
-          
+
             this.debug(`ensureMakeDir: Duplicate entry, retrying with timestamp`, {
               attempt: i + 1,
               max_retries: MAX_RETRIES,
               path: ownpath
             });
-          
+
             await sleep(1000);
-          
+
             // Create timestamped path
             let t = Moment(Date.now() / 1000, "X").format("YYYY-MM-DD@HH-mm-ss");
             let timestampedPath = [...path];
-          
+
             if (timestampedPath.length > 0) {
               let lastSegment = timestampedPath[timestampedPath.length - 1];
               timestampedPath[timestampedPath.length - 1] = `${lastSegment}-${t}`;
@@ -728,11 +728,11 @@ class __media extends Mfs {
             node = await this.db.await_proc("mfs_make_dir", id, timestampedPath, showResult);
           }
           break;
-        
+
         default:  // UNKNOWN ERROR
           {
             failed = `UNEXPECTED_SQL_ERROR_${node[1].sqlstate}`;
-          
+
             this.error(`ensureMakeDir: Unexpected SQL error`, {
               sqlstate: node[1].sqlstate,
               errno: node[1].errno,
@@ -740,14 +740,14 @@ class __media extends Mfs {
               path: ownpath,
               attempt: i + 1
             });
-          
+
             // Break immediately
             break;
           }
       }
-    
+
       i++;
-    
+
       // Break out early for unknown errors
       if (failed && failed.startsWith('UNEXPECTED_SQL_ERROR')) {
         break;
@@ -757,7 +757,7 @@ class __media extends Mfs {
     // Check if operation ultimately failed
     if (node[1] || failed) {
       const elapsed = Date.now() - START_TIME;
-    
+
       this.error(`ensureMakeDir: Operation failed after retries`, {
         failed_reason: failed,
         retries: i,
@@ -767,7 +767,7 @@ class __media extends Mfs {
         errno: error?.errno,
         sqlMessage: error?.sqlMessage
       });
-    
+
       // Throw error to propagate failure to caller
       throw this.exception.server({
         message: failed || 'MKDIR_FAILED',
@@ -788,12 +788,12 @@ class __media extends Mfs {
       retries: i,
       elapsed_ms: Date.now() - START_TIME
     });
-  
+
     // Notify if new node was created
     if (!exists && node.nid) {
       await this.notifyNewNode(node);
     }
-  
+
     return node;
   }
 
@@ -1843,6 +1843,9 @@ class __media extends Mfs {
    * 
    */
   async orig() {
+    if (this.input.get('ls')) {
+      this.session.log_service({ referer, nid: this.input.get(Attr.nid) });
+    }
     await this.send_media(this.source_granted(), ORIGINAL);
   }
 

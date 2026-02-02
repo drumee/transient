@@ -656,6 +656,14 @@ class __butler extends Mfs {
   /**
    * 
    */
+  async unsubscribe() {
+    const unsubscribe = this.input.get(Attr.email);
+    this.output.data({ unsubscribe });
+  }
+
+  /**
+   * 
+   */
   ping() {
     const id = this.user.uid();
     this.yp.call_proc("get_visitor", id, this.output.data);
