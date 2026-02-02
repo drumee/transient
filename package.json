@@ -22,7 +22,7 @@
   "license": "APACHE V2",
   "dependencies": {
     "@drumee/server-core": "^1.1.49",
-    "@drumee/server-essentials": "^1.2.13",
+    "@drumee/server-essentials": "^1.2.15",
     "argparse": "^2.0.1",
     "axios": "^1.13.2",
     "csv-parse": "^5.5.3",

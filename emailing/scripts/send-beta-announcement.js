@@ -264,7 +264,7 @@ async function sendEmail(record) {
     }
 
     // Send email
-    await msg.send({ html });
+    await msg.send({ from: "no-reply@drumee.org", html });
 
     return { success: true };
   } catch (error) {
