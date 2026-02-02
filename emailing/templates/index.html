@@ -4,7 +4,9 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Content-type" content="text/html; charset=utf-8" />
   <title>Beta Drumee Launch</title>
+  <link rel="icon" href="https://app.drumee.org/-/static/icons/raw/logo-drumee-icon.svg" type="image/png">
   <link rel="stylesheet" href="https://app.drumee.org/-/static/fonts/Armin-Grotesk/stylesheet.css" media="screen">
   <style type="text/css">
     body {
@@ -100,8 +102,8 @@
           <!-- Logo -->
           <tr>
             <td align="center" style="padding: 0 0 40px 0;">
-              <img src="https://marketing1.app.drumee.org/campaign-2026/logo-120.png?v=17&xid=<%= email %>" alt="Drumee Logo"
-                width="120" height="120"
+              <img src="https://marketing1.app.drumee.org/campaign-2026/logo-120.png?v=17&xid=<%= email %>"
+                alt="Drumee Logo" width="120" height="120"
                 style="display: block; width: 120px; height: 120px; max-width: 120px; border: 0; outline: none;" />
             </td>
           </tr>
@@ -192,7 +194,7 @@
           <!-- CTA Button -->
           <tr>
             <td style="padding: 0 30px 40px 30px;">
-              <table cellpadding="0" cellspacing="10" border="0">
+              <table cellpadding="0" cellspacing="0" border="0">
                 <tr>
                   <td align="center"
                     style="border-radius: 100px; background: linear-gradient(135deg, #B794F6 0%, #9F7AEA 100%);">
@@ -201,13 +203,18 @@
                       Join now
                     </a>
                   </td>
-                  <td align="center"
-                    style="width:2rem">
-                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding: 0 30px 40px 30px;">
+              <table cellpadding="0" cellspacing="0" border="0">
+                <tr>
                   <td align="center"
                     style="border-radius: 100px; background: linear-gradient(135deg, #B794F6 0%, #9F7AEA 100%);">
                     <a href="https://app.drumee.org/-/svc/butler.unsubscribe?email=<%= email %>"
-                      style="display: inline-block; padding: 14px 32px; font-size: 16px; font-weight: 600; color: #ffffff; text-decoration: none; border-radius: 100px; background-color: #9F7AEA;">
+                      style="display: inline-block; padding: 14px 32px; font-size: 16px; font-weight: 600; color: #ffffff; text-decoration: none; border-radius: 100px; background-color: #b08ff4;">
                       Unsubscribe
                     </a>
                   </td>
@@ -215,9 +222,7 @@
               </table>
             </td>
           </tr>
-
         </table>
-
       </td>
     </tr>
   </table>
