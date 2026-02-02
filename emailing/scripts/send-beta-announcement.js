@@ -254,6 +254,7 @@ async function sendEmail(record) {
       CONFIG.TEMPLATE = args.template;
     }
     if (existsSync(CONFIG.TEMPLATE)) {
+      
       html = msg.renderFrom(CONFIG.TEMPLATE, data);
     } else {
       // Fallback: simple HTML if template not ready yet
