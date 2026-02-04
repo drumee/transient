@@ -36,6 +36,12 @@ class __bootstrap extends RuntimeEnv {
     this.set({ data });
     this.output.setAuthorization(auth);
     const template_dir = resolve(__dirname, '..', TPL_BASE);
+    let bundles = {}
+    for (let m of ["core", "vendor", "sprite", "locale", "entry"]) {
+      bundles[m] = data.app[m]
+    }
+    data.bundles = bundles;
+    this.debug('AAA:44', data)
     let content = this.getRender(template_dir, "bootstrap.js.tpl")(data);
     this.output.javascript(content);
   }
@@ -50,7 +56,7 @@ class __bootstrap extends RuntimeEnv {
     const { ui_home, endpoint_path, runtime_dir, endpoint_name } = sysEnv();
     let plugin_base = join(ui_home, '../..', 'plugins', 'ui', endpoint_name);
     let plugin_info = join(plugin_base, name, 'index.json');
-    this.debug("AAA:53", {plugin_base, plugin_info, ui_home})
+    this.debug("AAA:53", { plugin_base, plugin_info, ui_home })
     let info;
     if (existsSync(plugin_info)) {
       info = readJson(plugin_info)

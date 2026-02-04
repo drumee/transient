@@ -40,9 +40,10 @@
       <script>localStorage.logLevel = "3;</script>
     <% } %>
 
-    <script type="text/javascript" id="rendering-engine" src="<%= app.location %>/app/<%= app.vendor %>" crossorigin="true"></script> 
-    <script type="text/javascript" id="rendering-engine" src="<%= app.location %>/app/<%= app.sprite %>" crossorigin="true"></script> 
-    <script type="text/javascript" id="rendering-engine" src="<%= app.location %>/app/<%= app.locale %>" crossorigin="true"></script> 
+    <script type="text/javascript" id="app-core" src="<%= app.location %>/app/<%= app.core %>" async="true" crossorigin="true"></script> 
+    <script type="text/javascript" id="app-vendor" src="<%= app.location %>/app/<%= app.vendor %>" async="true" crossorigin="true"></script> 
+    <script type="text/javascript" id="app-sprite" src="<%= app.location %>/app/<%= app.sprite %>" async="true" crossorigin="true"></script> 
+    <script type="text/javascript" id="app-locale" src="<%= app.location %>/app/<%= app.locale %>" async="true" crossorigin="true"></script> 
 
   </head>
 
@@ -55,7 +56,7 @@
     <%= renderer.include('warmup.html') %>
     </div>
     <div class="margin-auto" id="--wrapper"></div>
-    <script type="text/javascript" id="rendering-engine" src="<%= app.location %>/app/<%= app.entry %>" crossorigin="true"></script> 
+    <script type="text/javascript" id="app-entry" src="<%= app.location %>/app/<%= app.entry %>" async="true" crossorigin="true"></script> 
     <% if (typeof(debugUi) !== "undefined" && debugUi) { %>
       <script src="https://cdn.jsdelivr.net/npm/eruda"></script>
       <script>eruda.init();</script>

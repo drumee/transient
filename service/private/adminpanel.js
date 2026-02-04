@@ -19,7 +19,7 @@ const {
   Attr, Constants, Remit, sysEnv, utils, Messenger, RedisStore, Cache, nullValue
 } = require("@drumee/server-essentials");
 const { toArray, randomString } = utils;
-const { main_domain } = sysEnv();
+const { main_domain, myConf } = sysEnv();
 
 const { stringify } = JSON;
 const { isEmpty, isArray, isString, uniqueId } = require('lodash');
@@ -1340,7 +1340,9 @@ class __private_adminpanel extends Mfs {
       },
       handler: this.exception.email
     });
-    let body = await msg.send();
+    this.debug("AAA:1343", myConf)
+    /** TODO read relay domain from config */
+    let body = await msg.send({ from: "no-reply@drumee.org" });
     if (isString(body)) {
       return {
         subject,

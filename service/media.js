@@ -1843,9 +1843,6 @@ class __media extends Mfs {
    * 
    */
   async orig() {
-    if (this.input.get('ls')) {
-      this.session.log_service({ referer, nid: this.input.get(Attr.nid) });
-    }
     await this.send_media(this.source_granted(), ORIGINAL);
   }
 
@@ -1941,8 +1938,9 @@ class __media extends Mfs {
         this.warn("FAILED TO GET HTML CONTENT", e);
       }
       await this.send_media(data.id, ORIGINAL, null, "raw");
-      if (this.input.get("xid")) {
-        this.session.log_service();
+      let xid = this.input.get("xid")
+      if (xid) {
+        this.session.log_service({ xid });
       }
       return;
     }
