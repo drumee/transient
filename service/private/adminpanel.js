@@ -1784,7 +1784,8 @@ class __private_adminpanel extends Mfs {
   }
 
   /**
-   * 
+   * Move user to Free plan (domain_id=1) instead of deleting
+   * User will leave all paid domain hubs, ownership transferred to domain admin
    */
   async member_delete() {
     let orgid //= this.input.need(Attr.orgid);
@@ -1800,9 +1801,7 @@ class __private_adminpanel extends Mfs {
 
     if (Attr.archived != member.status) return this.output.status('INVALID_STATUS');
 
-
     if (member.is_able_delete != 'yes') return this.output.status('INVALID_TIME');
-
 
     let my_org = await this.user.organization();
     if (isEmpty(my_org)) return this.output.status('NO_ORG');
@@ -1821,43 +1820,69 @@ class __private_adminpanel extends Mfs {
     if (isEmpty(his_privilege)) return this.output.status('INCORRECT_DOMAIN');
 
     if (my_privilege.privilege < his_privilege.privilege) return this.output.status('NOT_ENOUGH_PRIVILEGE');
-    let hubs = await this.yp.await_proc('forward_proc', user_id, 'show_hubs', '')
-    hubs = toArray(hubs) || [];
+    
+    // Move user to Free plan using stored procedure
+    let result = await this.yp.await_proc('move_user_to_free', user_id, my_org.domain_id);
 
-    for (let hub of hubs) {
-      await this.yp.await_proc('forward_proc', user_id, 'leave_hub', `'${hub.id}'`)
-      if (hub.owner_id == user_id) {
-        let huber = await this.yp.await_proc('forward_proc', hub.id, 'hub_get_members_by_type', `'${this.uid}','owner',1`)
-        if (isEmpty(huber)) {
-          huber = await this.yp.await_proc('forward_proc', hub.id, 'hub_get_members_by_type', `'${this.uid}','admin',1`)
-        }
-        if (isEmpty(huber)) {
-          huber = await this.yp.await_proc('forward_proc', hub.id, 'hub_get_members_by_type', `'${this.uid}','all',1`)
-        }
-        if (!isEmpty(huber)) {
-          huber = toArray(huber) || [];
-          await this.yp.await_proc('forward_proc', hub.id, 'permission_grant', `'*','${huber[0].id}',0,63,'system',0`)
-        }
-        else {
-          await this.yp.await_proc(`entity_delete`, hub.id);
-          remove_dir(hub.home_dir)
-        }
-      }
-    }
-    let user = await this.yp.await_proc(`drumate_delete`, user_id);
-    remove_dir(user.home_dir);
+    // Get updated member info
+    let updated_member = await this.yp.await_proc('drumate_exists', user_id);
+
+    // if (member.email) {
+    //   await this.send_removal_notification(member.email, member.fullname, org.name);
+    // }
+    
     const admin = await this.yp.await_proc(`get_user`, this.uid);
-    this.output.data({ member: user, admin });
+    this.output.data({ 
+      member: {
+        ...updated_member,
+        previous_domain: org.name,
+        moved_to: 'Free Plan',
+        status: 'moved_to_free'
+      },
+      admin,
+      result
+    });
   }
 
+  /**
+   * TODO: Send removal notification email
+   */
+  // async send_removal_notification(email, fullname, org_name) {
+  //   const ulang = this.input.ua_language() || "en";
+  //   const subject = Cache.message('_admin_removal_subject', ulang) || "Account Moved to Free Plan";
+  //   
+  //   const msg = new Messenger({
+  //     template: "",
+  //     subject: subject,
+  //     recipient: email,
+  //     lex: Cache.lex(ulang),
+  //     data: {
+  //       recipient: fullname,
+  //       organization: org_name,
+  //       home: process.env.domain_name,
+  //     },
+  //     handler: this.exception.email
+  //   });
+  //   
+  //   let body = await msg.send();
+  //   if (isString(body)) {
+  //     return {
+  //       subject,
+  //       email,
+  //       body
+  //     }
+  //   }
+  // }
 
+  /**
+   * 
+   */
   async member_disconnect() {
     let orgid //= this.input.need(Attr.orgid);
     let user_id = this.input.need(Attr.user_id);
     let res = {};
     let chk = {};
     let profile = {};
-
 
     let org = await this.yp.await_proc('organisation_get', this.user.domain_id())
     orgid = org.id;
