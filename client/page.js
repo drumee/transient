@@ -175,7 +175,11 @@ class MainPage extends RuntimeEnv {
       bundles[m] = data.app[m]
     }
     data.bundles = bundles;
-    this.debug("AAA:173", data)
+    let xid = this.input.get("xid")
+    if (xid) {
+      let opt = { xid, source: xid, service: "page.index" };
+      this.session.log_service(opt);
+    }
     const template_dir = resolve(__dirname, TPL_BASE);
     let content = this.getRender(template_dir, "index.tpl")(data);
     this.output.html(content);

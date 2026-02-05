@@ -19,10 +19,6 @@
       if (el) {
         el.style.width = w;
       }
-      let txt = document.getElementById("warmup-text")
-      if (txt && count > 2) {
-        txt.dataset.state = 'reverse';
-      }
     };
     el.setAttribute('src', src);
     document.head.appendChild(el);

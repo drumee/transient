@@ -658,6 +658,7 @@ class __butler extends Mfs {
    */
   async unsubscribe() {
     const unsubscribe = this.input.get(Attr.email);
+    await this.yp.await_query(`UPDATE emailing SET status='unsubscribed' WHERE email=?`, unsubscribe)
     this.output.data({ unsubscribe });
   }
 

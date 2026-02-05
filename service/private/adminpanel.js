@@ -1326,23 +1326,25 @@ class __private_adminpanel extends Mfs {
     const ulang = "en"; //this.input.ua_language();
     const { link: host } = await this.user.organization();
     const link = `${this.input.homepath(host)}#/welcome/reset/${user.id}/${token}/reason=new-account`;
-    const subject = `${Cache.message('_admin_network_subject', ulang)}`;
-    //this.debug("AAAA:1346", {link, subject, user, email})
+    const subject = `${Cache.message('_join_my_organization', ulang)}`;
+    let my_org = await this.user.organization();
+    let org_name = my_org.name || my_org.link
     const msg = new Messenger({
       template: "butler/admin-invitation",
-      subject: subject,
+      subject: subject.format(org_name),
       recipient: email,
       lex: Cache.lex(ulang),
       data: {
+        org_name: my_org.name || my_org.link,
         sender: username,
         link: link,
         recipient: user.fullname
       },
       handler: this.exception.email
     });
-    this.debug("AAA:1343", myConf)
     /** TODO read relay domain from config */
-    let body = await msg.send({ from: "no-reply@drumee.org" });
+    let from = myConf.mailSender;
+    let body = await msg.send({ from });
     if (isString(body)) {
       return {
         subject,
@@ -1389,7 +1391,7 @@ class __private_adminpanel extends Mfs {
       },
       handler: this.exception.email
     });
-    let body = msg.send();
+    let body = msg.send({ from: myConf.mailSender });
     if (isString(body)) {
       return {
         subject,
@@ -1427,7 +1429,7 @@ class __private_adminpanel extends Mfs {
       },
       handler: this.exception.email
     });
-    let body = msg.send();
+    let body = msg.send({ from: myConf.mailSender });
     if (isString(body)) {
       return {
         subject,
@@ -1820,7 +1822,7 @@ class __private_adminpanel extends Mfs {
     if (isEmpty(his_privilege)) return this.output.status('INCORRECT_DOMAIN');
 
     if (my_privilege.privilege < his_privilege.privilege) return this.output.status('NOT_ENOUGH_PRIVILEGE');
-    
+
     // Move user to Free plan using stored procedure
     let result = await this.yp.await_proc('move_user_to_free', user_id, my_org.domain_id);
 
@@ -1830,9 +1832,9 @@ class __private_adminpanel extends Mfs {
     // if (member.email) {
     //   await this.send_removal_notification(member.email, member.fullname, org.name);
     // }
-    
+
     const admin = await this.yp.await_proc(`get_user`, this.uid);
-    this.output.data({ 
+    this.output.data({
       member: {
         ...updated_member,
         previous_domain: org.name,
