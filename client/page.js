@@ -170,6 +170,11 @@ class MainPage extends RuntimeEnv {
     if (this.input.get('debug-ui')) {
       data.debugUi = 1;
     }
+    let bundles = {}
+    for (let m of ["core", "vendor", "sprite", "locale", "entry"]) {
+      bundles[m] = data.app[m]
+    }
+    data.bundles = bundles;
     this.debug("AAA:173", data)
     const template_dir = resolve(__dirname, TPL_BASE);
     let content = this.getRender(template_dir, "index.tpl")(data);

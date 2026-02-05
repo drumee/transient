@@ -93,18 +93,3 @@
   </div>
 </div>
 
-<script>
-  let bunldes = new Map();
-  document.addEventListener('drumee:bootstraping', (e) => {
-    bunldes.set(e.name, 1);
-    let el = document.getElementById("warmup-progess")
-    let w = 100 * (bunldes.size / 4) + '%';
-    if (el) {
-      el.style.width = w;
-    }
-    let txt = document.getElementById("warmup-text")
-    if (txt && bunldes.size > 1) {
-      txt.dataset.state = 'reverse';
-    }
-  })
-</script>
