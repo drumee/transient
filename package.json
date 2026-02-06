@@ -2,7 +2,7 @@
   "name": "@drumee/ui-toolkit",
   "version": "0.0.15",
   "description": "",
-  "main": ".",
+  "main": "./index.js",
   "repository": {
     "type": "git",
     "url": "git@github.com:drumee/package.json.git"
