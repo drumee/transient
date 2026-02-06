@@ -15,9 +15,8 @@
   },
   "dependencies": {
     "@drumee/schemas-utils": "^1.0.0",
-    "@drumee/server-core": "^1.1.53",
-    "@drumee/server-dev-tools": "^1.1.32",
-    "@drumee/server-essentials": "^1.2.17",
+    "@drumee/server-core": "^1.1.54",
+    "@drumee/server-essentials": "^1.2.18",
     "@drumee/setup-schemas": "^1.0.26",
     "@hyzyla/pdfium": "^2.1.9",
     "accept-language": "^3.0.18",
@@ -100,8 +99,6 @@
     "ws": "^8.18.0"
   },
   "devDependencies": {
-    "@mapbox/node-pre-gyp": "^1.0.11",
-    "node-gyp": "^10.2.0",
-    "readline-sync": "^1.4.10"
+    "@drumee/server-dev-tools": "^1.1.32"
   }
 }

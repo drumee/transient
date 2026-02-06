@@ -105,11 +105,15 @@ function platform() {
   let platform = {};
   platform.fonts = [];
   platform.description = Cache.getSysConf('platform_intro_popup_title');
-  platform.termsandconditions = Cache.getSysConf('termsandconditions') || '{}';
   if (platform.description) {
     platform.description = JSON.parse(platform.description);
   }
-
+  platform.legals = Cache.getSysConf('legals');
+  if (platform.legals) {
+    platform.legals = JSON.parse(platform.legals);
+  } else {
+    platform.legals = {}
+  }
   let wp = Cache.getSysConf("wallpaper");
   if (isString(wp)) {
     platform.wallpaper = JSON.parse(wp);
@@ -187,4 +191,4 @@ async function createHub(args, opt = {}) {
 }
 
 
-module.exports = { get_env, platform, createHub};
+module.exports = { get_env, platform, createHub };
