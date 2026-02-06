@@ -17,3 +17,5 @@ if (document.readyState == 'complete') {
     document.addEventListener('drumee:router:ready', start);
   }
 }
+export * from './utils/index';
+export * from './utils/validator';
