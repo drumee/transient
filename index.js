@@ -8,14 +8,21 @@ function start() {
   })
 }
 
-if (document.readyState == 'complete') {
-  start()
-} else {
-  if (location.hash) {
-    document.addEventListener('drumee:plugins:ready', start);
+
+/**
+ * 
+ */
+export function loadWidgets() {
+  if (document.readyState == 'complete') {
+    start()
   } else {
-    document.addEventListener('drumee:router:ready', start);
+    if (location.hash) {
+      document.addEventListener('drumee:plugins:ready', start);
+    } else {
+      document.addEventListener('drumee:router:ready', start);
+    }
   }
 }
+
 export * from './utils/index';
 export * from './utils/validator';
