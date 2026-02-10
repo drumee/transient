@@ -671,9 +671,9 @@ class __private_contact extends Contact {
    * @param {*} tag 
    */
   async _add(contact_id, email, mobile, address, tag) {
-    await this.db.await_proc('my_contact_mail_add', contact_id, stringify(email))
-    await this.db.await_proc('my_contact_phone_add', contact_id, stringify(mobile))
-    await this.db.await_proc('my_contact_address_add', contact_id, stringify(address))
+    await this.db.await_proc('my_contact_mail_add', contact_id, email)
+    await this.db.await_proc('my_contact_phone_add', contact_id, mobile)
+    await this.db.await_proc('my_contact_address_add', contact_id, address)
     await this.db.await_proc('my_tag_add', contact_id, stringify(tag))
   }
 
@@ -742,6 +742,9 @@ class __private_contact extends Contact {
   }
 
 
+  /**
+   * 
+   */
   async unblock() {
     let contact_id = this.input.need(Attr.contact_id);
     let res = {};
@@ -1030,7 +1033,7 @@ class __private_contact extends Contact {
 
     if (isEmpty(invitee_id) && isEmpty(email)) {
       res.status = 'INVALID_DATA';
-      return re1s;
+      return this.output.data(res)
     }
 
     if (!isEmpty(invitee_id)) {
