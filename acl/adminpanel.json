@@ -60,6 +60,12 @@
         "src": "delete"
       }
     },
+    "set_mfa": {
+      "scope": "domain",
+      "permission": {
+        "src": "admin"
+      }
+    },
     "role_add": {
       "scope": "domain",
       "permission": {

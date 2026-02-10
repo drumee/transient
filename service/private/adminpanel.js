@@ -20,7 +20,7 @@ const {
 } = require("@drumee/server-essentials");
 const { toArray, randomString } = utils;
 const { main_domain, myConf } = sysEnv();
-
+const { resolve } = require('path');
 const { stringify } = JSON;
 const { isEmpty, isArray, isString, uniqueId } = require('lodash');
 const Crypto = require("crypto");
@@ -418,47 +418,34 @@ class __private_adminpanel extends Mfs {
     this.output.list(res);
   }
 
+  /**
+   * 
+   */
+  async _check_sanity(user_id) {
+    let user = await this.yp.await_proc("get_user", user_id)
+    let my_org = await this.user.organization();
+    if (isEmpty(user) || !user.db_name) {
+      return this.output.status('NO_ORG');
+    }
+    if (isEmpty(my_org || !my_org.domain_id)) {
+      return this.output.status('NO_ORG');
+    }
+    if (my_org.domain_id != user.domain_id) {
+      return this.output.status('INVALID_ORG');
+    }
+    return { user, my_org }
+  }
 
   /**
    * 
    */
   async member_loginlog() {
-    let orgid //= this.input.need(Attr.orgid);
     let user_id = this.input.need(Attr.user_id);
     const page = this.input.use(Attr.page) || 1;
-    let res = [];
-
-    let org = await this.yp.await_proc('organisation_get', this.user.domain_id())
-    orgid = org.id;
-    if (isEmpty(org)) return this.output.status('NO_ORG');
-
-    let my_org = await this.user.organization();
-    if (isEmpty(my_org)) return this.output.status('NO_ORG');
-
-    if (my_org.id != org.id) return this.output.status('INVALID_ORG');
-
-    let his_org = await this.yp.await_proc('my_organisation', user_id)
-    if (isEmpty(his_org)) return this.output.status('NO_ORG');
-
-    if (his_org.id != org.id) return this.output.status('INVALID_ORG');
-
-
-    let my_privilege = await this.yp.await_proc('domain_privilege', my_org.domain_id, this.uid);
-    if (my_privilege.privilege < Remit.dom_admin_view) return this.output.status('NOT_ENOUGH_PRIVILEGE');
-
-    let his_privilege = await this.yp.await_proc('domain_privilege', my_org.domain_id, user_id);
-    if (isEmpty(his_privilege)) return this.output.status('INCORRECT_DOMAIN');
-    if (my_privilege.privilege < his_privilege.privilege) return this.output.status('NOT_ENOUGH_PRIVILEGE');
-
-    let data = await this.yp.await_proc('forward_proc', user_id, 'show_login_log', `${page}`)
-    if (!isArray(data)) {
-      data = [data];
-    }
-    for (let rec of data) {
-      rec.metadata = this.parseJSON(rec.metadata)
-      res.push(rec);
-    }
-    this.output.list(res);
+    let { my_org } = await this._check_sanity(user_id) || {}
+    if (!my_org) return;
+    let data = await this.yp.await_proc("show_login_log", user_id, page)
+    this.output.list(data);
   }
 
   /**
@@ -732,6 +719,7 @@ class __private_adminpanel extends Mfs {
     let {
       email,
       firstname = "",
+      lastname = "",
       password = this.randomString(),
       category = "free",
       domain
@@ -740,11 +728,10 @@ class __private_adminpanel extends Mfs {
     username = username.replace(/[^a-zA-Z0-9]/g, ''); // Accept only ascci alphanum
     username = await this.yp.await_func("ensure_username", { username: username.toLowerCase(), domain });
     let a = firstname.split(/ +/)
-    let lastname = "";
     if (a.length > 1) {
       firstname = a[0]
       a.shift()
-      lastname = a.join(' ')
+      lastname = lastname || a.join(' ')
     }
     let profile = {
       username,
@@ -1323,7 +1310,7 @@ class __private_adminpanel extends Mfs {
     const username = this.user.get(Attr.fullname);
     await this.yp.await_proc('token_generate_next', email, email, token, Constants.FORGOT_PASSWORD, '');
     let user = await this.yp.await_proc('get_visitor', email);
-    const ulang = "en"; //this.input.ua_language();
+    const ulang = this.input.ua_language();
     const { link: host } = await this.user.organization();
     const link = `${this.input.homepath(host)}#/welcome/reset/${user.id}/${token}/reason=new-account`;
     const subject = `${Cache.message('_join_my_organization', ulang)}`;
@@ -1337,11 +1324,12 @@ class __private_adminpanel extends Mfs {
       data: {
         org_name: my_org.name || my_org.link,
         sender: username,
-        link: link,
+        link,
         recipient: user.fullname
       },
       handler: this.exception.email
     });
+    this.debug("AAA:1345", link)
     /** TODO read relay domain from config */
     let from = myConf.mailSender;
     let body = await msg.send({ from });
@@ -1792,89 +1780,87 @@ class __private_adminpanel extends Mfs {
   async member_delete() {
     let orgid //= this.input.need(Attr.orgid);
     let user_id = this.input.need(Attr.user_id);
+    let { my_org } = await this._check_sanity(user_id) || {}
+    if (!my_org) return;
 
-    let org = await this.yp.await_proc('organisation_get', this.user.domain_id())
-    orgid = org.id;
-    if (isEmpty(org)) return this.output.status('NO_ORG');
-
-    let member = await this.yp.await_proc('show_member_detail', user_id, orgid);
-
+    let member = await this.yp.await_proc('show_member_detail', user_id, my_org.id);
+    this.debug("AAA:1787", my_org, user_id, member)
     if (isEmpty(member)) return this.output.status('NO_MEMBER');
 
-    if (Attr.archived != member.status) return this.output.status('INVALID_STATUS');
-
-    if (member.is_able_delete != 'yes') return this.output.status('INVALID_TIME');
-
-    let my_org = await this.user.organization();
-    if (isEmpty(my_org)) return this.output.status('NO_ORG');
-
-    if (my_org.id != org.id) return this.output.status('INVALID_ORG');
-
-    let his_org = await this.yp.await_proc('my_organisation', user_id)
-    if (isEmpty(his_org)) return this.output.status('NO_ORG');
-
-    if (his_org.id != org.id) return this.output.status('INVALID_ORG');
-
-    let my_privilege = await this.yp.await_proc('domain_privilege', my_org.domain_id, this.uid);
-    if (my_privilege.privilege < Remit.dom_admin) return this.output.status('NOT_ENOUGH_PRIVILEGE');
-
-    let his_privilege = await this.yp.await_proc('domain_privilege', my_org.domain_id, user_id);
-    if (isEmpty(his_privilege)) return this.output.status('INCORRECT_DOMAIN');
-
-    if (my_privilege.privilege < his_privilege.privilege) return this.output.status('NOT_ENOUGH_PRIVILEGE');
-
-    // Move user to Free plan using stored procedure
     let result = await this.yp.await_proc('move_user_to_free', user_id, my_org.domain_id);
 
     // Get updated member info
     let updated_member = await this.yp.await_proc('drumate_exists', user_id);
 
-    // if (member.email) {
-    //   await this.send_removal_notification(member.email, member.fullname, org.name);
-    // }
+    if (member.email) {
+      let lex = Cache.lex(this.input.ua_language());
+      message = lex._admin_removal_message.format(org.name);
+      await this._send_email('_admin_removal_subject', member.email, { message });
+    }
 
     const admin = await this.yp.await_proc(`get_user`, this.uid);
+    let recipients = await this.yp.await_proc('user_sockets', user_id);
+
+    member = {
+      ...updated_member,
+      previous_domain: org.name,
+      previous_domain_id: org.id,
+      status: 'moved_away',
+      organization: org.name
+    }
+    await RedisStore.sendData(this.payload(member), recipients);
+    await this.yp.await_query('DELET FROM cookie WHERE uid=?', user_id);
     this.output.data({
-      member: {
-        ...updated_member,
-        previous_domain: org.name,
-        moved_to: 'Free Plan',
-        status: 'moved_to_free'
-      },
+      member,
       admin,
       result
     });
   }
 
   /**
-   * TODO: Send removal notification email
+   * 
    */
-  // async send_removal_notification(email, fullname, org_name) {
-  //   const ulang = this.input.ua_language() || "en";
-  //   const subject = Cache.message('_admin_removal_subject', ulang) || "Account Moved to Free Plan";
-  //   
-  //   const msg = new Messenger({
-  //     template: "",
-  //     subject: subject,
-  //     recipient: email,
-  //     lex: Cache.lex(ulang),
-  //     data: {
-  //       recipient: fullname,
-  //       organization: org_name,
-  //       home: process.env.domain_name,
-  //     },
-  //     handler: this.exception.email
-  //   });
-  //   
-  //   let body = await msg.send();
-  //   if (isString(body)) {
-  //     return {
-  //       subject,
-  //       email,
-  //       body
-  //     }
-  //   }
-  // }
+  async _send_email(subject_key, recipient, data, tpl_file = 'message.html') {
+    const ulang = this.input.ua_language();
+    let lex = Cache.lex(ulang)
+    let tpl = resolve(__dirname, "./templates", tpl_file)
+    let subject = lex[subject_key]
+    const msg = new Messenger({
+      subject,
+      recipient,
+      handler: this.exception.email,
+    });
+    data.subject = subject;
+    data.signature = data.signature || lex._drumee_team;
+    data.footer = data.footer || lex._copyright.format(`${new Date().getFullYear()}`)
+    data.hello = data.hello || lex._hello_x.format(data.fullname || "")
+    let html = msg.renderFrom(tpl, data)
+    await msg.send({ html });
+  }
+
+
+  /**
+  *
+  * @returns
+  */
+  async set_mfa() {
+    const mfa = this.input.get("mfa") || 0;
+    let user_id = this.input.need(Attr.user_id);
+    let lex = Cache.lex(this.input.ua_language())
+    let message = lex._mfa_enabled_message
+    if (mfa == 0) {
+      message = lex._mfa_disabled_message
+    }
+    let profile = { otp: mfa, mfa };
+    await this.yp.call_proc("drumate_update_profile", user_id, profile);
+    let user = await this.yp.await_proc(`get_user`, user_id);
+    if (!user) {
+      this.output.data({ status: "INVALID_USER" })
+    }
+
+    await this._send_email('_mfa_changed_subject', user.profile.email, { message });
+    this.output.data(user);
+  }
 
   /**
    * 

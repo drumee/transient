@@ -162,7 +162,7 @@ async function createHub(args, opt = {}) {
     hostname = new URL(`http://${hostname}`).hostname;
   }
 
-  opt.lang = "en"; //this.input.use(Attr.lang) || "en";
+  opt.lang = this.input.ua_language();
   filename = await this.yp.await_func(`${user_db}.unique_filename`, pid, filename, "");
   args = { hostname, area, filename, owner_id, domain };
   const rows = await this.yp.await_proc(`${user_db}.desk_create_hub`, args, opt);
