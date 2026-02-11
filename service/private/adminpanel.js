@@ -1804,11 +1804,9 @@ class __private_adminpanel extends Mfs {
       ...updated_member,
       previous_domain: my_org.name,
       previous_domain_id: my_org.id,
-      status: 'moved_away',
-      organization: org.name
+      organization: my_org.name
     }
     await RedisStore.sendData(this.payload(member), recipients);
-    await this.yp.await_query('DELET FROM cookie WHERE uid=?', user_id);
     this.output.data({
       member,
       admin,
