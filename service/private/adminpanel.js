@@ -1325,7 +1325,6 @@ class __private_adminpanel extends Mfs {
         org_name: my_org.name || my_org.link,
         sender: username,
         link,
-        hello:lex._hello_x.format("titi"),
         recipient: user.fullname
       },
       handler: this.exception.email
@@ -1794,7 +1793,8 @@ class __private_adminpanel extends Mfs {
     if (member.email) {
       let lex = Cache.lex(this.input.ua_language());
       let message = lex._admin_removal_message.format(my_org.name);
-      await this._send_email('_admin_removal_subject', member.email, { message });
+      let subject = lex._admin_removal_subject.format(my_org.name);
+      await this._send_email(subject, member.email, { message });
     }
 
     const admin = await this.yp.await_proc(`get_user`, this.uid);
@@ -1802,8 +1802,8 @@ class __private_adminpanel extends Mfs {
 
     member = {
       ...updated_member,
-      previous_domain: org.name,
-      previous_domain_id: org.id,
+      previous_domain: my_org.name,
+      previous_domain_id: my_org.id,
       status: 'moved_away',
       organization: org.name
     }
@@ -1819,11 +1819,10 @@ class __private_adminpanel extends Mfs {
   /**
    * 
    */
-  async _send_email(subject_key, recipient, data, tpl_file = 'message.html') {
+  async _send_email(subject, recipient, data, tpl_file = 'message.html') {
     const ulang = this.input.ua_language();
     let lex = Cache.lex(ulang)
     let tpl = resolve(__dirname, "./templates", tpl_file)
-    let subject = lex[subject_key]
     const msg = new Messenger({
       subject,
       recipient,
@@ -1856,8 +1855,8 @@ class __private_adminpanel extends Mfs {
     if (!user) {
       this.output.data({ status: "INVALID_USER" })
     }
-
-    await this._send_email('_mfa_changed_subject', user.profile.email, { message });
+    let subject = lex._mfa_changed_subject;
+    await this._send_email(subject, user.profile.email, { message });
     this.output.data(user);
   }
 
