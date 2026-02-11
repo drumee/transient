@@ -827,7 +827,6 @@ class __private_adminpanel extends Mfs {
     let seats = parseInt(org?.quota?.seat);
     let list = []
     let emails = {}
-    this.debug("AAA:818", seats, incoming_file)
     for (let user of users) {
       if (seats > 0) {
         user.domain = org.link
@@ -1314,22 +1313,23 @@ class __private_adminpanel extends Mfs {
     const { link: host } = await this.user.organization();
     const link = `${this.input.homepath(host)}#/welcome/reset/${user.id}/${token}/reason=new-account`;
     const subject = `${Cache.message('_join_my_organization', ulang)}`;
+    let lex = Cache.lex(ulang).toObject()
     let my_org = await this.user.organization();
     let org_name = my_org.name || my_org.link
     const msg = new Messenger({
       template: "butler/admin-invitation",
       subject: subject.format(org_name),
       recipient: email,
-      lex: Cache.lex(ulang),
+      lex,
       data: {
         org_name: my_org.name || my_org.link,
         sender: username,
         link,
+        hello:lex._hello_x.format("titi"),
         recipient: user.fullname
       },
       handler: this.exception.email
     });
-    this.debug("AAA:1345", link)
     /** TODO read relay domain from config */
     let from = myConf.mailSender;
     let body = await msg.send({ from });
@@ -1784,7 +1784,6 @@ class __private_adminpanel extends Mfs {
     if (!my_org) return;
 
     let member = await this.yp.await_proc('show_member_detail', user_id, my_org.id);
-    this.debug("AAA:1787", my_org, user_id, member)
     if (isEmpty(member)) return this.output.status('NO_MEMBER');
 
     let result = await this.yp.await_proc('move_user_to_free', user_id, my_org.domain_id);
@@ -1794,7 +1793,7 @@ class __private_adminpanel extends Mfs {
 
     if (member.email) {
       let lex = Cache.lex(this.input.ua_language());
-      message = lex._admin_removal_message.format(org.name);
+      let message = lex._admin_removal_message.format(my_org.name);
       await this._send_email('_admin_removal_subject', member.email, { message });
     }
 
