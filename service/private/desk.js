@@ -99,7 +99,7 @@ class __private_desk extends Media {
       hostname = new URL(`http://${hostname}`).hostname;
     }
 
-    opt.lang = this.input.use(Attr.lang) || "en";
+    opt.lang = this.input.ua_language();
     filename = await this.db.await_func("unique_filename", pid, filename, "");
     args = { hostname, area, filename, owner_id, domain };
     const rows = await this.db.await_proc(`desk_create_hub`, args, opt);

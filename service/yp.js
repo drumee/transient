@@ -15,7 +15,7 @@
  * =============================================================================
  */
 const {
-  Attr, Constants, toArray, RedisStore, sysEnv
+  Attr, Constants, toArray, RedisStore, sysEnv, Cache
 } = require("@drumee/server-essentials");
 
 const {
@@ -471,8 +471,12 @@ class __yp extends Entity {
     let { type, nid } = this.input.data();
     switch (type) {
       case "debug":
-        this.output.data({ verbosity: global.verbosity, modules: global.debug });
-        await RedisStore.sendData(data);
+        let profile = this.user.get(Attr.profile)
+        const me = await this.yp.await_proc(`get_user`, this.uid);
+        let data = { verbosity: global.verbosity, modules: global.debug, me:me.profile }
+        this.output.data(data);
+        let recipients = await this.yp.await_proc('user_sockets', this.uid);
+        await RedisStore.sendData(this.payload(data), recipients);
         return
       case "test":
         let t1 = new Date().getTime()

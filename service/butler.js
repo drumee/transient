@@ -171,7 +171,7 @@ class __butler extends Mfs {
     const ulang = this.input.ua_language();
     const link = `${this.input.homepath()}#/welcome/reset/${user.id}/${token}`;
     const subject = Cache.message("_password_reset_link", ulang);
-
+    const { main_domain } = sysEnv();
     const msg = new Messenger({
       template: "butler/password-forgot",
       subject,
@@ -181,7 +181,7 @@ class __butler extends Mfs {
         icon: this.hub.get(Attr.icon),
         recipient: user.fullname,
         link,
-        home: process.env.domain_name,
+        home: main_domain,
       },
       handler: this.exception.email,
     });
@@ -604,7 +604,7 @@ class __butler extends Mfs {
     switch (data.failed) {
       case 0:
         /** Output done by session.login */
-        const ulang = this.input.ua_language();
+        const ulang = "en"; //this.input.ua_language();
         let lex = Cache.lex(ulang)
         const { main_domain } = sysEnv();
         let data = {
