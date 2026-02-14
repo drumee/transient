@@ -28,9 +28,8 @@ class __bootstrap extends RuntimeEnv {
    * 
    */
   async js() {
-    let type = this.input.get(Attr.type) || 'text/javascript';
     let data = await this.getRuntimeEnv();
-    data = { ...this.hub.toJSON(), ...data, type };
+    data = { ...this.hub.toJSON(), ...data };
     let auth = this.input.authorization();
     data.keysel = auth.keysel || Attr.regsid;
     this.set({ data });
@@ -56,7 +55,6 @@ class __bootstrap extends RuntimeEnv {
     const { ui_home, endpoint_path, runtime_dir, endpoint_name } = sysEnv();
     let plugin_base = join(ui_home, '../..', 'plugins', 'ui', endpoint_name);
     let plugin_info = join(plugin_base, name, 'index.json');
-    this.debug("AAA:53", { plugin_base, plugin_info, ui_home })
     let info;
     if (existsSync(plugin_info)) {
       info = readJson(plugin_info)

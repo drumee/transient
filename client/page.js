@@ -146,14 +146,6 @@ class MainPage extends RuntimeEnv {
     if (sent) {
       return;
     }
-    // let plugins = this.getCustomPlugins();
-    // if (plugins) {
-    //   data.plugins = plugins;
-    // } else if (data.plugins && data.plugins.location) {
-    //   data.plugins = toArray(data.plugins)
-    // } else {
-    //   data.plugins = []
-    // }
     data.keysel = this.refreshAuthorization(data);
     let db = this.hub.get(Attr.db_name);
     data.fonts_links = await this.yp.await_proc(`${db}.get_fonts_links`);
