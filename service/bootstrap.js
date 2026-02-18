@@ -40,7 +40,7 @@ class __bootstrap extends RuntimeEnv {
       bundles[m] = data.app[m]
     }
     data.bundles = bundles;
-    this.debug('AAA:44', data)
+    data.isPlugin = 1;
     let content = this.getRender(template_dir, "bootstrap.js.tpl")(data);
     this.output.javascript(content);
   }
