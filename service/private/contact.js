@@ -1137,17 +1137,16 @@ class __private_contact extends Contact {
     this.output.data(res);
   }
 
-  //========================
-  //
-  //========================
-
+  /**
+   * 
+   * @returns 
+   */
   async invite() {
     let email = this.input.need(Attr.email);
     let message = this.input.use(Attr.message);
     let firstname = this.input.use(Attr.firstname);
     let lastname = this.input.use(Attr.lastname);
     let surname = this.input.use(Attr.surname);
-
     let fullname;
 
     if (!isEmpty(firstname)) {
@@ -1217,7 +1216,6 @@ class __private_contact extends Contact {
       let i = this.yp.await_proc('token_generate_next', entity, fullname, token, 'signup', this.uid);
       sent = await this.send_mail(email, message, token);
     } else {
-
       let my_drumate = await this.yp.await_proc('drumate_exists', this.uid)
       if ((drumate.domain_id == my_drumate.domain_id) && (my_drumate.domain_id > 1)) {
         res.status = 'SAME_DOMAIN';
@@ -1500,6 +1498,7 @@ class __private_contact extends Contact {
       );
       /** Make the peer automatically informed  */
       await this.yp.await_proc(`${peer.db_name}.contact_invite_informed`, this.uid);
+      await this.db.await_proc(`contact_invite_informed`, peer.id);
     } catch (error) {
       this.warn('[CONTACT] Failed to log accept activity:', error.message);
     }
