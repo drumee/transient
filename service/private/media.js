@@ -304,9 +304,6 @@ class __private_media extends Media {
           break;
         case "show":
           let nid = node.nid;
-          if (!dest) {
-            dest = this.heap.dest
-          }
           let access = `${node.des_db}.mfs_access_node`;
           let sockets = await this.yp.await_proc("entity_sockets", {
             db_name: node.des_db,
@@ -328,17 +325,17 @@ class __private_media extends Media {
               nid = r.actual_home_id;
             }
             delete r.args;
-            // const dest = { ...r };
+            const dest = { ...r };
             const src = { ...this.heap.oldItems[s.uid] }
             r.args = { tag, src, dest, changelog: this.__changelog };
-            // let c = null;
-            // if (counts[s.uid]) {
-            //   c = counts[s.uid];
-            // } else {
-            //   let proc = `${r.actual_db}.mfs_count_new`;
-            //   c = await this.yp.await_proc(proc, nid, s.uid);
-            //   counts[s.uid] = c;
-            // }
+            let c = null;
+            if (counts[s.uid]) {
+              c = counts[s.uid];
+            } else {
+              let proc = `${r.actual_db}.mfs_count_new`;
+              c = await this.yp.await_proc(proc, nid, s.uid);
+              counts[s.uid] = c;
+            }
 
             // r.new_chat = c.new_chat;
             // r.new_file = c.new_file;
