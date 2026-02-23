@@ -337,9 +337,9 @@ class __private_media extends Media {
               counts[s.uid] = c;
             }
 
-            r.new_chat = c.new_chat;
-            r.new_file = c.new_file;
-            r.hubs = c.hubs;
+            // r.new_chat = c.new_chat;
+            // r.new_file = c.new_file;
+            // r.hubs = c.hubs;
             nodes[s.uid] = r;
             await RedisStore.sendData(this.payload(r), s);
           }
@@ -870,7 +870,6 @@ class __private_media extends Media {
         denied.push(source_node);
       }
     }
-    this.debug("AAA:85", denied, this.heap.srcgrantlst, src, dest)
     if (!isEmpty(denied)) {
       this.warn("Got denied nodes", denied)
       this._done();
@@ -925,7 +924,6 @@ class __private_media extends Media {
         case "showone":
           if (!row.dest_db_name) {
             let entity = await this.yp.await_proc('get_entity', this.input.get('recipient_id'))
-            // this.warn("AAA:448 -- GOT NULL DEST DB. Using default", entity, row);
             proc = `${entity.db_name}.mfs_access_node`;
             r = await this.db.await_proc(proc, this.uid, row.nid);
             r.privilege = r.permission;
@@ -1217,7 +1215,6 @@ class __private_media extends Media {
       this.uid,
       Permission.MODIFY
     );
-    this.debug("AAA:pre_trash:mfs_chk_pre_trash", data)
     if (!isEmpty(data)) {
       this.exception.user("_delete_hub");
       return;
@@ -1263,8 +1260,6 @@ class __private_media extends Media {
       this.uid,
       Permission.MODIFY
     );
-    this.debug(`AAA:trash:this.heap.nodes`, this.heap.nodes)
-    this.debug(`AAA:trash:mfs_pre_trash_next dbname=${this.dbname}`, this.uid, granted, Permission.MODIFY, data)
     let keys = [Attr.nid, Attr.hub_id];
     let service = "media.remove";
     let recipients;

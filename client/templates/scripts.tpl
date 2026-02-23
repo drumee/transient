@@ -19,6 +19,7 @@
       icons         : "<%= appRoot %>/static/icons",
       instance      : "<%= instance_name %>",
       instance_name : "<%= instance_name %>",
+      isPlugin      : <%= typeof(isPlugin) === 'undefined' ? 0:1 %>,
       keysel        : "<%= keysel %>",
       lang          : "<%= language %>",
       localhost     : <%= localhost %>,

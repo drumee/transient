@@ -24,16 +24,12 @@ const { DENIED } = Events;
 const {
   BATCH_FILE,
   CARD,
-  CATEGORY,
   DIRNAME,
   DOWNLOAD_FOLDER,
-  EXTENSION,
   FAILED_CREATE_FILE,
-  FILENAME,
   FILESIZE,
   FOLDER,
   IMAGE,
-  MIMETYPE,
   NODE_ID,
   ORIGINAL,
   PREVIEW,
@@ -369,7 +365,7 @@ class __media extends Mfs {
    */
   async configure_icon(nid, incoming_file, filename) {
     const c = await getFileinfo(incoming_file, filename);
-    const ext = c[EXTENSION];
+    const ext = c.extension;
 
     const filepath = join(this.user.get(Attr.home_dir), "__config__", "icons");
     mkdirSync(filepath, { recursive: true });
@@ -579,6 +575,11 @@ class __media extends Mfs {
     if (!(await this.chekcDiskLimit())) return;
 
     const c = await getFileinfo(incoming_file, filename);
+    let { ext } = Cache.getFilecap(c.ext)
+    if(!ext){
+      /** Update filecap table to ensure proper execution */
+      await this.yp.await_proc('add_filecap', c);
+    }
     const data = {};
     data.filename = c.filename;
     data.parent_id = parent.nid;
@@ -868,7 +869,7 @@ class __media extends Mfs {
     if (!data) {
       return { error: "failed_to_store" };
     }
-    filename = data[FILENAME] || this.randomString();
+    filename = data.filename || this.randomString();
     if (filename.length > 126) {
       filename = filename.slice(0, 126);
     }
@@ -877,10 +878,10 @@ class __media extends Mfs {
       owner_id: uid,
       filename,
       pid,
-      category: data[CATEGORY],
-      ext: data[EXTENSION],
-      mimetype: data[MIMETYPE],
-      filesize: data[FILESIZE],
+      category: data.category,
+      ext: data.extension,
+      mimetype: data.mimetype,
+      filesize: data.filesize,
       showResults: 1
     }
     let md = this.input.get(Attr.metadata);
@@ -928,7 +929,7 @@ class __media extends Mfs {
 
     /** SEO Indexing via Bull Queue */
     // if ([Attr.document, Attr.image].includes(data[CATEGORY])) {
-    if ([Attr.document].includes(data[CATEGORY])) {
+    if ([Attr.document].includes(data.category)) {
       try {
         // Add to indexing queue
         res.actual_db = this.db._dbname;/** Require by the indexer. Do not use db_name, due to filter */
