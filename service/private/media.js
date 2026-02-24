@@ -336,10 +336,6 @@ class __private_media extends Media {
               c = await this.yp.await_proc(proc, nid, s.uid);
               counts[s.uid] = c;
             }
-
-            // r.new_chat = c.new_chat;
-            // r.new_file = c.new_file;
-            // r.hubs = c.hubs;
             nodes[s.uid] = r;
             await RedisStore.sendData(this.payload(r), s);
           }

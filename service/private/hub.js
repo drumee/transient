@@ -514,14 +514,17 @@ class __private_hub extends Hub {
       this.warn("delete_hub: WRONG_ENTITY_TYPE", hub_id)
       return this.exception.user("WRONG_ENTITY_TYPE");
     }
-    data.nid = data.id;
+    // let db_name = this.user.get(Attr.db_name);
+    let old_node = this.granted_node(); //await this.yp.await_proc(`${db_name}.mfs_access_node`, this.uid, hub_id);
+    let outout = { ...old_node, uid: this.uid, nid:hub_id, id: hub_id, hub_id }
+
     let sockets = await this.yp.await_proc("entity_sockets", hub_id);
-    await RedisStore.sendData(this.payload(data), sockets);
+    await RedisStore.sendData(this.payload(outout), sockets);
 
     await this.db.await_proc(`remove_all_members`, 0);
     let entity = await this.yp.await_proc("entity_delete", hub_id);
     remove_dir(entity.home_dir, 1);
-    this.output.data({ uid: this.uid, id: hub_id, hub_id });
+    this.output.data(outout);
   }
 
   /**
@@ -924,10 +927,7 @@ class __private_hub extends Hub {
 
     let service = "media.remove";
     let hub_id = this.hub.get(Attr.id);
-    this.debug("AAA:987", hub_id, members)
     for (let uid of members) {
-      let r = await this.yp.await_proc("get_entity", uid)
-      this.debug("AAA:987", r, uid)
       let { db_name } = await this.yp.await_proc("get_entity", uid);
       await this.yp.await_proc(`${db_name}.leave_hub`, hub_id);
       let node = this.granted_node();
