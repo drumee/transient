@@ -1,4 +1,3 @@
-const { Autolinker } = require("autolinker");
 const Filesize = require("filesize");
 
 let VERBOSITY = parseInt(localStorage.logLevel) || 0;
@@ -100,30 +99,40 @@ export function filesize(val, opt) {
 
 /**
  * 
- * @param {*} data 
+ * @param {*} text
  */
-export function copyToClipboard(data) {
+export async function copyToClipboard(text) {
+  // Try using modern Clipboard API first
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    try {
+      // await navigator.clipboard.writeText(data);
+      // return true;
+      const blob = new Blob([text], { type: 'text/plain' });
+      // Create a ClipboardItem with the Blob
+      const clipboardItem = new ClipboardItem({ [blob.type]: blob });
+      // Write the item to the clipboard
+      await navigator.clipboard.write([clipboardItem]);
+      return true;
+    } catch (err) {
+      console.error('Clipboard API failed:', err);
+      // Fall back to execCommand method
+    }
+  }
+
+  // Fallback for older browsers
   const el = document.createElement("textarea");
-  el.value = data;
+  el.value = text;
   el.setAttribute("readonly", "");
   el.style.position = "absolute";
   el.style.left = "-9999px";
-
   document.body.appendChild(el);
-  const selected =
-    document.getSelection().rangeCount > 0
-      ? document.getSelection().getRangeAt(0)
-      : false;
+
   el.select();
-
-  document.execCommand("copy");
+  const success = document.execCommand("copy");
   document.body.removeChild(el);
-  if (selected) {
-    document.getSelection().removeAllRanges();
-    document.getSelection().addRange(selected);
-  }
-}
 
+  return success;
+}
 /**
  * 
  * @param {*} val 
@@ -205,10 +214,8 @@ export function dayOfTime(time, format) {
  * @returns 
  */
 export function loadJS(url) {
-  console.log("AAA:208 loding js from", url)
   const a = new Promise(function (resolve, reject) {
     const xhr = new XMLHttpRequest();
-    // xhr.allowCORS(xhr, url);
     xhr.open("GET", url, true);
     xhr.onload = function (e) {
       const el = document.createElement(_a.script);
@@ -400,7 +407,7 @@ export function openUserMailAgent(msg) {
   let subject = msg.subject || msg.title || "";
   let body = msg.body || msg.message || "";
   subject = encodeURIComponent(subject);
-  body = encodeURIComponent(Autolinker.link(body));
+  body = encodeURIComponent(body);
   var mailToLink = `?subject=${subject}&body=${body}`;
   if (msg.recipients) {
     if (_.isString(msg.recipients)) {
@@ -417,16 +424,22 @@ export function openUserMailAgent(msg) {
   a.setAttribute(_a.href, mailToLink);
   a.setAttribute(_a.target, "_blank");
   a.style.position = _a.absolute;
-  a.style.display = _a.none;
+  a.style.opacity = 0;
+  a.style.width = "10px";
+  a.style.height = "10px";
   var clickHandler = () => {
     const f = () => {
       a.removeEventListener(_e.click, clickHandler);
       a.remove();
     };
-    _.delay(f, 300);
+    setTimeout(f, 300);
   };
+  console.log("AAA:427", a)
+  window.CLIKK = a;
   a.addEventListener(_e.click, clickHandler, false);
-  a.click();
+  setTimeout(() => {
+    a.click();
+  }, 300);
 }
 
 
@@ -631,23 +644,23 @@ export function createQrcode(opt) {
 
 export function createSafeObject(initial = {}) {
   const data = { ...initial };
-  
+
   const handler = {
     get(target, prop) {
       // Handle method calls
       if (methods.hasOwnProperty(prop)) {
         return methods[prop].bind(proxy);
       }
-      
+
       // Handle property access
       if (prop in data) {
         return data[prop];
       }
-      
+
       // Return key as string for missing properties
       return String(prop);
     },
-    
+
     set(target, prop, value) {
       // Don't allow overriding methods
       if (prop in methods) {
@@ -658,45 +671,45 @@ export function createSafeObject(initial = {}) {
       return true;
     }
   };
-  
+
   // Built-in methods
   const methods = {
     set(key, value) {
       data[key] = value;
       return this;
     },
-    
+
     get(key) {
       return key in data ? data[key] : String(key);
     },
-    
+
     extend(newProps) {
       Object.assign(data, newProps);
       return this;
     },
-    
+
     delete(key) {
       delete data[key];
       return this;
     },
-    
+
     has(key) {
       return key in data;
     },
-    
+
     keys() {
       return Object.keys(data);
     },
-    
+
     values() {
       return Object.values(data);
     },
-    
+
     toObject() {
       return { ...data };
     }
   };
-  
+
   const proxy = new Proxy({}, handler);
   return proxy;
 }
