@@ -388,34 +388,70 @@ class __private_hub extends Hub {
     );
     let message = this.input.use(Attr.message) || msg;
     users = toArray(users);
-    let res = {};
     let members = [];
     let rows = [];
     if (isEmpty(users)) {
-      res = [];
-      return res;
+      this.output.data([]);
+      return;
     }
     const { db_name, domain_id } = this.user.toJSON();
     let proc = `${db_name}.my_contact_exists`;
     for (let entity of users) {
-      let contact = await this.yp.await_proc(proc, 'entity', entity, '', '')
-      if (!isEmpty(contact)) {
-        if (contact.status == "active") {
-          members.push(contact.uid);
+      try {
+        let contact = await this.yp.await_proc(proc, 'entity', entity, '', '');
+        if (!isEmpty(contact)) {
+          if (contact.status == "active") {
+            members.push(contact.uid);
+          } else {
+            await this.yp.await_proc(
+              "yp_add_share_guest",
+              this.hub.get(Attr.id),
+              privilege,
+              expiry,
+              entity
+            );
+          }
         } else {
-          await this.yp.await_proc(
-            "yp_add_share_guest",
-            this.hub.get(Attr.id),
-            privilege,
-            expiry,
-            entity
-          );
+          let drumate = null;
+          try {
+            drumate = await this.yp.await_proc("drumate_exists", entity);
+          } catch (e) {
+            this.warn("[hub] add_contributors: drumate_exists for entity", entity, e);
+          }
+          const sameDomain = drumate && drumate.domain_id != null && domain_id === drumate.domain_id;
+          if (sameDomain) {
+            members.push(drumate.id);
+          } else {
+            // Not a contact: register as share guest and send contact invitation.
+            // Two cases: (1) Email already has Drumee account → contact.invite sends in-app mail.
+            // (2) Email not in system → contact.invite sends signup/invite email with token.
+            await this.yp.await_proc(
+              "yp_add_share_guest",
+              this.hub.get(Attr.id),
+              privilege,
+              expiry,
+              entity
+            );
+            const isEmail = typeof entity === "string" && entity.indexOf("@") !== -1;
+            if (isEmail) {
+              try {
+                const ContactPrivate = require("./contact");
+                const contactSvc = new ContactPrivate(this.input, this.output, this.session);
+                const origEmail = this.input.use(Attr.email) ?? this.input.get(Attr.email);
+                const origMessage = this.input.use(Attr.message);
+                this.input.set(Attr.email, entity);
+                this.input.set(Attr.message, message);
+                await contactSvc.invite();
+                if (origEmail !== undefined) this.input.set(Attr.email, origEmail);
+                if (origMessage !== undefined) this.input.set(Attr.message, origMessage);
+              } catch (err) {
+                this.warn("[hub] add_contributors: send invitation failed for entity", entity, err);
+              }
+            }
+          }
         }
-      } else {
-        let drumate = await this.yp.await_proc("drumate_exists", entity);
-        if (domain_id == drumate.domain_id) {
-          members.push(drumate.id);
-        }
+      } catch (err) {
+        this.warn("[hub] add_contributors: failed for entity", entity, err);
       }
     }
     for (let uid of members) {
