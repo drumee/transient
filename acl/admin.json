@@ -1,16 +1,78 @@
 {
   "services": {
     "show_watermark": {
+      "doc": "Get watermark timestamps for hub and drumate entity pools from the yellow-page database",
       "scope": "plateform",
       "permission": {
         "permission": "read"
-      }
+      },
+      "params": {},
+      "returns": {
+        "hub": {
+          "type": "object",
+          "doc": "Watermark record for hub entities returned by the watermark stored procedure"
+        },
+        "drumate": {
+          "type": "object",
+          "doc": "Watermark record for drumate entities returned by the watermark stored procedure"
+        },
+        "ctime": {
+          "type": "object",
+          "doc": "Most recent creation timestamps for each entity type",
+          "properties": {
+            "hub": {
+              "type": "string",
+              "doc": "Latest ctime for hub-type entities in the pool area"
+            },
+            "drumate": {
+              "type": "string",
+              "doc": "Latest ctime for drumate-type entities in the pool area"
+            }
+          }
+        }
+      },
+      "errors": [
+        {
+          "code": "DENIED",
+          "message": "Caller does not have the required platform remit",
+          "http_status": 403
+        }
+      ]
     },
     "yp_test": {
+      "doc": "Execute an arbitrary yellow-page stored procedure by name with a dynamic argument list. Intended for administrative testing and diagnostics only.",
       "scope": "plateform",
       "permission": {
         "permission": "write"
-      }
+      },
+      "params": {
+        "name": {
+          "type": "string",
+          "required": true,
+          "doc": "Name of the stored procedure to call on the yellow-page database"
+        },
+        "values": {
+          "type": "array",
+          "required": true,
+          "doc": "Ordered list of arguments to spread into the stored procedure call",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "returns": {
+        "data": {
+          "type": "object",
+          "doc": "Raw result returned by the named stored procedure"
+        }
+      },
+      "errors": [
+        {
+          "code": "DENIED",
+          "message": "Caller does not have the required platform remit",
+          "http_status": 403
+        }
+      ]
     }
   },
   "modules": {
