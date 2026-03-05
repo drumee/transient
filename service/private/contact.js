@@ -1271,47 +1271,53 @@ class __private_contact extends Contact {
         }
       }
     }
-    res = await this._show(newcontact.id);
-    res.input = email;
-    // if (sent.error) {
-    //   res.status = 'EMAIL_NOT_SENT';
-    //   res.failed = sent.error;
-    // }
+    try {
+      res = await this._show(newcontact.id);
+      res.input = email;
+      // if (sent.error) {
+      //   res.status = 'EMAIL_NOT_SENT';
+      //   res.failed = sent.error;
+      // }
 
-    // Log contact activities
-    if (!isEmpty(drumate) && res.status !== 'EMAIL_NOT_SENT') {
-      try {
-        // Log invite_sent (for sender)
-        await this.yp.await_proc(
-          'contact_log_activity',
-          this.uid,
-          drumate.id,
-          'invite_sent',
-          {
-            email: email,
-            message: message,
-            contact_id: newcontact.id
-          }
-        );
+      // Log contact activities
+      if (!isEmpty(drumate) && res.status !== 'EMAIL_NOT_SENT') {
+        try {
+          // Log invite_sent (for sender)
+          await this.yp.await_proc(
+            'contact_log_activity',
+            this.uid,
+            drumate.id,
+            'invite_sent',
+            {
+              email: email,
+              message: message,
+              contact_id: newcontact.id
+            }
+          );
 
-        // Log invite_received (for receiver)
-        await this.yp.await_proc(
-          'contact_log_activity',
-          this.uid,
-          drumate.id,
-          'invite_received',
-          {
-            email: email,
-            message: message,
-            from_fullname: this.user.get('fullname')
-          }
-        );
-      } catch (error) {
-        this.warn('[CONTACT] Failed to log invite activity:', error.message);
+          // Log invite_received (for receiver)
+          await this.yp.await_proc(
+            'contact_log_activity',
+            this.uid,
+            drumate.id,
+            'invite_received',
+            {
+              email: email,
+              message: message,
+              from_fullname: this.user.get('fullname')
+            }
+          );
+        } catch (error) {
+          this.warn('[CONTACT] Failed to log invite activity:', error.message);
+        }
       }
-    }
 
-    this.output.data(res);
+      this.output.data(res);
+    } catch (err) {
+      this.warn('[CONTACT] invite: _show or output failed after invite sent', err.message);
+      // Invite was already sent; return success so client does not get SERVICE_FAILED
+      this.output.data({ status: 'invited', input: email, contact_id: newcontact && newcontact.id });
+    }
   }
 
   /**
