@@ -129,6 +129,15 @@ class __butler extends Mfs {
       return;
     }
 
+    // Check if email is already a registered Drumee user
+    if (data.method === 'signup') {
+      const existingUser = await this.yp.await_proc('drumate_exists', data.email);
+      if (!isEmpty(existingUser) && existingUser.id) {
+        data.user_exists = true;
+        data.uid = existingUser.id;
+      }
+    }
+
     a = a[0].split(/[\.-_]/);
     const base = a[0] || "a";
     let i = await this.yp.await_proc("unique_ident", base);
