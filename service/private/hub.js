@@ -439,11 +439,14 @@ class __private_hub extends Hub {
                 const contactSvc = new ContactPrivate(this.input, this.output, this.session);
                 const origEmail = this.input.use(Attr.email) ?? this.input.get(Attr.email);
                 const origMessage = this.input.use(Attr.message);
+                const origHubId = this.input.use(Attr.hub_id);
                 this.input.set(Attr.email, entity);
                 this.input.set(Attr.message, message);
+                this.input.set(Attr.hub_id, this.hub.get(Attr.id));
                 await contactSvc.invite();
                 if (origEmail !== undefined) this.input.set(Attr.email, origEmail);
                 if (origMessage !== undefined) this.input.set(Attr.message, origMessage);
+                if (origHubId !== undefined) this.input.set(Attr.hub_id, origHubId);
               } catch (err) {
                 this.warn("[hub] add_contributors: send invitation failed for entity", entity, err);
               }

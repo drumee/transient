@@ -1177,112 +1177,108 @@ class __private_contact extends Contact {
       return this.output.data(res);
     }
 
-    let a = email.split('@');
-    a[1] = a[0]
-    if (a[0].indexOf('.') !== -1) {
-      a = a[0].split('.');
-    }
-    firstname = a[0]
-    lastname = a[1]
-
-    drumate = await this.yp.await_proc('drumate_exists', email);
-    if (isEmpty(drumate)) {
-      entity = email;
-      metadata.source = email
-      metadata.is_auto = 1
-    } else {
-      entity = drumate.id
-      metadata.source = email
-      metadata.is_auto = 1
-    }
-
-
-    let contact = await this.db.await_proc('my_contact_exists', 'entity', entity, null, null);
-
-    if (!isEmpty(contact)) {
-      if (contact.status == 'active' || contact.status == 'informed') {
-        res.status = 'ALREADY_IN_CONTACT';
-        return this.output.data(res);
+    try {
+      let a = email.split('@');
+      a[1] = a[0]
+      if (a[0].indexOf('.') !== -1) {
+        a = a[0].split('.');
       }
-      if (contact.status == 'received') {
-        res.status = 'INVITE_RECEIVED';
-        return this.output.data(res);
-      }
-    }
-    let sent = {};
-    if (isEmpty(drumate)) {
-      const token = this.randomString();
-      fullname = fullname || entity
-      let i = this.yp.await_proc('token_generate_next', entity, fullname, token, 'signup', this.uid);
-      sent = await this.send_mail(email, message, token);
-    } else {
-      let my_drumate = await this.yp.await_proc('drumate_exists', this.uid)
-      if ((drumate.domain_id == my_drumate.domain_id) && (my_drumate.domain_id > 1)) {
-        res.status = 'SAME_DOMAIN';
-        return this.output.data(res);
-      }
-      let vhost = await this.yp.await_proc('domain_exists', drumate.domain_id);
-      sent = await this.send_drumate_mail(email, message, vhost.name);
-    }
+      firstname = a[0]
+      lastname = a[1]
 
-    if (isEmpty(contact)) {
-      newcontact = await this.db.await_proc('my_contact_add_next',
-        entity, surname, firstname, lastname, 'independant', null, message, metadata
-      );
-    } else {
-      newcontact = await this.db.await_proc('my_contact_update_next',
-        contact.id, contact.surname, contact.firstname, contact.lastname,
-        contact.comment, message, contact.entity, contact.metadata
-      );
-    }
-
-    if (!isEmpty(drumate)) {
-      before = await this.yp.await_proc('forward_proc', drumate.id, 'contact_status_get', `'${this.uid}'`)
-      if (isEmpty(before)) { before.status = 'no' }
-
-      await this.db.await_proc('contact_invite', entity);
-      after = await this.yp.await_proc('forward_proc', drumate.id, 'contact_status_get', `'${this.uid}'`)
-
-      if ((after.status != before.status) && (after.status == 'invitation' || after.status == 'received' || after.status == 'informed')) {
-        data = await this.yp.await_proc('forward_proc', drumate.id, 'contact_notification_by_entity', `'${this.uid}'`)
-        let sockets = await this.yp.await_proc('user_sockets', drumate.id);
-        await RedisStore.sendData(this.payload(data), sockets);
-      }
-    }
-
-    if (isEmpty(drumate)) {
-      await this.db.await_proc('contact_invite', entity);
-    }
-
-    if (isEmpty(contact)) {
+      drumate = await this.yp.await_proc('drumate_exists', email);
       if (isEmpty(drumate)) {
-        let node = {}
-        node.email = entity;
-        node.category = 'priv';
-        node.is_default = '1';
-        await this.db.await_proc('my_contact_mail_add', newcontact.id, stringify([node]))
+        entity = email;
+        metadata.source = email
+        metadata.is_auto = 1
       } else {
-        if (EMAIL_CHECKER.test(email)) {
+        entity = drumate.id
+        metadata.source = email
+        metadata.is_auto = 1
+      }
+
+
+      let contact = await this.db.await_proc('my_contact_exists', 'entity', entity, null, null);
+
+      if (!isEmpty(contact)) {
+        if (contact.status == 'active' || contact.status == 'informed') {
+          res.status = 'ALREADY_IN_CONTACT';
+          return this.output.data(res);
+        }
+        if (contact.status == 'received') {
+          res.status = 'INVITE_RECEIVED';
+          return this.output.data(res);
+        }
+      }
+      let sent = {};
+      if (isEmpty(drumate)) {
+        const token = this.randomString();
+        fullname = fullname || entity
+        let i = this.yp.await_proc('token_generate_next', entity, fullname, token, 'signup', this.uid);
+        sent = await this.send_mail(email, message, token);
+      } else {
+        let my_drumate = await this.yp.await_proc('drumate_exists', this.uid)
+        if ((drumate.domain_id == my_drumate.domain_id) && (my_drumate.domain_id > 1)) {
+          res.status = 'SAME_DOMAIN';
+          return this.output.data(res);
+        }
+        let vhost = await this.yp.await_proc('domain_exists', drumate.domain_id);
+        sent = await this.send_drumate_mail(email, message, vhost.name);
+      }
+
+      if (isEmpty(contact)) {
+        newcontact = await this.db.await_proc('my_contact_add_next',
+          entity, surname, firstname, lastname, 'independant', null, message, metadata
+        );
+      } else {
+        newcontact = await this.db.await_proc('my_contact_update_next',
+          contact.id, contact.surname, contact.firstname, contact.lastname,
+          contact.comment, message, contact.entity, contact.metadata
+        );
+      }
+
+      if (!isEmpty(drumate)) {
+        before = await this.yp.await_proc('forward_proc', drumate.id, 'contact_status_get', `'${this.uid}'`)
+        if (isEmpty(before)) { before.status = 'no' }
+
+        await this.db.await_proc('contact_invite', entity);
+        after = await this.yp.await_proc('forward_proc', drumate.id, 'contact_status_get', `'${this.uid}'`)
+
+        if ((after.status != before.status) && (after.status == 'invitation' || after.status == 'received' || after.status == 'informed')) {
+          data = await this.yp.await_proc('forward_proc', drumate.id, 'contact_notification_by_entity', `'${this.uid}'`)
+          let sockets = await this.yp.await_proc('user_sockets', drumate.id);
+          await RedisStore.sendData(this.payload(data), sockets);
+        }
+      }
+
+      if (isEmpty(drumate)) {
+        await this.db.await_proc('contact_invite', entity);
+      }
+
+      if (isEmpty(contact)) {
+        if (isEmpty(drumate)) {
           let node = {}
-          node.email = email;
+          node.email = entity;
           node.category = 'priv';
           node.is_default = '1';
           await this.db.await_proc('my_contact_mail_add', newcontact.id, stringify([node]))
+        } else {
+          if (EMAIL_CHECKER.test(email)) {
+            let node = {}
+            node.email = email;
+            node.category = 'priv';
+            node.is_default = '1';
+            await this.db.await_proc('my_contact_mail_add', newcontact.id, stringify([node]))
+          }
         }
       }
-    }
-    try {
+
       res = await this._show(newcontact.id);
       res.input = email;
-      // if (sent.error) {
-      //   res.status = 'EMAIL_NOT_SENT';
-      //   res.failed = sent.error;
-      // }
 
       // Log contact activities
       if (!isEmpty(drumate) && res.status !== 'EMAIL_NOT_SENT') {
         try {
-          // Log invite_sent (for sender)
           await this.yp.await_proc(
             'contact_log_activity',
             this.uid,
@@ -1294,8 +1290,6 @@ class __private_contact extends Contact {
               contact_id: newcontact.id
             }
           );
-
-          // Log invite_received (for receiver)
           await this.yp.await_proc(
             'contact_log_activity',
             this.uid,
@@ -1304,7 +1298,7 @@ class __private_contact extends Contact {
             {
               email: email,
               message: message,
-              from_fullname: this.user.get('fullname')
+              from_fullname: (this.user && this.user.get) ? this.user.get('fullname') : ''
             }
           );
         } catch (error) {
@@ -1314,9 +1308,13 @@ class __private_contact extends Contact {
 
       this.output.data(res);
     } catch (err) {
-      this.warn('[CONTACT] invite: _show or output failed after invite sent', err.message);
-      // Invite was already sent; return success so client does not get SERVICE_FAILED
-      this.output.data({ status: 'invited', input: email, contact_id: newcontact && newcontact.id });
+      this.warn('[CONTACT] invite error', err && err.message ? err.message : err);
+      // Always return 200 with body so client does not get 400 SERVICE_FAILED
+      if (newcontact) {
+        this.output.data({ status: 'invited', input: email, contact_id: newcontact.id });
+      } else {
+        this.output.data({ status: 'SERVICE_ERROR', error: String(err && err.message || err), input: email });
+      }
     }
   }
 
