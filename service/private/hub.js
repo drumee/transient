@@ -406,8 +406,8 @@ class __private_hub extends Hub {
             await this.yp.await_proc(
               "yp_add_share_guest",
               this.hub.get(Attr.id),
-              privilege,
               expiry,
+              privilege,
               entity
             );
           }
