@@ -185,30 +185,6 @@ class __media extends Mfs {
     this.output.data(node);
   }
 
-  /**
-   * 
-   * @param {*} metadat 
-   */
-  cleanJson(data) {
-    if (!data) return {};
-    let tmp;
-    if (isString(data)) {
-      tmp = JSON.parse(data);
-      let exists = {};
-      if (isString(tmp._seen_)) {
-        let s = toArray(JSON.parse(tmp._seen_));
-        let seen = s.filter((e) => {
-          let key = keys(e)[0];
-          if (exists[key]) return false;
-          exists[key] = e[key];
-          return /[0-9a-f]{16,16}/i.test(key)
-        })
-        tmp._seen_ = stringify(seen);
-      }
-      return tmp;
-    }
-    return data;
-  }
 
   /**
    * ownpath refers to the absolute path within the hub, nid must be set to hone_id

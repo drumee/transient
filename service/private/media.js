@@ -44,12 +44,12 @@ const {
 } = Constants;
 
 const { MfsTools, Generator, Document } = require("@drumee/server-core");
-const { check_base, remove_node, move_node, copy_node, mkdir } = MfsTools;
+const { check_base, remove_node, move_node, copy_node, mkdir, cleanSeen} = MfsTools;
 const Media = require("../media");
 const { stringify } = JSON;
 const { isEmpty, isString, values } = require("lodash");
-const { resolve, basename, extname, normalize } = require("path");
-const { existsSync, writeFileSync, readdirSync } = require("fs");
+const { resolve, basename, extname } = require("path");
+const { existsSync, writeFileSync, readdirSync, statSync} = require("fs");
 const { writeFileSync: writeJson } = require("jsonfile");
 const SPAWN_OPT = { detached: true, stdio: ["ignore", "ignore", "ignore"] };
 const Spawn = require("child_process").spawn;
@@ -1427,7 +1427,7 @@ class __private_media extends Media {
       case Attr.schedule:
         try {
           let { metadata } = JSON.parse(this.granted_node());
-          metadata = this.cleanJson(metadata);
+          metadata = cleanSeen(metadata);
           metadata.title = filename;
           res = await this.db.await_proc(
             "mfs_set_metadata",
@@ -1517,7 +1517,7 @@ class __private_media extends Media {
     let md5Hash = await Generator.rotate_image(node, angle);
     if (md5Hash) {
       let { metadata } = node;
-      metadata = this.cleanJson(metadata);
+      metadata = cleanSeen(metadata);
       metadata.md5Hash = md5Hash;
       let { mtime } = await this.db.await_proc("mfs_set_metadata", node.id, metadata, 1);
       node.mtime = mtime;
@@ -1563,7 +1563,7 @@ class __private_media extends Media {
         await this.store(pid, filepath, user_filename);
       } else {
         let metadata = this.input.get(Attr.metadata) || {};
-        metadata = this.cleanJson(metadata);
+        metadata = cleanSeen(metadata);
         metadata.md5Hash = md5Hash.digest("hex");
 
         // Save old values before replacement
@@ -1667,7 +1667,7 @@ class __private_media extends Media {
     }
     let md5Hash = this.input.get("md5Hash");
     let { metadata } = node;
-    metadata = this.cleanJson(metadata);
+    metadata = cleanSeen(metadata);
     metadata.md5Hash = md5Hash;
     let privilege = node.permission;
     let home_dir = node.home_dir;
