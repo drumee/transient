@@ -1,3 +1,48 @@
+drumee-ui-pod (3.2.30) stable; urgency=medium
+  * Change icons builder
+ -- Somanos Sar <somanos.sar@drumee.com>  Thi, 26 Jan 2026 10:00:00 +000
+
+drumee-ui-pod (3.2.29) stable; urgency=medium
+  * Styles fixes
+ -- Somanos Sar <somanos.sar@drumee.com>  Thi, 26 Jan 2026 10:00:00 +000
+drumee-ui-pod (3.2.28) stable; urgency=medium
+  * Fix support folders inner hubs
+ -- Somanos Sar <somanos.sar@drumee.com>  Tue, 24 Jan 2026 10:00:00 +000
+
+drumee-ui-pod (3.2.27) stable; urgency=medium
+  * Support folders inner hubs
+ -- Somanos Sar <somanos.sar@drumee.com>  Fri, 20 Jan 2026 10:00:00 +000
+
+drumee-ui-pod (3.2.26) stable; urgency=medium
+  * Changed router loading strategy
+ -- Somanos Sar <somanos.sar@drumee.com>  Wed, 18 Jan 2026 10:00:00 +000
+
+drumee-ui-pod (3.2.25) stable; urgency=medium
+  * Deploy reward hub
+ -- Somanos Sar <somanos.sar@drumee.com>  Sat, 14 Jan 2026 10:00:00 +000
+
+drumee-ui-pod (3.2.24) stable; urgency=medium
+  * Deploy reward hub
+ -- Somanos Sar <somanos.sar@drumee.com>  Thu, 12 Jan 2026 10:00:00 +000
+drumee-ui-pod (3.2.23) stable; urgency=medium
+  * Fixes adminpanel
+ -- Somanos Sar <somanos.sar@drumee.com>  Tue, 10 Jan 2026 10:00:00 +000
+
+drumee-ui-pod (3.2.22) stable; urgency=medium
+  * Fixes contact
+ -- Somanos Sar <somanos.sar@drumee.com>  Feb, 09 Jan 2026 10:00:00 +000
+drumee-ui-pod (3.2.21) stable; urgency=medium
+  * Clean up icons
+ -- Somanos Sar <somanos.sar@drumee.com>  Feb, 06 Jan 2026 10:00:00 +000
+
+drumee-ui-pod (3.2.20) stable; urgency=medium
+  * Improve initil loading
+ -- Somanos Sar <somanos.sar@drumee.com>  Feb, 05 Jan 2026 10:00:00 +000
+
+drumee-ui-pod (3.2.19) stable; urgency=medium
+  * Small fixes
+ -- Somanos Sar <somanos.sar@drumee.com>  Feb, 03 Jan 2026 10:00:00 +000
+
 drumee-ui-pod (3.2.18) stable; urgency=medium
   * Small fixes
  -- Somanos Sar <somanos.sar@drumee.com>  Fri, 30 Jan 2026 10:00:00 +000

@@ -92,7 +92,6 @@ if [ "$enableApi" == "yes" ]; then
   webpack --config $config
 fi
 
-rsync -ra bb-templates $UI_BUILD_PATH/
 rm -f $UI_BUILD_PATH/app/stats.json
 rm -rf $build_dir/debian/
 
