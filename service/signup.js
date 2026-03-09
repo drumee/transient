@@ -134,22 +134,22 @@ class Signup extends Loby {
     this.user.set(res.user);
     this.uid = res.user.id;
     await this.make_default_folers(res.user)
-    let hub = await this.createHub({
-      filename: uniqueNamesGenerator(hubNameConfig),
-      owner_id: res.user.id,
-      domain: res.user.domain,
-      area: Attr.private,
-      user_db: res.user.db_name
-    });
-    await this.make_default_folers(hub)
-    hub = await this.createHub({
-      filename: uniqueNamesGenerator(hubNameConfig),
-      owner_id: res.user.id,
-      domain: res.user.domain,
-      area: Attr.share,
-      user_db: res.user.db_name
-    });
-    await this.make_default_folers(hub)
+    // let hub = await this.createHub({
+    //   filename: uniqueNamesGenerator(hubNameConfig),
+    //   owner_id: res.user.id,
+    //   domain: res.user.domain,
+    //   area: Attr.private,
+    //   user_db: res.user.db_name
+    // });
+    // await this.make_default_folers(hub)
+    // hub = await this.createHub({
+    //   filename: uniqueNamesGenerator(hubNameConfig),
+    //   owner_id: res.user.id,
+    //   domain: res.user.domain,
+    //   area: Attr.share,
+    //   user_db: res.user.db_name
+    // });
+    // await this.make_default_folers(hub)
     await this.setWallpaper(this.uid)
     await this.send_signup_welcome(email)
     this.output.data(res);
