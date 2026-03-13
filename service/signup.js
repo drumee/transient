@@ -168,6 +168,7 @@ class Signup extends Loby {
   /**
    * Resolve pending hub invitations từ hub.add_contributors (email được invite trước khi đăng ký).
    * Add user vào các hub và xóa khỏi pending_invitation.
+   * Logic tham khảo adminpanel.js: join_hub + permission_grant (user db) + permission_grant (hub db).
    * @param {string} email - email user vừa đăng ký
    */
   async _resolve_pending_invitation(email) {
@@ -175,6 +176,13 @@ class Signup extends Loby {
     if (isArray(newUser)) newUser = newUser[0];
     if (isEmpty(newUser) || !newUser.id) {
       this.warn("[_resolve_pending_invitation] Cannot find user for", email);
+      return;
+    }
+
+    const userEntity = await this.yp.await_proc("get_entity", newUser.id);
+    const userDbName = userEntity && userEntity.db_name;
+    if (!userDbName) {
+      this.warn("[_resolve_pending_invitation] Cannot find db_name for user", newUser.id);
       return;
     }
 
@@ -189,15 +197,19 @@ class Signup extends Loby {
     for (const row of rows) {
       const { hub_id, permission, expiry_time } = row;
       try {
-        const db_name = await this.yp.await_func("get_db_name", hub_id);
-        if (!db_name) {
+        const hubDbName = await this.yp.await_func("get_db_name", hub_id);
+        if (!hubDbName) {
           this.warn('[_resolve_pending_invitation] Cannot find db_name for hub', hub_id);
           continue;
         }
 
-        await this.yp.await_proc(`${db_name}.add_member`, newUser.id, permission, expiry_time);
+        await this.yp.await_proc(`${userDbName}.join_hub`, hub_id);
         await this.yp.await_proc(
-          `${db_name}.permission_grant`,
+          `${userDbName}.permission_grant`,
+          hub_id, newUser.id, expiry_time, permission, 'system', 'Resolved from pending_invitation on signup'
+        );
+        await this.yp.await_proc(
+          `${hubDbName}.permission_grant`,
           '*', newUser.id, expiry_time, permission, 'system', 'Resolved from pending_invitation on signup'
         );
         this.debug("[_resolve_pending_invitation] Added user", newUser.id, "to hub", hub_id);
