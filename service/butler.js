@@ -129,6 +129,15 @@ class __butler extends Mfs {
       return;
     }
 
+    // Check if email is already a registered Drumee user
+    if (data.method === 'signup') {
+      const existingUser = await this.yp.await_proc('drumate_exists', data.email);
+      if (!isEmpty(existingUser) && existingUser.id) {
+        data.user_exists = true;
+        data.uid = existingUser.id;
+      }
+    }
+
     a = a[0].split(/[\.-_]/);
     const base = a[0] || "a";
     let i = await this.yp.await_proc("unique_ident", base);
@@ -588,26 +597,28 @@ class __butler extends Mfs {
     const password = this.input.need(Attr.password).trim();
     const email = this.input.need(Attr.email).trim();
     const firstname = this.input.get(Attr.firstname);
+
     let bound = await this.yp.await_func("socket_check_binding", socket_id, this.input.sid());
     if (!bound) {
       return this.output.data({ status: "not_bound" });
     }
-    let data = {
-      socket_id, password, email, firstname
-    }
-    let user = await this.yp.await_proc("drumate_exists", email);
-    if (user && user.email) {
+
+    let existingUser = await this.yp.await_proc("drumate_exists", email);
+    if (existingUser && existingUser.email) {
       return this.output.data({ status: "user_exists", email });
     }
-    data = await this._create_account(data)
-    let tpl = resolve(__dirname, "./templates/welcome.html")
-    switch (data.failed) {
-      case 0:
+
+    let accountData = { socket_id, password, email, firstname };
+    accountData = await this._create_account(accountData);  
+    
+    let tpl = resolve(__dirname, "./templates/welcome.html");
+    switch (accountData.failed) {
+      case 0: {
         /** Output done by session.login */
-        const ulang = "en"; //this.input.ua_language();
-        let lex = Cache.lex(ulang)
+        const ulang = "en";
+        let lex = Cache.lex(ulang);
         const { main_domain } = sysEnv();
-        let data = {
+        let mailData = {
           heading: lex._your_account_is_all_set,
           message: lex._mail_signup_drumee,
           workspace: lex._discover_drumee_desk,
@@ -615,31 +626,92 @@ class __butler extends Mfs {
           signature: lex._drumee_team,
           reminder: lex._copyright.format(`${new Date().getFullYear()}`),
           hello: lex._hello_x.format(firstname || ""),
-        }
+        };
         const msg = new Messenger({
           subject: lex._welcome_on_drumee,
           recipient: email,
           handler: this.exception.email,
         });
-
-        let html = msg.renderFrom(tpl, data)
+        let html = msg.renderFrom(tpl, mailData);
         await msg.send({ html });
-        return
+
+        // Resolve pending hub invitations registered before account existed
+        try {
+          await this._resolve_pending_invitation(email);
+        } catch (err) {
+          this.warn("[signup] Failed to resolve pending_invitation for", email, err && err.message);
+        }
+
+        return;
+      }
       case 2:
         return this.output.data({ status: 'server_busy' });
       default: {
-        this.warn("Failed to create drumate", data)
-        if (data.error) {
+        this.warn("Failed to create drumate", accountData);
+        if (accountData.error) {
           return this.output.data({ status: 'server_error' });
         }
       }
     }
-    if (!data.error) {
+
+    if (!accountData.error) {
       /** Output done by session.login */
-      return
+      return;
     }
 
-    return this.output.data(data);
+    return this.output.data(accountData);
+  }
+
+  /**
+  * After a new user completes signup, resolve any pending hub invitations
+  * that were registered via yp_add_pending_invitation before the account existed.
+  *
+  * @param {string} email - newly registered user's email
+  */
+  async _resolve_pending_invitation(email) {
+    const { toArray } = require("@drumee/server-essentials").utils;
+    const { isEmpty } = require("lodash");
+
+    // 1. Get new user's ID
+    const newUser = await this.yp.await_proc("drumate_exists", email);
+    if (isEmpty(newUser) || !newUser.id) {
+      this.warn("[_resolve_pending_invitation] Cannot find newly created user for", email);
+      return;
+    }
+
+    // 2. Find all pending hub invitations for this email
+    const pending = await this.yp.await_proc("pending_invitation_get_by_email", email);
+    const rows = toArray(pending);
+    if (isEmpty(rows)) return;
+
+    for (const row of rows) {
+      const { hub_id, permission, expiry_time } = row;
+      try {
+        // 3. Get hub db_name explicitly
+        const db_name = await this.yp.await_func("get_db_name", hub_id);
+        if (!db_name) {
+          this.warn(`[_resolve_pending_invitation] Cannot find db_name for hub ${hub_id}`);
+          continue;
+        }
+
+        // 4. Add as real member
+        await this.yp.await_proc(`${db_name}.add_member`, newUser.id, permission, expiry_time);
+
+        // 5. Grant hub permission
+        await this.yp.await_proc(
+          `${db_name}.permission_grant`,
+          '*', newUser.id, expiry_time, permission, 'system', 'Resolved from pending_invitation on signup'
+        );
+
+        this.debug(`[_resolve_pending_invitation] Added user ${newUser.id} to hub ${hub_id}`);
+      } catch (err) {
+        // Log per-hub failure but continue processing remaining hubs
+        this.warn(`[_resolve_pending_invitation] Failed for hub ${hub_id}:`, err && err.message);
+      }
+    }
+
+    // 6. Clean up all resolved pending_invitation entries for this email
+    await this.yp.await_proc("pending_invitation_delete_by_email", email);
   }
 
   /**
