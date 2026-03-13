@@ -629,30 +629,31 @@ class __private_contact extends Contact {
    * @param {*} contact_id 
    * @returns 
    */
-  async _show(contact_id) {
+  async _show(contact_id, opts) {
+    const db = (opts && opts.db) || this.db;
     let res = {};
-    let data = await this.db.await_proc('my_contact_get_next', contact_id, null)
+    let data = await db.await_proc('my_contact_get_next', contact_id, null)
     if (!isEmpty(data)) {
       res = data;
     }
-    data = await this.db.await_proc('my_contact_mail_get', contact_id)
+    data = await db.await_proc('my_contact_mail_get', contact_id)
     data = toArray(data);
     if (data) {
       res.email = data;
     }
 
-    data = await this.db.await_proc('my_contact_address_get', contact_id)
+    data = await db.await_proc('my_contact_address_get', contact_id)
     data = toArray(data);
     if (data) {
       res.address = data;
     }
 
-    data = await this.db.await_proc('my_contact_phone_get', contact_id)
+    data = await db.await_proc('my_contact_phone_get', contact_id)
     data = toArray(data);
     if (data) {
       res.mobile = data;
     }
-    data = await this.db.await_proc('my_tag_get', contact_id)
+    data = await db.await_proc('my_tag_get', contact_id)
     data = toArray(data);
     if (data) {
       res.tag = data;
@@ -1149,6 +1150,24 @@ class __private_contact extends Contact {
     let surname = this.input.use(Attr.surname);
     let fullname;
 
+    // Contact table lives in user (drumate) DB (a_*), not folder DB (f_*). When called from hub (folder) context
+    // with hub_id, this.db points to folder db. Resolve inviter's drumate db for contact ops.
+    let contactDbName = this.input.use("_contact_db_name");
+    if (!contactDbName && this.input.get('hub_id')) {
+      try {
+        const rows = await this.yp.await_query(
+          'SELECT db_name FROM yp.entity WHERE id = ? AND db_name IS NOT NULL AND db_name LIKE \'a_%\' LIMIT 1',
+          this.uid
+        );
+        if (rows && rows[0] && rows[0].db_name) contactDbName = rows[0].db_name;
+      } catch (e) {
+        this.warn("[contact.invite] resolve inviter drumate db failed", e && e.message);
+      }
+    }
+    const contactDb = contactDbName
+      ? { await_proc: (proc, ...args) => this.yp.await_proc(`${contactDbName}.${proc}`, ...args) }
+      : this.db;
+
     if (!isEmpty(firstname)) {
       if (!isEmpty(lastname)) {
         fullname = firstname + ' ' + lastname
@@ -1187,18 +1206,19 @@ class __private_contact extends Contact {
       lastname = a[1]
 
       drumate = await this.yp.await_proc('drumate_exists', email);
-      if (isEmpty(drumate)) {
+      if (isArray(drumate)) drumate = drumate[0];
+      const emailNotInSystem = isEmpty(drumate) || !drumate?.id;
+      if (emailNotInSystem) {
         entity = email;
         metadata.source = email
         metadata.is_auto = 1
       } else {
-        entity = drumate.id
+        entity = drumate.id;
         metadata.source = email
         metadata.is_auto = 1
       }
 
-
-      let contact = await this.db.await_proc('my_contact_exists', 'entity', entity, null, null);
+      let contact = await contactDb.await_proc('my_contact_exists', 'entity', entity, null, null);
 
       if (!isEmpty(contact)) {
         if (contact.status == 'active' || contact.status == 'informed') {
@@ -1211,7 +1231,7 @@ class __private_contact extends Contact {
         }
       }
       let sent = {};
-      if (isEmpty(drumate)) {
+      if (emailNotInSystem) {
         const token = this.randomString();
         fullname = fullname || entity
         let i = this.yp.await_proc('token_generate_next', entity, fullname, token, 'signup', this.uid);
@@ -1227,21 +1247,28 @@ class __private_contact extends Contact {
       }
 
       if (isEmpty(contact)) {
-        newcontact = await this.db.await_proc('my_contact_add_next',
+        newcontact = await contactDb.await_proc('my_contact_add_next',
           entity, surname, firstname, lastname, 'independant', null, message, metadata
         );
       } else {
-        newcontact = await this.db.await_proc('my_contact_update_next',
+        newcontact = await contactDb.await_proc('my_contact_update_next',
           contact.id, contact.surname, contact.firstname, contact.lastname,
           contact.comment, message, contact.entity, contact.metadata
         );
+      }
+
+      if (isEmpty(newcontact)) {
+        this.warn("[contact.invite] my_contact_add_next/update returned empty for", email);
+        res.status = emailNotInSystem ? 'invited' : 'CONTACT_DB_ERROR';
+        res.input = email;
+        return this.output.data(res);
       }
 
       if (!isEmpty(drumate)) {
         before = await this.yp.await_proc('forward_proc', drumate.id, 'contact_status_get', `'${this.uid}'`)
         if (isEmpty(before)) { before.status = 'no' }
 
-        await this.db.await_proc('contact_invite', entity);
+        await contactDb.await_proc('contact_invite', entity);
         after = await this.yp.await_proc('forward_proc', drumate.id, 'contact_status_get', `'${this.uid}'`)
 
         if ((after.status != before.status) && (after.status == 'invitation' || after.status == 'received' || after.status == 'informed')) {
@@ -1252,7 +1279,7 @@ class __private_contact extends Contact {
       }
 
       if (isEmpty(drumate)) {
-        await this.db.await_proc('contact_invite', entity);
+        await contactDb.await_proc('contact_invite', entity);
       }
 
       if (isEmpty(contact)) {
@@ -1261,19 +1288,19 @@ class __private_contact extends Contact {
           node.email = entity;
           node.category = 'priv';
           node.is_default = '1';
-          await this.db.await_proc('my_contact_mail_add', newcontact.id, stringify([node]))
+          await contactDb.await_proc('my_contact_mail_add', newcontact.id, stringify([node]))
         } else {
           if (EMAIL_CHECKER.test(email)) {
             let node = {}
             node.email = email;
             node.category = 'priv';
             node.is_default = '1';
-            await this.db.await_proc('my_contact_mail_add', newcontact.id, stringify([node]))
+            await contactDb.await_proc('my_contact_mail_add', newcontact.id, stringify([node]))
           }
         }
       }
 
-      res = await this._show(newcontact.id);
+      res = await this._show(newcontact.id, contactDbName ? { db: contactDb } : {});
       res.input = email;
 
       // Log contact activities

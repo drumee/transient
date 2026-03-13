@@ -394,7 +394,27 @@ class __private_hub extends Hub {
       this.output.data([]);
       return;
     }
-    const { db_name, domain_id } = this.user.toJSON();
+    let { db_name, domain_id } = this.user.toJSON();
+    // Contact table lives in user (drumate) DB (a_*), not folder DB (f_*). When hub is a folder,
+    // this.user.db_name may be the folder's db. Resolve owner's drumate db for contact ops.
+    if (!db_name || String(db_name).startsWith("f_")) {
+      try {
+        const rows = await this.yp.await_query(
+          "SELECT e.db_name FROM yp.hub h JOIN yp.entity e ON e.id = h.owner_id WHERE h.id = ? LIMIT 1",
+          this.hub.get(Attr.id)
+        );
+        if (rows && rows[0] && rows[0].db_name) {
+          db_name = rows[0].db_name;
+        }
+      } catch (e) {
+        this.warn("[hub] add_contributors: resolve owner db failed", e && e.message);
+      }
+    }
+    if (!db_name) {
+      this.warn("[hub] add_contributors: no contact db for hub", this.hub.get(Attr.id));
+      this.output.data([]);
+      return;
+    }
     let proc = `${db_name}.my_contact_exists`;
     for (let entity of users) {
       try {
@@ -404,7 +424,7 @@ class __private_hub extends Hub {
             members.push(contact.uid);
           } else {
             await this.yp.await_proc(
-              "yp_add_share_guest",
+              "yp_add_pending_invitation",
               this.hub.get(Attr.id),
               expiry,
               privilege,
@@ -415,6 +435,7 @@ class __private_hub extends Hub {
           let drumate = null;
           try {
             drumate = await this.yp.await_proc("drumate_exists", entity);
+            if (isArray(drumate)) drumate = drumate[0];
           } catch (e) {
             this.warn("[hub] add_contributors: drumate_exists for entity", entity, e);
           }
@@ -422,25 +443,33 @@ class __private_hub extends Hub {
           if (sameDomain) {
             members.push(drumate.id);
           } else {
-            // Not a contact: register as share guest and send contact invitation.
+            // Not a contact: register as pending invitation and send contact invitation.
             // Two cases: (1) Email already has Drumee account → contact.invite sends in-app mail.
             // (2) Email not in system → contact.invite sends signup/invite email with token.
             await this.yp.await_proc(
-              "yp_add_share_guest",
+              "yp_add_pending_invitation",
               this.hub.get(Attr.id),
-              privilege,
               expiry,
+              privilege,
               entity
             );
             const isEmail = typeof entity === "string" && entity.indexOf("@") !== -1;
             if (isEmail) {
               try {
                 const ContactPrivate = require("./contact");
-                const contactSvc = new ContactPrivate(this.input, this.output, this.session);
+                const contactSvc = new ContactPrivate({
+                  session: this.session,
+                  permission: this.permission || { scope: "hub" }
+                });
+                contactSvc.db = {
+                  await_proc: (proc, ...args) => this.yp.await_proc(`${db_name}.${proc}`, ...args),
+                  end: () => Promise.resolve()
+                };
                 const origEmail = this.input.use(Attr.email) ?? this.input.get(Attr.email);
                 const origMessage = this.input.use(Attr.message);
                 this.input.set(Attr.email, entity);
                 this.input.set(Attr.message, message);
+                this.input.set("_contact_db_name", db_name);
                 await contactSvc.invite();
                 if (origEmail !== undefined) this.input.set(Attr.email, origEmail);
                 if (origMessage !== undefined) this.input.set(Attr.message, origMessage);

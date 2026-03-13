@@ -637,9 +637,9 @@ class __butler extends Mfs {
 
         // Resolve pending hub invitations registered before account existed
         try {
-          await this._resolve_share_guest(email);
+          await this._resolve_pending_invitation(email);
         } catch (err) {
-          this.warn("[signup] Failed to resolve share_guest for", email, err && err.message);
+          this.warn("[signup] Failed to resolve pending_invitation for", email, err && err.message);
         }
 
         return;
@@ -664,23 +664,23 @@ class __butler extends Mfs {
 
   /**
   * After a new user completes signup, resolve any pending hub invitations
-  * that were registered via yp_add_share_guest before the account existed.
+  * that were registered via yp_add_pending_invitation before the account existed.
   *
   * @param {string} email - newly registered user's email
   */
-  async _resolve_share_guest(email) {
+  async _resolve_pending_invitation(email) {
     const { toArray } = require("@drumee/server-essentials").utils;
     const { isEmpty } = require("lodash");
 
     // 1. Get new user's ID
     const newUser = await this.yp.await_proc("drumate_exists", email);
     if (isEmpty(newUser) || !newUser.id) {
-      this.warn("[_resolve_share_guest] Cannot find newly created user for", email);
+      this.warn("[_resolve_pending_invitation] Cannot find newly created user for", email);
       return;
     }
 
     // 2. Find all pending hub invitations for this email
-    const pending = await this.yp.await_proc("share_guest_get_by_email", email);
+    const pending = await this.yp.await_proc("pending_invitation_get_by_email", email);
     const rows = toArray(pending);
     if (isEmpty(rows)) return;
 
@@ -690,7 +690,7 @@ class __butler extends Mfs {
         // 3. Get hub db_name explicitly
         const db_name = await this.yp.await_func("get_db_name", hub_id);
         if (!db_name) {
-          this.warn(`[_resolve_share_guest] Cannot find db_name for hub ${hub_id}`);
+          this.warn(`[_resolve_pending_invitation] Cannot find db_name for hub ${hub_id}`);
           continue;
         }
 
@@ -700,18 +700,18 @@ class __butler extends Mfs {
         // 5. Grant hub permission
         await this.yp.await_proc(
           `${db_name}.permission_grant`,
-          '*', newUser.id, expiry_time, permission, 'system', 'Resolved from share_guest on signup'
+          '*', newUser.id, expiry_time, permission, 'system', 'Resolved from pending_invitation on signup'
         );
 
-        this.debug(`[_resolve_share_guest] Added user ${newUser.id} to hub ${hub_id}`);
+        this.debug(`[_resolve_pending_invitation] Added user ${newUser.id} to hub ${hub_id}`);
       } catch (err) {
         // Log per-hub failure but continue processing remaining hubs
-        this.warn(`[_resolve_share_guest] Failed for hub ${hub_id}:`, err && err.message);
+        this.warn(`[_resolve_pending_invitation] Failed for hub ${hub_id}:`, err && err.message);
       }
     }
 
-    // 6. Clean up all resolved share_guest entries for this email
-    await this.yp.await_proc("share_guest_delete_by_email", email);
+    // 6. Clean up all resolved pending_invitation entries for this email
+    await this.yp.await_proc("pending_invitation_delete_by_email", email);
   }
 
   /**
