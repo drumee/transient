@@ -1,3 +1,7 @@
+drumee-ui-pod (3.2.31) stable; urgency=medium
+  * Small fixes
+ -- Somanos Sar <somanos.sar@drumee.com>  Mon, 09 Mar 2026 10:00:00 +000
+
 drumee-ui-pod (3.2.30) stable; urgency=medium
   * Change icons builder
  -- Somanos Sar <somanos.sar@drumee.com>  Thi, 26 Jan 2026 10:00:00 +000

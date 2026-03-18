@@ -1,0 +1,27 @@
+{
+  "name": "drumee-repo",
+  "version": "1.0.0",
+  "description": "Drumee Official Repository",
+  "main": "index.js",
+  "scripts": {
+    "install": "npm run get:dev:tools && npm run get:essentials && npm run get:essentials",
+    "postinstall": "(cd node_modules/.bin;  ln -sf ../@drumee/dev-tools/watch.sh ./drumee-dev)",
+    "get:dev:tools": "export PROJECT_ID=57 && npm i --save-dev @drumee/dev-tools",
+    "get:core": "export PROJECT_ID=41 && npm i @drumee/server-core",
+    "get:essentials": "export PROJECT_ID=40 && npm i @drumee/server-essentials",
+    "release": "git commit -am '[CHG] tuning dev-tools' && git push && npm version patch",
+    "update": "git pull && npm run install",
+    "deploy": "drumee-deploy",
+    "dev": "drumee-dev"
+  },
+  "dependencies": {
+    "@drumee/server-core": "^1.2.47",
+    "@drumee/server-essentials": "^1.1.76",
+    "lodash": "^4.17.21",
+    "unique-names-generator": "^4.7.1"
+  },
+  "devDependencies": {
+    "@drumee/dev-tools": "^0.1.29",
+    "minimist": "^1.2.8"
+  }
+}

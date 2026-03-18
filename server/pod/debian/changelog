@@ -1,3 +1,7 @@
+drumee-server-pod (2.9.32) stable; urgency=medium
+  * Small fixes
+  -- Somanos Sar <somanos.sar@drumee.com>  Mon, 09 Mars 2026 10:00:00 +000
+
 drumee-server-pod (2.9.31) stable; urgency=medium
   * Support folders inner hubs
   -- Somanos Sar <somanos.sar@drumee.com>  Tue, 20 Feb 2026 10:00:00 +000
