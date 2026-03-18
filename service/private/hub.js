@@ -394,22 +394,8 @@ class __private_hub extends Hub {
       this.output.data([]);
       return;
     }
-    let { db_name, domain_id } = this.user.toJSON();
-    // Contact table lives in user (drumate) DB (a_*), not folder DB (f_*). When hub is a folder,
-    // this.user.db_name may be the folder's db. Resolve owner's drumate db for contact ops.
-    if (!db_name || String(db_name).startsWith("f_")) {
-      try {
-        const rows = await this.yp.await_query(
-          "SELECT e.db_name FROM yp.hub h JOIN yp.entity e ON e.id = h.owner_id WHERE h.id = ? LIMIT 1",
-          this.hub.get(Attr.id)
-        );
-        if (rows && rows[0] && rows[0].db_name) {
-          db_name = rows[0].db_name;
-        }
-      } catch (e) {
-        this.warn("[hub] add_contributors: resolve owner db failed", e && e.message);
-      }
-    }
+    let { domain_id } = this.user.toJSON();
+    let db_name = await this.yp.await_func("get_db_name", this.hub.get(Attr.id));
     if (!db_name) {
       this.warn("[hub] add_contributors: no contact db for hub", this.hub.get(Attr.id));
       this.output.data([]);
