@@ -35,4 +35,5 @@ function get(name) {
   return null;
 };
 
-module.exports = { get, register };
+
+module.exports = { Registry, get, register };

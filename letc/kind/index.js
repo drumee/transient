@@ -1,11 +1,28 @@
 
 let __singleton;
-const SYSTEM_CLASSES = require('./seeds/static');
-const USER_CLASSES = {};
+const SystemClasses = require('./seeds/static');
+const AppClasses = {};
 const Addons = require("./seeds/addons");
-let Helper;
 const { fetchService, loadJS } = require("@drumee/ui-essentials");
 const Plugins = new Map();
+
+/**
+  @param string name
+*/
+function listSeeds(Obj, name) {
+  const style = "color: green; font-weight: bold;"
+  let keys = _.keys(Obj)
+  if (name) {
+    keys = keys.filter((k) => {
+      return (new RegExp(name).test(k))
+    })
+  }
+  for (let i of keys) {
+    console.log(i + " -> " + "%c" + Obj[i], style)
+  }
+  return keys
+};
+
 
 /**
  * 
@@ -24,16 +41,17 @@ class __kind extends Backbone.Model {
    * @param {*} t 
    */
   exists(t) {
-    return SYSTEM_CLASSES[t] || USER_CLASSES[t];
+    return SystemClasses[t] || AppClasses[t] || Addons.get(t);
   }
 
   /**
-   * 
-   */
-  list(pattern) {
-    if (!Helper) Helper = require('./seeds/helper');
-    return Helper.list(pattern)
-  }
+    @param string name
+  */
+  list(name) {
+    listSeeds(Addons.Registry, name)
+    listSeeds(AppClasses, name)
+    listSeeds(SystemClasses, name)
+  };
 
   /**
    * 
@@ -92,18 +110,18 @@ class __kind extends Backbone.Model {
    * @returns 
    */
   register(k, v, verbose = 0) {
-    if (USER_CLASSES[k]) {
+    if (AppClasses[k]) {
       if (verbose) {
         this.warn(`Kind ${k} already exists. Use method replace`);
       }
       return;
     }
     //@warn "FORCE OVERWRITING KIND #{k}"
-    if (SYSTEM_CLASSES[k]) {
+    if (SystemClasses[k]) {
       this.warn(`Kind *${k}* is reserved, it cannot be reused.`);
       return;
     }
-    return USER_CLASSES[k] = v;
+    return AppClasses[k] = v;
   }
 
   /**
@@ -113,11 +131,11 @@ class __kind extends Backbone.Model {
    * @returns 
    */
   replace(k, v) {
-    if (SYSTEM_CLASSES[k]) {
+    if (SystemClasses[k]) {
       this.warn(`Kind ${k} is reserved. It cannot be resused`);
       return;
     }
-    return USER_CLASSES[k] = v;
+    return AppClasses[k] = v;
   }
 
 
@@ -127,7 +145,7 @@ class __kind extends Backbone.Model {
    * @returns 
    */
   get(name) {
-    let f = SYSTEM_CLASSES[name] || USER_CLASSES[name];
+    let f = SystemClasses[name] || AppClasses[name];
     if (_.isFunction(f)) {
       return f;
     }
@@ -142,13 +160,13 @@ class __kind extends Backbone.Model {
   /**
    * 
    */
-  export_builtins(pfx = 'letc') {
+  export_SystemClasses(pfx = 'letc') {
     let n;
-    for (let k in SYSTEM_CLASSES) {
+    for (let k in SystemClasses) {
       n = _.camelCase(`${pfx}-${k}`);
       if (!window[n]) {
         this.debug(`Exporting ${n}`);
-        window[n] = SYSTEM_CLASSES[k];
+        window[n] = SystemClasses[k];
       } else {
         this.warn(`Failed to export kind ${n}. Name is already in use`);
       }
@@ -180,7 +198,7 @@ class __kind extends Backbone.Model {
           return reject();
         }
         if (Plugins.get(data.path)) {
-           this.debug(`${kind} already loaded, skipped`, data.path);
+          this.debug(`${kind} already loaded, skipped`, data.path);
           return resolve(this.get(kind))
         }
         this.once("addons:registered", () => { resolve(this.get(kind)) })
@@ -205,7 +223,7 @@ class __kind extends Backbone.Model {
    * @returns 
    */
   async waitFor(name) {
-    let f = SYSTEM_CLASSES[name] || USER_CLASSES[name];
+    let f = SystemClasses[name] || AppClasses[name];
     if (_.isFunction(f)) {
       return f;
     }
@@ -217,8 +235,8 @@ class __kind extends Backbone.Model {
     }
     if (_.isFunction(f.then)) {
       let r = await f.then((e) => {
-        if (SYSTEM_CLASSES[name]) return SYSTEM_CLASSES[name];
-        SYSTEM_CLASSES[name] = e;
+        if (SystemClasses[name]) return SystemClasses[name];
+        SystemClasses[name] = e;
         return e;
       });
       return r;
