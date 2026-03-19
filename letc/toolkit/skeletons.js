@@ -38,8 +38,6 @@ export const Skeletons = {
   Profile    : require("./skeleton/profile"),
   Progress   : require("./skeleton/progress"),
   RichText   : require("./skeleton/rich-text"),
-  Switch     : require("./skeleton/switch"),
-  Switcher   : require("./skeleton/switcher"),
   Textarea   : require("./skeleton/entry/textarea"),
   UserProfile: require("./skeleton/profile"),
   Wrapper    : { 

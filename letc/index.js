@@ -17,7 +17,7 @@ function export_globals(resolve) {
   };
 
   window.Template = require('./preset/template');
-  window.Skeletons = require('./toolkit/skeletons');
+  window.Skeletons = require('./toolkit/skeletons').Skeletons;
   window.Websocket = null;
 
   window.Validator = require('@drumee/ui-essentials').validator
