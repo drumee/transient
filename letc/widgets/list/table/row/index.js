@@ -1,4 +1,6 @@
+
 const LetcBlank = require('../../../blank');
+
 class __list_table_row extends LetcBlank.default {
 
   /**
