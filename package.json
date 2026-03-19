@@ -1,8 +1,8 @@
 {
   "name": "@drumee/ui-core",
-  "version": "1.0.8",
+  "version": "1.0.0",
   "description": "Drumee Rendering Engine Core Library",
-  "main": "lib/index.js",
+  "main": "letc/index.js",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/drumee/ui-core.git"
@@ -13,7 +13,11 @@
     "Interface",
     "Pattern",
     "Design",
-    "MVC"
+    "MVC",
+    "Client-side",
+    "Rendering",
+    "Engine",
+    "Json-based"
   ],
   "author": "Somanos Sar <somanos@drumee.com> (http://drumee.org)",
   "license": "AGPL-3.0-or-later",
@@ -25,6 +29,7 @@
   },
   "homepage": "https://github.com/drumee/ui-core#readme",
   "dependencies": {
+    "@drumee/ui-essentials": "^1.0.0",
     "@drumee/ui-styles": "^1.0.1",
     "autolinker": "^4.1.5",
     "backbone": "^1.6.1",
@@ -34,6 +39,8 @@
     "d3-selection": "^3.0.0",
     "d3pie": "^0.2.1",
     "dompurify": "^3.3.0",
+    "jquery": "^4.0.0",
+    "jquery-ui": "^1.14.2",
     "rectangle-node": "^0.1.0",
     "transformation-matrix": "^3.1.0",
     "vdom-to-html": "^2.3.1"
