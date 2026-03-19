@@ -1,5 +1,5 @@
 const LetcBox = require('../../box');
-class __entry_reminder extends LetcBox.default {
+class __entry_reminder extends LetcBox {
   constructor(...args) {
     super(...args);
     this._reset = this._reset.bind(this);

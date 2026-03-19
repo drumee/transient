@@ -153,7 +153,7 @@ const _defauldClass = "svg-path";
 //
 // LightJumpSpinner
 //-------------------------------------
-class __svg_path extends LetcBox.default {
+class __svg_path extends LetcBox {
   constructor(...args) {
     super(...args);
     this._generate = this._generate.bind(this);

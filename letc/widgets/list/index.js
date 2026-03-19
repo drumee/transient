@@ -5,7 +5,7 @@ const _button = function (id) {
 const SPINNER_WAIT = 'spinnerWait';
 
 const LetcBox = require('../box');
-class __list extends LetcBox.default {
+class __list extends LetcBox {
 
   /**
    * 

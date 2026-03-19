@@ -4,7 +4,7 @@ const _canvas = function(id, w, h){
 };
 const LetcBox = require('../../box');
 
-class __img_box extends LetcBox.default {
+class __img_box extends LetcBox {
   constructor(...args) {
     super(...args);
     this.onDomRefresh = this.onDomRefresh.bind(this);

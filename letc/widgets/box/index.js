@@ -680,5 +680,4 @@ class __drumee_box extends Marionette.CollectionView {
 }
 __drumee_box.initClass();
 
-
-export default __drumee_box;
+module.exports = __drumee_box;

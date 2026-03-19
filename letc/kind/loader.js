@@ -1,6 +1,6 @@
 const LetcBox= require('../widgets/box')
 function __kind_loader(promise){
-  class ___letc_loader extends LetcBox.default {
+  class ___letc_loader extends LetcBox {
 
     static initClass() {
       this.prototype.isLazyClass  = 1;

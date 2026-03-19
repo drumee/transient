@@ -82,7 +82,7 @@ const __compliances = {
 
 const _default_class = "drumee-widget entry";
 const LetcBox = require('../../box');
-class __drumee_entry_input extends LetcBox.default {
+class __drumee_entry_input extends LetcBox {
   constructor(...args) {
     super(...args);
     this.onRender = this.onRender.bind(this);

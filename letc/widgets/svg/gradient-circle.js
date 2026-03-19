@@ -14,7 +14,7 @@ const LetcBox = require('../box');
 /**
  * 
  */
-class __gradient_circle extends LetcBox.default {
+class __gradient_circle extends LetcBox {
   constructor(...args) {
     super(...args);
     this._draw = this._draw.bind(this);

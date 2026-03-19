@@ -12,7 +12,6 @@ class __list_table_row extends LetcBlank {
     this.declareHandlers();
   }
 
-
   /**
    * Upon DOM refresh, after element actually insterted into DOM
    */

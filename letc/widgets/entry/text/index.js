@@ -3,7 +3,7 @@ const LetcBox = require('../../box');
 //-------------------------------------
 //
 //-------------------------------------
-class __entry_text extends LetcBox.default {
+class __entry_text extends LetcBox {
   constructor(...args) {
     super(...args);
     this.reload = this.reload.bind(this);
