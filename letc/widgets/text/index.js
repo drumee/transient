@@ -1,9 +1,3 @@
-// ==================================================================== *
-//   Copyright Xialia.com  2011-2020
-//   FILE : src/drumee/libs/reader/text
-//   TYPE :
-// ==================================================================== *
-
 const dompurify = require('dompurify');
 
 const _id_tag = 'note-';

@@ -1,9 +1,3 @@
-// ============================================================ *
-//   Copyright Xialia.com  2011-2019
-//   FILE : libs/reader/text/rich.coffee
-//   TYPE :
-// ============================================================ *
-
 
 const _id_tag = 'note-';
 const _default_class = "drumee-widget rich-text";

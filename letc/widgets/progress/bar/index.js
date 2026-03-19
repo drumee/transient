@@ -1,5 +1,5 @@
 const { filesize } = require("@drumee/ui-essentials")
-const LetcBox = require('../box');
+const LetcBox = require('../../box');
 class ___progress_bar extends LetcBox {
 
 
