@@ -158,7 +158,7 @@ const LetcBlank = require('../blank');
 class __drumee_box extends Marionette.CollectionView {
   static initClass() {
     this.prototype.nativeClassName = 'drumee-box';
-    this.prototype.emptyView = LetcBlank.default;
+    this.prototype.emptyView = LetcBlank;
     this.prototype.childViewTriggers = {
       'item:clicked': 'child:bubble',
       'bubble': 'child:bubble',
