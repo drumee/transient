@@ -16,9 +16,8 @@ class __user_profile extends LetcBox {
     this.declareHandlers();
     let id = opt.id || opt.uid || opt.user_id || opt.drumate_id || opt.entity_id;
     this.mset({ id });
-    if (window.Wm) {
-      Wm.on('user.connection_status', this.updateStatus.bind(this));
-    }
+    this.updateStatus = this.updateStatus.bind(this);
+    RADIO_BROADCAST.on(_e.peerData, this.updateStatus);
   }
 
 
@@ -26,9 +25,7 @@ class __user_profile extends LetcBox {
    * 
    */
   onBeforeDestroy() {
-    if (window.Wm) {
-      Wm.off('user.connection_status', this.updateStatus.bind(this));
-    }
+    RADIO_BROADCAST.off(_e.peerData, this.updateStatus);
   }
 
   /**
@@ -65,7 +62,7 @@ class __user_profile extends LetcBox {
       const src = Visitor.avatar(this.mget(_a.id), imageType);
 
       return this.__imageBox.feed({
-        kind: ""
+        kind: "blank",
         className: `${this.fig.family}__icon ${this.fig.family}__picture picture`,
         sys_pn: 'picture',
         src,
@@ -200,7 +197,7 @@ class __user_profile extends LetcBox {
 * @param {*} data 
 */
   updateStatus(data) {
-    if (data.user_id != this.mget(_a.id)) return;
+    if (data.id != this.mget(_a.id)) return;
     this.el.dataset.online = data.status;
     this.mset({ online: data.status })
     this.trigger('status_changed', data);
