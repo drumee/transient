@@ -46,7 +46,7 @@ const OPEN_NODE = "open-node";
 const pseudo_media = require("media/pseudo");
 const DATEFORMAT = "DD MMM YY HH:MM:ss";
 
-class __core_mfs extends LetcBox {
+class __core_mfs extends LetcBox.default {
 
   constructor(...args) {
     super(...args);

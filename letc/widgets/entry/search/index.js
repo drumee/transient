@@ -1,5 +1,5 @@
 const LetcBox = require('../../box');
-class __entry_search extends LetcBox {
+class __entry_search extends LetcBox.default {
   constructor(...args) {
     super(...args);
     this.onPartReady = this.onPartReady.bind(this);

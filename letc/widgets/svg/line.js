@@ -10,7 +10,7 @@ function _wrapper(id){
 };
 
 const LetcBox = require('../box');
-class __svg_line extends LetcBox {
+class __svg_line extends LetcBox.default {
   constructor(...args) {
     super(...args);
     this._generate = this._generate.bind(this);

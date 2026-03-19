@@ -16,7 +16,7 @@ const LetcBox = require('../box');
 /**
  * 
  */
-class __circle_percent extends LetcBox {
+class __circle_percent extends LetcBox.default {
   constructor(...args) {
     super(...args);
     this._draw = this._draw.bind(this);

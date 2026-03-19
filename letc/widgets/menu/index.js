@@ -5,7 +5,7 @@ const Rectangle = require('rectangle-node');
 const { TweenLite, Expo } = gsap;
 const _default_class = "menu-topic drumee-widget";
 const LetcBox = require('../box');
-class __menu_topic extends LetcBox {
+class __menu_topic extends LetcBox.default {
   constructor(...args) {
     super(...args);
     this.onBeforeDestroy = this.onBeforeDestroy.bind(this);

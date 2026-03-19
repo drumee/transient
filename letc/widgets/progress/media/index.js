@@ -2,7 +2,7 @@ const { filesize, arcLength } = require("@drumee/ui-essentials")
 
 const LetcBox = require('../../box');
 
-class __svg_progress extends LetcBox {
+class __svg_progress extends LetcBox.default {
 
   /**
    * 
