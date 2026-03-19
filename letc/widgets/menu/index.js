@@ -2,7 +2,6 @@
 
 require('./skin')
 const Rectangle = require('rectangle-node');
-const { TweenLite, Expo } = gsap;
 const _default_class = "menu-topic drumee-widget";
 const LetcBox = require('../box');
 class __menu_topic extends LetcBox {
@@ -297,7 +296,7 @@ class __menu_topic extends LetcBox {
     const {
       items
     } = this._branches;
-    TweenLite.set(items.$el, { y: 0 });
+    gsap.TweenLite.set(items.$el, { y: 0 });
     items.el.dataset.state = _a.closed;
     this.el.dataset.state = 0;
     this.isOpen = false;
@@ -306,18 +305,18 @@ class __menu_topic extends LetcBox {
     let trigger_height = this.__trigger.$el.height();
     switch (this.mget(_a.direction)) {
       case _a.down:
-        TweenLite.set(items.$el, { y: -(items_height + trigger_height) });
+        gsap.TweenLite.set(items.$el, { y: -(items_height + trigger_height) });
         break;
       case _a.up:
-        TweenLite.set(this.__items.$el, { y: items_height });
-        TweenLite.set(this.__itemsWrapper.$el, {
+        gsap.TweenLite.set(this.__items.$el, { y: items_height });
+        gsap.TweenLite.set(this.__itemsWrapper.$el, {
           y: 0,
           opacity: 0,
         });
         break;
       case _a.left:
       case _a.right:
-        TweenLite.set(items.$el, { x: 0 });
+        gsap.TweenLite.set(items.$el, { x: 0 });
         break;
     }
     this.model.set(_a.state, 0);
@@ -338,24 +337,24 @@ class __menu_topic extends LetcBox {
     let trigger_height = this.__trigger.$el.height();
     switch (this.mget(_a.direction)) {
       case _a.down:
-        TweenLite.set(this.__items.$el, { y: -(items_height + trigger_height) });
-        TweenLite.set(this.__itemsWrapper.$el, {
+        gsap.TweenLite.set(this.__items.$el, { y: -(items_height + trigger_height) });
+        gsap.TweenLite.set(this.__itemsWrapper.$el, {
           y: 0,
           opacity: 0,
         });
         break;
       case _a.up:
-        TweenLite.set(this.__items.$el, { y: items_height });
-        TweenLite.set(this.__itemsWrapper.$el, {
+        gsap.TweenLite.set(this.__items.$el, { y: items_height });
+        gsap.TweenLite.set(this.__itemsWrapper.$el, {
           y: 0,
           opacity: 0,
         });
         break;
       case _a.left:
-        TweenLite.set(this.__items.$el, { x: items_width });
+        gsap.TweenLite.set(this.__items.$el, { x: items_width });
         break;
       case _a.right:
-        TweenLite.set(this.__items.$el, { x: -items_width });
+        gsap.TweenLite.set(this.__items.$el, { x: -items_width });
         break;
     }
   }
@@ -382,33 +381,33 @@ class __menu_topic extends LetcBox {
     let opt = {
       onStart: this._onStartOpening,
       onComplete: this._onOpen,
-      ease: Expo.easeOut,
+      ease: gsap.Expo.easeOut,
     };
     let wrapper = this.__itemsWrapper.$el;
     switch (this.mget(_a.direction)) {
       case _a.down:
-        TweenLite.to(items.$el, d, {
+        gsap.TweenLite.to(items.$el, d, {
           y: 0,
           ...opt
         });
         break;
       case _a.up:
-        TweenLite.to(items.$el, d, {
+        gsap.TweenLite.to(items.$el, d, {
           y: 0,
           ...opt
         });
-        TweenLite.to(this.__itemsWrapper.$el, {
+        gsap.TweenLite.to(this.__itemsWrapper.$el, {
           y: -(items_height + trigger_height),
         });
         break;
       case _a.left:
-        TweenLite.from(items.$el, d, {
+        gsap.TweenLite.from(items.$el, d, {
           x: items_width,
           ...opt
         });
         break;
       case _a.right:
-        TweenLite.from(items.$el, d, {
+        gsap.TweenLite.from(items.$el, d, {
           x: -items_width,
           ...opt
         });
@@ -416,7 +415,7 @@ class __menu_topic extends LetcBox {
       default:
         this.warn("Unsupported valued", this.mget(_a.direction));
     }
-    TweenLite.to(wrapper, d, {
+    gsap.TweenLite.to(wrapper, d, {
       opacity: 1,
     });
   }
@@ -505,31 +504,31 @@ class __menu_topic extends LetcBox {
     let opt = {
       onStart: this._onStartClosing,
       onComplete: this._onClosed,
-      ease: Expo.easeInOut
+      ease: gsap.Expo.easeInOut
     };
     let items_width = this.__items.$el.width();
     let items_height = this.__items.$el.height();
     switch (this.mget(_a.direction)) {
       case _a.down:
-        TweenLite.to(items.$el, d, {
+        gsap.TweenLite.to(items.$el, d, {
           y: -items_height,
           ...opt
         });
         break;
       case _a.up:
-        TweenLite.to(items.$el, d, {
+        gsap.TweenLite.to(items.$el, d, {
           y: items_height,
           ...opt
         });
         break;
       case _a.left:
-        TweenLite.to(items.$el, d, {
+        gsap.TweenLite.to(items.$el, d, {
           x: items_width,
           ...opt
         });
         break;
       case _a.right:
-        TweenLite.to(items.$el, d, {
+        gsap.TweenLite.to(items.$el, d, {
           x: -items_width,
           ...opt
         });
@@ -537,7 +536,7 @@ class __menu_topic extends LetcBox {
       default:
         this.warn("Unsupported valued", this.mget(_a.direction));
     }
-    TweenLite.to(this.__itemsWrapper.$el, d, {
+    gsap.TweenLite.to(this.__itemsWrapper.$el, d, {
       opacity: 0,
     });
   }
