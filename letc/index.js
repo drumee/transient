@@ -1,4 +1,4 @@
-const { createSafeObject } = require("@drumee/ui-toolkit");
+const { validator, createSafeObject } = require("@drumee/ui-essentials");
 
 let _lpreoad = function () { }
 
@@ -20,7 +20,7 @@ function export_globals(resolve) {
   window.Skeletons = require('./toolkit/skeletons').Skeletons;
   window.Websocket = null;
 
-  window.Validator = require('@drumee/ui-essentials').validator
+  window.Validator = validator;
   window.Kind = require("./kind");
   window.pointerDragged = false;
   window.LetcBlank = require("./widgets/blank");
