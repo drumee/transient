@@ -153,6 +153,7 @@ function validateData(c, target) {
   return data;
 };
 
+const LetcBlank = require('../blank');
 
 class __drumee_box extends Marionette.CollectionView {
   static initClass() {
