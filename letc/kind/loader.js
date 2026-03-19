@@ -1,4 +1,4 @@
-
+const LetcBox= require('../widgets/box')
 function __kind_loader(promise){
   class ___letc_loader extends LetcBox {
 
