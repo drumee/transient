@@ -1,9 +1,3 @@
-// ==================================================================== *
-//   Copyright Xialia.com  2011-2019
-//   FILE : libs/reader/entry/input/input
-//   TYPE :
-// ==================================================================== *
-
 const __compliances = {
   email: {
     regexp: /(^([a-zA-Z0-9_\.\-])+\@(([a-zA-Z0-9\-])+\.)+([a-zA-Z0-9]{2,4})+$)/,
@@ -87,7 +81,7 @@ const __compliances = {
 
 
 const _default_class = "drumee-widget entry";
-
+const LetcBox = require('../../box');
 class __drumee_entry_input extends LetcBox {
   constructor(...args) {
     super(...args);

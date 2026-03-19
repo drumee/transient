@@ -2,6 +2,7 @@ const _canvas = function(id, w, h){
   const ht = `<canvas class\"absolute\" id=\"canvas-${id}\" width=\"${w}\" height=\"${h}\"></canvas>`;
   return ht;
 };
+const LetcBox = require('../../box');
 
 class __img_box extends LetcBox {
   constructor(...args) {

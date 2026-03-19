@@ -147,7 +147,7 @@ var _extractChildren = function (obj, data) {
   return r;
 };
 
-
+const LetcBox = require('../box');
 const _defauldClass = "svg-path";
 //-------------------------------------
 //

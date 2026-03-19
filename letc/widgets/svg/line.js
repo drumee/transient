@@ -9,7 +9,7 @@ function _wrapper(id){
   return `<div id=\"${id}\" style=\"position:absolute;\" class=\"svg-wrapper\"></div>`;
 };
 
-
+const LetcBox = require('../box');
 class __svg_line extends LetcBox {
   constructor(...args) {
     super(...args);

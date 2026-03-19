@@ -10,7 +10,7 @@ function _path(stroke_array, stroke, moreClass) {
   return r;
 };
 
-
+const LetcBox = require('../box');
 /**
  * 
  */

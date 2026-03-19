@@ -1,10 +1,4 @@
-
-// ==================================================================== *
-//   Copyright Xialia.com  2011-2019
-//   FILE : libs/reader/entry/search/search
-//   TYPE :
-// ==================================================================== *
-
+const LetcBox = require('../../box');
 class __entry_reminder extends LetcBox {
   constructor(...args) {
     super(...args);

@@ -1,3 +1,4 @@
+const LetcBox = require('../../box');
 class __entry_search extends LetcBox {
   constructor(...args) {
     super(...args);

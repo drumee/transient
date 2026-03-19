@@ -1,4 +1,5 @@
 const { colorFromName } = require("@drumee/ui-essentials")
+const LetcBox = require('../box');
 
 const __cache = {};
 class __user_profile extends LetcBox {
