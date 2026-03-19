@@ -268,9 +268,9 @@ class __private_media extends Media {
     const socket_id = this.input.get(Attr.socket_id);
     data = toArray(data);
     let result = [];
-    let copied = [];
+    // let copied = [];
     let dest, src;
-    let notify = {};
+    // let notify = {};
     let nodes = {};
     for (node of data) {
       switch (node.action) {
@@ -282,22 +282,22 @@ class __private_media extends Media {
         case "copy":
           src = { nid: node.nid, mfs_root: node.src_mfs_root };
           dest = { nid: node.des_id, hub_id: rid, mfs_root: node.des_mfs_root };
-          let m = await this.yp.await_proc(
-            "forward_proc",
-            dest.hub_id,
-            "mfs_access_node",
-            `"${this.uid}", "${dest.nid}"`
-          );
+          // let m = await this.yp.await_proc(
+          //   "forward_proc",
+          //   dest.hub_id,
+          //   "mfs_access_node",
+          //   `"${this.uid}", "${dest.nid}"`
+          // );
           try {
             if (node.type == "same") {
               move_node(src, dest, 1);
             } else {
               copy_node(src, dest, 1);
-              m.position = this.input.get(Attr.position) || 0;
+              // m.position = this.input.get(Attr.position) || 0;
             }
             dest.parent_id = node.des_id;
-            notify[rid] = this.input.get(Attr.pid);
-            copied.push(dest);
+            // notify[rid] = this.input.get(Attr.pid);
+            // copied.push(dest);
           } catch (e) {
             this.warn("COPY FAILED ", e);
           }
@@ -348,7 +348,7 @@ class __private_media extends Media {
             mfs_root: node.src_mfs_root,
           };
           remove_node(target, 1);
-          copied = dest;
+          // copied = dest;
           break;
       }
     }

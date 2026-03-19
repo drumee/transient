@@ -32,7 +32,7 @@
       service       : "<%= servicePath %>?",
       serviceApi    : "<%= servicePath %>?",
       servicePath   : "<%= servicePath %>",
-      serviceUrl    : "<%= protocol %>://<%= main_domain %><%= servicePath %>?",
+      serviceUrl    : "<%= protocol %>://<%= main_domain %><%= svcPath %>",
       signed_in     : <%= signed_in || 0 %>,
       startTime,
       static        : "<%= appRoot %>/static/",

@@ -395,9 +395,9 @@ class __private_hub extends Hub {
       return;
     }
     let { domain_id } = this.user.toJSON();
-    let db_name = await this.yp.await_func("get_db_name", this.hub.get(Attr.id));
+    let db_name = await this.yp.await_func("get_db_name", this.uid);
     if (!db_name) {
-      this.warn("[hub] add_contributors: no contact db for hub", this.hub.get(Attr.id));
+      this.warn("[hub] add_contributors: no contact db for hub", this.uid);
       this.output.data([]);
       return;
     }

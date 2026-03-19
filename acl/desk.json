@@ -498,12 +498,6 @@
         "src": "owner"
       }
     },
-    "create_website": {
-      "scope": "domain",
-      "permission": {
-        "src": "admin"
-      }
-    },
     "get_alternate_account": {
       "scope": "hub",
       "permission": {
