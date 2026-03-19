@@ -1,8 +1,5 @@
-/* ==================================================================== *
-*   Copyright xialia.com  2011-2021
-* ==================================================================== */
-
-class __list_table_row extends LetcBlank {
+const LetcBlank = require('../../../blank');
+class __list_table_row extends LetcBlank.default {
 
   /**
    * 
