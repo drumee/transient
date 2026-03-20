@@ -41,6 +41,13 @@ class rectangle extends LetcBox {
     }
     return (i.area() / this.bbox.area());
   }
+
+  /**
+   * 
+   */
+  createRectangle(x, y, w, h){
+    return new  Rectangle(x, y, w, h)
+  }
 }
 
 module.exports = rectangle;
