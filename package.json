@@ -30,7 +30,6 @@
   "homepage": "https://github.com/drumee/ui-core#readme",
   "dependencies": {
     "@drumee/ui-essentials": "^1.0.0",
-    "@drumee/ui-styles": "^1.0.1",
     "autolinker": "^4.1.5",
     "backbone": "^1.6.1",
     "backbone.marionette": "^4.1.3",
