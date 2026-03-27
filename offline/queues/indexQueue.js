@@ -58,7 +58,7 @@ const indexQueue = new Queue('drumee:seo-indexing', {
 
     // Job retention
     removeOnComplete: 100, // Keep last 100 completed
-    removeOnFail: false    // Keep failed for debugging
+    removeOnFail: true     // Clear queue after all attempts exhausted
   }
 });
 
@@ -182,7 +182,7 @@ async function addFile(node, options = {}) {
       jobId,
       priority: jobPriority,
       removeOnComplete: true,
-      removeOnFail: false
+      removeOnFail: true     // Clear queue after all attempts exhausted
     });
 
     console.log(`[IndexQueue] Queued: ${node.filename} (job ${job.id}, priority ${jobPriority})`);
