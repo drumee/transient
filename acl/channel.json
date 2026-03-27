@@ -516,6 +516,91 @@
         { "code": "INVALID_DOMAIN", "message": "Current user does not belong to the configured support domain", "http_status": 403 },
         { "code": "INVALID_TICKET", "message": "No ticket found with the given ticket_id", "http_status": 404 }
       ]
+    },
+    "write": {
+      "doc": "Post a new message to a share hub channel. Intended for use in DMZ (share hub) context where the author may be an anonymous guest identified via yp.dmz_user. Requires chat permission (read + write combined, value 6). Supports threaded replies and file attachments. Broadcasts the new message to all hub participants except the sender.",
+      "scope": "hub",
+      "permission": {
+        "src": "chat"
+      },
+      "params": {
+        "message_id": {
+          "type": "string",
+          "required": true,
+          "doc": "Client-generated unique message ID (16-char hex). Must be unique across the channel table."
+        },
+        "message": {
+          "type": "string",
+          "required": false,
+          "doc": "Text content of the message. Defaults to empty string."
+        },
+        "thread_id": {
+          "type": "string",
+          "required": false,
+          "doc": "Message ID of the parent message to reply to. Creates a threaded reply when provided."
+        },
+        "attachment": {
+          "type": "array",
+          "required": false,
+          "doc": "Array of file node IDs to attach to the message."
+        },
+        "is_forward": {
+          "type": "number",
+          "required": false,
+          "doc": "Forward flag. Set to 1 if this message is forwarded from another source. Defaults to 0."
+        },
+        "socket_id": {
+          "type": "string",
+          "required": true,
+          "doc": "Caller's WebSocket socket ID. Used to exclude the caller from the broadcast recipients."
+        },
+        "echoId": {
+          "type": "string",
+          "required": false,
+          "doc": "Client-side echo identifier for optimistic UI updates."
+        }
+      },
+      "returns": {
+        "type": "object",
+        "doc": "Posted message record returned from channel_write procedure",
+        "properties": {
+          "sys_id": {
+            "type": "number",
+            "doc": "Auto-incremented message sequence ID"
+          },
+          "author_id": {
+            "type": "string",
+            "doc": "ID of the message author — yp.drumate.id for authenticated users, yp.dmz_user.id for anonymous guests"
+          },
+          "is_attachment": {
+            "type": "number",
+            "doc": "1 if the message has attachments, 0 otherwise"
+          },
+          "firstname": {
+            "type": "string",
+            "doc": "First name of the author (from yp.drumate) or display name (from yp.dmz_user) for anonymous guests"
+          },
+          "lastname": {
+            "type": "string",
+            "doc": "Last name of the author (from yp.drumate), empty string for anonymous guests"
+          },
+          "fullname": {
+            "type": "string",
+            "doc": "Full name of the author — concatenated from drumate or from dmz_user.name for anonymous guests"
+          },
+          "echoId": {
+            "type": "string",
+            "doc": "Echoed client-side echo identifier"
+          }
+        }
+      },
+      "errors": [
+        {
+          "code": "MISSING_PARAM",
+          "message": "message_id or socket_id is missing",
+          "http_status": 400
+        }
+      ]
     }
   },
   "modules": {
