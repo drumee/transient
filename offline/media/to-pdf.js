@@ -56,7 +56,7 @@ class __pdf_builder extends Offline {
               await this.build();
             } catch (e) {
               this.syslog("Failed to build - gave up", e);
-              rmSync(this.lockFile);
+              rmSync(this.lockFile, { force: true });
               process.exit(1);
             }
           };
@@ -84,7 +84,7 @@ class __pdf_builder extends Offline {
     await this.onCompletion();
     this.syslog(`Build completed successfully. ${this._preview}`);
     setTimeout(() => {
-      rmSync(this.lockFile);
+      rmSync(this.lockFile, { force: true });
       process.exit(0);
     }, 3000);
   }
