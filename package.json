@@ -1,6 +1,6 @@
 {
 	"name": "@drumee/ui-styles",
-	"version": "1.0.3",
+	"version": "1.0.4",
 	"description": "Drumee reusable SASS component library",
 	"main": "dist/css/main.css",
 	"style": "dist/css/main.css",
