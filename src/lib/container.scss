@@ -1,8 +1,3 @@
-/* =================================================================== *
-   #   Copyright Xialia.com  2011-2019                                    *
-   #   FILE : src/drumee/skin/global/container
-   #   TYPE : Global styles, for the whole platform
-   # ==================================================================== */
 
 @use "./typo";
 
@@ -21,7 +16,6 @@
   display: flex;
   flex-direction: column;
 }
-
 
 .drumee-box,
 .drumee-widget,
