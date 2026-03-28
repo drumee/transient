@@ -8,6 +8,7 @@ const validChild = function (e) { return e && e.kind };
  */
 function collectData(c) {
   let data = {};
+  const key = _a.formItem;
   const name = c.mget(key);
 
   // walk in to array of data mode eg: array of phone numbers  
