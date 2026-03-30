@@ -755,6 +755,13 @@
       },
       "log": true
     },
+    "mark_onboarding_complete": {
+      "scope": "hub",
+      "permission": {
+        "src": "owner"
+      },
+      "log": true
+    },
     "my_contacts": {
       "scope": "hub",
       "permission": {
