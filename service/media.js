@@ -1189,22 +1189,25 @@ class __media extends Mfs {
    */
   async show_node_by() {
     const nid = this.source_granted().id || "0";
-    let sort = this.input.use(Attr.sort, Attr.rank).toLowerCase();
-    let order = this.input.use(Attr.order, "asc").toLowerCase();
-    if (![Attr.rank, Attr.date, Attr.size, Attr.sort].includes(sort)) {
-      sort = Attr.rank;
+    const VALID_TYPES = ['all', 'node', 'file', 'hub'];
+    let sort_by = this.input.use(Attr.sort, Attr.rank).toLowerCase();
+    let order   = this.input.use(Attr.order, "asc").toLowerCase();
+    let type    = this.input.use(Attr.type, 'all');
+    if (![Attr.rank, Attr.date, Attr.size, Attr.sort].includes(sort_by)) {
+      sort_by = Attr.rank;
     }
     if (!["asc", "desc"].includes(order)) {
       order = "asc";
+    }
+    if (!VALID_TYPES.includes(type)) {
+      type = 'all';
     }
     const page = this.input.use(Attr.page, 1);
     let data = await this.db.await_proc(
       "mfs_show_node_by",
       nid,
       this.uid,
-      sort,
-      order,
-      page
+      { sort_by, order, page, type }
     );
     this.output.list(data);
   }
@@ -1214,22 +1217,25 @@ class __media extends Mfs {
    */
   async show_node_by_with_size() {
     const nid = this.source_granted().id || "0";
-    let sort = this.input.use(Attr.sort, Attr.rank).toLowerCase();
-    let order = this.input.use(Attr.order, "asc").toLowerCase();
-    if (![Attr.rank, Attr.date, Attr.size, Attr.sort].includes(sort)) {
-      sort = Attr.rank;
+    const VALID_TYPES = ['all', 'node', 'file', 'hub'];
+    let sort_by = this.input.use(Attr.sort, Attr.rank).toLowerCase();
+    let order   = this.input.use(Attr.order, "asc").toLowerCase();
+    let type    = this.input.use(Attr.type, 'all');
+    if (![Attr.rank, Attr.date, Attr.size, Attr.sort].includes(sort_by)) {
+      sort_by = Attr.rank;
     }
     if (!["asc", "desc"].includes(order)) {
       order = "asc";
+    }
+    if (!VALID_TYPES.includes(type)) {
+      type = 'all';
     }
     const page = this.input.use(Attr.page, 1);
     let branch = await this.db.await_proc(
       "mfs_show_node_by",
       nid,
       this.uid,
-      sort,
-      order,
-      page
+      { sort_by, order, page, type }
     );
     if (!isArray(branch)) {
       branch = [branch];
@@ -1239,7 +1245,6 @@ class __media extends Mfs {
       if (file.ftype == "folder") {
         let nodes = await this.db.await_proc("mfs_manifest", nid, this.uid, 0);
         file.filesize = nodes[0].total_size;
-        //file.node = nodes
       }
       tree.push(file);
     }
