@@ -213,8 +213,13 @@ class __private_desk extends Media {
    */
   async home() {
     const page = this.input.use(Attr.page, 1);
-    let res = await this.db.call_proc("mfs_show_node_by",
-      this.home_id, this.uid, 'rank', 'asc', page)
+    const type = this.input.use(Attr.type, 'all');
+    let res = await this.db.await_proc(
+      "mfs_show_node_by",
+      this.home_id,
+      this.uid,
+      { sort_by: 'rank', order: 'asc', page, type }
+    );
     this.output.list(res);
   }
 
