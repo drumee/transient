@@ -1,7 +1,8 @@
 // service/onboarding.js
 
 const { Entity } = require('@drumee/server-core');
-const { toArray, Cache, Constants, Attr } = require('@drumee/server-essentials');
+const { toArray, Cache, Constants, Attr, Messenger } = require('@drumee/server-essentials');
+const { resolve } = require('path');
 const { ID_NOBODY } = Constants;
 class Onboarding extends Entity {
 
@@ -104,18 +105,24 @@ class Onboarding extends Entity {
   }
 
   /**
-   * 
+   * Step 2: Save team type selection.
+   * Valid values: personal | startup | enterprise
    */
   async save_usage_plan() {
     const sessionId = this.input.sid();
     const usagePlan = this.input.need(Attr.args);
 
-    // Call SP
+    const VALID_PLANS = ['personal', 'startup', 'enterprise'];
+    if (!VALID_PLANS.includes(usagePlan)) {
+      return this.exception.user(
+        'Invalid usage plan. Must be one of: personal, startup, enterprise.'
+      );
+    }
+
     await this.db.await_proc(
       `${this.app_db}.save_onboarding_usage_plan`,
       sessionId, usagePlan
     );
-
     this.output.data({ success: true, message: 'Usage plan saved.', data: {} });
   }
 
@@ -247,6 +254,122 @@ class Onboarding extends Entity {
     this.conf = Cache.getSysConf('ob_conf');
     responseData.xlink = xlink;
     this.output.data(responseData);
+  }
+
+  /**
+   * Step 3: Generate shareable referral signup link for the current user.
+   * Fetches or generates the user's referral code from C_reward,
+   * then returns the full signup URL.
+   *
+   * NOTE: Calls reward_get_referral_code cross-DB via this.db.
+   * If loby's DB user lacks EXECUTE on C_reward, switch to this.yp.await_proc(...).
+   */
+  async get_onboarding_invite_link() {
+    if (!this.uid) {
+      return this.exception.user('User not authenticated.');
+    }
+
+    const rewardConf = JSON.parse(Cache.getSysConf('reward_hub_conf') || '{}');
+    const reward_db = rewardConf.db_name;
+    if (!reward_db) {
+      return this.exception.user('Reward hub not configured.');
+    }
+
+    const result = await this.db.await_proc(
+      `${reward_db}.reward_get_referral_code`,
+      this.uid
+    );
+
+    const rows = toArray(result);
+    const row = rows[0] || {};
+
+    if (!row.referral_code || row.status === 'failed') {
+      return this.exception.user('Failed to get referral code.');
+    }
+
+    const homepath = this.input.homepath();
+    const referral_url = `${homepath}#/welcome/signup?ref=${encodeURIComponent(row.referral_code)}`;
+
+    this.output.data({
+      referral_code: row.referral_code,
+      referral_url
+    });
+  }
+
+  /**
+   * Step 3: Send invite emails to a list of email addresses.
+   * Each email receives a referral signup link tied to the current user.
+   * Invite tracking is handled automatically when the invitee signs up using the referral code (via reward_save_referral in signup flow).
+   *
+   * NOTE: cross-DB call to C_reward via this.db.
+   * If loby DB user lacks EXECUTE on C_reward, switch to this.yp.await_proc(...).
+   */
+  async send_onboarding_invites() {
+    if (!this.uid) {
+      return this.exception.user('User not authenticated.');
+    }
+
+    const emails = toArray(this.input.need('emails'));
+    if (!emails.length) {
+      return this.exception.user('No emails provided.');
+    }
+
+    const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    const invalid = emails.filter(e => !EMAIL_RE.test(String(e).trim()));
+    if (invalid.length) {
+      return this.exception.user(`Invalid email address(es): ${invalid.join(', ')}`);
+    }
+
+    const rewardConf = JSON.parse(Cache.getSysConf('reward_hub_conf') || '{}');
+    const reward_db = rewardConf.db_name;
+    if (!reward_db) {
+      return this.exception.user('Reward hub not configured.');
+    }
+
+    // Get or generate inviter's referral code from C_reward
+    const result = await this.db.await_proc(
+      `${reward_db}.reward_get_referral_code`,
+      this.uid
+    );
+    const rows = toArray(result);
+    const row = rows[0] || {};
+
+    if (!row.referral_code || row.status === 'failed') {
+      return this.exception.user('Failed to get referral code.');
+    }
+
+    const homepath = this.input.homepath();
+    const referral_url = `${homepath}#/welcome/signup?ref=${encodeURIComponent(row.referral_code)}`;
+    const tpl = resolve(__dirname, './templates/onboarding-invite.html');
+    let sent = 0;
+
+    for (const email of emails) {
+      const data = {
+        heading: 'You have been invited to Drumee',
+        hello: 'Hello,',
+        message: 'Your colleague has invited you to join Drumee — a sovereign workspace for files, chat, and collaboration.',
+        link: referral_url,
+        workspace: 'Join Drumee',
+        signature: 'The Drumee Team',
+        reminder: `© ${new Date().getFullYear()} Drumee. All rights reserved.`,
+      };
+
+      const msg = new Messenger({
+        subject: 'You have been invited to Drumee',
+        recipient: email.trim(),
+        handler: this.exception.email,
+      });
+
+      try {
+        const html = msg.renderFrom(tpl, data);
+        await msg.send({ html });
+        sent++;
+      } catch (e) {
+        this.warn(`[send_onboarding_invites] Failed to send to ${email}:`, e && e.message);
+      }
+    }
+
+    this.output.data({ success: true, sent });
   }
 }
 
