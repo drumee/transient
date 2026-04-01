@@ -160,6 +160,7 @@ export function password(ui, opt) {
         className: `${pfx}-input`,
         service: service || _e.submit,
         name,
+        formItem: name,
         placeholder,
         interactive,
         sys_pn,
