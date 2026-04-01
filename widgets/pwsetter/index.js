@@ -25,6 +25,8 @@ export default class dtk_pwsetter extends LetcBox {
    */
   check() {
     let { password, password2 } = this.getData()
+    password = password || '';
+    password2 = password2 || '';
     let rate = 100 * (password.length / 20) + 5;
     if (rate > 100) rate = 100;
     this.__strengthGrade.el.style.width = `${rate}%`;
