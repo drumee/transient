@@ -57,6 +57,7 @@ async function get_env() {
   data.hub = { ...data.hub, ...hub };
   this.user.set(Attr.quota, {});
   data.user = await this.yp.await_proc("get_user", this.uid) || {};
+  data.user.onboarded = !!(data.user.profile && data.user.profile.onboarded);
   let { usage } = await this.yp.await_proc("disk_usage", this.uid) || {};
   data.user.disk_usage = usage;
   data.user.otp_key = this.session.get('secret');

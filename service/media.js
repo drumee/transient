@@ -1285,8 +1285,8 @@ class __media extends Mfs {
   async get_path() {
     const node_id = this.source_granted().id;
     const filenames = await this.db.call_proc("mfs_get_filenames", node_id);
-    const data = await this.db.call_proc("mfs_get_path", node_id);
-
+    const data = await this.db.await_proc("mfs_get_path", node_id, this.uid);
+ 
     const p = [];
     if (isArray(data)) {
       for (let d of data) {
