@@ -1189,7 +1189,7 @@ class __media extends Mfs {
    */
   async show_node_by() {
     const nid = this.source_granted().id || "0";
-    const VALID_TYPES = ['all', 'node', 'file', 'hub'];
+    const VALID_TYPES = ['all', 'node', Attr.file, Attr.hub];
     let sort_by = this.input.use(Attr.sort, Attr.rank).toLowerCase();
     let order   = this.input.use(Attr.order, "asc").toLowerCase();
     let type    = this.input.use(Attr.type, 'all');
