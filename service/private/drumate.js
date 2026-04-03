@@ -360,6 +360,18 @@ class __private_drumate extends Entity {
     this.output.data(data);
   }
 
+  /**
+  * Mark onboarding as complete for current user
+  */
+  async mark_onboarding_complete() {
+    let data = await this.yp.await_proc(
+      'drumate_update_profile',
+      this.uid,
+      JSON.stringify({ onboarded: true })
+    );
+    this.output.data(data);
+  }
+
 
   /**
    * 
