@@ -654,6 +654,24 @@ class __private_channel extends Entity {
     let recipients = await this.yp.await_proc('entity_sockets', { exclude, hub_id });
     await RedisStore.sendData(this.payload(data), recipients);
 
+    // Track chat_initiated
+    try {
+      const track = await this.db.await_proc('share_track_add', 'chat_initiated', this.uid, null);
+      const row = toArray(track)[0] || {};
+      if (row.inserted) {
+        const trackRecipients = await this.yp.await_proc('entity_sockets', { hub_id });
+        await RedisStore.sendData(
+          this.payload(
+            { event: 'chat_initiated', actor_id: this.uid, firstname: row.firstname, lastname: row.lastname },
+            { service: 'share.track_event' }
+          ),
+          trackRecipients
+        );
+      }
+    } catch (e) {
+      this.warn('[channel.write] chat_initiated tracking failed:', e && e.message);
+    }
+
     this.output.data(data);
   }
 
