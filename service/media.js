@@ -552,7 +552,7 @@ class __media extends Mfs {
 
     const c = await getFileinfo(incoming_file, filename);
     let { ext } = Cache.getFilecap(c.ext)
-    if(!ext){
+    if (!ext) {
       /** Update filecap table to ensure proper execution */
       await this.yp.await_proc('add_filecap', c);
     }
@@ -1191,8 +1191,8 @@ class __media extends Mfs {
     const nid = this.source_granted().id || "0";
     const VALID_TYPES = ['all', 'node', Attr.file, Attr.hub];
     let sort_by = this.input.use(Attr.sort, Attr.rank).toLowerCase();
-    let order   = this.input.use(Attr.order, "asc").toLowerCase();
-    let type    = this.input.use(Attr.type, 'all');
+    let order = this.input.use(Attr.order, "asc").toLowerCase();
+    let type = this.input.use(Attr.type, 'all');
     if (![Attr.rank, Attr.date, Attr.size, Attr.sort].includes(sort_by)) {
       sort_by = Attr.rank;
     }
@@ -1219,8 +1219,8 @@ class __media extends Mfs {
     const nid = this.source_granted().id || "0";
     const VALID_TYPES = ['all', 'node', 'file', 'hub'];
     let sort_by = this.input.use(Attr.sort, Attr.rank).toLowerCase();
-    let order   = this.input.use(Attr.order, "asc").toLowerCase();
-    let type    = this.input.use(Attr.type, 'all');
+    let order = this.input.use(Attr.order, "asc").toLowerCase();
+    let type = this.input.use(Attr.type, 'all');
     if (![Attr.rank, Attr.date, Attr.size, Attr.sort].includes(sort_by)) {
       sort_by = Attr.rank;
     }
@@ -1283,22 +1283,9 @@ class __media extends Mfs {
    * Gets list of all medias inside a node.
    */
   async get_path() {
-    const node_id = this.source_granted().id;
-    const filenames = await this.db.call_proc("mfs_get_filenames", node_id);
-    const data = await this.db.await_proc("mfs_get_path", node_id, this.uid);
- 
-    const p = [];
-    if (isArray(data)) {
-      for (let d of data) {
-        if (!isEmpty(d)) {
-          p.push(d);
-        }
-      }
-    } else {
-      p.push(data);
-    }
-    this.output.add_data({ filenames });
-    this.output.data(p);
+    const { id } = this.source_granted();
+    const data = await this.db.await_proc("mfs_get_path", id, this.uid);
+    this.output.list(data);
   }
 
   /**
