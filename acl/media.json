@@ -639,6 +639,41 @@
         }
       }
     },
+    "restore": {
+      "doc": "Restore a trashed file or folder to its original location. If the original parent no longer exists, returns parent_missing=1 so the FE can show a location picker and fall back to restore_into.",
+      "scope": "hub",
+      "permission": {
+        "src": "read"
+      },
+      "params": {
+        "nid": {
+          "type": "string",
+          "required": true,
+          "doc": "Node ID of the trashed item to restore (from show_bin results)"
+        }
+      },
+      "returns": {
+        "parent_missing": {
+          "type": "number",
+          "doc": "1 if original parent no longer exists. FE should show location picker and call restore_into."
+        },
+        "original_parent_id": {
+          "type": "string",
+          "doc": "Original parent ID (only present when parent_missing=1). FE can use to show context."
+        },
+        "nid": {
+          "type": "string",
+          "doc": "Node ID (only present when parent_missing=1)"
+        }
+      },
+      "errors": [
+        {
+          "code": "RESTORE_FAILED",
+          "message": "Could not restore node (e.g. attempted to restore root)",
+          "http_status": 400
+        }
+      ]
+    },
     "show_node_by": {
       "doc": "Get paginated list of files/folders with sorting",
       "scope": "hub",
