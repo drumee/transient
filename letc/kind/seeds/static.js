@@ -4,7 +4,7 @@
 module.exports = {
   blank: require('../../widgets/blank'),
   box: require('../../widgets/box'),
-  ifram: require('../../widgets/iframe'),
+  iframe: require('../../widgets/iframe'),
   image_smart: require('../../widgets/image/smart'),
   image_svg: require('../../widgets/image/svg'),
   list_smart: require('../../widgets/list/smart'),
