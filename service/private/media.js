@@ -68,6 +68,7 @@ class __private_media extends Media {
     this.move_all = this.move_all.bind(this);
     this.pre_restore_into = this.pre_restore_into.bind(this);
     this.restore_into = this.restore_into.bind(this);
+    this.restore = this.restore.bind(this);
     this.pre_move = this.pre_move.bind(this);
     this._ready_for_move = this._ready_for_move.bind(this);
     this.update_caption = this.update_caption.bind(this);
@@ -886,6 +887,49 @@ class __private_media extends Media {
       uid
     );
     await this._dispatch_restore(data);
+  }
+
+  /**
+  * Restore a trashed file/folder to its original location.
+  * If the original parent no longer exists, returns parent_missing=1
+  * so the FE can show a location picker and call restore_into instead.
+  * No physical file move is needed — files remain in mfs_root/{id}/.
+  */
+  async restore() {
+    const nid = this.input.need(Attr.nid);
+    let data = await this.db.await_proc('mfs_restore', nid);
+    data = toArray(data)[0] || {};
+
+    if (data.failed) {
+      return this.exception.user(data.message || 'RESTORE_FAILED');
+    }
+
+    if (data.parent_missing) {
+      return this.output.data({
+        parent_missing: 1,
+        nid,
+        original_parent_id: data.original_parent_id,
+      });
+    }
+
+    // Fetch full node attributes for WS notification
+    const restored = await this.db.await_proc('mfs_access_node', this.uid, nid);
+    if (!restored || !restored.hub_id) {
+      return this.output.data(data);
+    }
+
+    let changelog = await this.changelog_write({ src: restored, event: 'media.new' });
+    let sockets = await this.yp.await_proc('entity_sockets', restored.hub_id);
+    await RedisStore.sendData(
+      this.payload({ ...restored, args: { changelog } }, { service: 'media.restore' }),
+      sockets
+    );
+    await RedisStore.sendData(
+      this.payload({ rebuild: 1 }, { service: 'notification.resync' }),
+      sockets
+    );
+
+    this.output.data({ ...restored, args: { changelog } });
   }
 
   /**
