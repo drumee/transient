@@ -213,7 +213,11 @@ class __private_desk extends Media {
    */
   async home() {
     const page = this.input.use(Attr.page, 1);
-    const type = this.input.use(Attr.type, 'all');
+    const VALID_TYPES = ['all', 'node', 'file', 'hub', 'docs', 'pdf', 'image', 'other'];
+    let type = this.input.use(Attr.type, 'all');
+    if (!VALID_TYPES.includes(type)) {
+      type = 'all';
+    }
     let res = await this.db.await_proc(
       "mfs_show_node_by",
       this.home_id,
