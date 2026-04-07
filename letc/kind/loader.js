@@ -20,7 +20,6 @@ function __kind_loader(promise){
         this.warn("FAILED TO RESPAWN ", this , "->", promise);
         return this.warn("RESPAWN STACK :::: ", e); 
       };
-
       promise.then(ok).catch(failed);
     }
   }

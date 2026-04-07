@@ -124,6 +124,7 @@ class __kind extends Backbone.Model {
     return AppClasses[k] = v;
   }
 
+
   /**
    * 
    * @param {*} k 
@@ -149,8 +150,16 @@ class __kind extends Backbone.Model {
     if (_.isFunction(f)) {
       return f;
     }
-    f = Addons.get(name);
-    if (_.isFunction(f != null ? f.then : undefined)) {
+    f = Addons.get(name)
+    if (!f) {
+      this.warn(`Failed to find kind for ${name}`);
+      return null;
+    }
+    if (_.isFunction(f)) {
+      let p = f()
+      return this.loader(p);
+    }
+    if (_.isFunction(f.then)) {
       return this.loader(f);
     }
     this.warn(`Failed to find kind for ${name}`);
@@ -232,6 +241,15 @@ class __kind extends Backbone.Model {
     if (!f) {
       this.warn(`Could not wait for kind ${name}`);
       return null;
+    }
+    if (_.isFunction(f)) {
+      let p = f()
+      let r = await p.then((e) => {
+        if (SystemClasses[name]) return SystemClasses[name];
+        SystemClasses[name] = e.default;
+        return e.default;
+      });
+      return r;
     }
     if (_.isFunction(f.then)) {
       let r = await f.then((e) => {

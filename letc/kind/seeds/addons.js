@@ -10,19 +10,22 @@ function register(kind, ref) {
     return;
   }
   if (_.isFunction(ref.then)) {
-    Registry[kind] = (s, f) => {
+    Registry[kind] = new Promise((s, f) => {
       ref.then((m) => {
         if (m.default) {
           s(m.default)
-        }else{
+        } else {
           s(m)
         }
-      }).catch((e)=>{
-        console.warn(`Failed to register kind=${kind}`, e)
+      }).catch((e) => {
+        console.warn(`Failed(21) to register kind=${kind}`, e)
         f(e)
       })
-    }
+    })
+  } else {
+    Registry[kind] = ref
   }
+
 }
 
 /**
@@ -31,7 +34,7 @@ function register(kind, ref) {
  * @returns 
  */
 function get(name) {
-  if (Registry[name]) return new Promise(Registry[name]);
+  if (Registry[name]) return Registry[name];
   return null;
 };
 
