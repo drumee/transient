@@ -22,7 +22,7 @@ function register(kind, ref) {
         f(e)
       })
     })
-  } else {
+  } else if (_.isFunction(ref)) {
     Registry[kind] = ref
   }
 

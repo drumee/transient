@@ -110,6 +110,10 @@ class __kind extends Backbone.Model {
    * @returns 
    */
   register(k, v, verbose = 0) {
+    if(!v){
+      this.warn(`Kind ${k} pointing to null widget`);
+      return
+    }
     if (AppClasses[k]) {
       if (verbose) {
         this.warn(`Kind ${k} already exists. Use method replace`);
@@ -121,7 +125,12 @@ class __kind extends Backbone.Model {
       this.warn(`Kind *${k}* is reserved, it cannot be reused.`);
       return;
     }
-    return AppClasses[k] = v;
+    if (v.default) {
+      AppClasses[k] = v.default
+    } else {
+      AppClasses[k] = v;
+    }
+    return AppClasses[k]
   }
 
 

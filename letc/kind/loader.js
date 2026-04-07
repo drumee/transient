@@ -1,24 +1,24 @@
-const LetcBox= require('../widgets/box')
-function __kind_loader(promise){
+const LetcBox = require('../widgets/box')
+function __kind_loader(promise) {
   class ___letc_loader extends LetcBox {
 
     static initClass() {
-      this.prototype.isLazyClass  = 1;
+      this.prototype.isLazyClass = 1;
     }
 
     /**
      * 
      */
-    onBeforeRender(){
+    onBeforeRender() {
       const k = this.mget(_a.kind);
-      const ok = f=> {
+      const ok = f => {
         Kind.register(k, f, 0);
-        let index =  this.renew();
+        let index = this.renew();
         this.trigger(_a.respawn, index);
       };
-      const failed = e=> {
-        this.warn("FAILED TO RESPAWN ", this , "->", promise);
-        return this.warn("RESPAWN STACK :::: ", e); 
+      const failed = e => {
+        this.warn("FAILED TO RESPAWN ", this, "->", promise);
+        return this.warn("RESPAWN STACK :::: ", e);
       };
       promise.then(ok).catch(failed);
     }
