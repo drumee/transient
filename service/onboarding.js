@@ -371,6 +371,84 @@ class Onboarding extends Entity {
 
     this.output.data({ success: true, sent });
   }
+
+  /**
+  * Get activation status for the current user.
+  * Events tracked via yp.services_log for:
+  *   - workspace_created  → desk.create_hub
+  *   - teammate_invited   → onboarding.send_onboarding_invites
+  * Events tracked via direct hub DB query for:
+  *   - first_file_uploaded → media table (high-frequency, not suitable for services_log)
+  *   - folder_chat_started → channel table (high-frequency, not suitable for services_log)
+  */
+  async get_activation_status() {
+    if (!this.uid) {
+      return this.output.data({
+        workspace_created: false,
+        first_file_uploaded: false,
+        teammate_invited: false,
+        folder_chat_started: false
+      });
+    }
+
+    // Query services_log for low-frequency logged events
+    let logged = new Set();
+    try {
+      const raw = toArray(
+        await this.yp.await_query(
+          `SELECT DISTINCT name FROM services_log WHERE uid = ? AND name IN (?, ?)`,
+          this.uid,
+          'desk.create_hub',
+          'onboarding.send_onboarding_invites'
+        )
+      );
+      logged = new Set(raw.map(r => r.name));
+    } catch (e) {
+      this.warn('[get_activation_status] services_log query failed:', e && e.message);
+    }
+
+    // Query hub DB directly for high-frequency events
+    let first_file_uploaded = false;
+    let folder_chat_started = false;
+
+    try {
+      const hubRow = toArray(
+        await this.yp.await_query(
+          `SELECT db_name FROM entity WHERE owner_id = ? AND type = 'hub' AND area = 'private' LIMIT 1`,
+          this.uid
+        )
+      )[0];
+
+      if (hubRow && hubRow.db_name) {
+        const db = hubRow.db_name;
+
+        const fileRow = toArray(
+          await this.yp.await_query(
+            `SELECT 1 AS found FROM ${db}.media WHERE owner_id = ? AND category NOT IN ('folder', 'hub', 'root') LIMIT 1`,
+            this.uid
+          )
+        )[0];
+        first_file_uploaded = !!fileRow;
+
+        const chatRow = toArray(
+          await this.yp.await_query(
+            `SELECT 1 AS found FROM ${db}.channel WHERE author_id = ? LIMIT 1`,
+            this.uid
+          )
+        )[0];
+        folder_chat_started = !!chatRow;
+      }
+    } catch (e) {
+      this.warn('[get_activation_status] Hub DB query failed:', e && e.message);
+    }
+
+    this.output.data({
+      workspace_created: logged.has('desk.create_hub'),
+      first_file_uploaded,
+      teammate_invited: logged.has('onboarding.send_onboarding_invites'),
+      folder_chat_started
+    });
+  }
 }
 
 module.exports = Onboarding;
