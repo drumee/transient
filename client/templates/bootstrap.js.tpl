@@ -26,7 +26,7 @@ function load_bundle(id, src){
 }
 
 <% _.each(bundles, function(m, k) { %>
-  load_bundle("bundles-<%= k %>", "<%= app.location %>/app/<%= m %>")
+  load_bundle("bundles-<%= k %>", "<%= m %>")
 <% }); %>
 
 

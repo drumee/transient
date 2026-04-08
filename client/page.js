@@ -163,8 +163,14 @@ class MainPage extends RuntimeEnv {
       data.debugUi = 1;
     }
     let bundles = {}
-    for (let m of ["core", "vendor", "sprite", "locale", "entry"]) {
-      bundles[m] = data.app[m]
+    if (data.app.manifest) {
+      for (let m of ["runtime", "core", "vendor", "sprite", "locale", "main"]) {
+        bundles[m] = data.app.manifest[`${m}.js`]
+      }
+    } else {
+      for (let m of ["core", "vendor", "sprite", "locale", "entry"]) {
+        bundles[m] = data.app[m]
+      }
     }
     data.bundles = bundles;
     let xid = this.input.get("xid")
