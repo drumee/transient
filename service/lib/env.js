@@ -137,6 +137,7 @@ function platform() {
     platform.plugins = JSON.parse(Cache.getSysConf("plugins"));
   }
   platform.services = getServices();
+  platform.doc_editor = Cache.getSysConf("doc_editor");
   platform.endpoint = this.input.basepath();
   return platform;
 }
