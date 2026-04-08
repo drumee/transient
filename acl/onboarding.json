@@ -96,6 +96,14 @@
       "permission": {
         "src": "anonymous",
         "fast_check": "public-api"
+      },
+      "log": true
+    },
+    "get_activation_status": {
+      "scope": "hub",
+      "permission": {
+        "src": "anonymous",
+        "fast_check": "public-api"
       }
     }
   },
