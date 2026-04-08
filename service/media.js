@@ -1178,10 +1178,14 @@ class __media extends Mfs {
    * 
    */
   get_all() {
-    const node_id =
-      this.input.use(Attr.nid) || this.input.use(Attr.node_id, this.get_home_id());
+    const node_id = this.input.use(Attr.nid) || this.input.use(Attr.node_id, this.get_home_id());
     const page = this.input.use(Attr.page, 1);
-    this.db.call_proc("mfs_list_all", node_id, page, this.output.data);
+    const VALID_TYPES = ['all', 'docs', 'pdf', 'image', 'other'];
+    let type = this.input.use(Attr.type, 'all');
+    if (!VALID_TYPES.includes(type)) {
+      type = 'all';
+    }
+    this.db.call_proc("mfs_list_all", node_id, page, type, this.output.data);
   }
 
   /**
