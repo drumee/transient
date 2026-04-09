@@ -1177,7 +1177,7 @@ class __media extends Mfs {
   /**
    * 
    */
-  get_all() {
+  async get_all() {
     const node_id = this.input.use(Attr.nid) || this.input.use(Attr.node_id, this.get_home_id());
     const page = this.input.use(Attr.page, 1);
     const VALID_TYPES = ['all', 'docs', 'pdf', 'image', 'other'];
@@ -1185,7 +1185,13 @@ class __media extends Mfs {
     if (!VALID_TYPES.includes(type)) {
       type = 'all';
     }
-    this.db.call_proc("mfs_list_all", node_id, page, type, this.output.data);
+    let data = await this.db.await_proc(
+      "mfs_show_node_by",
+      node_id,
+      this.uid,
+      { sort_by: 'date', order: 'desc', page, type }
+    );
+    this.output.list(data);
   }
 
   /**
