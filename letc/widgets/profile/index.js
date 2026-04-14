@@ -54,21 +54,25 @@ class __user_profile extends LetcBox {
 
   /**
    * 
-   * @param {*} m 
+   * @param {*} src 
    * @returns 
    */
+  img() {
+    const imageType = this.mget(_a.type) || _a.vignette
+    const src = Visitor.avatar(this.mget(_a.id), imageType)
+    return `
+      <img class="${this.fig.family}__icon ${this.fig.family}__picture picture" data-flow="x" src="${src}">
+    `
+  }
+
+  /**
+   *
+   * @param {*} m
+    * @returns
+    */
   _show(m) {
     if (m === 'p') {
-      const imageType = this.mget(_a.type) || _a.vignette
-      const src = Visitor.avatar(this.mget(_a.id), imageType);
-
-      return this.__imageBox.feed({
-        kind: "blank",
-        className: `${this.fig.family}__icon ${this.fig.family}__picture picture`,
-        sys_pn: 'picture',
-        src,
-        active: this.mget(_a.active)
-      });
+      return this.__imageBox.el.innerHTML = this.img();
     }
 
     let opt = null;
@@ -182,9 +186,9 @@ class __user_profile extends LetcBox {
   }
 
   /**
-   * 
-   * @param {*} e 
-   */
+   *
+   * @param {*} e
+    */
   _onError(e) {
     __cache[this.mget(_a.id)] = 1;
     this.el.dataset.default = 1;
@@ -193,10 +197,10 @@ class __user_profile extends LetcBox {
 
 
   /**
-* 
-* @param {*} service 
-* @param {*} data 
-*/
+*
+* @param {*} service
+    * @param {*} data
+    */
   updateStatus(data) {
     if (data.id != this.mget(_a.id)) return;
     this.el.dataset.online = data.status;
