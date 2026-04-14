@@ -32,6 +32,7 @@ class __private_channel extends Entity {
     this.messages = this.messages.bind(this);
     this.post = this.post.bind(this);
     this.write = this.write.bind(this);
+    this.list_notifications = this.list_notifications.bind(this);
     this.read = this.read.bind(this);
     this.notify_chat = this.notify_chat.bind(this);
     this.acknowledge = this.acknowledge.bind(this);
@@ -617,6 +618,7 @@ class __private_channel extends Entity {
     const thread_id = this.input.use(Attr.thread_id);
     let attachment = this.input.use(Attr.attachment, []);
     const is_forward = this.input.use(Attr.is_forward, 0);
+    const mention_ids = this.input.use('mention_ids', null);
     let exclude = this.input.need(Attr.socket_id);
     if (exclude) exclude = [exclude];
 
@@ -638,7 +640,8 @@ class __private_channel extends Entity {
       message,
       thread_id || null,
       !isEmpty(attachment) ? stringify(attachment) : null,
-      is_forward
+      is_forward,
+      !isEmpty(mention_ids) ? stringify(mention_ids) : null
     );
 
     data.is_attachment = !isEmpty(attachment) ? 1 : 0;
@@ -673,6 +676,65 @@ class __private_channel extends Entity {
     }
 
     this.output.data(data);
+  }
+
+  /**
+  * Retrieve paginated notifications for the current user across all hubs.
+  * Supports type filter (all / mention / share) and unread-only toggle.
+  */
+  async list_notifications() {
+    const VALID_TYPES = ['all', 'mention', 'share'];
+    let type = this.input.use(Attr.type, 'all');
+    if (!VALID_TYPES.includes(type)) type = 'all';
+    const unread_only = this.input.use('unread_only', 0) ? 1 : 0;
+    const page = this.input.use(Attr.page, 1);
+ 
+    // Get all active hubs owned by the current user
+    let hubs = [];
+    try {
+      hubs = toArray(
+        await this.yp.await_query(
+          `SELECT id, db_name FROM entity
+          WHERE owner_id = ? AND type = 'hub' AND status = 'active'`,
+          this.uid
+        )
+      );
+    } catch (e) {
+      this.warn('[channel.list_notifications] hub list query failed:', e && e.message);
+    }
+ 
+    // Query channel_list_notifications per hub and aggregate results
+    let all_notifications = [];
+    for (const hub of hubs) {
+      if (!hub.db_name) continue;
+      try {
+        const rows = toArray(
+          await this.yp.await_proc(
+            `${hub.db_name}.channel_list_notifications`,
+            this.uid,
+            type,
+            unread_only,
+            1
+          )
+        );
+        // Tag each row with its hub_id
+        for (const row of rows) {
+          row.hub_id = hub.id;
+          all_notifications.push(row);
+        }
+      } catch (e) {
+        this.warn(`[channel.list_notifications] hub ${hub.id} query failed:`, e && e.message);
+      }
+    }
+ 
+    // Sort merged results by ctime DESC then apply pagination
+    all_notifications.sort((a, b) => b.ctime - a.ctime);
+ 
+    const PAGE_SIZE = 45;
+    const offset = (page - 1) * PAGE_SIZE;
+    const paged = all_notifications.slice(offset, offset + PAGE_SIZE);
+ 
+    this.output.list(paged);
   }
 
   // ========================
