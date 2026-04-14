@@ -601,7 +601,55 @@
           "http_status": 400
         }
       ]
-    }
+    },
+    "list_notifications": {
+      "doc": "Retrieve paginated notification list for the current user aggregated across all their hubs. Supports filtering by type (all, mention, share) and an unread-only toggle. Iterates all active hubs owned by the current user, calls channel_list_notifications per hub, merges and sorts results by ctime DESC. Returns only messages where the current user is in the delivered recipients list, excluding own messages and soft-deleted messages.",
+      "scope": "hub",
+      "permission": {
+        "src": "read"
+      },
+      "params": {
+        "type": {
+          "type": "string",
+          "required": false,
+          "doc": "Notification filter type. Accepted values: all (default) — all activity directed at current user; mention — messages where current user's ID is in mention_ids; share — forwarded messages (is_forward = 1) or messages with file attachments."
+        },
+        "unread_only": {
+          "type": "number",
+          "required": false,
+          "doc": "Set to 1 to return only unread notifications (current user not yet in _seen_). Defaults to 0 (return all)."
+        },
+        "page": {
+          "type": "number",
+          "required": false,
+          "doc": "Page number for pagination (default: 1)."
+        }
+      },
+      "returns": {
+        "type": "array",
+        "doc": "Paginated list of notification objects.",
+        "items": {
+          "type": "object",
+          "properties": {
+            "sys_id": { "type": "number", "doc": "Message sequence ID" },
+            "author_id": { "type": "string", "doc": "ID of the message author" },
+            "message": { "type": "string", "doc": "Message text content" },
+            "message_id": { "type": "string", "doc": "Unique message identifier" },
+            "thread_id": { "type": "string", "doc": "Parent message ID if this is a reply" },
+            "is_forward": { "type": "number", "doc": "1 if message is forwarded, 0 otherwise" },
+            "attachment": { "type": "string", "doc": "JSON-encoded attachment array, null if none" },
+            "is_attachment": { "type": "number", "doc": "1 if message has attachments, 0 otherwise" },
+            "mention_ids": { "type": "array",  "doc": "Array of user IDs mentioned in this message, null if none" },
+            "ctime": { "type": "number", "doc": "Unix timestamp when the message was posted" },
+            "firstname": { "type": "string", "doc": "Author first name (from yp.drumate) or display name (from yp.dmz_user for anonymous guests)" },
+            "lastname": { "type": "string", "doc": "Author last name, empty string for anonymous guests" },
+            "fullname": { "type": "string", "doc": "Author full name" },
+            "is_read": { "type": "number", "doc": "1 if current user has seen this message, 0 if unread" }
+          }
+        }
+      },
+      "errors": []
+    } 
   },
   "modules": {
     "private": "service/private/channel",
