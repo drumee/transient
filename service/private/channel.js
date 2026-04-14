@@ -31,6 +31,7 @@ class __private_channel extends Entity {
     super(...args);
     this.messages = this.messages.bind(this);
     this.post = this.post.bind(this);
+    this.write = this.write.bind(this);
     this.read = this.read.bind(this);
     this.notify_chat = this.notify_chat.bind(this);
     this.acknowledge = this.acknowledge.bind(this);
@@ -606,6 +607,73 @@ class __private_channel extends Entity {
     this.output.data(data)
   }
 
+  /**
+   * Post a message to a share hub channel.
+   * Supports both authenticated (yp.drumate) and anonymous (yp.dmz_user) authors.
+   * message_id is generated server-side via message_id SP.
+   */
+  async write() {
+    let message = this.input.use(Attr.message, '');
+    const thread_id = this.input.use(Attr.thread_id);
+    let attachment = this.input.use(Attr.attachment, []);
+    const is_forward = this.input.use(Attr.is_forward, 0);
+    let exclude = this.input.need(Attr.socket_id);
+    if (exclude) exclude = [exclude];
+
+    let message_id = await this.db.await_proc('message_id');
+    message_id = message_id.id;
+
+    let sbox = await this.db.call_proc('mfs_home');
+    if (!isEmpty(attachment)) {
+      let desdir = await this.yp.await_proc('forward_proc', sbox.hub_id, 'mfs_make_dir', `'${sbox.chat_id}','${stringify(message_id)}',1`);
+      attachment = await this.move_attachemnt(sbox, desdir, attachment, message_id);
+    }
+
+    if (!isEmpty(message)) { message = message.replace(/'/gi, "''"); }
+
+    let data = await this.db.await_proc(
+      'channel_write',
+      this.uid,
+      message_id,
+      message,
+      thread_id || null,
+      !isEmpty(attachment) ? stringify(attachment) : null,
+      is_forward
+    );
+
+    data.is_attachment = !isEmpty(attachment) ? 1 : 0;
+
+    if (!isEmpty(thread_id)) {
+      data.thread = await this.threadInfo(thread_id, this.hub.get(Attr.id));
+    }
+
+    data.hub_id = this.hub.get(Attr.id);
+    data.echoId = this.input.get('echoId');
+
+    let hub_id = this.hub.get(Attr.id);
+    let recipients = await this.yp.await_proc('entity_sockets', { exclude, hub_id });
+    await RedisStore.sendData(this.payload(data), recipients);
+
+    // Track chat_initiated
+    try {
+      const track = await this.db.await_proc('share_track_add', 'chat_initiated', this.uid, null);
+      const row = toArray(track)[0] || {};
+      if (row.inserted) {
+        const trackRecipients = await this.yp.await_proc('entity_sockets', { hub_id });
+        await RedisStore.sendData(
+          this.payload(
+            { event: 'chat_initiated', actor_id: this.uid, firstname: row.firstname, lastname: row.lastname },
+            { service: 'share.track_event' }
+          ),
+          trackRecipients
+        );
+      }
+    } catch (e) {
+      this.warn('[channel.write] chat_initiated tracking failed:', e && e.message);
+    }
+
+    this.output.data(data);
+  }
 
   // ========================
   // 
