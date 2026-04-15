@@ -68,7 +68,6 @@ class __private_channel extends Entity {
     const order = this.input.use(Attr.order, 'asc');
     const page = this.input.use(Attr.page) || 1;
     let data = await this.db.await_proc('channel_list_messages', this.uid, 'date', order, page);
-
     data = toArray(data);
     let messages = [];
 

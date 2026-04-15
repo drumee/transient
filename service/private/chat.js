@@ -614,17 +614,17 @@ class privateChat extends Entity {
    *
    */
   async messages() {
-    let entity_id = this.input.need(Attr.entity_id);
+    let peer_id = this.input.get(Attr.peer_id) || this.input.need(Attr.entity_id);
     let page = this.input.use(Attr.page) || 1;
     let nodes = {};
     let db_name = this.user.get(Attr.db_name);
     let entity = await this.yp.await_proc(
       `${db_name}.shareroom_contact_get`,
-      entity_id
+      peer_id
     );
     nodes = {
       page: page,
-      entity_id: entity_id,
+      entity_id: peer_id,
     };
 
     let data = await this.db.await_proc("list_message", nodes);
@@ -665,6 +665,13 @@ class privateChat extends Entity {
     this.output.list(messages);
   }
 
+  /**
+   * 
+   * @param {*} attachments 
+   * @param {*} uid 
+   * @param {*} page 
+   * @returns 
+   */
   async _getAttachmentsInfo(attachments, uid, page) {
     let files = [];
 
