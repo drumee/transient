@@ -1,77 +1,226 @@
 {
   "services": {
-    "show_watermark": {
-      "doc": "Get watermark timestamps for hub and drumate entity pools from the yellow-page database",
-      "scope": "plateform",
+    "member_stats": {
+      "doc": "Retrieve aggregated member statistics for the Admin Console header: total members, admins, pending invites, and external guests within the current domain organisation.",
+      "scope": "domain",
       "permission": {
-        "permission": "read"
+        "src": "read"
       },
       "params": {},
       "returns": {
-        "hub": {
-          "type": "object",
-          "doc": "Watermark record for hub entities returned by the watermark stored procedure"
-        },
-        "drumate": {
-          "type": "object",
-          "doc": "Watermark record for drumate entities returned by the watermark stored procedure"
-        },
-        "ctime": {
-          "type": "object",
-          "doc": "Most recent creation timestamps for each entity type",
-          "properties": {
-            "hub": {
-              "type": "string",
-              "doc": "Latest ctime for hub-type entities in the pool area"
-            },
-            "drumate": {
-              "type": "string",
-              "doc": "Latest ctime for drumate-type entities in the pool area"
-            }
+        "type": "object",
+        "doc": "Aggregated stats object",
+        "properties": {
+          "total_members": {
+            "type": "number",
+            "doc": "Total non-system, non-archived members in the organisation"
+          },
+          "admins": {
+            "type": "number",
+            "doc": "Members with privilege level above 1"
+          },
+          "pending_invites": {
+            "type": "number",
+            "doc": "Active members who have never connected (connected = 0)"
+          },
+          "external_guests": {
+            "type": "number",
+            "doc": "Distinct DMZ guests who have accessed hubs belonging to this organisation"
           }
         }
       },
       "errors": [
-        {
-          "code": "DENIED",
-          "message": "Caller does not have the required platform remit",
-          "http_status": 403
-        }
+        { "code": "NO_ORG", "message": "No organisation found for the current domain", "http_status": 404 }
       ]
     },
-    "yp_test": {
-      "doc": "Execute an arbitrary yellow-page stored procedure by name with a dynamic argument list. Intended for administrative testing and diagnostics only.",
-      "scope": "plateform",
+    "member_list_workspaces": {
+      "doc": "Retrieve the list of active workspaces (hubs) within the organisation that a specific member has access to.",
+      "scope": "domain",
       "permission": {
-        "permission": "write"
+        "src": "read"
       },
       "params": {
-        "name": {
+        "user_id": {
           "type": "string",
           "required": true,
-          "doc": "Name of the stored procedure to call on the yellow-page database"
-        },
-        "values": {
-          "type": "array",
-          "required": true,
-          "doc": "Ordered list of arguments to spread into the stored procedure call",
-          "items": {
-            "type": "string"
-          }
+          "doc": "ID of the member whose workspace list to retrieve"
         }
       },
       "returns": {
-        "data": {
+        "type": "array",
+        "doc": "List of workspace objects the member has access to within the organisation",
+        "items": {
           "type": "object",
-          "doc": "Raw result returned by the named stored procedure"
+          "properties": {
+            "hub_id": { "type": "string", "doc": "Hub entity ID" },
+            "hub_name": { "type": "string", "doc": "Display name of the hub" }
+          }
         }
       },
       "errors": [
-        {
-          "code": "DENIED",
-          "message": "Caller does not have the required platform remit",
-          "http_status": 403
+        { "code": "NO_ORG", "message": "No organisation found or target user does not belong to the same organisation", "http_status": 404 },
+        { "code": "INVALID_ORG", "message": "Target user belongs to a different organisation", "http_status": 403 }
+      ]
+    },
+    "member_device_list": {
+      "doc": "Retrieve the list of active registered security devices for a specific member.",
+      "scope": "domain",
+      "permission": {
+        "src": "read"
+      },
+      "params": {
+        "user_id": {
+          "type": "string",
+          "required": true,
+          "doc": "ID of the member whose device list to retrieve"
         }
+      },
+      "returns": {
+        "type": "array",
+        "doc": "List of active device records for the member, ordered by most recently active",
+        "items": {
+          "type": "object",
+          "properties": {
+            "sys_id": { "type": "number", "doc": "Device record ID" },
+            "name": { "type": "string", "doc": "Device display name" },
+            "platform": { "type": "string", "doc": "Device platform (e.g. macOS, iOS)" },
+            "version": { "type": "string", "doc": "OS or app version" },
+            "status": { "type": "string", "doc": "Device status (active)" },
+            "ctime": { "type": "number", "doc": "Registration timestamp (UNIX)" },
+            "mtime": { "type": "number", "doc": "Last activity timestamp (UNIX)" }
+          }
+        }
+      },
+      "errors": [
+        { "code": "NO_ORG", "message": "No organisation found or target user does not belong to the same organisation", "http_status": 404 },
+        { "code": "INVALID_ORG", "message": "Target user belongs to a different organisation", "http_status": 403 }
+      ]
+    },
+    "member_device_remove": {
+      "doc": "Revoke a specific registered security device for a member by device record ID.",
+      "scope": "domain",
+      "permission": {
+        "src": "admin"
+      },
+      "params": {
+        "user_id": {
+          "type": "string",
+          "required": true,
+          "doc": "ID of the member whose device to revoke"
+        },
+        "device_id": {
+          "type": "number",
+          "required": true,
+          "doc": "sys_id of the device record to revoke"
+        }
+      },
+      "returns": {
+        "type": "object",
+        "doc": "Result object with affected row count",
+        "properties": {
+          "affected": { "type": "number", "doc": "Number of rows updated (1 if successful, 0 if device not found or already revoked)" }
+        }
+      },
+      "errors": [
+        { "code": "NO_ORG", "message": "No organisation found or target user does not belong to the same organisation", "http_status": 404 },
+        { "code": "INVALID_ORG", "message": "Target user belongs to a different organisation", "http_status": 403 }
+      ]
+    },
+    "member_device_remove_all": {
+      "doc": "Revoke all active registered security devices for a specific member.",
+      "scope": "domain",
+      "permission": {
+        "src": "admin"
+      },
+      "params": {
+        "user_id": {
+          "type": "string",
+          "required": true,
+          "doc": "ID of the member whose devices to revoke"
+        }
+      },
+      "returns": {
+        "type": "object",
+        "doc": "Result object with affected row count",
+        "properties": {
+          "affected": { "type": "number", "doc": "Number of device records revoked" }
+        }
+      },
+      "errors": [
+        { "code": "NO_ORG", "message": "No organisation found or target user does not belong to the same organisation", "http_status": 404 },
+        { "code": "INVALID_ORG", "message": "Target user belongs to a different organisation", "http_status": 403 }
+      ]
+    },
+    "member_set_workspace_admin": {
+      "doc": "Grant Workspace Admin permission (permission level 31) to a member on one or more specific hubs within the organisation. Only hubs belonging to the caller's organisation are processed.",
+      "scope": "domain",
+      "permission": {
+        "src": "admin"
+      },
+      "params": {
+        "user_id": {
+          "type": "string",
+          "required": true,
+          "doc": "ID of the member to promote to Workspace Admin"
+        },
+        "hub_id": {
+          "type": "array",
+          "required": true,
+          "doc": "Array of hub IDs to grant Workspace Admin access on. Accepts a single string which is normalised to an array."
+        }
+      },
+      "returns": {
+        "type": "array",
+        "doc": "List of results per hub, each containing hub_id and the updated permission record"
+      },
+      "errors": [
+        { "code": "NO_ORG", "message": "No organisation found or target user does not belong to the same organisation", "http_status": 404 },
+        { "code": "INVALID_ORG", "message": "Target user belongs to a different organisation", "http_status": 403 }
+      ]
+    },
+    "member_remove_workspace_admin": {
+      "doc": "Downgrade a Workspace Admin back to regular member (permission level 7) on one or more specific hubs within the organisation. Only hubs belonging to the caller's organisation are processed.",
+      "scope": "domain",
+      "permission": {
+        "src": "admin"
+      },
+      "params": {
+        "user_id": {
+          "type": "string",
+          "required": true,
+          "doc": "ID of the member to downgrade from Workspace Admin"
+        },
+        "hub_id": {
+          "type": "array",
+          "required": true,
+          "doc": "Array of hub IDs to remove Workspace Admin access from. Accepts a single string which is normalised to an array."
+        }
+      },
+      "returns": {
+        "type": "object",
+        "doc": "Status object confirming the operation completed",
+        "properties": {
+          "status": { "type": "string", "doc": "Always 'done' on success" }
+        }
+      },
+      "errors": [
+        { "code": "NO_ORG", "message": "No organisation found or target user does not belong to the same organisation", "http_status": 404 },
+        { "code": "INVALID_ORG", "message": "Target user belongs to a different organisation", "http_status": 403 }
+      ]
+    },
+    "member_list_workspace_admins": {
+      "doc": "Retrieve the list of members who have Workspace Admin permission on at least one hub within the organisation.",
+      "scope": "domain",
+      "permission": {
+        "src": "read"
+      },
+      "params": {},
+      "returns": {
+        "type": "array",
+        "doc": "List of member detail records for all workspace admins in the organisation"
+      },
+      "errors": [
+        { "code": "NO_ORG", "message": "No organisation found for the current domain", "http_status": 404 }
       ]
     }
   },
