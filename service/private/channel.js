@@ -36,6 +36,9 @@ class __private_channel extends Entity {
     this.read = this.read.bind(this);
     this.notify_chat = this.notify_chat.bind(this);
     this.acknowledge = this.acknowledge.bind(this);
+    this.bookmark_add = this.bookmark_add.bind(this);
+    this.bookmark_remove = this.bookmark_remove.bind(this);
+    this.bookmark_list = this.bookmark_list.bind(this);
     this.send_ticket = this.send_ticket.bind(this);
     this.post_ticket = this.post_ticket.bind(this);
     this.show_ticket = this.show_ticket.bind(this);
@@ -907,6 +910,35 @@ class __private_channel extends Entity {
       await RedisStore.sendData(this.payload(msg, { service }), recipients);
     }
     this.output.list(temp_result);
+  }
+
+  /**
+   * Save (pin) a notification for quick access.
+   * Stores message_id + hub_id in notification_bookmark table (user DB).
+   */
+  async bookmark_add() {
+    const message_id = this.input.need('message_id');
+    const hub_id     = this.input.need('hub_id');
+    const data = await this.db.await_proc('notification_bookmark_add', message_id, hub_id);
+    this.output.data(data);
+  }
+
+  /**
+   * Remove a pinned notification.
+   */
+  async bookmark_remove() {
+    const message_id = this.input.need('message_id');
+    const data = await this.db.await_proc('notification_bookmark_remove', message_id);
+    this.output.data(data);
+  }
+
+  /**
+   * List all bookmarked notifications for the current user.
+   */
+  async bookmark_list() {
+    const page = this.input.use(Attr.page, 1);
+    const data = await this.db.await_proc('notification_bookmark_list', page);
+    this.output.list(data);
   }
 }
 
