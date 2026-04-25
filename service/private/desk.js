@@ -299,18 +299,63 @@ class __private_desk extends Media {
   }
 
   /**
-   * 
+   * Search files/folders (via desk_search SP + media_index)
+   * AND messages (via channel_search SP, cross-hub).
    */
   async search() {
     const string = this.input.safe_string(Attr.string);
-    const page = this.input.use(Attr.page, 1);
+    const page   = this.input.use(Attr.page, 1);
+ 
     if (isEmpty(string)) {
       this.output.list([]);
       return;
     }
-    let pattern = string.trim();
-    let res = await this.db.await_proc("desk_search", { pattern, page });
-    this.output.list(res)
+ 
+    const pattern = string.trim();
+ 
+    // File / folder search (existing behaviour, cross-hub via media_index)
+    let fileResults = await this.db.await_proc('desk_search', { pattern, page });
+    fileResults = toArray(fileResults).map(r => ({ ...r, result_type: 'file' }));
+ 
+    // Message search across all active hubs owned by the current user
+    let messageResults = [];
+    try {
+      const hubs = toArray(
+        await this.yp.await_query(
+          `SELECT id, db_name FROM entity
+           WHERE owner_id = ? AND type = 'hub' AND status = 'active'`,
+          this.uid
+        )
+      );
+ 
+      for (const hub of hubs) {
+        if (!hub.db_name) continue;
+        try {
+          const rows = toArray(
+            await this.yp.await_proc(`${hub.db_name}.channel_search`, pattern)
+          );
+          for (const row of rows) {
+            row.hub_id      = hub.id;
+            row.result_type = 'message';
+            messageResults.push(row);
+          }
+        } catch (e) {
+          // One hub failing must not abort the entire search
+          this.warn(
+            `[desk.search] channel_search failed for hub ${hub.id}:`,
+            e && e.message
+          );
+        }
+      }
+ 
+      // Sort merged message results newest-first
+      messageResults.sort((a, b) => b.ctime - a.ctime);
+ 
+    } catch (e) {
+      this.warn('[desk.search] message search stage failed:', e && e.message);
+    }
+ 
+    this.output.list([...fileResults, ...messageResults]);
   }
 
   /**
