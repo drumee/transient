@@ -515,6 +515,43 @@
       "permission": {
         "src": "owner"
       }
+    },
+    "recent_files": {
+      "doc": "Get recently modified files across all user hubs, sorted by modification time DESC",
+      "scope": "hub",
+      "permission": {
+        "src": "owner"
+      },
+      "log": false,
+      "params": {
+        "page": {
+          "type": "number",
+          "required": false,
+          "default": 1,
+          "min": 1,
+          "doc": "Page number for pagination"
+        }
+      },
+      "returns": {
+        "items": {
+          "type": "array",
+          "doc": "Recent files across all accessible hubs, sorted by mtime DESC",
+          "items": {
+            "type": "object",
+            "properties": {
+              "nid": { "type": "string", "doc": "Node ID" },
+              "hub_id": { "type": "string", "doc": "Hub the file belongs to" },
+              "filename": { "type": "string", "doc": "File name" },
+              "filetype": { "type": "string", "doc": "Node type (file, folder, etc.)" },
+              "filesize": { "type": "number", "doc": "File size in bytes" },
+              "mtime": { "type": "number", "doc": "Last modified timestamp (unix)" },
+              "ctime": { "type": "number", "doc": "Created timestamp (unix)" },
+              "vhost": { "type": "string", "doc": "Hub virtual hostname" },
+              "ownpath": { "type": "string", "doc": "File path within hub" }
+            }
+          }
+        }
+      }
     }
   },
   "modules": {
