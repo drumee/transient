@@ -42,6 +42,7 @@ class __private_desk extends Media {
     this.get_workers = this.get_workers.bind(this);
     this.get_alternate_account = this.get_alternate_account.bind(this);
     this.reorder = this.reorder.bind(this);
+    this.recent_files = this.recent_files.bind(this);
   }
 
   /**
@@ -514,6 +515,17 @@ class __private_desk extends Media {
       }
       return result;
     })();
+  }
+
+  /**
+   * Return recently modified files across all user hubs,
+   * sorted by mtime DESC. Uses media_index (cross-hub, built by desk_search).
+   * Hub nodes (workspaces) are excluded — shown separately by desk.home().
+   */
+  async recent_files() {
+    const page = this.input.use(Attr.page, 1);
+    const res = await this.db.await_proc('desk_recent_files', { page });
+    this.output.list(res);
   }
 }
 
