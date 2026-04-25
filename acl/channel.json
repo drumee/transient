@@ -649,7 +649,82 @@
         }
       },
       "errors": []
-    } 
+    },
+    "bookmark_add": {
+      "doc": "Pin a notification message for quick access",
+      "scope": "hub",
+      "permission": {
+        "src": "owner"
+      },
+      "log": false,
+      "params": {
+        "message_id": {
+          "type": "string",
+          "required": true,
+          "doc": "Unique message ID to bookmark (from channel table)"
+        },
+        "hub_id": {
+          "type": "string",
+          "required": true,
+          "doc": "Hub ID where the message lives"
+        }
+      },
+      "returns": {
+        "id": { "type": "number", "doc": "Bookmark record ID" },
+        "message_id": { "type": "string", "doc": "Bookmarked message ID" },
+        "hub_id": { "type": "string", "doc": "Hub the message belongs to" },
+        "ctime": { "type": "number", "doc": "Bookmark creation timestamp" }
+      }
+    },
+    "bookmark_remove": {
+      "doc": "Unpin a previously bookmarked notification",
+      "scope": "hub",
+      "permission": {
+        "src": "owner"
+      },
+      "log": false,
+      "params": {
+        "message_id": {
+          "type": "string",
+          "required": true,
+          "doc": "Unique message ID to remove from bookmarks"
+        }
+      },
+      "returns": {
+        "affected": { "type": "number", "doc": "Number of rows deleted (0 or 1)" }
+      }
+    },
+    "bookmark_list": {
+      "doc": "Get paginated list of bookmarked notifications for the current user",
+      "scope": "hub",
+      "permission": {
+        "src": "owner"
+      },
+      "log": false,
+      "params": {
+        "page": {
+          "type": "number",
+          "required": false,
+          "default": 1,
+          "min": 1,
+          "doc": "Page number for pagination"
+        }
+      },
+      "returns": {
+        "items": {
+          "type": "array",
+          "doc": "Bookmarked notifications sorted by ctime DESC",
+          "items": {
+            "type": "object",
+            "properties": {
+              "message_id": { "type": "string" },
+              "hub_id": { "type": "string" },
+              "ctime": { "type": "number" }
+            }
+          }
+        }
+      }
+    }
   },
   "modules": {
     "private": "service/private/channel",
