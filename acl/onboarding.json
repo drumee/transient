@@ -105,6 +105,31 @@
         "src": "anonymous",
         "fast_check": "public-api"
       }
+    },
+    "send_workspace_invites": {
+      "scope": "hub",
+      "permission": {
+        "src": "anonymous",
+        "fast_check": "public-api"
+      },
+      "log": true,
+      "doc": "Invite one or more email addresses to specific workspaces with a given privilege level",
+      "params": {
+        "emails": {
+          "type": "array",
+          "required": true,
+          "doc": "List of email addresses to invite"
+        },
+        "workspaces": {
+          "type": "array",
+          "required": true,
+          "doc": "List of workspace+role objects: [{hub_id, privilege}]. Privilege: 3=View, 6=Chat, 7=Edit, 15=Admin"
+        }
+      },
+      "returns": {
+        "success": { "type": "boolean" },
+        "sent":    { "type": "number", "doc": "Number of invitation emails successfully sent" }
+      }
     }
   },
   "modules": {
