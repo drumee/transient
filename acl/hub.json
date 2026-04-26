@@ -176,6 +176,59 @@
         }
       }
     },
+    "invite_with_roles": {
+      "doc": "Invite users to multiple workspaces with per-workspace privilege. Called from the Home page Invite button. Accepts an array of emails/user IDs and an array of {hub_id, privilege} assignments.",
+      "scope": "hub",
+      "permission": {
+        "src": "admin"
+      },
+      "log": true,
+      "params": {
+        "users": {
+          "type": "array",
+          "required": true,
+          "minItems": 1,
+          "doc": "Array of user IDs or email addresses to invite",
+          "items": { "type": "string" }
+        },
+        "assignments": {
+          "type": "array",
+          "required": true,
+          "minItems": 1,
+          "doc": "Array of workspace-role pairs. Each item specifies a target hub and the privilege bitmask to grant.",
+          "items": {
+            "type": "object",
+            "properties": {
+              "hub_id": {
+                "type": "string",
+                "doc": "Target workspace (hub) ID"
+              },
+              "privilege": {
+                "type": "number",
+                "doc": "Privilege bitmask to grant in this workspace. E.g. Chat=2, Edit=4, Edit+Chat=6, Admin=15"
+              }
+            }
+          }
+        }
+      },
+      "returns": {
+        "success": {
+          "type": "boolean",
+          "doc": "True if the operation completed without fatal errors"
+        },
+        "results": {
+          "type": "array",
+          "doc": "Per-workspace result summary",
+          "items": {
+            "type": "object",
+            "properties": {
+              "hub_id": { "type": "string", "doc": "Workspace ID" },
+              "added":  { "type": "number", "doc": "Number of users immediately added as members" }
+            }
+          }
+        }
+      }
+    },
     "delete_contributor": {
       "doc": "Remove members from hub (broadcasts removal notification)",
       "scope": "hub",
