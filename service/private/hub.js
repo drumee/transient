@@ -52,6 +52,7 @@ class __private_hub extends Hub {
     this.get_settings = this.get_settings.bind(this);
     this.show_privilege = this.show_privilege.bind(this);
     this.add_contributors = this.add_contributors.bind(this);
+    this.invite_with_roles = this.invite_with_roles.bind(this);
     this.delete_contributor = this.delete_contributor.bind(this);
     this.get_space_usage = this.get_space_usage.bind(this);
     this.set_privilege = this.set_privilege.bind(this);
@@ -553,6 +554,216 @@ class __private_hub extends Hub {
       1
     );
     this.output.data(users);
+  }
+
+  /**
+   * Invite one or more users to multiple workspaces with per-workspace privilege.
+   * Called from the Home page "Invite" button.
+   *
+   *
+   * Input:
+   *   users {string[]} — array of user IDs or email addresses
+   *   assignments {object[]} — [{hub_id, privilege}]
+   *
+   * Privilege bitmask:
+   *   2  = Chat only
+   *   4  = Edit (read + write)
+   *   6  = Edit + Chat
+   *   15 = Admin
+   *
+   * Flow per assignment:
+   *   1. Resolve hub_db via get_db_name
+   *   2. Get hub name for notification message
+   *   3. Get mfs_home for chat_upload_id
+   *   4. For each user entity:
+   *      a. Check my_contact_exists (inviter's contact DB)
+   *         - active contact → add to members[] immediately
+   *         - pending contact → yp_add_pending_invitation
+   *      b. If not a contact: drumate_exists
+   *         - same domain → add to members[] immediately
+   *         - different domain → yp_add_pending_invitation + send invite email
+   *   5. For confirmed members: add_member + permission_grant (both * and chat_upload_id)
+   *   6. WebSocket notify each added member
+   *
+   * Returns: { success: boolean, results: [{hub_id, added}] }
+   */
+  async invite_with_roles() {
+    let users = this.input.need(Attr.users);
+    let assignments = this.input.need('assignments');
+ 
+    users = toArray(users);
+    assignments = toArray(assignments);
+ 
+    if (isEmpty(users) || isEmpty(assignments)) {
+      this.output.data({ success: false, results: [] });
+      return;
+    }
+ 
+    const username = this.user.get('fullname');
+    const lang = this.user.language() || this.input.app_language();
+    const { domain_id } = this.user.toJSON();
+    const expiry = 0; // No expiry option in UI
+ 
+    // Inviter's contact DB — used for my_contact_exists lookups
+    const contact_db = await this.yp.await_func('get_db_name', this.uid);
+    if (!contact_db) {
+      this.warn('[hub] invite_with_roles: no contact db for uid', this.uid);
+      this.output.data({ success: false, results: [] });
+      return;
+    }
+    const contact_proc = `${contact_db}.my_contact_exists`;
+ 
+    const results = [];
+ 
+    for (const assignment of assignments) {
+      const { hub_id, privilege } = assignment;
+      if (!hub_id || privilege == null) {
+        this.warn('[hub] invite_with_roles: skipping invalid assignment', assignment);
+        continue;
+      }
+ 
+      // Resolve target hub's DB — explicit db_name, no forward_proc
+      const hub_db = await this.yp.await_func('get_db_name', hub_id);
+      if (!hub_db) {
+        this.warn('[hub] invite_with_roles: no db found for hub_id', hub_id);
+        continue;
+      }
+ 
+      // Hub display name for notification message
+      const hubInfo = await this.yp.await_proc('get_hub', hub_id);
+      const hubname = (hubInfo && (hubInfo.hubname || hubInfo.name)) || hub_id;
+      const msg = Cache.message('_x_add_you_to_team', lang).format(username, hubname);
+ 
+      // mfs_home needed for chat_upload_id permission grant
+      const mfs_home = await this.yp.await_proc(`${hub_db}.mfs_home`);
+ 
+      const members = []; // UIDs to add immediately
+      const rows = []; // Results from add_member (for WebSocket notify)
+ 
+      // Resolve each user entity
+      for (const entity of users) {
+        try {
+          // 1. Check inviter's contact list
+          const contact = await this.yp.await_proc(contact_proc, 'entity', entity, '', '');
+ 
+          if (!isEmpty(contact)) {
+            if (contact.status === 'active') {
+              // Known active contact → add immediately
+              members.push(contact.uid);
+            } else {
+              // Pending contact → store for deferred grant
+              await this.yp.await_proc(
+                'yp_add_pending_invitation',
+                hub_id, expiry, privilege, entity
+              );
+            }
+          } else {
+            // Not in contact list — check if user exists in Drumee
+            let drumate = null;
+            try {
+              drumate = await this.yp.await_proc('drumate_exists', entity);
+              if (isArray(drumate)) drumate = drumate[0];
+            } catch (e) {
+              this.warn('[hub] invite_with_roles: drumate_exists failed for', entity, e);
+            }
+ 
+            const sameDomain =
+              drumate &&
+              drumate.domain_id != null &&
+              domain_id === drumate.domain_id;
+ 
+            if (sameDomain) {
+              // Exists on same domain → add immediately
+              members.push(drumate.id);
+            } else {
+              // Unknown user or different domain → pending + invite email
+              await this.yp.await_proc(
+                'yp_add_pending_invitation',
+                hub_id, expiry, privilege, entity
+              );
+ 
+              // Only send email if entity looks like an email address
+              const isEmail = typeof entity === 'string' && entity.indexOf('@') !== -1;
+              if (isEmail) {
+                try {
+                  const ContactPrivate = require('./contact');
+                  const contactSvc = new ContactPrivate({
+                    session:    this.session,
+                    permission: this.permission || { scope: 'hub' },
+                  });
+                  contactSvc.db = {
+                    await_proc: (proc, ...args) =>
+                      this.yp.await_proc(`${contact_db}.${proc}`, ...args),
+                    end: () => Promise.resolve(),
+                  };
+                  const origEmail   = this.input.use(Attr.email);
+                  const origMessage = this.input.use(Attr.message);
+                  this.input.set(Attr.email, entity);
+                  this.input.set(Attr.message, msg);
+                  this.input.set('_contact_db_name', contact_db);
+                  await contactSvc.invite();
+                  if (origEmail   !== undefined) this.input.set(Attr.email, origEmail);
+                  if (origMessage !== undefined) this.input.set(Attr.message, origMessage);
+                } catch (err) {
+                  this.warn(
+                    '[hub] invite_with_roles: send invitation failed for',
+                    entity, err
+                  );
+                }
+              }
+            }
+          }
+        } catch (err) {
+          this.warn('[hub] invite_with_roles: failed for entity', entity, err);
+        }
+      }
+ 
+      // Add confirmed members
+      for (const uid of members) {
+        // Grant membership in hub DB
+        const r = await this.yp.await_proc(`${hub_db}.add_member`, uid, privilege, expiry);
+        if (!r || !r.db_name) continue;
+        rows.push(r);
+ 
+        // Grant resource-level permission on hub root
+        await this.yp.await_proc(
+          `${hub_db}.permission_grant`,
+          '*', uid, expiry, privilege, 'system', msg
+        );
+ 
+        // Grant chat upload permission if chat folder exists
+        if (mfs_home && mfs_home.chat_upload_id) {
+          await this.yp.await_proc(
+            `${hub_db}.permission_grant`,
+            mfs_home.chat_upload_id,
+            uid,
+            0,    // no expiry on chat upload
+            4,    // read+write for uploads
+            'no_traversal',
+            'chat upload permission'
+          );
+        }
+      }
+ 
+      // WebSocket notify each successfully added member
+      for (const recipient of toArray(rows)) {
+        const hub     = await this.yp.await_proc(
+          `${recipient.db_name}.mfs_access_node`,
+          recipient.id,
+          hub_id
+        );
+        hub.message = msg;
+        hub.ownpath = '/';
+        hub.hub_id = hub.actual_hub_id;
+        hub.db_name = hub.actual_db_name;
+        const sockets = await this.yp.await_proc('user_sockets', recipient.id);
+        await RedisStore.sendData(this.payload(hub), sockets);
+      }
+ 
+      results.push({ hub_id, added: members.length });
+    }
+ 
+    this.output.data({ success: true, results });
   }
 
   /**
