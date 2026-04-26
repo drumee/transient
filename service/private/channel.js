@@ -44,6 +44,8 @@ class __private_channel extends Entity {
     this.show_ticket = this.show_ticket.bind(this);
     this.list_tickets = this.list_tickets.bind(this);
     this.update_ticket = this.update_ticket.bind(this);
+    this.dm_init = this.dm_init.bind(this);
+    this.list_conversations = this.list_conversations.bind(this);
   }
 
   /**
@@ -939,6 +941,214 @@ class __private_channel extends Entity {
     const page = this.input.use(Attr.page, 1);
     const data = await this.db.await_proc('notification_bookmark_list', page);
     this.output.list(data);
+  }
+
+  /**
+   * Get or create a 1-on-1 DM hub between the current user and a recipient.
+   *
+   * DM hubs use area='private' and a deterministic filename:
+   *   _inbox_{lower_uid}_{higher_uid}
+   * where UIDs are sorted lexicographically for consistency regardless of who initiates the conversation.
+   *
+   * The hub is owned by the initiator; the recipient is added via the hub's permission table with privilege=7 (Edit+Chat).
+   *
+   * Returns: { hub_id, home_id, db_name, is_new }
+   */
+  async dm_init() {
+    const recipient_id = this.input.need('recipient_id');
+    if (!recipient_id || recipient_id === this.uid) {
+      return this.exception.user('Invalid recipient_id.');
+    }
+ 
+    const [uid_a, uid_b] = [this.uid, recipient_id].sort();
+    const dm_filename = `_inbox_${uid_a}_${uid_b}`;
+ 
+    // 1. Check if DM hub already exists in current user's media table
+    let existing = await this.db.await_query(
+      `SELECT m.id AS hub_id, e.db_name, e.home_id
+       FROM media m
+       INNER JOIN yp.entity e ON e.id = m.id
+       WHERE m.category = 'hub'
+         AND m.user_filename = ?
+         AND m.status = 'active'
+       LIMIT 1`,
+      dm_filename
+    );
+ 
+    if (existing && existing.hub_id) {
+      existing.is_new = 0;
+      return this.output.data(existing);
+    }
+ 
+    // 2. Create new DM hub in current user's drumate DB
+    const domain = this.user.get(Attr.domain);
+    const owner_id = this.uid;
+ 
+    // Sanitise filename for hostname
+    let hostname = dm_filename.replace(/[ \.,;:!&~#'|@*\$><\?\(\)\[\]\{\}\"\/]/g, '');
+    hostname = await this.yp.await_func('strip_accents', hostname);
+    hostname = hostname.replace(/\-$/, '').trim().toLowerCase();
+    hostname = new URL(`http://${hostname}`).hostname;
+ 
+    const args = { hostname, area: 'private', filename: dm_filename, owner_id, domain };
+    const rows = await this.db.await_proc('desk_create_hub', args, {});
+ 
+    let hub_id, hub_db, home_id;
+    for (const r of toArray(rows)) {
+      if (r && r.failed) {
+        this.warn('[dm_init] desk_create_hub failed', rows);
+        return this.exception.server('DM_HUB_CREATION_FAILED');
+      }
+      if (r.db_name && r.filesize != null && r.actual_home_id) {
+        hub_db = r.db_name;
+        home_id = r.actual_home_id;
+      }
+      if (r.db_name && r.home_dir) {
+        hub_id = r.id;
+        hub_db = hub_db || r.db_name;
+      }
+    }
+ 
+    if (!hub_id || !hub_db) {
+      return this.exception.server('DM_HUB_CREATION_FAILED');
+    }
+ 
+    // 3. Add recipient as member with Edit+Chat privilege (7)
+    try {
+      // add_member(member_id, privilege, expiry_time)
+      // expiry_time=0 means no expiry — member stays permanently
+      await this.yp.await_proc(
+        `${hub_db}.add_member`,
+        recipient_id,
+        7,
+        0
+      );
+    } catch (e) {
+      // Non-fatal: hub is created, recipient can be added later
+      this.warn('[dm_init] add_member failed:', e && e.message);
+    }
+ 
+    // 4. Notify recipient via WebSocket
+    try {
+      const recipients = await this.yp.await_proc('user_sockets', recipient_id);
+      await RedisStore.sendData(
+        this.payload({ hub_id, home_id, db_name: hub_db, event: 'dm.new' }, { service: 'channel.dm_init' }),
+        recipients
+      );
+    } catch (e) {
+      this.warn('[dm_init] notify failed:', e && e.message);
+    }
+ 
+    this.output.data({ hub_id, home_id, db_name: hub_db, is_new: 1 });
+  }
+
+  /**
+   * List all DM conversations for the current user.
+   *
+   *
+   * Returns: array of conversation objects sorted by last_message_time DESC.
+   * Each item:
+   *   hub_id, db_name, other_uid, last_message, last_message_time,
+   *   unread_count, is_active_now (placeholder — presence via WebSocket)
+   */
+  async list_conversations() {
+    const page = this.input.use(Attr.page, 1);
+    const PAGE_SIZE = 20;
+    const offset = (page - 1) * PAGE_SIZE;
+ 
+    // 1. Find all DM hubs in current user's media table
+    const hubs = toArray(
+      await this.db.await_query(
+        `SELECT m.id AS hub_id, e.db_name, m.user_filename AS filename
+         FROM media m
+         INNER JOIN yp.entity e ON e.id = m.id
+         WHERE m.category = 'hub'
+           AND m.user_filename LIKE '_inbox_%'
+           AND m.status = 'active'
+         ORDER BY m.upload_time DESC`
+      )
+    );
+ 
+    if (!hubs.length) {
+      return this.output.list([]);
+    }
+ 
+    // 2. For each DM hub: get last message + unread count
+    const conversations = [];
+ 
+    for (const hub of hubs) {
+      if (!hub.db_name) continue;
+ 
+      // Derive other_uid from filename: _inbox_{uid_a}_{uid_b}
+      // Current user is one of them; the other is the recipient
+      const parts = hub.filename.split('_').filter(Boolean);
+      // parts: ['inbox', uid_a, uid_b]
+      const other_uid = parts.find(p => p !== 'inbox' && p !== this.uid) || null;
+ 
+      let last_message = null;
+      let last_message_time = 0;
+      let unread_count = 0;
+ 
+      try {
+        const db_name = hub.db_name;
+ 
+        // Last message
+        const lastMsgs = toArray(
+          await this.yp.await_proc(`${db_name}.channel_list_messages`, this.uid, 'date', 'desc', 1)
+        );
+        if (lastMsgs.length) {
+          const lm = lastMsgs[0];
+          last_message = lm.message ? String(lm.message).substring(0, 100) : null;
+          last_message_time = lm.ctime || 0;
+          if (!last_message && lm.is_attachment) last_message = '[File]';
+        }
+ 
+        // Unread count
+        const unreadRow = toArray(
+          await this.yp.await_query(
+            `SELECT COUNT(*) AS cnt
+             FROM ${db_name}.channel c
+             WHERE c.status = 'active'
+               AND c.author_id != ?
+               AND NOT EXISTS (
+                 SELECT 1 FROM ${db_name}.read_channel rc
+                 WHERE rc.message_id = c.message_id AND rc.uid = ?
+               )`,
+            this.uid, this.uid
+          )
+        )[0];
+        unread_count = unreadRow ? (unreadRow.cnt || 0) : 0;
+ 
+      } catch (e) {
+        this.warn(`[list_conversations] hub ${hub.hub_id} query failed:`, e && e.message);
+      }
+ 
+      // Get other user's profile
+      let other_user = { id: other_uid };
+      if (other_uid) {
+        try {
+          other_user = await this.yp.await_proc('get_user', other_uid) || { id: other_uid };
+        } catch (e) {
+          this.warn('[list_conversations] get_user failed:', e && e.message);
+        }
+      }
+ 
+      conversations.push({
+        hub_id: hub.hub_id,
+        db_name: hub.db_name,
+        other_uid,
+        other_user,
+        last_message,
+        last_message_time,
+        unread_count,
+      });
+    }
+ 
+    // 3. Sort by last_message_time DESC, apply pagination
+    conversations.sort((a, b) => b.last_message_time - a.last_message_time);
+    const paged = conversations.slice(offset, offset + PAGE_SIZE);
+ 
+    this.output.list(paged);
   }
 }
 
