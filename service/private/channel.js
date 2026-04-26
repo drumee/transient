@@ -915,31 +915,53 @@ class __private_channel extends Entity {
   }
 
   /**
-   * Save (pin) a notification for quick access.
-   * Stores message_id + hub_id in notification_bookmark table (user DB).
+   * Pin (bookmark) a notification message for quick access.
+   * Stores message_id + hub_id in notification_bookmark table (user drumate DB).
    */
   async bookmark_add() {
     const message_id = this.input.need('message_id');
-    const hub_id     = this.input.need('hub_id');
-    const data = await this.db.await_proc('notification_bookmark_add', message_id, hub_id);
+    const hub_id = this.input.need('hub_id');
+ 
+    const user_db = await this.yp.await_func('get_db_name', this.uid);
+    if (!user_db) return this.exception.server('USER_DB_NOT_FOUND');
+ 
+    const data = await this.yp.await_proc(
+      `${user_db}.notification_bookmark_add`,
+      message_id,
+      hub_id
+    );
     this.output.data(data);
   }
 
   /**
-   * Remove a pinned notification.
+   * Unpin (remove) a previously bookmarked notification.
    */
   async bookmark_remove() {
     const message_id = this.input.need('message_id');
-    const data = await this.db.await_proc('notification_bookmark_remove', message_id);
+ 
+    const user_db = await this.yp.await_func('get_db_name', this.uid);
+    if (!user_db) return this.exception.server('USER_DB_NOT_FOUND');
+ 
+    const data = await this.yp.await_proc(
+      `${user_db}.notification_bookmark_remove`,
+      message_id
+    );
     this.output.data(data);
   }
 
   /**
-   * List all bookmarked notifications for the current user.
+   * List all bookmarked notifications for the current user (paginated).
    */
   async bookmark_list() {
     const page = this.input.use(Attr.page, 1);
-    const data = await this.db.await_proc('notification_bookmark_list', page);
+ 
+    const user_db = await this.yp.await_func('get_db_name', this.uid);
+    if (!user_db) return this.exception.server('USER_DB_NOT_FOUND');
+ 
+    const data = await this.yp.await_proc(
+      `${user_db}.notification_bookmark_list`,
+      page
+    );
     this.output.list(data);
   }
 
@@ -948,9 +970,8 @@ class __private_channel extends Entity {
    *
    * DM hubs use area='private' and a deterministic filename:
    *   _inbox_{lower_uid}_{higher_uid}
-   * where UIDs are sorted lexicographically for consistency regardless of who initiates the conversation.
-   *
-   * The hub is owned by the initiator; the recipient is added via the hub's permission table with privilege=7 (Edit+Chat).
+   * where UIDs are sorted lexicographically so the result is
+   * identical regardless of who initiates the conversation.
    *
    * Returns: { hub_id, home_id, db_name, is_new }
    */
@@ -960,27 +981,34 @@ class __private_channel extends Entity {
       return this.exception.user('Invalid recipient_id.');
     }
  
+    // Get user's drumate DB explicitly
+    const user_db = await this.yp.await_func('get_db_name', this.uid);
+    if (!user_db) return this.exception.server('USER_DB_NOT_FOUND');
+ 
+    // Deterministic filename
     const [uid_a, uid_b] = [this.uid, recipient_id].sort();
     const dm_filename = `_inbox_${uid_a}_${uid_b}`;
  
-    // 1. Check if DM hub already exists in current user's media table
-    let existing = await this.db.await_query(
-      `SELECT m.id AS hub_id, e.db_name, e.home_id
-       FROM media m
-       INNER JOIN yp.entity e ON e.id = m.id
-       WHERE m.category = 'hub'
-         AND m.user_filename = ?
-         AND m.status = 'active'
-       LIMIT 1`,
-      dm_filename
-    );
+    // 1. Check if DM hub already exists in user's drumate media table
+    const existing = toArray(
+      await this.yp.await_query(
+        `SELECT m.id AS hub_id, e.db_name, e.home_id
+         FROM ${user_db}.media m
+         INNER JOIN yp.entity e ON e.id = m.id
+         WHERE m.category = 'hub'
+           AND m.user_filename = ?
+           AND m.status = 'active'
+         LIMIT 1`,
+        dm_filename
+      )
+    )[0];
  
     if (existing && existing.hub_id) {
       existing.is_new = 0;
       return this.output.data(existing);
     }
  
-    // 2. Create new DM hub in current user's drumate DB
+    // 2. Create new DM hub — desk_create_hub runs in drumate DB context
     const domain = this.user.get(Attr.domain);
     const owner_id = this.uid;
  
@@ -991,7 +1019,9 @@ class __private_channel extends Entity {
     hostname = new URL(`http://${hostname}`).hostname;
  
     const args = { hostname, area: 'private', filename: dm_filename, owner_id, domain };
-    const rows = await this.db.await_proc('desk_create_hub', args, {});
+ 
+    // Call desk_create_hub in user's drumate DB
+    const rows = await this.yp.await_proc(`${user_db}.desk_create_hub`, args, {});
  
     let hub_id, hub_db, home_id;
     for (const r of toArray(rows)) {
@@ -1000,7 +1030,7 @@ class __private_channel extends Entity {
         return this.exception.server('DM_HUB_CREATION_FAILED');
       }
       if (r.db_name && r.filesize != null && r.actual_home_id) {
-        hub_db = r.db_name;
+        hub_db  = r.db_name;
         home_id = r.actual_home_id;
       }
       if (r.db_name && r.home_dir) {
@@ -1013,18 +1043,12 @@ class __private_channel extends Entity {
       return this.exception.server('DM_HUB_CREATION_FAILED');
     }
  
-    // 3. Add recipient as member with Edit+Chat privilege (7)
+    // 3. Add recipient as member with Edit+Chat privilege
+    //    add_member(member_id, privilege, expiry_time) — expiry_time=0 = no expiry
     try {
-      // add_member(member_id, privilege, expiry_time)
-      // expiry_time=0 means no expiry — member stays permanently
-      await this.yp.await_proc(
-        `${hub_db}.add_member`,
-        recipient_id,
-        7,
-        0
-      );
+      await this.yp.await_proc(`${hub_db}.add_member`, recipient_id, 7, 0);
     } catch (e) {
-      // Non-fatal: hub is created, recipient can be added later
+      // Non-fatal: hub created, recipient can be added later
       this.warn('[dm_init] add_member failed:', e && e.message);
     }
  
@@ -1032,7 +1056,10 @@ class __private_channel extends Entity {
     try {
       const recipients = await this.yp.await_proc('user_sockets', recipient_id);
       await RedisStore.sendData(
-        this.payload({ hub_id, home_id, db_name: hub_db, event: 'dm.new' }, { service: 'channel.dm_init' }),
+        this.payload(
+          { hub_id, home_id, db_name: hub_db, event: 'dm.new' },
+          { service: 'channel.dm_init' }
+        ),
         recipients
       );
     } catch (e) {
