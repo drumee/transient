@@ -724,6 +724,61 @@
           }
         }
       }
+    },
+    "dm_init": {
+      "doc": "Get or create a 1-on-1 DM conversation hub with a specific user",
+      "scope": "hub",
+      "permission": {
+        "src": "owner"
+      },
+      "log": false,
+      "params": {
+        "recipient_id": {
+          "type": "string",
+          "required": true,
+          "doc": "UID of the user to start a DM conversation with"
+        }
+      },
+      "returns": {
+        "hub_id": { "type": "string", "doc": "DM hub ID" },
+        "home_id": { "type": "string", "doc": "DM hub home directory node ID" },
+        "db_name": { "type": "string", "doc": "DM hub database name" },
+        "is_new": { "type": "number", "doc": "1 if newly created, 0 if existing" }
+      }
+    },
+    "list_conversations": {
+      "doc": "List all DM conversations for the current user, sorted by last message time DESC",
+      "scope": "hub",
+      "permission": {
+        "src": "owner"
+      },
+      "log": false,
+      "params": {
+        "page": {
+          "type": "number",
+          "required": false,
+          "default": 1,
+          "min": 1,
+          "doc": "Page number (20 conversations per page)"
+        }
+      },
+      "returns": {
+        "items": {
+          "type": "array",
+          "doc": "DM conversation list sorted by last_message_time DESC",
+          "items": {
+            "type": "object",
+            "properties": {
+              "hub_id": { "type": "string" },
+              "other_uid": { "type": "string", "doc": "UID of the other party" },
+              "other_user": { "type": "object", "doc": "Other user profile (name, avatar)" },
+              "last_message": { "type": "string", "doc": "Last message preview (max 100 chars), or '[File]' for attachments" },
+              "last_message_time": { "type": "number", "doc": "Unix timestamp of last message" },
+              "unread_count": { "type": "number", "doc": "Number of unread messages from other party" }
+            }
+          }
+        }
+      }
     }
   },
   "modules": {
