@@ -20,6 +20,26 @@
         }
       }
     },
+    "test_email": {
+      "doc": "Test emaling system.",
+      "scope": "hub",
+      "permission": {
+        "src": "anonymous"
+      },
+      "params": {
+        "email": {
+          "type": "string",
+          "required": true,
+          "doc": "only for test pupose."
+        }
+      },
+      "returns": {
+        "verbosity": {
+          "type": "array",
+          "doc": "list of email sent"
+        }
+      }
+    },
     "instances": {
       "doc": "List the available Drumee infrastructure instance names. Reads instance keys from /etc/drumee/infrastructure/instances.json when the file exists, otherwise returns a single-element list containing the current sysEnv instance name.",
       "scope": "domain",

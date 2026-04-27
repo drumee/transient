@@ -164,11 +164,11 @@ class MainPage extends RuntimeEnv {
     }
     let bundles = {}
     if (data.app.manifest) {
-      for (let m of ["runtime", "core", "vendor", "sprite", "locale", "main"]) {
+      for (let m of ["runtime", "core", "vendor", "sprite", "locale", "main", "meeting"]) {
         bundles[m] = data.app.manifest[`${m}.js`]
       }
     } else {
-      for (let m of ["core", "vendor", "sprite", "locale", "entry"]) {
+      for (let m of ["core", "vendor", "sprite", "locale", "entry", "meeting"]) {
         bundles[m] = data.app[m]
       }
     }

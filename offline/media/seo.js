@@ -31,7 +31,11 @@ const SEPARATOR = /[ ,.:;?!\/\-\_\$\&\'\"\\|\@=+\t\n\r\f\)\(\[\]\'\`]+/;
 const stopword = require('stopword');
 
 // OCR
-const tesseract = require("node-tesseract-ocr");
+/** 
+ * Disabled due to security issue 
+ * Maybe switching to AI solution ?
+*/
+// const tesseract = require("node-tesseract-ocr");
 
 // PDF processing
 const pdfParse = require('pdf-parse');
@@ -220,8 +224,10 @@ class __seo_indexer extends Offline {
       }
 
       // Last resort: OCR
-      this.syslog('PDF has no text, using OCR...');
-      return await this.pdfToImageOCR(src, index);
+      this.log('PDF has no text, OCR has been disabled...');
+      return ""
+      /** Disabled due to security issue */
+      // return await this.pdfToImageOCR(src, index);
 
     } catch (e) {
       throw new Error(`PDF extraction failed: ${e.message}`);

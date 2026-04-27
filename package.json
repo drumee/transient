@@ -17,8 +17,7 @@
   "dependencies": {
     "@drumee/schemas-utils": "^1.0.0",
     "@drumee/server-core": "^1.1.69",
-    "@drumee/server-essentials": "^1.2.34",
-    "@drumee/setup-schemas": "^1.0.26",
+    "@drumee/server-essentials": "^1.2.37",
     "@hyzyla/pdfium": "^2.1.9",
     "accept-language": "^3.0.18",
     "after": "^0.8.2",
@@ -65,7 +64,6 @@
     "music-metadata": "^11.12.3",
     "mysql": "^2.18.1",
     "node-constants": "0.0.2",
-    "node-tesseract-ocr": "^2.2.1",
     "nodejs-fs-utils": "^1.2.5",
     "ovh": "^2.0.3",
     "parse-http-header": "^1.0.1",
