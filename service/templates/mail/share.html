@@ -1,37 +1,264 @@
-<!DOCTYPE html>
-<html>
-
+<%
+// Defensive defaults so the template never crashes on missing vars.
+// User-controlled values are rendered HTML-escaped (the dash form);
+// UI chrome uses unescaped interpolation. Static UI strings live in
+// English here; wire them to lex keys (lex._share_*) when those exist.
+var _lex = (typeof lex !== 'undefined' && lex) ? lex : {};
+var _sharer       = (typeof sharer_name   !== 'undefined' && sharer_name)   ? sharer_name   : ((typeof fullname !== 'undefined' && fullname) ? fullname : 'Someone');
+var _sharer_email = (typeof sharer_email  !== 'undefined' && sharer_email)  ? sharer_email  : '';
+var _resource     = (typeof resource_name !== 'undefined' && resource_name) ? resource_name : 'a workspace';
+var _kind         = (typeof resource_kind !== 'undefined' && resource_kind) ? resource_kind : 'folder';
+var _others       = (typeof others_count  !== 'undefined' && others_count)  ? others_count  : 0;
+var _cta_url      = (typeof cta_url       !== 'undefined' && cta_url)       ? cta_url       : '#';
+var _cta_label    = (typeof cta_label     !== 'undefined' && cta_label)     ? cta_label     : ('Join Drumee to view this ' + _kind + ' →');
+var _tagline      = (typeof tagline       !== 'undefined' && tagline)       ? tagline       : 'No credit card required. Free for up to 3 guests.';
+var _privacy_url  = (typeof privacy_url   !== 'undefined' && privacy_url)   ? privacy_url   : '#';
+var _terms_url    = (typeof terms_url     !== 'undefined' && terms_url)     ? terms_url     : '#';
+var _support_url  = (typeof support_url   !== 'undefined' && support_url)   ? support_url   : '#';
+// URLs from `data` are caller-supplied; reject anything not http(s) or a fragment.
+var _safeUrl = function (u) { return (typeof u === 'string' && /^(https?:\/\/|mailto:|#)/i.test(u)) ? u : '#'; };
+_cta_url = _safeUrl(_cta_url);
+_privacy_url = _safeUrl(_privacy_url);
+_terms_url = _safeUrl(_terms_url);
+_support_url = _safeUrl(_support_url);
+var _privacy_lbl  = _lex._privacy_policy || 'Privacy Policy';
+var _terms_lbl    = _lex._terms_of_use   || 'Terms of Service';
+var _support_lbl  = _lex._support        || 'Support';
+var _year         = (new Date()).getFullYear();
+var _avatar       = (_sharer || '?').replace(/\s+/g, ' ').split(' ').filter(Boolean).map(function (s) { return s.charAt(0).toUpperCase(); }).slice(0, 2).join('') || '?';
+%><!DOCTYPE html>
+<html lang="<%= (typeof lang !== 'undefined' && lang) ? lang : 'en' %>">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>
-    <%= heading %>
-  </title>
+  <meta name="x-apple-disable-message-reformatting">
+  <title><%- (typeof subject !== 'undefined' && subject) ? subject : (_sharer + ' shared a ' + _kind + ' with you') %></title>
 </head>
+<body style="margin:0;padding:0;background:#f2f2f7;-webkit-font-smoothing:antialiased;font-family:'Geist','SF Pro Display',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#f2f2f7;">
+    <tr>
+      <td align="center" style="padding:20px 8px;">
+        <table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" style="width:600px;max-width:100%;background:#f2f2f7;border-radius:8px;overflow:hidden;">
 
-<body style="background: #f4f5f8; padding: 20px;">
-  <div data-layer="1"
-    style="width: 480px; padding: 32px; background: var(--Gray-White, white); border-radius: 24px; outline: 1px var(--Neutral-200, #EBECF0) solid; outline-offset: -1px; flex-direction: column; justify-content: center; align-items: center; gap: 32px; display: inline-flex">
-    <div data-layer="1"
-      style="align-self: stretch; flex-direction: column; justify-content: flex-start; align-items: center; gap: 24px; display: flex">
-      <div data-layer="4" style="width: 83px; height: 72px; position: relative">
-        <div data-svg-wrapper data-layer="Symbol" class="Symbol" style="left: 1.20px; top: 2.25px; position: absolute">
-          <svg width="81" height="64" viewBox="0 0 81 64" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <path
-              d="M12.3286 1.1773C26.3873 -3.77489 31.1116 8.55949 34.4635 7.58372C68.5443 -2.34044 69.585 7.28991 73.8757 19.2162C74.0939 19.9947 74.2604 20.8101 74.3817 21.6542C78.2022 24.6535 80.6355 29.1781 80.6356 34.2403C80.6356 40.8759 76.4554 46.5882 70.4493 49.1515C68.1051 57.7594 61.1646 64 52.9669 64C48.9502 64 45.2356 62.5016 42.2153 59.9609C39.309 62.5016 35.7346 64 31.8696 64C25.2821 64 19.5384 59.648 16.5094 53.1997C16.327 53.2051 16.1438 53.208 15.96 53.208C6.40948 53.208 2.17338e-05 45.8873 0 36.8567C2.71648e-05 31.5636 1.32768 26.8587 5.45236 23.8702C3.80918 13.734 4.4931 3.93739 12.3286 1.1773ZM42.8633 16.8696C39.9205 16.8696 37.535 19.2055 37.535 22.0869V31.1304C37.535 34.0119 39.9206 36.3478 42.8633 36.3478C45.8061 36.3478 48.1916 34.0119 48.1917 31.1304V22.0869C48.1917 19.2055 45.8061 16.8696 42.8633 16.8696ZM57.7827 16.8696C54.8399 16.8696 52.4543 19.2055 52.4543 22.0869V31.1304C52.4543 34.0119 54.8399 36.3478 57.7827 36.3478C60.7254 36.3478 63.111 34.0119 63.111 31.1304V22.0869C63.111 19.2055 60.7254 16.8696 57.7827 16.8696Z"
-              fill="var(--Primary-500, #B251FB)" />
-          </svg>
-        </div>
-      </div>
-      <div data-layer="1"
-        style="align-self: stretch; flex-direction: column; justify-content: center; align-items: flex-start; gap: 4px; display: flex">
-        <div data-layer="1"
-          style="align-self: stretch; text-align: center; color: var(--Neutral-900, #222732); font-size: 32px; font-family: Armin Grotesk; font-weight: 600; line-height: 40px; word-wrap: break-word">
-          <%= heading %>
-        </div>
-      </div>
-    </div>
-  </div>
+          <!-- Header: purple signature -->
+          <tr>
+            <td bgcolor="#433cc5" align="center" style="padding:24px;background:#433cc5;">
+              <table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr><td align="center" style="line-height:0;">
+                <%= (typeof logo_svg !== 'undefined' && logo_svg) ? logo_svg : '' %>
+              </td></tr></table>
+            </td>
+          </tr>
+
+          <!-- Main content -->
+          <tr>
+            <td style="padding:32px;">
+
+              <!-- Headline -->
+              <h1 style="margin:0 0 8px 0;padding:0;font-family:'Geist','SF Pro Display',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;font-weight:600;font-size:24px;line-height:1.1;color:#282538;">
+                <%- _sharer %> shared a <%- _kind %> with you
+              </h1>
+              <p style="margin:0;padding:0;font-family:'Geist','SF Pro Display',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;font-weight:400;font-size:16px;line-height:1.4;color:#282538;">
+                You've been invited to collaborate on the <strong style="color:#433cc5;font-weight:700;"><%- _resource %></strong> workspace. Join <%- _sharer %><% if (_others) { %> and <%- _others %> others<% } %> to view the full file structure.
+              </p>
+
+              <!-- 40px gap -->
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr><td style="height:40px;line-height:40px;font-size:0;">&nbsp;</td></tr></table>
+
+              <!-- Redacted preview card -->
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#f2f2f7;border:1px solid rgba(71,69,84,0.1);border-radius:8px;">
+                <tr><td style="padding:25px;">
+
+                  <!-- Folder header row -->
+                  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+                    <tr>
+                      <td align="left" valign="middle">
+                        <table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr>
+                          <td valign="middle" style="padding-right:12px;line-height:0;width:17px;">
+                            <%= (typeof folder_icon_svg !== 'undefined' && folder_icon_svg) ? folder_icon_svg : '' %>
+                          </td>
+                          <td valign="middle">
+                            <span style="font-family:'Manrope','SF Pro Display',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;font-weight:700;font-size:18px;line-height:28px;color:#282538;letter-spacing:-0.45px;"><%- _resource %></span>
+                          </td>
+                        </tr></table>
+                      </td>
+                      <td align="right" valign="middle" style="white-space:nowrap;">
+                        <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:rgba(20,17,35,0.4);margin-right:4px;line-height:8px;font-size:0;">&nbsp;</span>
+                        <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:rgba(20,17,35,0.4);margin-right:4px;line-height:8px;font-size:0;">&nbsp;</span>
+                        <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:rgba(20,17,35,0.4);line-height:8px;font-size:0;">&nbsp;</span>
+                      </td>
+                    </tr>
+                  </table>
+
+                  <!-- 24px gap -->
+                  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr><td style="height:24px;line-height:24px;font-size:0;">&nbsp;</td></tr></table>
+
+                  <!-- 3 redacted folder rows (skeleton bars; opacity 0.4 stands in for the Figma blur) -->
+                  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="opacity:0.4;">
+                    <tr>
+                      <td valign="middle" style="padding:8px 0 9px 0;width:36px;line-height:0;">
+                        <svg width="20" height="16" viewBox="0 0 20 16" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M2 16C1.45 16 0.979167 15.8042 0.5875 15.4125C0.195833 15.0208 0 14.55 0 14V2C0 1.45 0.195833 0.979167 0.5875 0.5875C0.979167 0.195833 1.45 0 2 0H8L10 2H18C18.55 2 19.0208 2.19583 19.4125 2.5875C19.8042 2.97917 20 3.45 20 4V14C20 14.55 19.8042 15.0208 19.4125 15.4125C19.0208 15.8042 18.55 16 18 16H2V16M2 14H18V4H9.175L7.175 2H2V14Z" fill="#FFA8DC"/></svg>
+                      </td>
+                      <td valign="middle" style="padding:8px 0 9px 0;border-bottom:1px solid rgba(71,69,84,0.1);">
+                        <div style="background:#363246;height:16px;border-radius:2px;width:128px;line-height:16px;font-size:0;">&nbsp;</div>
+                      </td>
+                      <td valign="middle" align="right" style="padding:8px 0 9px 0;border-bottom:1px solid rgba(71,69,84,0.1);">
+                        <div style="background:#2b273b;height:12px;border-radius:2px;width:64px;display:inline-block;line-height:12px;font-size:0;">&nbsp;</div>
+                      </td>
+                    </tr>
+                    <tr>
+                      <td valign="middle" style="padding:8px 0 9px 0;width:36px;line-height:0;">
+                        <svg width="16" height="20" viewBox="0 0 16 20" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M4 16H12V14H4V16M4 12H12V10H4V12M2 20C1.45 20 0.979167 19.8042 0.5875 19.4125C0.195833 19.0208 0 18.55 0 18V2C0 1.45 0.195833 0.979167 0.5875 0.5875C0.979167 0.195833 1.45 0 2 0H10L16 6V18C16 18.55 15.8042 19.0208 15.4125 19.4125C15.0208 19.8042 14.55 20 14 20H2M9 7V2H2V18H14V7H9Z" fill="#884EFF"/></svg>
+                      </td>
+                      <td valign="middle" style="padding:8px 0 9px 0;border-bottom:1px solid rgba(71,69,84,0.1);">
+                        <div style="background:#363246;height:16px;border-radius:2px;width:192px;line-height:16px;font-size:0;">&nbsp;</div>
+                      </td>
+                      <td valign="middle" align="right" style="padding:8px 0 9px 0;border-bottom:1px solid rgba(71,69,84,0.1);">
+                        <div style="background:#2b273b;height:12px;border-radius:2px;width:48px;display:inline-block;line-height:12px;font-size:0;">&nbsp;</div>
+                      </td>
+                    </tr>
+                    <tr>
+                      <td valign="middle" style="padding:8px 0 9px 0;width:36px;line-height:0;">
+                        <svg width="18" height="18" viewBox="0 0 18 18" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M2 18C1.45 18 0.979167 17.8042 0.5875 17.4125C0.195833 17.0208 0 16.55 0 16V2C0 1.45 0.195833 0.979167 0.5875 0.5875C0.979167 0.195833 1.45 0 2 0H16C16.55 0 17.0208 0.195833 17.4125 0.5875C17.8042 0.979167 18 1.45 18 2V16C18 16.55 17.8042 17.0208 17.4125 17.4125C17.0208 17.8042 16.55 18 16 18H2M2 16H16V2H2V16M3 14H15L11.25 9L8.25 13L6 10L3 14Z" fill="#D65F59"/></svg>
+                      </td>
+                      <td valign="middle" style="padding:8px 0 9px 0;border-bottom:1px solid rgba(71,69,84,0.1);">
+                        <div style="background:#363246;height:16px;border-radius:2px;width:96px;line-height:16px;font-size:0;">&nbsp;</div>
+                      </td>
+                      <td valign="middle" align="right" style="padding:8px 0 9px 0;border-bottom:1px solid rgba(71,69,84,0.1);">
+                        <div style="background:#2b273b;height:12px;border-radius:2px;width:80px;display:inline-block;line-height:12px;font-size:0;">&nbsp;</div>
+                      </td>
+                    </tr>
+                  </table>
+
+                  <!-- Access Restricted badge (the figma overlay; rendered as a centered row for email compat) -->
+                  <table role="presentation" cellpadding="0" cellspacing="0" border="0" align="center" style="margin:16px auto 0 auto;background:#ffffff;border:1px solid #d65f59;border-radius:12px;">
+                    <tr>
+                      <td style="padding:13px 25px;" valign="middle">
+                        <table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr>
+                          <td valign="middle" style="padding-right:12px;line-height:0;">
+                            <%= (typeof lock_icon_svg !== 'undefined' && lock_icon_svg) ? lock_icon_svg : '' %>
+                          </td>
+                          <td valign="middle">
+                            <span style="font-family:'Manrope','SF Pro Display',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;font-weight:600;font-size:14px;line-height:20px;color:#0b0a21;">Access Restricted</span>
+                          </td>
+                        </tr></table>
+                      </td>
+                    </tr>
+                  </table>
+
+                  <!-- 24px gap -->
+                  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr><td style="height:24px;line-height:24px;font-size:0;">&nbsp;</td></tr></table>
+
+                  <!-- Recent Activity label -->
+                  <p style="margin:0 0 12px 0;padding:0;font-family:'Geist Mono','SF Mono',Menlo,Consolas,monospace;font-weight:600;font-size:12px;line-height:1.4;letter-spacing:4px;text-transform:uppercase;color:rgba(67,60,197,0.6);">Recent Activity</p>
+
+                  <!-- Chat snippet 1: sharer (left) -->
+                  <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin-bottom:12px;">
+                    <tr>
+                      <td valign="top" style="padding-right:12px;width:32px;">
+                        <table cellpadding="0" cellspacing="0" border="0"><tr>
+                          <td bgcolor="#6c5ce7" align="center" valign="middle" width="32" height="32" style="width:32px;height:32px;background:#6c5ce7;border-radius:8px;color:#faf6ff;font-family:'Inter','SF Pro Display',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;font-weight:600;font-size:10px;line-height:32px;text-align:center;"><%- _avatar %></td>
+                        </tr></table>
+                      </td>
+                      <td valign="top">
+                        <table cellpadding="0" cellspacing="0" border="0">
+                          <tr>
+                            <td bgcolor="#e5e5ea" style="background:#e5e5ea;padding:8px 16px;border-radius:0 12px 12px 12px;color:#0b0a21;font-family:'Inter','SF Pro Display',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;font-size:14px;line-height:20px;max-width:387px;">
+                              <span style="display:inline-block;filter:blur(4px);-webkit-filter:blur(4px);opacity:0.7;">I've just uploaded the final wireframes for the dashboard.</span>
+                            </td>
+                          </tr>
+                        </table>
+                      </td>
+                    </tr>
+                  </table>
+
+                  <!-- Chat snippet 2: collaborator (right) -->
+                  <table role="presentation" cellpadding="0" cellspacing="0" border="0" align="right">
+                    <tr>
+                      <td valign="top">
+                        <table cellpadding="0" cellspacing="0" border="0">
+                          <tr>
+                            <td bgcolor="#d65f59" style="background:#d65f59;padding:8px 16px;border-radius:12px 12px 0 12px;color:#e4e3ff;font-family:'Inter','SF Pro Display',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;font-size:14px;line-height:20px;max-width:387px;">
+                              <span style="display:inline-block;filter:blur(4px);-webkit-filter:blur(4px);opacity:0.85;">Great work! I will take a look at the assets now.</span>
+                            </td>
+                          </tr>
+                        </table>
+                      </td>
+                      <td valign="top" style="padding-left:12px;width:32px;">
+                        <table cellpadding="0" cellspacing="0" border="0"><tr>
+                          <td bgcolor="#363246" align="center" valign="middle" width="32" height="32" style="width:32px;height:32px;background:#363246;border-radius:8px;color:#c8c4d7;font-family:'Inter','SF Pro Display',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;font-weight:600;font-size:10px;line-height:32px;text-align:center;">SJ</td>
+                        </tr></table>
+                      </td>
+                    </tr>
+                  </table>
+
+                </td></tr>
+              </table>
+
+              <!-- 40px gap before CTA -->
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr><td style="height:40px;line-height:40px;font-size:0;">&nbsp;</td></tr></table>
+
+              <!-- CTA button -->
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+                <tr>
+                  <td align="center" bgcolor="#433cc5" style="background:#433cc5;border-radius:4px;">
+                    <a href="<%- _cta_url %>" style="display:block;width:100%;background:#433cc5;color:#ffffff;text-decoration:none;font-family:'Geist','SF Pro Display',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;font-weight:600;font-size:16px;line-height:24px;text-align:center;padding:16px 24px;border-radius:4px;box-sizing:border-box;">
+                      <%- _cta_label %>
+                    </a>
+                  </td>
+                </tr>
+              </table>
+
+              <!-- Tagline -->
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr><td style="height:24px;line-height:24px;font-size:0;">&nbsp;</td></tr></table>
+              <p style="margin:0;padding:0;text-align:center;font-family:'Geist Mono','SF Mono',Menlo,Consolas,monospace;font-weight:600;font-size:10px;line-height:1;letter-spacing:4px;text-transform:uppercase;color:#433cc5;">
+                <%- _tagline %>
+              </p>
+
+            </td>
+          </tr>
+
+          <!-- Footer -->
+          <tr>
+            <td bgcolor="#f2f2f7" style="background:#f2f2f7;border-top:1px solid #d1d1d6;padding:33px 32px 32px 32px;">
+
+              <!-- Footer links -->
+              <table role="presentation" cellpadding="0" cellspacing="0" border="0" align="center">
+                <tr>
+                  <td style="padding:0 16px;font-family:'Geist','SF Pro Display',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;font-size:10px;line-height:1.4;color:#84848c;">
+                    <a href="<%- _privacy_url %>" style="color:#84848c;text-decoration:none;"><%= _privacy_lbl %></a>
+                  </td>
+                  <td style="padding:0 16px;font-family:'Geist','SF Pro Display',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;font-size:10px;line-height:1.4;color:#84848c;">
+                    <a href="<%- _terms_url %>" style="color:#84848c;text-decoration:none;"><%= _terms_lbl %></a>
+                  </td>
+                  <td style="padding:0 16px;font-family:'Geist','SF Pro Display',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;font-size:10px;line-height:1.4;color:#84848c;">
+                    <a href="<%- _support_url %>" style="color:#84848c;text-decoration:none;"><%= _support_lbl %></a>
+                  </td>
+                </tr>
+              </table>
+
+              <!-- 32px gap -->
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr><td style="height:32px;line-height:32px;font-size:0;">&nbsp;</td></tr></table>
+
+              <!-- Brand line + invitation context -->
+              <p style="margin:0 0 7px 0;padding:0;text-align:center;font-family:'Geist','SF Pro Display',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;font-weight:700;font-size:12px;line-height:1.4;color:#84848c;">DRUMEE WORKSPACE CURATOR</p>
+              <table role="presentation" cellpadding="0" cellspacing="0" border="0" align="center" style="max-width:320px;">
+                <tr><td style="text-align:center;font-family:'Geist','SF Pro Display',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;font-weight:400;font-size:10px;line-height:1.4;color:#84848c;">
+                  You received this because <%- _sharer %><% if (_sharer_email) { %> (<%- _sharer_email %>)<% } %> invited you to a workspace. Manage your email preferences in your account settings.
+                </td></tr>
+              </table>
+
+              <!-- 32px gap -->
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr><td style="height:32px;line-height:32px;font-size:0;">&nbsp;</td></tr></table>
+
+              <!-- Copyright -->
+              <p style="margin:0;padding:0;font-family:'Geist','SF Pro Display',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;font-weight:400;font-size:8px;line-height:1.4;color:#84848c;">© <%= _year %> Drumee. All rights reserved.</p>
+
+            </td>
+          </tr>
+
+        </table>
+      </td>
+    </tr>
+  </table>
 </body>
-
 </html>

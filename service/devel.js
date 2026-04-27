@@ -17,12 +17,19 @@
 /** ===================== */
 const { Entity } = require('@drumee/server-core');
 const { readFileSync } = require('jsonfile');
+const { readFileSync: readFile } = require('fs');
 const { keys } = require('lodash');
 const { existsSync } = require("fs");
 const { sysEnv, Messenger, Attr, Cache } = require("@drumee/server-essentials");
 const { instance } = sysEnv();
 const { resolve } = require('path');
 const ENDPOINTS = '/etc/drumee/infrastructure/instances.json';
+const ICONS_DIR = resolve(__dirname, '../icons');
+const SHARE_ICONS = {
+  logo_svg: 'logo.svg',
+  folder_icon_svg: 'folder-icon.svg',
+  lock_icon_svg: 'lock-icon.svg',
+};
 class Devel extends Entity {
 
 
@@ -54,6 +61,7 @@ class Devel extends Entity {
     data.signature = data.signature || lex._drumee_team;
     data.footer = data.footer || lex._copyright.format(`${new Date().getFullYear()}`)
     data.hello = data.hello || lex._hello_x.format(data.fullname || "")
+    data.lex = data.lex || lex;
     let html = msg.renderFrom(tpl, data)
     let status = await msg.send({ html });
     this.debug("AAA:58", recipient, status)
@@ -66,6 +74,11 @@ class Devel extends Entity {
     const subject = this.input.get('subject') || "Test email"
     const recipient = this.input.get('recipient');
     const data = this.input.get('data') || {};
+    for (const [key, file] of Object.entries(SHARE_ICONS)) {
+      if (data[key]) continue;
+      const path = resolve(ICONS_DIR, file);
+      if (existsSync(path)) data[key] = readFile(path, 'utf8');
+    }
     await this._send_email(subject, recipient, data, "mail/share.html")
     this.output.list(recipient)
   }
