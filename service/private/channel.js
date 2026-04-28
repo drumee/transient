@@ -1177,6 +1177,17 @@ class __private_channel extends Entity {
  
     this.output.list(paged);
   }
+
+  /**
+   * Get all channel messages in the current hub that have a specific file attached.
+   * Powers the "See Chat Threads" feature from the file context menu
+   * Params: file_nid (required) — media node ID of the file to search in attachment JSON arrays.
+   */
+  async list_by_file() {
+    const file_nid = this.input.need('file_nid');
+    const data = await this.db.await_proc('channel_list_by_file', file_nid);
+    this.output.list(data);
+  }
 }
 
 
