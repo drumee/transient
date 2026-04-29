@@ -24,7 +24,7 @@ const { sysEnv, Messenger, Attr, Cache } = require("@drumee/server-essentials");
 const { instance } = sysEnv();
 const { resolve } = require('path');
 const ENDPOINTS = '/etc/drumee/infrastructure/instances.json';
-const ICONS_DIR = resolve(__dirname, '../icons');
+const ICONS_DIR = resolve(__dirname, './icons');
 const SHARE_ICONS = {
   logo_svg: 'logo.svg',
   folder_icon_svg: 'folder-icon.svg',
@@ -77,9 +77,10 @@ class Devel extends Entity {
     for (const [key, file] of Object.entries(SHARE_ICONS)) {
       if (data[key]) continue;
       const path = resolve(ICONS_DIR, file);
+       this.debug("AAA:59", key, path)
       if (existsSync(path)) data[key] = readFile(path, 'utf8');
     }
-    await this._send_email(subject, recipient, data, "mail/share.html")
+    // await this._send_email(subject, recipient, data, "mail/share.html")
     this.output.list(recipient)
   }
 }
