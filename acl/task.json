@@ -1,0 +1,248 @@
+{
+  "services": {
+    "list": {
+      "doc": "List all tasks in the current hub (folder), ordered by Kanban column then rank. Returns all tasks regardless of status.",
+      "scope": "hub",
+      "permission": {
+        "src": "read"
+      },
+      "params": {},
+      "returns": {
+        "type": "array",
+        "doc": "Array of task objects ordered by status column then rank",
+        "items": {
+          "type": "object",
+          "properties": {
+            "id": { "type": "string", "doc": "Task ID" },
+            "title": { "type": "string", "doc": "Task title" },
+            "status": { "type": "string", "doc": "Kanban column: todo | in_progress | to_review | complete" },
+            "due_date": { "type": "string", "doc": "Due date (YYYY-MM-DD), null if not set" },
+            "created_by": { "type": "string", "doc": "UID of the user who created the task" },
+            "rank": { "type": "number", "doc": "Position within the status column" },
+            "ctime": { "type": "number", "doc": "Unix timestamp of creation" },
+            "mtime": { "type": "number", "doc": "Unix timestamp of last update" }
+          }
+        }
+      }
+    },
+    "create": {
+      "doc": "Create a new task in the current hub (folder). The task is placed at the bottom of the target status column.",
+      "scope": "hub",
+      "permission": {
+        "src": "write"
+      },
+      "params": {
+        "title": {
+          "type": "string",
+          "required": true,
+          "doc": "Task title"
+        },
+        "status": {
+          "type": "string",
+          "required": false,
+          "default": "todo",
+          "enum": ["todo", "in_progress", "to_review", "complete"],
+          "doc": "Initial Kanban column. Defaults to todo."
+        },
+        "due_date": {
+          "type": "string",
+          "required": false,
+          "doc": "Due date in YYYY-MM-DD format. Optional."
+        }
+      },
+      "returns": {
+        "type": "object",
+        "doc": "Newly created task object",
+        "properties": {
+          "id": { "type": "string", "doc": "Task ID" },
+          "title": { "type": "string", "doc": "Task title" },
+          "status": { "type": "string", "doc": "Kanban column" },
+          "due_date": { "type": "string", "doc": "Due date or null" },
+          "created_by": { "type": "string", "doc": "UID of creator" },
+          "rank": { "type": "number", "doc": "Position within column" },
+          "ctime": { "type": "number", "doc": "Unix timestamp of creation" },
+          "mtime": { "type": "number", "doc": "Unix timestamp of last update" }
+        }
+      }
+    },
+    "update": {
+      "doc": "Update a task's title and/or due date. Provide only the fields to change; omitted fields are left unchanged.",
+      "scope": "hub",
+      "permission": {
+        "src": "write"
+      },
+      "params": {
+        "id": {
+          "type": "string",
+          "required": true,
+          "doc": "Task ID to update"
+        },
+        "title": {
+          "type": "string",
+          "required": false,
+          "doc": "New task title. Omit to keep existing value."
+        },
+        "due_date": {
+          "type": "string",
+          "required": false,
+          "doc": "New due date in YYYY-MM-DD format. Pass null to clear."
+        }
+      },
+      "returns": {
+        "type": "object",
+        "doc": "Updated task object"
+      },
+      "errors": [
+        { "code": "TASK_NOT_FOUND", "message": "No task found with the given ID", "http_status": 404 }
+      ]
+    },
+    "update_status": {
+      "doc": "Move a task to a different Kanban column. The task is placed at the bottom of the destination column.",
+      "scope": "hub",
+      "permission": {
+        "src": "write"
+      },
+      "params": {
+        "id": {
+          "type": "string",
+          "required": true,
+          "doc": "Task ID to move"
+        },
+        "status": {
+          "type": "string",
+          "required": true,
+          "enum": ["todo", "in_progress", "to_review", "complete"],
+          "doc": "Destination Kanban column"
+        }
+      },
+      "returns": {
+        "type": "object",
+        "doc": "Updated task object with new status and rank"
+      },
+      "errors": [
+        { "code": "TASK_NOT_FOUND", "message": "No task found with the given ID", "http_status": 404 },
+        { "code": "INVALID_STATUS", "message": "status must be one of: todo, in_progress, to_review, complete", "http_status": 400 }
+      ]
+    },
+    "delete": {
+      "doc": "Delete a task permanently. All linked file associations (task_file rows) are removed automatically via CASCADE.",
+      "scope": "hub",
+      "permission": {
+        "src": "delete"
+      },
+      "params": {
+        "id": {
+          "type": "string",
+          "required": true,
+          "doc": "Task ID to delete"
+        }
+      },
+      "returns": {
+        "type": "object",
+        "doc": "Deleted task ID and affected row count",
+        "properties": {
+          "id": { "type": "string", "doc": "Deleted task ID" },
+          "affected": { "type": "number", "doc": "Number of rows deleted (1 if found, 0 if not found)" }
+        }
+      }
+    },
+    "link_file": {
+      "doc": "Link a file (media node) to a task. Idempotent — linking the same file twice has no effect. Returns the full updated list of files linked to the task.",
+      "scope": "hub",
+      "permission": {
+        "src": "write"
+      },
+      "params": {
+        "task_id": {
+          "type": "string",
+          "required": true,
+          "doc": "Task ID to link the file to"
+        },
+        "file_nid": {
+          "type": "string",
+          "required": true,
+          "doc": "Media node ID of the file to link"
+        }
+      },
+      "returns": {
+        "type": "array",
+        "doc": "Updated list of all files linked to the task, including media metadata",
+        "items": {
+          "type": "object",
+          "properties": {
+            "task_id": { "type": "string", "doc": "Task ID" },
+            "file_nid": { "type": "string", "doc": "File media node ID" },
+            "linked_by": { "type": "string", "doc": "UID of the user who linked the file" },
+            "ctime": { "type": "number", "doc": "Unix timestamp of when the file was linked" },
+            "filename": { "type": "string", "doc": "File display name (user_filename from media)" },
+            "category": { "type": "string", "doc": "File category (document, image, etc.)" },
+            "extension": { "type": "string", "doc": "File extension" },
+            "filesize": { "type": "number", "doc": "File size in bytes" }
+          }
+        }
+      }
+    },
+    "unlink_file": {
+      "doc": "Remove the link between a file and a task. The file itself is not deleted from the hub.",
+      "scope": "hub",
+      "permission": {
+        "src": "write"
+      },
+      "params": {
+        "task_id": {
+          "type": "string",
+          "required": true,
+          "doc": "Task ID to unlink the file from"
+        },
+        "file_nid": {
+          "type": "string",
+          "required": true,
+          "doc": "Media node ID of the file to unlink"
+        }
+      },
+      "returns": {
+        "type": "object",
+        "doc": "Confirmation of the unlinked pair",
+        "properties": {
+          "task_id": { "type": "string", "doc": "Task ID" },
+          "file_nid": { "type": "string", "doc": "File media node ID" },
+          "affected": { "type": "number", "doc": "1 if removed, 0 if link did not exist" }
+        }
+      }
+    },
+    "get_linked_files": {
+      "doc": "Get all files linked to a task, including file metadata from the media table.",
+      "scope": "hub",
+      "permission": {
+        "src": "read"
+      },
+      "params": {
+        "task_id": {
+          "type": "string",
+          "required": true,
+          "doc": "Task ID to get linked files for"
+        }
+      },
+      "returns": {
+        "type": "array",
+        "doc": "List of linked file objects with media metadata",
+        "items": {
+          "type": "object",
+          "properties": {
+            "task_id": { "type": "string", "doc": "Task ID" },
+            "file_nid": { "type": "string", "doc": "File media node ID" },
+            "linked_by": { "type": "string", "doc": "UID of the user who linked the file" },
+            "ctime": { "type": "number", "doc": "Unix timestamp of when the file was linked" },
+            "filename": { "type": "string", "doc": "File display name" },
+            "category": { "type": "string", "doc": "File category" },
+            "extension": { "type": "string", "doc": "File extension" },
+            "filesize": { "type": "number", "doc": "File size in bytes" }
+          }
+        }
+      }
+    }
+  },
+  "modules": {
+    "private": "service/private/task"
+  }
+}
