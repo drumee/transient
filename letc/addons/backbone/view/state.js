@@ -18,11 +18,11 @@ Backbone.View.prototype.setState = function(state, recursive) {
   if (_.isFunction(this._syncState)) {
     this._syncState(state);
   }
-  this.triggerMethod("also:click"); // Sync state to the chanel.
   if (recursive && (this.children != null ? this.children.length : undefined)) {
-    return Array.from(this.children.toArray()).map((c) =>
+    Array.from(this.children.toArray()).map((c) =>
       c.setState(state, recursive));
   }
+  this.triggerMethod("change:radio"); // Sync state to the chanel.
 };
 
 /**
