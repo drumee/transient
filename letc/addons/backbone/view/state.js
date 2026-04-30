@@ -22,7 +22,6 @@ Backbone.View.prototype.setState = function(state, recursive) {
     Array.from(this.children.toArray()).map((c) =>
       c.setState(state, recursive));
   }
-  this.triggerMethod("change:radio"); // Sync state to the chanel.
 };
 
 /**
