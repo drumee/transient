@@ -7,25 +7,25 @@ const _propsList = [_a.before, _a.after, _a.hover];
  * @param [String] pseudo name of pseudo element
  * @option [String] id
 */
-HTMLElement.prototype.removePseudoStyle = function(pseudo){
-  let _sheetId;
-  const id = this.getAttribute(_a.id);
-  if ((id == null)) {
-    return;
-  }
-  if (pseudo != null) {
-    try {
-      _sheetId = `${_sheet_tag}-${pseudo}-${id}`;
-      return document.getElementById(_sheetId).remove();
-    } catch (error) {}
-  } else {
-    return Array.from(_propsList).map((p) =>
-      (() => { try {
-        _sheetId = `${_sheet_tag}-${p}-${id}`;
-        return document.getElementById(_sheetId).remove();
-      } catch (error1) {} })());
-  }
-};
+// HTMLElement.prototype.removePseudoStyle = function(pseudo){
+//   let _sheetId;
+//   const id = this.getAttribute(_a.id);
+//   if ((id == null)) {
+//     return;
+//   }
+//   if (pseudo != null) {
+//     try {
+//       _sheetId = `${_sheet_tag}-${pseudo}-${id}`;
+//       return document.getElementById(_sheetId).remove();
+//     } catch (error) {}
+//   } else {
+//     return Array.from(_propsList).map((p) =>
+//       (() => { try {
+//         _sheetId = `${_sheet_tag}-${p}-${id}`;
+//         return document.getElementById(_sheetId).remove();
+//       } catch (error1) {} })());
+//   }
+// };
 
 /**
  * Add a position style of an html element
@@ -33,47 +33,47 @@ HTMLElement.prototype.removePseudoStyle = function(pseudo){
  * @param [Object] props property or list of properties
  * @returns 
  */
-HTMLElement.prototype.pseudoStyle = function(position, props){
-  let data;
-  const id = _.uniqueId(_id_tag);
-  this.setAttribute(_a.id, id);
-  position = position ||this.dataset.position;
-  const _sheetId = `${_sheet_tag}-${position}-${id}`;
-  const _head = document.head || document.getElementsByTagName('head')[0];
-  let _sheet = document.getElementById(_sheetId);
-  if ((_sheet == null)) {
-    _sheet = document.createElement(_a.style);
-    _sheet.id = _sheetId;
-  }
-  if (this.dataset.pseudo) {
-    try {
-      data = JSON.parse(this.dataset.pseudo);
-    } catch (error) {}
-  }
-  const selector =  `#${id}:${position}`;
-  let cssText  =  "";
-  data = data || {};
-  if (_.isString(props)) {
-    cssText = props;
-  } else if (_.isObject(props)) {
-    _.merge(data, props);
-  }
-  data.content = data.content || '"\\2605"';
-  for (let k in data) {
-    const v = data[k];
-    cssText += `${k}:${v};`;
-  }
-  if (_.isEmpty(cssText)) {
-    return this;
-  }
-  _sheet.innerHTML =  `${selector}{ ${cssText} }`;
-  _head.appendChild(_sheet);
-  if (!_.isEmpty(props)) {
-    this.setAttribute(_a.data.pseudo, JSON.stringify(data));
-    this.setAttribute(_a.data.position, position);
-  }
-  return this;
-};
+// HTMLElement.prototype.pseudoStyle = function(position, props){
+//   let data;
+//   const id = _.uniqueId(_id_tag);
+//   this.setAttribute(_a.id, id);
+//   position = position ||this.dataset.position;
+//   const _sheetId = `${_sheet_tag}-${position}-${id}`;
+//   const _head = document.head || document.getElementsByTagName('head')[0];
+//   let _sheet = document.getElementById(_sheetId);
+//   if ((_sheet == null)) {
+//     _sheet = document.createElement(_a.style);
+//     _sheet.id = _sheetId;
+//   }
+//   if (this.dataset.pseudo) {
+//     try {
+//       data = JSON.parse(this.dataset.pseudo);
+//     } catch (error) {}
+//   }
+//   const selector =  `#${id}:${position}`;
+//   let cssText  =  "";
+//   data = data || {};
+//   if (_.isString(props)) {
+//     cssText = props;
+//   } else if (_.isObject(props)) {
+//     _.merge(data, props);
+//   }
+//   data.content = data.content || '"\\2605"';
+//   for (let k in data) {
+//     const v = data[k];
+//     cssText += `${k}:${v};`;
+//   }
+//   if (_.isEmpty(cssText)) {
+//     return this;
+//   }
+//   _sheet.innerHTML =  `${selector}{ ${cssText} }`;
+//   _head.appendChild(_sheet);
+//   if (!_.isEmpty(props)) {
+//     this.setAttribute(_a.data.pseudo, JSON.stringify(data));
+//     this.setAttribute(_a.data.position, position);
+//   }
+//   return this;
+// };
 
 
 /**
@@ -100,17 +100,17 @@ HTMLElement.prototype.show = function(){
  * 
  *  @return [Boolean] yes if visible
  */
-HTMLElement.prototype.isInViewport = function(){
-  const r = this.getBoundingClientRect();
-  const top = r.y + window.scrollY;
-  const bottom = top + r.height;
-  const screen_top = window.scrollY;
-  const screen_bottom = screen_top + window.innerHeight;
-  const screen_left = window.scrollX;
-  const screen_right = screen_left + window.innerWidth;
-  const res = (top < screen_bottom) && (bottom > screen_top);
-  return res;
-};
+// HTMLElement.prototype.isInViewport = function(){
+//   const r = this.getBoundingClientRect();
+//   const top = r.y + window.scrollY;
+//   const bottom = top + r.height;
+//   const screen_top = window.scrollY;
+//   const screen_bottom = screen_top + window.innerHeight;
+//   const screen_left = window.scrollX;
+//   const screen_right = screen_left + window.innerWidth;
+//   const res = (top < screen_bottom) && (bottom > screen_top);
+//   return res;
+// };
 
 
 /**
@@ -162,145 +162,145 @@ HTMLElement.prototype.outerHeight = function(unit){
  * @param {*} side 
  * @returns 
  */
-HTMLElement.prototype.getBorder = function(side){
-  const r = window.getComputedStyle(this);
-  const left   = (parseInt(r.borderLeftWidth)   || 0); 
-  const right  = (parseInt(r.borderRightWidth)  || 0); 
-  const top    = (parseInt(r.borderTopWidth)    || 0); 
-  const bottom = (parseInt(r.borderBottomWidth) || 0);
-  switch (side) {
-    case _a.left: 
-      return left;
-      break;
+// HTMLElement.prototype.getBorder = function(side){
+//   const r = window.getComputedStyle(this);
+//   const left   = (parseInt(r.borderLeftWidth)   || 0); 
+//   const right  = (parseInt(r.borderRightWidth)  || 0); 
+//   const top    = (parseInt(r.borderTopWidth)    || 0); 
+//   const bottom = (parseInt(r.borderBottomWidth) || 0);
+//   switch (side) {
+//     case _a.left: 
+//       return left;
+//       break;
 
-    case _a.right:  
-      return right;
-      break;
+//     case _a.right:  
+//       return right;
+//       break;
 
-    case _a.top: 
-      return top;
-      break;
+//     case _a.top: 
+//       return top;
+//       break;
 
-    case _a.bottom:  
-      return bottom;
-      break;
+//     case _a.bottom:  
+//       return bottom;
+//       break;
 
-    case _a.x: case _a.horizontal:  
-      return left + right;  
-      break;
+//     case _a.x: case _a.horizontal:  
+//       return left + right;  
+//       break;
 
-    case _a.y: case _a.vertical:  
-      return top + bottom;
-      break;
+//     case _a.y: case _a.vertical:  
+//       return top + bottom;
+//       break;
 
-    default:
-      var a = { 
-        top,
-        right,
-        bottom,
-        left
-      };
-      return a;
-  }
-  return 0;
-};
-
-/**
- * 
- * @param {*} side 
- * @returns 
- */
-HTMLElement.prototype.getPadding = function(side){
-  const r = window.getComputedStyle(this);
-  const left   = (parseInt(r.paddingLeft)   || 0);
-  const right  = (parseInt(r.paddingRight)  || 0);
-  const top    = (parseInt(r.paddingTop)    || 0);
-  const bottom = (parseInt(r.paddingBottom) || 0);
-  switch (side) {
-    case _a.left: 
-      return left;
-      break;
-
-    case _a.right:  
-      return right;
-      break;
-
-    case _a.top: 
-      return top;
-      break;
-
-    case _a.bottom:  
-      return bottom;
-      break;
-
-    case _a.x: case _a.horizontal:  
-      return left + right;  
-      break;
-
-    case _a.y: case _a.vertical:  
-      return top + bottom;
-      break;
-
-    default:
-      var a = { 
-        top,
-        right,
-        bottom,
-        left
-      };
-      return a;
-  }
-  return 0;
-};
-
+//     default:
+//       var a = { 
+//         top,
+//         right,
+//         bottom,
+//         left
+//       };
+//       return a;
+//   }
+//   return 0;
+// };
 
 /**
  * 
  * @param {*} side 
  * @returns 
  */
-HTMLElement.prototype.idleSpace = function(side){
-  const r = window.getComputedStyle(this);
-  const left   = (parseInt(r.borderLeftWidth)   || 0) + (parseInt(r.paddingLeft)   || 0);
-  const right  = (parseInt(r.borderRightWidth)  || 0) + (parseInt(r.paddingRight)  || 0);
-  const top    = (parseInt(r.borderTopWidth)    || 0) + (parseInt(r.paddingTop)    || 0);
-  const bottom = (parseInt(r.borderBottomWidth) || 0) + (parseInt(r.paddingBottom) || 0);
-  switch (side) {
-    case _a.left: 
-      return left;
-      break;
+// HTMLElement.prototype.getPadding = function(side){
+//   const r = window.getComputedStyle(this);
+//   const left   = (parseInt(r.paddingLeft)   || 0);
+//   const right  = (parseInt(r.paddingRight)  || 0);
+//   const top    = (parseInt(r.paddingTop)    || 0);
+//   const bottom = (parseInt(r.paddingBottom) || 0);
+//   switch (side) {
+//     case _a.left: 
+//       return left;
+//       break;
 
-    case _a.right:  
-      return right;
-      break;
+//     case _a.right:  
+//       return right;
+//       break;
 
-    case _a.top: 
-      return top;
-      break;
+//     case _a.top: 
+//       return top;
+//       break;
 
-    case _a.bottom:  
-      return bottom;
-      break;
+//     case _a.bottom:  
+//       return bottom;
+//       break;
 
-    case _a.x: case _a.horizontal:  
-      return left + right;  
-      break;
+//     case _a.x: case _a.horizontal:  
+//       return left + right;  
+//       break;
 
-    case _a.y: case _a.vertical:  
-      return top + bottom;
-      break;
+//     case _a.y: case _a.vertical:  
+//       return top + bottom;
+//       break;
 
-    default:
-      var a = { 
-        top,
-        right,
-        bottom,
-        left
-      };
-      return a;
-  }
-  return 0;
-};
+//     default:
+//       var a = { 
+//         top,
+//         right,
+//         bottom,
+//         left
+//       };
+//       return a;
+//   }
+//   return 0;
+// };
+
+
+/**
+ * 
+ * @param {*} side 
+ * @returns 
+ */
+// HTMLElement.prototype.idleSpace = function(side){
+//   const r = window.getComputedStyle(this);
+//   const left   = (parseInt(r.borderLeftWidth)   || 0) + (parseInt(r.paddingLeft)   || 0);
+//   const right  = (parseInt(r.borderRightWidth)  || 0) + (parseInt(r.paddingRight)  || 0);
+//   const top    = (parseInt(r.borderTopWidth)    || 0) + (parseInt(r.paddingTop)    || 0);
+//   const bottom = (parseInt(r.borderBottomWidth) || 0) + (parseInt(r.paddingBottom) || 0);
+//   switch (side) {
+//     case _a.left: 
+//       return left;
+//       break;
+
+//     case _a.right:  
+//       return right;
+//       break;
+
+//     case _a.top: 
+//       return top;
+//       break;
+
+//     case _a.bottom:  
+//       return bottom;
+//       break;
+
+//     case _a.x: case _a.horizontal:  
+//       return left + right;  
+//       break;
+
+//     case _a.y: case _a.vertical:  
+//       return top + bottom;
+//       break;
+
+//     default:
+//       var a = { 
+//         top,
+//         right,
+//         bottom,
+//         left
+//       };
+//       return a;
+//   }
+//   return 0;
+// };
 
 
 /**
