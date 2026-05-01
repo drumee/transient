@@ -117,7 +117,7 @@ class __offline_media_zip extends Offline {
     this.data_dir = resolve(
       tmp_dir,
       DOWNLOAD_FOLDER,
-      this.hub_id,
+      this.uid,
       this.zipid
     );
     this.sender = await this.yp.await_proc('get_user', this.uid);

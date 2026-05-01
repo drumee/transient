@@ -1745,18 +1745,20 @@ class __media extends Mfs {
    */
   async zip() {
     const id = this.input.need(Attr.id);
-    const hub_id = this.hub.get(Attr.id);
+    // Use this.uid to match the path used by create_small_zip() and
+    // create_large_zip(). Using hub_id caused path mismatch in workspaces
+    // where hub_id ≠ uid, resulting in 404 on zip retrieval.
     const src = join(
       tmp_dir,
       DOWNLOAD_FOLDER,
-      hub_id,
+      this.uid,
       id,
       `index.zip`
     );
     const target = join(
       mfs_dir,
       DOWNLOAD_FOLDER,
-      hub_id,
+      this.uid,
       id
     );
     mkdirSync(target, { recursive: true });
