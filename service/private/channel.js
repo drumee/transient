@@ -661,6 +661,23 @@ class __private_channel extends Entity {
     let recipients = await this.yp.await_proc('entity_sockets', { exclude, hub_id });
     await RedisStore.sendData(this.payload(data), recipients);
 
+    if (!isEmpty(mention_ids)) {
+      try {
+        const hubRecipientUids = toArray(recipients).map(r => r.uid);
+        const extraMentionIds = mention_ids.filter(
+          id => id !== this.uid && !hubRecipientUids.includes(id)
+        );
+        if (extraMentionIds.length) {
+          const mentionRecipients = await this.yp.await_proc('user_sockets', extraMentionIds);
+          if (!isEmpty(mentionRecipients)) {
+            await RedisStore.sendData(this.payload(data), mentionRecipients);
+          }
+        }
+      } catch (e) {
+        this.warn('[channel.write] mention notification failed:', e && e.message);
+      }
+    }
+
     // Track chat_initiated
     try {
       const track = await this.db.await_proc('share_track_add', 'chat_initiated', this.uid, null);

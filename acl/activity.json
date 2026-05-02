@@ -336,6 +336,34 @@
           "status": "error"
         }
       ]
+    },
+
+    "dismiss": {
+      "doc": "Dismiss a single activity notification so it no longer appears in the feed.",
+      "scope": "hub",
+      "permission": {
+        "src": "write"
+      },
+      "params": {
+        "changelog_id": {
+          "type": "integer",
+          "required": true,
+          "description": "The changelog entry ID to dismiss"
+        }
+      },
+      "returns": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "description": "ok on success"
+          },
+          "changelog_id": {
+            "type": "integer",
+            "description": "The dismissed changelog ID"
+          }
+        }
+      }
     }
   },
 

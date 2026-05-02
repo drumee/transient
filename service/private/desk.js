@@ -307,10 +307,16 @@ class __private_desk extends Media {
     const page   = this.input.use(Attr.page, 1);
  
     if (isEmpty(string)) {
-      this.output.list([]);
+      const data = await this.db.await_proc(
+        "mfs_show_node_by",
+        this.home_id,
+        this.uid,
+        { sort_by: 'rank', order: 'asc', page, type: 'hub' }
+      );
+      this.output.list(data);
       return;
     }
- 
+
     const pattern = string.trim();
  
     // File / folder search (existing behaviour, cross-hub via media_index)

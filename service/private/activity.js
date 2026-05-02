@@ -100,7 +100,16 @@ class MfsActivity extends Entity {
    */
   async get_feed() {
     const page = this.input.use(Attr.page) || 1;
-    const result = await this._callUserProc('mfs_get_activity_feed', this.uid, page);
+    const filter = this.input.use('filter') || 'all';
+    const unreadOnly = parseInt(this.input.use('unread_only') || 0);
+    const proc = unreadOnly ? 'mfs_get_activity_feed' : 'activity_get_log';
+    let result = await this._callUserProc(proc, this.uid, page);
+    result = toArray(result);
+    if (filter === 'mentions') {
+      result = result.filter((row) => row.event !== 'media.share');
+    } else if (filter === 'shares') {
+      result = result.filter((row) => row.event === 'media.share');
+    }
     this.output.list(result);
   }
 
@@ -226,6 +235,13 @@ class MfsActivity extends Entity {
       message: 'File not acknowledged',
     });
 
+  }
+
+  async dismiss() {
+    const changelogId = parseInt(this.input.need('changelog_id'));
+    const result = await this._callUserProc('mfs_dismiss_activity', this.uid, changelogId);
+    const data = toArray(result)[0] || {};
+    this.output.data(data);
   }
 }
 
