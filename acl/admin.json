@@ -1,226 +1,789 @@
 {
   "services": {
     "member_stats": {
-      "doc": "Retrieve aggregated member statistics for the Admin Console header: total members, admins, pending invites, and external guests within the current domain organisation.",
+      "doc": "Return aggregate member statistics for the caller's domain: total members, active members, frozen members, and pending invites. Reads from member_list_stats SP scoped to the caller's domain_id.",
       "scope": "domain",
-      "permission": {
-        "src": "read"
-      },
+      "permission": { "src": "admin" },
       "params": {},
       "returns": {
         "type": "object",
-        "doc": "Aggregated stats object",
         "properties": {
-          "total_members": {
-            "type": "number",
-            "doc": "Total non-system, non-archived members in the organisation"
-          },
-          "admins": {
-            "type": "number",
-            "doc": "Members with privilege level above 1"
-          },
-          "pending_invites": {
-            "type": "number",
-            "doc": "Active members who have never connected (connected = 0)"
-          },
-          "external_guests": {
-            "type": "number",
-            "doc": "Distinct DMZ guests who have accessed hubs belonging to this organisation"
-          }
+          "total": { "type": "integer", "description": "Total member count in domain" },
+          "active": { "type": "integer", "description": "Members with active status" },
+          "frozen": { "type": "integer", "description": "Members with frozen status" },
+          "pending": { "type": "integer", "description": "Pending invite count" }
         }
       },
-      "errors": [
-        { "code": "NO_ORG", "message": "No organisation found for the current domain", "http_status": 404 }
-      ]
+      "errors": []
     },
     "member_list_workspaces": {
-      "doc": "Retrieve the list of active workspaces (hubs) within the organisation that a specific member has access to.",
+      "doc": "List all workspaces (hubs) a specific member belongs to within the caller's domain, including their permission level per workspace.",
       "scope": "domain",
-      "permission": {
-        "src": "read"
-      },
+      "permission": { "src": "admin" },
       "params": {
-        "user_id": {
+        "uid": {
           "type": "string",
           "required": true,
-          "doc": "ID of the member whose workspace list to retrieve"
+          "description": "ID of the member whose workspace list to retrieve"
         }
       },
       "returns": {
         "type": "array",
-        "doc": "List of workspace objects the member has access to within the organisation",
+        "description": "List of workspaces the member belongs to",
         "items": {
-          "type": "object",
-          "properties": {
-            "hub_id": { "type": "string", "doc": "Hub entity ID" },
-            "hub_name": { "type": "string", "doc": "Display name of the hub" }
-          }
+          "hub_id": { "type": "string", "description": "Workspace hub ID" },
+          "hub_name": { "type": "string", "description": "Workspace name (ident)" },
+          "permission": { "type": "integer", "description": "Member permission value in this workspace" }
         }
       },
-      "errors": [
-        { "code": "NO_ORG", "message": "No organisation found or target user does not belong to the same organisation", "http_status": 404 },
-        { "code": "INVALID_ORG", "message": "Target user belongs to a different organisation", "http_status": 403 }
-      ]
+      "errors": []
     },
-    "member_device_list": {
-      "doc": "Retrieve the list of active registered security devices for a specific member.",
+    "member_list_workspace_admins": {
+      "doc": "List all members in the domain who have admin-level permission (permission >= 31) in at least one workspace. Aggregates across all hubs in the domain via hub_get_workspace_admins.",
       "scope": "domain",
-      "permission": {
-        "src": "read"
-      },
-      "params": {
-        "user_id": {
-          "type": "string",
-          "required": true,
-          "doc": "ID of the member whose device list to retrieve"
-        }
-      },
+      "permission": { "src": "admin" },
+      "params": {},
       "returns": {
         "type": "array",
-        "doc": "List of active device records for the member, ordered by most recently active",
+        "description": "List of members who are workspace admins in at least one hub",
         "items": {
-          "type": "object",
-          "properties": {
-            "sys_id": { "type": "number", "doc": "Device record ID" },
-            "name": { "type": "string", "doc": "Device display name" },
-            "platform": { "type": "string", "doc": "Device platform (e.g. macOS, iOS)" },
-            "version": { "type": "string", "doc": "OS or app version" },
-            "status": { "type": "string", "doc": "Device status (active)" },
-            "ctime": { "type": "number", "doc": "Registration timestamp (UNIX)" },
-            "mtime": { "type": "number", "doc": "Last activity timestamp (UNIX)" }
-          }
+          "uid": { "type": "string", "description": "Member user ID" },
+          "hub_id": { "type": "string", "description": "Workspace hub ID" },
+          "hub_name": { "type": "string", "description": "Workspace name" }
         }
       },
-      "errors": [
-        { "code": "NO_ORG", "message": "No organisation found or target user does not belong to the same organisation", "http_status": 404 },
-        { "code": "INVALID_ORG", "message": "Target user belongs to a different organisation", "http_status": 403 }
-      ]
+      "errors": []
     },
-    "member_device_remove": {
-      "doc": "Revoke a specific registered security device for a member by device record ID.",
+    "member_save_workspace_roles": {
+      "doc": "Save per-workspace privilege assignments for a member. Iterates over the assignments array and calls permission_grant on each target hub DB with the specified privilege value. Existing permission row is replaced (REPLACE INTO semantics from permission_grant).",
       "scope": "domain",
-      "permission": {
-        "src": "admin"
-      },
+      "permission": { "src": "admin" },
       "params": {
-        "user_id": {
+        "uid": {
           "type": "string",
           "required": true,
-          "doc": "ID of the member whose device to revoke"
+          "description": "ID of the member to update"
         },
-        "device_id": {
-          "type": "number",
-          "required": true,
-          "doc": "sys_id of the device record to revoke"
-        }
-      },
-      "returns": {
-        "type": "object",
-        "doc": "Result object with affected row count",
-        "properties": {
-          "affected": { "type": "number", "doc": "Number of rows updated (1 if successful, 0 if device not found or already revoked)" }
-        }
-      },
-      "errors": [
-        { "code": "NO_ORG", "message": "No organisation found or target user does not belong to the same organisation", "http_status": 404 },
-        { "code": "INVALID_ORG", "message": "Target user belongs to a different organisation", "http_status": 403 }
-      ]
-    },
-    "member_device_remove_all": {
-      "doc": "Revoke all active registered security devices for a specific member.",
-      "scope": "domain",
-      "permission": {
-        "src": "admin"
-      },
-      "params": {
-        "user_id": {
-          "type": "string",
-          "required": true,
-          "doc": "ID of the member whose devices to revoke"
-        }
-      },
-      "returns": {
-        "type": "object",
-        "doc": "Result object with affected row count",
-        "properties": {
-          "affected": { "type": "number", "doc": "Number of device records revoked" }
-        }
-      },
-      "errors": [
-        { "code": "NO_ORG", "message": "No organisation found or target user does not belong to the same organisation", "http_status": 404 },
-        { "code": "INVALID_ORG", "message": "Target user belongs to a different organisation", "http_status": 403 }
-      ]
-    },
-    "member_set_workspace_admin": {
-      "doc": "Grant Workspace Admin permission (permission level 31) to a member on one or more specific hubs within the organisation. Only hubs belonging to the caller's organisation are processed.",
-      "scope": "domain",
-      "permission": {
-        "src": "admin"
-      },
-      "params": {
-        "user_id": {
-          "type": "string",
-          "required": true,
-          "doc": "ID of the member to promote to Workspace Admin"
-        },
-        "hub_id": {
+        "assignments": {
           "type": "array",
           "required": true,
-          "doc": "Array of hub IDs to grant Workspace Admin access on. Accepts a single string which is normalised to an array."
+          "description": "JSON array of hub_id + privilege pairs. Example: [{\"hub_id\":\"abc123\",\"privilege\":7}]. Privilege values: View=3, Chat=3, Edit=7, Admin=31."
+        }
+      },
+      "returns": {
+        "type": "object",
+        "properties": {
+          "status": { "type": "string", "description": "OK on success" }
+        }
+      },
+      "errors": []
+    },
+    "member_device_list": {
+      "doc": "List all registered devices for a specific member. Returns device records from the yp.device table.",
+      "scope": "domain",
+      "permission": { "src": "admin" },
+      "params": {
+        "uid": {
+          "type": "string",
+          "required": true,
+          "description": "ID of the member whose devices to list"
         }
       },
       "returns": {
         "type": "array",
-        "doc": "List of results per hub, each containing hub_id and the updated permission record"
+        "description": "List of registered devices for the member",
+        "items": {
+          "device_id": { "type": "string", "description": "Device unique ID" },
+          "device_name": { "type": "string", "description": "Device display name" },
+          "ctime": { "type": "integer", "description": "Registration timestamp (UNIX)" }
+        }
+      },
+      "errors": []
+    },
+    "member_device_remove": {
+      "doc": "Remove a specific registered device for a member. Calls member_device_remove SP with uid and device_id.",
+      "scope": "domain",
+      "permission": { "src": "admin" },
+      "params": {
+        "uid": {
+          "type": "string",
+          "required": true,
+          "description": "ID of the member"
+        },
+        "device_id": {
+          "type": "string",
+          "required": true,
+          "description": "ID of the device to remove"
+        }
+      },
+      "returns": {
+        "type": "object",
+        "properties": {
+          "status": { "type": "string", "description": "OK on success" }
+        }
+      },
+      "errors": []
+    },
+    "member_device_remove_all": {
+      "doc": "Remove all registered devices for a member. Calls member_device_remove_all SP with uid.",
+      "scope": "domain",
+      "permission": { "src": "admin" },
+      "params": {
+        "uid": {
+          "type": "string",
+          "required": true,
+          "description": "ID of the member whose devices to remove"
+        }
+      },
+      "returns": {
+        "type": "object",
+        "properties": {
+          "status": { "type": "string", "description": "OK on success" }
+        }
+      },
+      "errors": []
+    },
+    "member_set_workspace_admin": {
+      "doc": "Grant admin-level permission (permission=31) to a member in a specific workspace by calling permission_grant on the hub DB with resource_id='*', assign_via='system'. Replaces any existing permission row for that member in the hub.",
+      "scope": "domain",
+      "permission": { "src": "admin" },
+      "params": {
+        "uid": {
+          "type": "string",
+          "required": true,
+          "description": "ID of the member to promote to workspace admin"
+        },
+        "hub_id": {
+          "type": "string",
+          "required": true,
+          "description": "ID of the target workspace hub"
+        }
+      },
+      "returns": {
+        "type": "object",
+        "properties": {
+          "status": { "type": "string", "description": "OK on success, HUB_NOT_FOUND if hub DB cannot be resolved" }
+        }
       },
       "errors": [
-        { "code": "NO_ORG", "message": "No organisation found or target user does not belong to the same organisation", "http_status": 404 },
-        { "code": "INVALID_ORG", "message": "Target user belongs to a different organisation", "http_status": 403 }
+        {
+          "code": "HUB_NOT_FOUND",
+          "description": "get_db_name returned null for the given hub_id"
+        }
       ]
     },
     "member_remove_workspace_admin": {
-      "doc": "Downgrade a Workspace Admin back to regular member (permission level 7) on one or more specific hubs within the organisation. Only hubs belonging to the caller's organisation are processed.",
+      "doc": "Downgrade a workspace admin back to Edit-level permission (permission=7) in a specific workspace by calling permission_grant on the hub DB. Does not remove membership, only reduces privilege.",
       "scope": "domain",
-      "permission": {
-        "src": "admin"
-      },
+      "permission": { "src": "admin" },
       "params": {
-        "user_id": {
+        "uid": {
           "type": "string",
           "required": true,
-          "doc": "ID of the member to downgrade from Workspace Admin"
+          "description": "ID of the member to demote from workspace admin"
         },
         "hub_id": {
-          "type": "array",
+          "type": "string",
           "required": true,
-          "doc": "Array of hub IDs to remove Workspace Admin access from. Accepts a single string which is normalised to an array."
+          "description": "ID of the target workspace hub"
         }
       },
       "returns": {
         "type": "object",
-        "doc": "Status object confirming the operation completed",
         "properties": {
-          "status": { "type": "string", "doc": "Always 'done' on success" }
+          "status": { "type": "string", "description": "OK on success, HUB_NOT_FOUND if hub DB cannot be resolved" }
         }
       },
       "errors": [
-        { "code": "NO_ORG", "message": "No organisation found or target user does not belong to the same organisation", "http_status": 404 },
-        { "code": "INVALID_ORG", "message": "Target user belongs to a different organisation", "http_status": 403 }
+        {
+          "code": "HUB_NOT_FOUND",
+          "description": "get_db_name returned null for the given hub_id"
+        }
       ]
     },
-    "member_list_workspace_admins": {
-      "doc": "Retrieve the list of members who have Workspace Admin permission on at least one hub within the organisation.",
+    "get_audit_logs": {
+      "doc": "Return paginated audit log entries across all hubs in the domain. Iterates over every hub DB in the domain, calls hub_get_audit_logs_filtered per hub, merges and sorts all results by ctime descending, then returns one page of 20 entries. Known limitation: only fetches page 1 from each hub before merging, so entries beyond page 1 of any single hub may be omitted.",
       "scope": "domain",
-      "permission": {
-        "src": "read"
+      "permission": { "src": "admin" },
+      "params": {
+        "username": {
+          "type": "string",
+          "required": false,
+          "description": "Filter by actor full name (LIKE match). Empty string disables filter."
+        },
+        "from_time": {
+          "type": "integer",
+          "required": false,
+          "description": "Filter entries at or after this UNIX timestamp. 0 disables filter."
+        },
+        "to_time": {
+          "type": "integer",
+          "required": false,
+          "description": "Filter entries at or before this UNIX timestamp. 0 disables filter."
+        },
+        "page": {
+          "type": "integer",
+          "required": false,
+          "description": "Page number, 1-based. Page size is 20. Defaults to 1."
+        }
       },
+      "returns": {
+        "type": "array",
+        "description": "Paginated list of audit log entries sorted by ctime descending",
+        "items": {
+          "uid": { "type": "string", "description": "Actor user ID" },
+          "action": { "type": "string", "description": "Action enum value" },
+          "category": { "type": "string", "description": "Category enum value" },
+          "notify_to": { "type": "string", "description": "Notification target" },
+          "entity_id": { "type": "string", "description": "Affected entity ID" },
+          "log": { "type": "string", "description": "Log message" },
+          "ctime": { "type": "integer", "description": "Entry timestamp (UNIX)" },
+          "actor_name": { "type": "string", "description": "Actor full name from yp.drumate" },
+          "firstname": { "type": "string", "description": "Actor first name" },
+          "lastname": { "type": "string", "description": "Actor last name" },
+          "email": { "type": "string", "description": "Actor email" },
+          "hub_id": { "type": "string", "description": "Source hub ID (appended by service layer)" }
+        }
+      },
+      "errors": []
+    },
+
+    "export_audit_logs": {
+      "doc": "Export the full unfiltered audit log (no pagination) across all hubs in the domain. Same aggregation logic as get_audit_logs but returns all matching entries sorted by ctime descending. Intended for CSV export on the client side.",
+      "scope": "domain",
+      "permission": { "src": "admin" },
+      "params": {
+        "username": {
+          "type": "string",
+          "required": false,
+          "description": "Filter by actor full name (LIKE match). Empty string disables filter."
+        },
+        "from_time": {
+          "type": "integer",
+          "required": false,
+          "description": "Filter entries at or after this UNIX timestamp. 0 disables filter."
+        },
+        "to_time": {
+          "type": "integer",
+          "required": false,
+          "description": "Filter entries at or before this UNIX timestamp. 0 disables filter."
+        }
+      },
+      "returns": {
+        "type": "array",
+        "description": "Full list of matching audit log entries across all hubs, sorted by ctime descending. Same field set as get_audit_logs."
+      },
+      "errors": []
+    },
+    "get_audit_stats": {
+      "doc": "Return summary statistics for the Audit Logs tab header cards. security_score and high_risk_count are placeholders (hardcoded 94 and 0 respectively) for Round 1. storage_used_bytes is real data: sum of yp.entity.space for all active hubs in the domain.",
+      "scope": "domain",
+      "permission": { "src": "admin" },
+      "params": {
+        "from_time": {
+          "type": "integer",
+          "required": false,
+          "description": "Range start (UNIX timestamp). Currently unused in SP computation. 0 disables."
+        },
+        "to_time": {
+          "type": "integer",
+          "required": false,
+          "description": "Range end (UNIX timestamp). Currently unused in SP computation. 0 disables."
+        }
+      },
+      "returns": {
+        "type": "object",
+        "properties": {
+          "security_score": { "type": "integer", "description": "Placeholder value: 94" },
+          "high_risk_count": { "type": "integer", "description": "Placeholder value: 0" },
+          "storage_used_bytes": { "type": "number", "description": "Sum of yp.entity.space for all active hubs in domain (float)" }
+        }
+      },
+      "errors": []
+    },
+
+    "get_org_storage_stats": {
+      "doc": "Return a per-hub storage breakdown for the domain. Lists all active hubs belonging to the caller's domain with their used storage in bytes and megabytes. Reads yp.entity.space for each hub.",
+      "scope": "domain",
+      "permission": { "src": "admin" },
       "params": {},
       "returns": {
         "type": "array",
-        "doc": "List of member detail records for all workspace admins in the organisation"
+        "description": "List of active hubs in the domain with their storage usage",
+        "items": {
+          "hub_id": { "type": "string", "description": "Hub entity ID" },
+          "hub_name": { "type": "string", "description": "Hub name (yp.entity.ident)" },
+          "used_bytes": { "type": "number", "description": "Storage used in bytes (yp.entity.space)" },
+          "used_mb": { "type": "number", "description": "Storage used in megabytes, rounded to 2 decimal places" }
+        }
+      },
+      "errors": []
+    },
+    "get_org_user_storage": {
+      "doc": "Return a paginated, sortable list of members in the domain with their individual storage usage. Joins yp.drumate, yp.privilege, and yp.entity (type=drumate) to compute per-user used bytes.",
+      "scope": "domain",
+      "permission": { "src": "admin" },
+      "params": {
+        "sort_by": {
+          "type": "string",
+          "required": false,
+          "description": "Sort order. Accepted values: usage_high (default, highest usage first), usage_low (lowest usage first)."
+        },
+        "page": {
+          "type": "integer",
+          "required": false,
+          "description": "Page number, 1-based. Defaults to 1."
+        }
+      },
+      "returns": {
+        "type": "array",
+        "description": "Paginated list of domain members with storage usage",
+        "items": {
+          "uid": { "type": "string", "description": "Member user ID" },
+          "firstname": { "type": "string", "description": "Member first name" },
+          "lastname": { "type": "string", "description": "Member last name" },
+          "fullname": { "type": "string", "description": "Member full name" },
+          "email": { "type": "string", "description": "Member email" },
+          "domain_privilege": { "type": "integer", "description": "Member domain-level privilege" },
+          "used_bytes": { "type": "number", "description": "Storage used in bytes" },
+          "used_mb": { "type": "number", "description": "Storage used in megabytes, rounded to 2 decimal places" }
+        }
+      },
+      "errors": []
+    },
+    "hub_member_list": {
+      "doc": "Return a paginated list of members in a specific workspace hub with their hub-level permission, role label, and online status. Role label is derived from permission value: HUB_OWNER (>=63), HUB_ADMIN (>=31), MEMBER (<31). Online status is resolved from yp.socket.state='active'.",
+      "scope": "hub",
+      "permission": { "src": "admin" },
+      "params": {
+        "hub_id": {
+          "type": "string",
+          "required": true,
+          "description": "ID of the target workspace hub"
+        },
+        "role": {
+          "type": "string",
+          "required": false,
+          "description": "Filter by role. Accepted values: all (default), admin (permission >= 31), member (permission < 31)."
+        },
+        "page": {
+          "type": "integer",
+          "required": false,
+          "description": "Page number, 1-based. Defaults to 1."
+        }
+      },
+      "returns": {
+        "type": "array",
+        "description": "Paginated list of hub members sorted by lastname, firstname",
+        "items": {
+          "uid": { "type": "string", "description": "Member user ID" },
+          "firstname": { "type": "string", "description": "Member first name" },
+          "lastname": { "type": "string", "description": "Member last name" },
+          "fullname": { "type": "string", "description": "Member full name" },
+          "email": { "type": "string", "description": "Member email" },
+          "ident": { "type": "string", "description": "Member ident handle" },
+          "hub_permission": { "type": "integer", "description": "Member permission value in this hub" },
+          "role_label": { "type": "string", "description": "Derived role: HUB_OWNER, HUB_ADMIN, or MEMBER" },
+          "status": { "type": "string", "description": "ONLINE if active socket exists, AWAY otherwise" },
+          "last_active": { "type": "integer", "description": "MAX(ctime) from yp.socket for this member, or null" }
+        }
       },
       "errors": [
-        { "code": "NO_ORG", "message": "No organisation found for the current domain", "http_status": 404 }
+        {
+          "code": "HUB_NOT_FOUND",
+          "description": "get_db_name returned null for the given hub_id"
+        }
+      ]
+    },
+    "hub_member_stats": {
+      "doc": "Return summary stat cards for the Workspace Admin Member tab: total members, admins (permission >= 31), external guests (domain_id differs from hub domain), and pending invites (placeholder 0 for Round 1).",
+      "scope": "hub",
+      "permission": { "src": "admin" },
+      "params": {
+        "hub_id": {
+          "type": "string",
+          "required": true,
+          "description": "ID of the target workspace hub"
+        }
+      },
+      "returns": {
+        "type": "object",
+        "properties": {
+          "total_members": { "type": "integer", "description": "Total member count in hub (permission > 0, resource_id='*')" },
+          "admins": { "type": "integer", "description": "Members with permission >= 31" },
+          "external_guests": { "type": "integer", "description": "Members whose domain_id differs from hub domain" },
+          "pending_invites": { "type": "integer", "description": "Placeholder: 0 for Round 1" }
+        }
+      },
+      "errors": [
+        {
+          "code": "HUB_NOT_FOUND",
+          "description": "get_db_name returned null for the given hub_id"
+        }
+      ]
+    },
+    "hub_member_remove": {
+      "doc": "Remove a member from a specific workspace hub by deleting their permission row (resource_id='*') and logging a removed action via hub_add_action_log.",
+      "scope": "hub",
+      "permission": { "src": "admin" },
+      "params": {
+        "hub_id": {
+          "type": "string",
+          "required": true,
+          "description": "ID of the target workspace hub"
+        },
+        "uid": {
+          "type": "string",
+          "required": true,
+          "description": "ID of the member to remove"
+        }
+      },
+      "returns": {
+        "type": "object",
+        "properties": {
+          "affected": { "type": "integer", "description": "Number of permission rows deleted (0 or 1)" }
+        }
+      },
+      "errors": [
+        {
+          "code": "HUB_NOT_FOUND",
+          "description": "get_db_name returned null for the given hub_id"
+        }
+      ]
+    },
+    "get_workspace_overview": {
+      "doc": "Return a domain-wide list of all workspaces visible to the calling user. Requires hub_id for scope:hub permission check but returns all workspaces the caller has admin access to in the domain via get_workspace_overview SP.",
+      "scope": "hub",
+      "permission": { "src": "admin" },
+      "params": {
+        "hub_id": {
+          "type": "string",
+          "required": true,
+          "description": "Any hub_id the caller is admin of. Required for scope:hub ACL check. Does not filter results."
+        }
+      },
+      "returns": {
+        "type": "array",
+        "description": "List of workspaces in domain the caller has admin access to"
+      },
+      "errors": []
+    },
+    "get_hub_folders": {
+      "doc": "List folders within a specific workspace for the Permission tab. Calls mfs_show_node_by with type='node' to return folder nodes only. Defaults to the hub root if node_id is not provided.",
+      "scope": "hub",
+      "permission": { "src": "admin" },
+      "params": {
+        "hub_id": {
+          "type": "string",
+          "required": true,
+          "description": "ID of the target workspace hub"
+        },
+        "node_id": {
+          "type": "string",
+          "required": false,
+          "description": "Parent folder node ID to list from. Defaults to hub root if omitted."
+        },
+        "page": {
+          "type": "integer",
+          "required": false,
+          "description": "Page number, 1-based. Defaults to 1."
+        }
+      },
+      "returns": {
+        "type": "array",
+        "description": "List of folder nodes under the given parent in the hub"
+      },
+      "errors": [
+        {
+          "code": "HUB_NOT_FOUND",
+          "description": "get_db_name returned null for the given hub_id"
+        }
+      ]
+    },
+    "get_folder_permissions": {
+      "doc": "Get the full permissions configuration for a folder: auto revocation settings, one-time link config, member access list with privilege levels, and device access settings. Calls folder_get_permissions SP on the hub DB.",
+      "scope": "hub",
+      "permission": { "src": "admin" },
+      "params": {
+        "hub_id": {
+          "type": "string",
+          "required": true,
+          "description": "ID of the workspace hub containing the folder"
+        },
+        "nid": {
+          "type": "string",
+          "required": true,
+          "description": "Node ID of the folder"
+        }
+      },
+      "returns": {
+        "type": "object",
+        "description": "Full permissions config object for the folder as returned by folder_get_permissions SP"
+      },
+      "errors": [
+        {
+          "code": "HUB_NOT_FOUND",
+          "description": "get_db_name returned null for the given hub_id"
+        }
+      ]
+    },
+    "save_folder_permissions": {
+      "doc": "Save (upsert) the full permissions configuration for a folder. Accepts the config as a JSON object or JSON string and calls folder_save_permissions SP on the hub DB.",
+      "scope": "hub",
+      "permission": { "src": "admin" },
+      "params": {
+        "hub_id": {
+          "type": "string",
+          "required": true,
+          "description": "ID of the workspace hub containing the folder"
+        },
+        "nid": {
+          "type": "string",
+          "required": true,
+          "description": "Node ID of the folder"
+        },
+        "config": {
+          "type": "object",
+          "required": true,
+          "description": "Full permissions config object (or JSON string). Passed as-is to folder_save_permissions SP."
+        }
+      },
+      "returns": {
+        "type": "object",
+        "properties": {
+          "status": { "type": "string", "description": "OK on success" }
+        }
+      },
+      "errors": [
+        {
+          "code": "HUB_NOT_FOUND",
+          "description": "get_db_name returned null for the given hub_id"
+        }
+      ]
+    },
+    "generate_folder_otl": {
+      "doc": "Generate a one-time link token for a folder. Calls folder_generate_otl SP on the hub DB with the folder nid and the caller uid. Returns the generated token data.",
+      "scope": "hub",
+      "permission": { "src": "admin" },
+      "params": {
+        "hub_id": {
+          "type": "string",
+          "required": true,
+          "description": "ID of the workspace hub containing the folder"
+        },
+        "nid": {
+          "type": "string",
+          "required": true,
+          "description": "Node ID of the folder for which to generate the OTL"
+        }
+      },
+      "returns": {
+        "type": "object",
+        "description": "Generated OTL token data as returned by folder_generate_otl SP"
+      },
+      "errors": [
+        {
+          "code": "HUB_NOT_FOUND",
+          "description": "get_db_name returned null for the given hub_id"
+        }
+      ]
+    },
+    "revoke_folder_otl": {
+      "doc": "Revoke the existing one-time link for a folder. Calls folder_revoke_otl SP on the hub DB with the folder nid.",
+      "scope": "hub",
+      "permission": { "src": "admin" },
+      "params": {
+        "hub_id": {
+          "type": "string",
+          "required": true,
+          "description": "ID of the workspace hub containing the folder"
+        },
+        "nid": {
+          "type": "string",
+          "required": true,
+          "description": "Node ID of the folder whose OTL to revoke"
+        }
+      },
+      "returns": {
+        "type": "object",
+        "properties": {
+          "status": { "type": "string", "description": "OK on success" }
+        }
+      },
+      "errors": [
+        {
+          "code": "HUB_NOT_FOUND",
+          "description": "get_db_name returned null for the given hub_id"
+        }
+      ]
+    },
+    "get_hub_storage_stats": {
+      "doc": "Return storage statistics for a specific workspace hub. Calls get_hub_storage_stats SP on the hub DB passing hub_id.",
+      "scope": "hub",
+      "permission": { "src": "admin" },
+      "params": {
+        "hub_id": {
+          "type": "string",
+          "required": true,
+          "description": "ID of the target workspace hub"
+        }
+      },
+      "returns": {
+        "type": "object",
+        "description": "Hub-level storage stats as returned by get_hub_storage_stats SP"
+      },
+      "errors": [
+        {
+          "code": "HUB_NOT_FOUND",
+          "description": "get_db_name returned null for the given hub_id"
+        }
+      ]
+    },
+    "get_hub_user_storage": {
+      "doc": "Return a paginated, sortable list of hub members with their individual storage usage within the hub. Calls get_hub_user_storage SP on the hub DB.",
+      "scope": "hub",
+      "permission": { "src": "admin" },
+      "params": {
+        "hub_id": {
+          "type": "string",
+          "required": true,
+          "description": "ID of the target workspace hub"
+        },
+        "sort_by": {
+          "type": "string",
+          "required": false,
+          "description": "Sort order. Accepted values: usage_high (default), usage_low."
+        },
+        "page": {
+          "type": "integer",
+          "required": false,
+          "description": "Page number, 1-based. Defaults to 1."
+        }
+      },
+      "returns": {
+        "type": "array",
+        "description": "Paginated list of hub members with their storage usage"
+      },
+      "errors": [
+        {
+          "code": "HUB_NOT_FOUND",
+          "description": "get_db_name returned null for the given hub_id"
+        }
+      ]
+    },
+    "get_file_versions": {
+      "doc": "Return a paginated list of files that have version history in a specific hub. Calls file_version_list SP on the hub DB. Optional search filters by filename.",
+      "scope": "hub",
+      "permission": { "src": "admin" },
+      "params": {
+        "hub_id": {
+          "type": "string",
+          "required": true,
+          "description": "ID of the target workspace hub"
+        },
+        "search": {
+          "type": "string",
+          "required": false,
+          "description": "Filename search string (LIKE match). Empty string disables filter."
+        },
+        "page": {
+          "type": "integer",
+          "required": false,
+          "description": "Page number, 1-based. Defaults to 1."
+        }
+      },
+      "returns": {
+        "type": "array",
+        "description": "Paginated list of files with version history, sorted by version_count descending then by mtime descending"
+      },
+      "errors": [
+        {
+          "code": "HUB_NOT_FOUND",
+          "description": "get_db_name returned null for the given hub_id"
+        }
+      ]
+    },
+    "get_file_version_detail": {
+      "doc": "Return the full version history for a specific file. Calls file_version_get SP on the hub DB. Returns two result sets: file base info and ordered version list (newest first).",
+      "scope": "hub",
+      "permission": { "src": "admin" },
+      "params": {
+        "hub_id": {
+          "type": "string",
+          "required": true,
+          "description": "ID of the workspace hub containing the file"
+        },
+        "nid": {
+          "type": "string",
+          "required": true,
+          "description": "Node ID of the file"
+        }
+      },
+      "returns": {
+        "type": "object",
+        "description": "File base info and version history as returned by file_version_get SP"
+      },
+      "errors": [
+        {
+          "code": "HUB_NOT_FOUND",
+          "description": "get_db_name returned null for the given hub_id"
+        }
+      ]
+    },
+    "delete_file_old_versions": {
+      "doc": "Delete all non-active (old) versions for a specific file, or for all files in the hub if nid is omitted. Calls file_version_delete_old SP on the hub DB.",
+      "scope": "hub",
+      "permission": { "src": "admin" },
+      "params": {
+        "hub_id": {
+          "type": "string",
+          "required": true,
+          "description": "ID of the target workspace hub"
+        },
+        "nid": {
+          "type": "string",
+          "required": false,
+          "description": "Node ID of the specific file to clean. If omitted, all files in the hub are cleaned."
+        }
+      },
+      "returns": {
+        "type": "object",
+        "properties": {
+          "status": { "type": "string", "description": "OK on success" }
+        }
+      },
+      "errors": [
+        {
+          "code": "HUB_NOT_FOUND",
+          "description": "get_db_name returned null for the given hub_id"
+        }
+      ]
+    },
+    "download_file_versions": {
+      "doc": "Return the list of downloadable paths or URLs for all versions of a specific file. Calls file_version_download SP on the hub DB.",
+      "scope": "hub",
+      "permission": { "src": "admin" },
+      "params": {
+        "hub_id": {
+          "type": "string",
+          "required": true,
+          "description": "ID of the workspace hub containing the file"
+        },
+        "nid": {
+          "type": "string",
+          "required": true,
+          "description": "Node ID of the file"
+        }
+      },
+      "returns": {
+        "type": "array",
+        "description": "List of version download records as returned by file_version_download SP"
+      },
+      "errors": [
+        {
+          "code": "HUB_NOT_FOUND",
+          "description": "get_db_name returned null for the given hub_id"
+        }
       ]
     }
   },
