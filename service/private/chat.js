@@ -332,7 +332,7 @@ class privateChat extends Entity {
         mydata = await this.yp.await_proc(
           "forward_proc",
           this.uid,
-          "channel_post_message_next",
+          "channel_post_message",
           `'${stringify(myinput)}','${message}'`
         );
 
@@ -340,7 +340,7 @@ class privateChat extends Entity {
         hisdata = await this.yp.await_proc(
           "forward_proc",
           entity_id,
-          "channel_post_message_next",
+          "channel_post_message",
           `'${stringify(hisinput)}','${message}'`
         );
         mydata.is_attachment = 0;
@@ -419,7 +419,7 @@ class privateChat extends Entity {
         let data = await this.yp.await_proc(
           "forward_proc",
           entity_id,
-          "channel_post_message_next",
+          "channel_post_message",
           `'${stringify(input)}','${msg.message}'`
         );
         await this.yp.await_proc(

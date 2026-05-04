@@ -1455,9 +1455,9 @@ class __private_contact extends Contact {
     myinput = input
 
     myinput.entity_id = entity_id
-    mydata = await this.yp.await_proc('forward_proc', uid, 'channel_post_message_next', `'${stringify(myinput)}','${message}'`)
+    mydata = await this.yp.await_proc('forward_proc', uid, 'channel_post_message', `'${stringify(myinput)}','${message}'`)
     hisinput.entity_id = uid
-    hisdata = await this.yp.await_proc('forward_proc', entity_id, 'channel_post_message_next', `'${stringify(hisinput)}','${message}'`)
+    hisdata = await this.yp.await_proc('forward_proc', entity_id, 'channel_post_message', `'${stringify(hisinput)}','${message}'`)
 
     acknowledge.message_id = message_id
     acknowledge.entity_id = entity_id
