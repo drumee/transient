@@ -1,17 +1,7 @@
-/*
- * decaffeinate suggestions:
- * DS207: Consider shorter variations of null checks
- * Full docs: https://github.com/decaffeinate/decaffeinate/blob/main/docs/suggestions.md
- */
-// ==================================================================== *
-//   Copyright Xialia.com  2011-2019
-//   FILE : classes/skeleton/note
-//   TYPE : Skeleton
-// ==================================================================== *
 
 const __builder = require("../builder");
 
-const __tk_rich_text = function(props, style) {
+module.exports = function(props, style) {
   if (_.isString(props)) {
     props = { 
       content   : props,
@@ -31,5 +21,3 @@ const __tk_rich_text = function(props, style) {
   }
   return a;
 };
-
-module.exports = __tk_rich_text;

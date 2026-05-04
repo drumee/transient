@@ -1,12 +1,7 @@
-// ==================================================================== *
-//   Copyright Xialia.com  2011-2019
-//   FILE : classes/skeleton/box-x
-//   TYPE : Skeleton
-// ==================================================================== *
 
 const __core = require("../builder");
 
-const __skl_box_x = function(props, style) {
+module.exports = function(props, style) {
   props = props || {};
   props.flow = _a.x;
   const cn = props.className || '';
@@ -22,5 +17,3 @@ const __skl_box_x = function(props, style) {
   }
   return a;
 };
-
-module.exports = __skl_box_x;

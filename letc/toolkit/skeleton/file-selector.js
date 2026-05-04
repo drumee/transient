@@ -1,6 +1,6 @@
 const __builder = require("../builder");
 
-const __skl_fs = function(props, style) {
+module.exports = function(props, style) {
   if (_.isString(props)) {
     props = { 
       content   : props,
@@ -14,11 +14,8 @@ const __skl_fs = function(props, style) {
     
   props = props || {};
   const x = new __builder(props, style);
-  const a = x.render({
+  return x.render({
     kind   : "fileselector",
     sys_pn : 'fileselector'
   });
-  return a;
-};
-
-module.exports = __skl_fs;
+}
