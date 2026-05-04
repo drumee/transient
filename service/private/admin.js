@@ -163,6 +163,23 @@ class __admin extends Entity {
     this.output.list(allLogs);
   }
 
+  async get_hub_audit_logs() {
+    let hub_id = this.input.need(Attr.hub_id);
+    let username = this.input.use('username', '');
+    let from_time = this.input.use('from_time', 0);
+    let to_time = this.input.use('to_time', 0);
+    let page = this.input.use(Attr.page, 1);
+    let res = await this.yp.await_proc(
+      'get_hub_audit_logs',
+      hub_id,
+      username,
+      from_time,
+      to_time,
+      page
+    );
+    this.output.list(res);
+  }
+
   async get_audit_stats() {
     let from_time = this.input.use('from_time', 0);
     let to_time   = this.input.use('to_time', 0);
