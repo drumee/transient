@@ -504,7 +504,7 @@ class conference extends __yp {
     };
 
     let mydata = await this.yp.await_proc(
-      `${author.db_name}.channel_post_message_next`,
+      `${author.db_name}.channel_post_message`,
       myinput,
       msg_type
     );
@@ -525,7 +525,7 @@ class conference extends __yp {
       },
     };
     let hisdata = await this.yp.await_proc(
-      `${peer.db_name}.channel_post_message_next`,
+      `${peer.db_name}.channel_post_message`,
       hisinput,
       msg_type
     );
