@@ -606,7 +606,7 @@ class __private_hub extends Hub {
       let data = await this.yp.await_proc(
         "forward_proc",
         this.hub.get(Attr.id),
-        "channel_post_message_next",
+        "channel_post_message",
         `'${stringify(input)}','${message}'`
       );
       data.is_attachment = 0;

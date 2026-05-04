@@ -398,7 +398,7 @@ class __private_channel extends Entity {
     input.metadata = metadata
     input.metadata.message_type = 'ticket_auto_reply'
     let message = Cache.message("_ticket_auto_reply", this.client_language());
-    let data = await this.yp.await_proc('forward_proc', hub_id, 'channel_post_message_next', `'${stringify(input)}','${message}'`)
+    let data = await this.yp.await_proc('forward_proc', hub_id, 'channel_post_message', `'${stringify(input)}','${message}'`)
     return this.output.sanitize(data);
   }
 
@@ -441,7 +441,7 @@ class __private_channel extends Entity {
       input.metadata.message_type = 'ticket'
       input.ticket_id = ticket.ticket_id;
       if (!isEmpty(attachment)) { input.attachment = attachment }
-      let data = await this.yp.await_proc('forward_proc', sbox.hub_id, 'channel_post_message_next', `'${stringify(input)}','${message}'`)
+      let data = await this.yp.await_proc('forward_proc', sbox.hub_id, 'channel_post_message', `'${stringify(input)}','${message}'`)
       data.is_attachment = 0
       if (!isEmpty(input.attachment)) {
         await this.yp.await_proc('forward_proc', sbox.hub_id, 'channel_post_attachment', `'${message_id}','${sbox.hub_id}','${stringify(input.attachment)}'`)
@@ -514,7 +514,7 @@ class __private_channel extends Entity {
       if (!isEmpty(attachment)) { input.attachment = attachment }
       if (!isEmpty(message)) { message = message.replace(/'/gi, "''"); }
       if (!isEmpty(thread_id)) { input.thread_id = thread_id }
-      let data = await this.yp.await_proc('forward_proc', sbox.hub_id, 'channel_post_message_next', `'${stringify(input)}','${message}'`)
+      let data = await this.yp.await_proc('forward_proc', sbox.hub_id, 'channel_post_message', `'${stringify(input)}','${message}'`)
       data.is_attachment = 0
       if (!isEmpty(input.attachment)) {
         await this.yp.await_proc('forward_proc', sbox.hub_id, 'channel_post_attachment', `'${message_id}','${sbox.hub_id}','${stringify(input.attachment)}'`)
@@ -584,7 +584,7 @@ class __private_channel extends Entity {
     if (!isEmpty(thread_id)) { input.thread_id = thread_id }
     input.message_id = message_id
     let data = await this.yp.await_proc('forward_proc', this.hub.get(Attr.id),
-      'channel_post_message_next', `'${stringify(input)}','${message}'`
+      'channel_post_message', `'${stringify(input)}','${message}'`
     );
     data.is_attachment = 0
     if (!isEmpty(input.attachment)) {
