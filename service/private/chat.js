@@ -66,20 +66,10 @@ class privateChat extends Entity {
    *
    */
   async acknowledge() {
-    const message_id = this.input.need(Attr.message_id);
-    let ack = {};
-    let message = await this.db.await_proc("channel_get", message_id);
-    ack.message_id = message.message_id;
-    ack.entity_id = message.entity_id;
-    ack.uid = this.uid;
-    let db_name = this.user.get(Attr.db_name);
-    await this.yp.await_proc(`${db_name}.acknowledge_message`, ack);
-    message = await this.db.await_proc("channel_get", message_id);
-    if (message.author_id != this.uid) {
-      let dest = await this.yp.await_proc("user_sockets", [message.author_id]);
-      await RedisStore.sendData(this.payload(message), dest);
-    }
-    this.output.data(message);
+    const peer_id = this.input.get(Attr.peer_id) || this.input.need(Attr.entity_id);
+    const ref_ctime = this.input.use("ref_ctime");
+    await this.db.await_proc("p2p_acknowledge", { peer_id, ref_ctime });
+    this.output.data({ peer_id });
   }
 
   /**
@@ -328,23 +318,16 @@ class privateChat extends Entity {
       //if(!message_id) message_id = await this.db.await_proc('message_id');
       let message_id = await this.yp.await_func("uniqueId");
       if (!isEmpty(drumate)) {
-        myinput.entity_id = entity_id;
+        // Single write: message stored in sender's DB only.
+        // p2p_post_message SP handles cross-DB p2p_time update for receiver.
+        myinput.peer_id = entity_id;
         mydata = await this.yp.await_proc(
           "forward_proc",
           this.uid,
-          "channel_post_message",
+          "p2p_post_message",
           `'${stringify(myinput)}','${message}'`
         );
-
-        hisinput.entity_id = this.uid;
-        hisdata = await this.yp.await_proc(
-          "forward_proc",
-          entity_id,
-          "channel_post_message",
-          `'${stringify(hisinput)}','${message}'`
-        );
         mydata.is_attachment = 0;
-        hisdata.is_attachment = 0;
         if (!isEmpty(input.attachment)) {
           await this.yp.await_proc(
             "forward_proc",
@@ -352,33 +335,12 @@ class privateChat extends Entity {
             "channel_post_attachment",
             `'${message_id}','${this.uid}','${stringify(input.attachment)}'`
           );
-          await this.yp.await_proc(
-            "forward_proc",
-            entity_id,
-            "channel_post_attachment",
-            `'${message_id}','${entity_id}','${stringify(input.attachment)}'`
-          );
           mydata.is_attachment = 1;
-          hisdata.is_attachment = 1;
-          //mydata.attachment = await this._getAttachmentsInfo(stringify(input.attachment), this.uid);
-          //hisdata.attachment = await this._getAttachmentsInfo(stringify(input.attachment), entity_id);
         }
 
-        acknowledge.message_id = message_id;
-        acknowledge.entity_id = entity_id;
-        acknowledge.uid = this.uid;
-        await this.yp.await_proc(
-          "forward_proc",
-          this.uid,
-          "acknowledge_message",
-          `'${stringify(acknowledge)}'`
-        );
-
         mydata.entity = await this.entityInfo(this.uid, entity_id);
-        hisdata.entity = await this.entityInfo(entity_id, this.uid);
         if (!isEmpty(thread_id)) {
           mydata.thread = await this.threadInfo(thread_id, this.uid);
-          hisdata.thread = await this.threadInfo(thread_id, entity_id);
         }
         let mycount = await this.yp.await_proc(
           "forward_proc",
@@ -388,10 +350,8 @@ class privateChat extends Entity {
         );
         mydata.room = mycount.room;
         mydata.total = mycount.total;
-
         mydata.to_id = this.uid;
         mydata.echoId = this.input.get("echoId");
-        hisdata.to_id = entity_id;
 
         /** Update sibling sessions */
         let myDest = await this.yp.await_proc("user_sockets", this.uid);
@@ -403,6 +363,9 @@ class privateChat extends Entity {
         }
         temp_result.push(mydata);
 
+        // Notify peer: WS push so they reload via p2p_list_messages (cross-DB fetch)
+        let hisdata = { ...mydata };
+        hisdata.to_id = entity_id;
         let hiscount = await this.yp.await_proc(
           "forward_proc",
           entity_id,
@@ -624,10 +587,10 @@ class privateChat extends Entity {
     );
     nodes = {
       page: page,
-      entity_id: peer_id,
+      peer_id: peer_id,
     };
 
-    let data = await this.db.await_proc("list_message", nodes);
+    let data = await this.db.await_proc("p2p_list_messages", nodes);
 
     if (!isArray(data)) {
       data = [data];
@@ -636,7 +599,7 @@ class privateChat extends Entity {
     let recipients = [];
     for (let message of data) {
       message.entity = { id: this.uid };
-      if (message.entity_id != this.uid) {
+      if (message.author_id != this.uid) {
         message.entity = entity;
       }
 
@@ -724,6 +687,22 @@ class privateChat extends Entity {
       res.status = "INVALID_OPTION";
       return this.output.data(res);
     }
+    // P2P delete path: caller passes peer_id to signal P2P context
+    let peer_id = this.input.use(Attr.peer_id);
+    if (peer_id) {
+      let temp_result = [];
+      for (let message_id of messages) {
+        let result;
+        if (option === "all") {
+          result = await this.db.await_proc("p2p_delete_all", { message_id, peer_id });
+        } else {
+          result = await this.db.await_proc("p2p_delete_me", { message_id });
+        }
+        temp_result.push(result);
+      }
+      return this.output.list(temp_result);
+    }
+
     let invalid_messageid = 0;
     let invalid_option = 0;
     for (let message_id of messages) {
