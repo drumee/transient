@@ -72,8 +72,19 @@ class __private_channel extends Entity {
   async messages() {
     const order = this.input.use(Attr.order, 'asc');
     const page = this.input.use(Attr.page) || 1;
+    const nid = this.input.use(Attr.nid);
     let data = await this.db.await_proc('channel_list_messages', this.uid, 'date', order, page);
     data = toArray(data);
+    if (!isEmpty(nid)) {
+      // Legacy messages (no _scope_nid) appear in every folder context for
+      // backward compatibility. New messages scoped via _scope_nid stay isolated.
+      data = data.filter(msg => {
+        try {
+          const meta = typeof msg.metadata === 'string' ? JSON.parse(msg.metadata) : (msg.metadata || {});
+          return !meta._scope_nid || meta._scope_nid === `${nid}`;
+        } catch (e) { return true; }
+      });
+    }
     let messages = [];
 
     let cache = {};
@@ -582,6 +593,8 @@ class __private_channel extends Entity {
     if (!isEmpty(attachment)) { input.attachment = attachment }
     if (!isEmpty(message)) { message = message.replace(/'/gi, "''"); }
     if (!isEmpty(thread_id)) { input.thread_id = thread_id }
+    const nid = this.input.use(Attr.nid);
+    if (!isEmpty(nid)) { input.metadata = { _scope_nid: `${nid}` }; }
     input.message_id = message_id
     let data = await this.yp.await_proc('forward_proc', this.hub.get(Attr.id),
       'channel_post_message', `'${stringify(input)}','${message}'`
