@@ -1,41 +1,30 @@
 {
   "services": {
     "acknowledge": {
-      "doc": "Mark a message as read. Updates message acknowledgment status and notifies the message author via WebSocket that their message has been read.",
+      "doc": "Mark a P2P conversation as read. Advances the read cursor (ref_ctime) for the conversation with the specified peer. No longer requires a specific message_id — acknowledges up to the current timestamp or a supplied ref_ctime.",
       "scope": "hub",
       "permission": {
         "src": "write"
       },
       "params": {
-        "message_id": {
+        "peer_id": {
           "type": "string",
           "required": true,
-          "description": "ID of the message to acknowledge/mark as read"
+          "description": "The peer user ID whose conversation is being acknowledged. Accepts entity_id as alias."
+        },
+        "ref_ctime": {
+          "type": "integer",
+          "required": false,
+          "description": "Unix timestamp to acknowledge up to. Defaults to current server time if omitted."
         }
       },
       "returns": {
         "type": "object",
-        "description": "Updated message object with acknowledgment status",
+        "description": "Acknowledgment confirmation",
         "properties": {
-          "message_id": {
+          "peer_id": {
             "type": "string",
-            "description": "Message ID"
-          },
-          "entity_id": {
-            "type": "string",
-            "description": "Chat entity/contact ID"
-          },
-          "message": {
-            "type": "string",
-            "description": "Message content"
-          },
-          "author_id": {
-            "type": "string",
-            "description": "Message author's user ID"
-          },
-          "ctime": {
-            "type": "integer",
-            "description": "Message creation timestamp"
+            "description": "Peer ID that was acknowledged"
           }
         }
       },
@@ -335,7 +324,7 @@
     },
 
     "count_all": {
-      "doc": "Get total unread message count across all chat rooms. Returns aggregate count of unread messages from all conversations.",
+      "doc": "Get unread message counts across all chat categories. Returns breakdown by contact P2P chats, shared hub chats, archived chats, and support tickets.",
       "scope": "hub",
       "permission": {
         "src": "write"
@@ -343,12 +332,31 @@
       "params": {},
       "returns": {
         "type": "object",
-        "description": "Aggregate unread count",
+        "description": "Unread count breakdown",
         "properties": {
-          "total_unread": {
+          "contact_chat_cnt": {
             "type": "integer",
-            "description": "Total number of unread messages across all chats",
-            "example": 42
+            "description": "Unread P2P contact conversations (excluding archived)"
+          },
+          "share_chat_cnt": {
+            "type": "integer",
+            "description": "Unread messages in shared hub rooms"
+          },
+          "archive_chat_cnt": {
+            "type": "integer",
+            "description": "Unread messages in archived conversations"
+          },
+          "support_cnt": {
+            "type": "integer",
+            "description": "Unread support ticket messages"
+          },
+          "head_chat_cnt": {
+            "type": "integer",
+            "description": "Total number of conversations with any unread"
+          },
+          "total_cnt": {
+            "type": "integer",
+            "description": "Grand total unread across all categories"
           }
         }
       },
@@ -356,7 +364,7 @@
     },
 
     "delete": {
-      "doc": "Delete messages from chat. Can delete for self only ('me') or for both parties ('all'). Removes message content and attachments. Option 'all' requires user to be the message author.",
+      "doc": "Delete messages from a P2P or hub chat. For P2P: pass peer_id to activate the P2P delete path — 'me' soft-deletes from sender DB, 'all' deletes from both sides via cross-DB. For hub chat: omit peer_id (legacy path). Option 'all' requires user to be the message author.",
       "scope": "hub",
       "permission": {
         "src": "write"
@@ -365,7 +373,7 @@
         "option": {
           "type": "string",
           "required": true,
-          "description": "Delete scope: 'me' (hide from self) or 'all' (delete for everyone, requires authorship)"
+          "description": "'me' to hide from self only, 'all' to delete for both parties (author only)"
         },
         "messages": {
           "type": "array",
@@ -373,27 +381,24 @@
           "description": "Array of message IDs to delete",
           "items": {
             "type": "string",
-            "description": "Message ID"
+            "description": "message_id"
           }
+        },
+        "peer_id": {
+          "type": "string",
+          "required": false,
+          "description": "Peer user ID. Required for P2P delete. If omitted, falls through to hub chat delete path."
         }
       },
       "returns": {
         "type": "array",
-        "description": "List of deleted messages with status",
+        "description": "Deletion result per message",
         "items": {
           "type": "object",
           "properties": {
             "message_id": {
               "type": "string",
               "description": "Deleted message ID"
-            },
-            "entity_id": {
-              "type": "string",
-              "description": "Chat entity ID"
-            },
-            "delete_status": {
-              "type": "string",
-              "description": "Deletion status"
             }
           }
         }
@@ -402,23 +407,12 @@
         {
           "code": "INVALID_OPTION",
           "message": "Option must be 'me' or 'all'",
-          "returns": {
-            "status": "INVALID_OPTION"
-          }
+          "returns": { "status": "INVALID_OPTION" }
         },
         {
           "code": "INVALID_MESSAGES",
           "message": "One or more message IDs do not exist",
-          "returns": {
-            "status": "INVALID_MESSAGES"
-          }
-        },
-        {
-          "code": "INVALID_OPTION",
-          "message": "Cannot delete 'all' - user is not the message author",
-          "returns": {
-            "status": "INVALID_OPTION"
-          }
+          "returns": { "status": "INVALID_MESSAGES" }
         }
       ]
     },
@@ -478,7 +472,7 @@
     },
 
     "messages": {
-      "doc": "Get paginated message list for a chat conversation. Returns messages with entity info, thread details, and attachment indicators. Automatically marks messages as read and notifies authors via WebSocket.",
+      "doc": "Get paginated message list for a P2P conversation. Returns messages from both sides of the conversation (sent and received), merged and sorted by ctime descending. Automatically advances the read cursor. Notifies message authors via WebSocket that their messages were seen.",
       "scope": "hub",
       "permission": {
         "src": "write"
@@ -487,7 +481,7 @@
         "entity_id": {
           "type": "string",
           "required": true,
-          "description": "Chat entity/contact ID to get messages from"
+          "description": "Peer user ID to load conversation with. Also accepted as peer_id."
         },
         "page": {
           "type": "integer",
@@ -498,41 +492,85 @@
       },
       "returns": {
         "type": "array",
-        "description": "Paginated list of messages with full context",
+        "description": "Paginated list of messages from both sides of the P2P conversation",
         "items": {
           "type": "object",
           "properties": {
+            "sys_id": {
+              "type": "integer",
+              "description": "Message row ID"
+            },
+            "peer_id": {
+              "type": "string",
+              "description": "The peer this message belongs to (replaces entity_id)"
+            },
             "message_id": {
               "type": "string",
-              "description": "Message ID"
-            },
-            "entity_id": {
-              "type": "string",
-              "description": "Message entity ID"
-            },
-            "message": {
-              "type": "string",
-              "description": "Message content"
+              "description": "Unique message ID"
             },
             "author_id": {
               "type": "string",
-              "description": "Message author's user ID"
+              "description": "User ID who sent the message"
+            },
+            "message": {
+              "type": "string",
+              "description": "Message text content"
             },
             "ctime": {
               "type": "integer",
-              "description": "Message creation timestamp"
+              "description": "Message creation Unix timestamp"
+            },
+            "is_readed": {
+              "type": "integer",
+              "description": "1 if message has been read by recipient"
+            },
+            "is_seen": {
+              "type": "integer",
+              "description": "1 if message has been seen by all delivered parties"
+            },
+            "is_notify": {
+              "type": "integer",
+              "description": "1 if this message triggered a notification"
             },
             "is_attachment": {
               "type": "integer",
-              "description": "1 if has attachments, 0 otherwise"
+              "description": "1 if message has attachments"
+            },
+            "attachment_first": {
+              "type": "object",
+              "description": "First attachment object (if any)"
+            },
+            "attachment_count": {
+              "type": "integer",
+              "description": "Total number of attachments"
+            },
+            "mention_ids": {
+              "type": "array",
+              "description": "Array of mentioned user IDs"
+            },
+            "message_type": {
+              "type": "string",
+              "description": "Message type: chat, call, etc. Defaults to 'chat'."
+            },
+            "thread_id": {
+              "type": "string",
+              "description": "Thread/reply parent message ID"
+            },
+            "is_forward": {
+              "type": "integer",
+              "description": "1 if message is a forward"
+            },
+            "metadata": {
+              "type": "object",
+              "description": "Internal delivery/seen tracking metadata"
             },
             "entity": {
               "type": "object",
-              "description": "Message author entity information"
+              "description": "Contact info of the peer (populated for messages not authored by caller)"
             },
             "thread": {
               "type": "object",
-              "description": "Thread/reply context (if message is a reply)"
+              "description": "Thread/reply context object (if message is a reply)"
             }
           }
         }
@@ -541,7 +579,7 @@
     },
 
     "post": {
-      "doc": "Send a message in a chat. Creates and delivers a message to a contact with optional attachments and thread reply. Validates contact, attachments, and thread. Moves attachments to permanent storage and distributes message to both parties via WebSocket.",
+      "doc": "Send a P2P message to a contact. Message is stored in sender's DB only (single-write). Peer's conversation list (p2p_time) is updated cross-DB. Both sender and recipient are notified via WebSocket.",
       "scope": "hub",
       "permission": {
         "src": "write"
@@ -550,7 +588,7 @@
         "entity_id": {
           "type": "string",
           "required": true,
-          "description": "Recipient entity/contact ID"
+          "description": "Recipient contact's user ID (peer_id)"
         },
         "message": {
           "type": "string",
@@ -561,7 +599,7 @@
         "thread_id": {
           "type": "string",
           "required": false,
-          "description": "ID of message being replied to (for threaded conversations)"
+          "description": "ID of message being replied to"
         },
         "attachment": {
           "type": "array",
@@ -576,37 +614,57 @@
       },
       "returns": {
         "type": "array",
-        "description": "Array containing message objects sent to sender and recipient",
+        "description": "Array of message delivery objects. First item is sender's copy; second is the peer notification payload.",
         "items": {
           "type": "object",
           "properties": {
+            "sys_id": {
+              "type": "integer",
+              "description": "Message row ID"
+            },
+            "peer_id": {
+              "type": "string",
+              "description": "The peer this message is addressed to (replaces entity_id)"
+            },
             "message_id": {
               "type": "string",
               "description": "Unique message ID"
             },
-            "entity_id": {
-              "type": "string",
-              "description": "Chat entity ID"
-            },
-            "message": {
-              "type": "string",
-              "description": "Message content"
-            },
             "author_id": {
               "type": "string",
-              "description": "Message author user ID"
+              "description": "Sender user ID"
             },
             "to_id": {
               "type": "string",
               "description": "Recipient user ID"
             },
+            "message": {
+              "type": "string",
+              "description": "Message content"
+            },
+            "ctime": {
+              "type": "integer",
+              "description": "Creation Unix timestamp"
+            },
             "is_attachment": {
               "type": "integer",
-              "description": "1 if has attachments, 0 otherwise"
+              "description": "1 if has attachments"
+            },
+            "message_type": {
+              "type": "string",
+              "description": "Message type, defaults to 'chat'"
+            },
+            "is_readed": {
+              "type": "integer",
+              "description": "1 for sender's copy (auto-read)"
+            },
+            "is_seen": {
+              "type": "integer",
+              "description": "1 if peer has seen the message"
             },
             "entity": {
               "type": "object",
-              "description": "Contact entity information"
+              "description": "Peer contact information"
             },
             "thread": {
               "type": "object",
@@ -614,15 +672,15 @@
             },
             "room": {
               "type": "integer",
-              "description": "Unread count for this room"
+              "description": "Unread count for this P2P conversation"
             },
             "total": {
               "type": "integer",
-              "description": "Total unread messages"
+              "description": "Total unread P2P conversations"
             },
             "echoId": {
               "type": "string",
-              "description": "Echo ID from client request"
+              "description": "Echo ID echoed back from client request"
             }
           }
         }
@@ -631,23 +689,17 @@
         {
           "code": "INVALID_CONTACT",
           "message": "Contact does not exist or is invalid",
-          "returns": {
-            "status": "INVALID_CONTACT"
-          }
+          "returns": { "status": "INVALID_CONTACT" }
         },
         {
           "code": "INVALID_ATTACHMENT",
           "message": "One or more attachments are invalid or inaccessible",
-          "returns": {
-            "status": "INVALID_ATTACHMENT"
-          }
+          "returns": { "status": "INVALID_ATTACHMENT" }
         },
         {
           "code": "INVALID_THREAD",
           "message": "Thread ID does not exist",
-          "returns": {
-            "status": "INVALID_THREAD"
-          }
+          "returns": { "status": "INVALID_THREAD" }
         }
       ]
     },

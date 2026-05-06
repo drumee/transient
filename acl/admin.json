@@ -275,6 +275,38 @@
       },
       "errors": []
     },
+    "get_hub_audit_logs": {
+      "doc": "Return paginated audit log entries for a specific workspace hub (hub-scoped). Reads from yp.mfs_changelog filtered by hub_id. Supports date range and username filters.",
+      "scope": "hub",
+      "permission": { "src": "admin" },
+      "params": {
+        "hub_id": { "type": "string", "required": true, "description": "ID of the target workspace hub" },
+        "username": { "type": "string", "required": false, "description": "Filter by actor full name (LIKE match). Empty string disables filter." },
+        "from_time": { "type": "integer", "required": false, "description": "Filter entries at or after this UNIX timestamp. 0 disables filter." },
+        "to_time": { "type": "integer", "required": false, "description": "Filter entries at or before this UNIX timestamp. 0 disables filter." },
+        "page": { "type": "integer", "required": false, "description": "Page number, 1-based. Defaults to 1." }
+      },
+      "returns": {
+        "type": "array",
+        "description": "Paginated list of mfs_changelog entries for the hub sorted by timestamp descending",
+        "items": {
+          "id": { "type": "integer", "description": "changelog entry ID" },
+          "ctime": { "type": "integer", "description": "Event timestamp (UNIX)" },
+          "uid": { "type": "string", "description": "Actor user ID" },
+          "hub_id": { "type": "string", "description": "Hub ID" },
+          "event": { "type": "string", "description": "Event name" },
+          "src": { "type": "string", "description": "Source state (JSON)" },
+          "dest": { "type": "string", "description": "Destination state (JSON)" },
+          "actor_name": { "type": "string", "description": "Actor full name" },
+          "firstname": { "type": "string", "description": "Actor first name" },
+          "lastname": { "type": "string", "description": "Actor last name" },
+          "email": { "type": "string", "description": "Actor email" }
+        }
+      },
+      "errors": [
+        { "code": "HUB_NOT_FOUND", "description": "get_db_name returned null for the given hub_id" }
+      ]
+    },
     "get_audit_stats": {
       "doc": "Return summary statistics for the Audit Logs tab header cards. security_score and high_risk_count are placeholders (hardcoded 94 and 0 respectively) for Round 1. storage_used_bytes is real data: sum of yp.entity.space for all active hubs in the domain.",
       "scope": "domain",
