@@ -770,27 +770,31 @@
       "method": "contacts"
     },
     "backup": {
-      "doc": "Backup user data (files, folders and data)",
+      "doc": "Export user data as a ZIP archive. Accepts flags: personal (user-owned files/folders), hubs (workspace files where user has download permission), chat (P2P chat history per peer as CSV), logs (services_log + mfs_changelog + contact_activity as CSV). Runs as offline queue job — download link sent via email on completion.",
       "scope": "hub",
       "permission": {
         "src": "owner"
       },
       "params": {
         "flags": {
-          "type": "object",
+          "type": "array",
           "required": true,
-          "doc": "personal: backup personal files and folders belonging to the user; hubs: backup personal files and folders from hubs where the user has the download permission; chats: create one csv file per hub_id; logs: create a csv file containing activity logs."
+          "doc": "One or more of: personal, hubs, chat, logs"
         },
-        "id": {
+        "socket_id": {
           "type": "string",
           "required": true,
-          "doc": "The user id"
+          "doc": "WebSocket connection ID for real-time progress notifications"
         }
       },
       "returns": {
+        "zipid": {
+          "type": "string",
+          "doc": "Unique job ID — used by frontend to track progress via WebSocket events"
+        },
         "status": {
           "type": "string",
-          "doc": "Status code (OK or FAILED). The actual backup process will be queued. Once it's completed, a download link shall be sent to the user"
+          "doc": "Always 'queued' — confirms the job was accepted"
         }
       }
     },

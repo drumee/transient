@@ -16,10 +16,11 @@
  */
 
 const { existsSync } = require('fs');
+const { resolve } = require('path');
 const { isEmpty, isArray } = require('lodash');
 const {
   Attr, toArray, Remit, Constants, sendSms,
-  Messenger, DrumeeCache, RedisStore
+  Messenger, DrumeeCache, RedisStore, sysEnv
 } = require("@drumee/server-essentials")
 
 const {
@@ -542,10 +543,38 @@ class __private_drumate extends Entity {
   }
 
   /**
-   * 
+   * Queue a full user-data export (personal files, hub files, P2P chat, activity logs).
+   * Flags: personal | hubs | chat | logs
+   * Runs as offline background process — sends download link via email on completion.
    */
   async backup() {
-    this.output.data({ status: "OK" });
+    const { spawn } = require('child_process');
+    const { server_location } = sysEnv();
+    const SPAWN_OPT = { detached: true, stdio: ['ignore', 'ignore', 'ignore'] };
+
+    const flags     = this.input.need(Attr.flags);
+    const socket_id = this.input.need(Attr.socket_id);
+    const zipid     = this.randomString();
+    const email     = this.user.get(Attr.email);
+    const lang      = this.user.language() || this.input.app_language() || 'en';
+    const db_name   = this.user.get(Attr.db_name);
+
+    const data = {
+      uid:       this.uid,
+      hub_id:    this.hub.get(Attr.id),
+      zipid,
+      socket_id,
+      flags:     Array.isArray(flags) ? flags : [flags],
+      lang,
+      email,
+      db_name
+    };
+
+    const cmd   = resolve(server_location, 'offline', 'drumate', 'backup.js');
+    const child = spawn(cmd, [JSON.stringify(data)], SPAWN_OPT);
+    child.unref();
+
+    this.output.json({ zipid, status: 'queued' });
   }
 
   /**
