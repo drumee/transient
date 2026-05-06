@@ -195,45 +195,40 @@ class __offline_drumate_backup extends Offline {
     const chatDir = resolve(this.data_dir, 'chat');
     mkdirSync(chatDir, { recursive: true });
 
-    const rows = toArray(await this.yp.await_query(
-      `SELECT peer_id, author_id, message, message_id, thread_id,
-              attachment, is_forward, mention_ids, status, ctime, metadata
-       FROM \`${this.db_name}\`.p2p_channel
-       WHERE status != 'trashed'
-       ORDER BY peer_id, ctime ASC`
-    ));
-    if (!rows.length) return;
+    // Get all hubs user belongs to
+    const hubs = toArray(await this.yp.await_proc(`${this.db_name}.show_hubs`));
 
-    // Group by peer_id
-    const grouped = {};
-    for (const row of rows) {
-      if (!grouped[row.peer_id]) grouped[row.peer_id] = [];
-      grouped[row.peer_id].push(row);
-    }
+    for (const hub of hubs) {
+      if (!hub.db_name) continue;
 
-    // Resolve peer display names
-    const peerMap = {};
-    for (const pid of Object.keys(grouped)) {
-      const peer = await this.yp.await_proc('get_user', pid);
-      peerMap[pid] = peer ? (peer.fullname || peer.email || pid) : pid;
-    }
+      // Query hub's channel table (team chat)
+      const rows = toArray(await this.yp.await_query(
+        `SELECT c.author_id, d.firstname, d.lastname, d.email,
+                c.message, c.message_id, c.thread_id,
+                c.attachment, c.is_forward, c.mention_ids,
+                c.status, c.ctime
+         FROM \`${hub.db_name}\`.channel c
+         LEFT JOIN yp.drumate d ON d.id = c.author_id
+         WHERE c.status != 'trashed'
+         ORDER BY c.ctime ASC`
+      ));
 
-    const header = _toRow([
-      'peer_id', 'peer_name', 'author_id', 'message', 'message_id',
-      'thread_id', 'attachment', 'is_forward', 'mention_ids', 'status', 'ctime'
-    ]);
-    for (const [pid, messages] of Object.entries(grouped)) {
-      const peerLabel = peerMap[pid].replace(/[^a-zA-Z0-9_\- @.]/g, '_');
-      const csvPath = resolve(chatDir, `${peerLabel}.csv`);
-      const lines = [header];
-      for (const m of messages) {
-        lines.push(_toRow([
-          pid, peerMap[pid],
-          m.author_id, m.message, m.message_id,
-          m.thread_id, m.attachment, m.is_forward,
-          m.mention_ids, m.status, m.ctime
-        ]));
-      }
+      if (!rows.length) continue;
+
+      const safeName = (hub.name || hub.id).replace(/[^a-zA-Z0-9_\- ]/g, '_');
+      const csvPath  = resolve(chatDir, `${safeName}.csv`);
+
+      const header = _toRow([
+        'author_id', 'firstname', 'lastname', 'email',
+        'message', 'message_id', 'thread_id',
+        'attachment', 'is_forward', 'mention_ids', 'status', 'ctime'
+      ]);
+      const lines = [header, ...rows.map(r => _toRow([
+        r.author_id, r.firstname, r.lastname, r.email,
+        r.message, r.message_id, r.thread_id,
+        r.attachment, r.is_forward, r.mention_ids, r.status, r.ctime
+      ]))];
+
       writeFileSync(csvPath, lines.join('\n'), 'utf8');
     }
   }
