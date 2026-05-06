@@ -769,10 +769,33 @@
       },
       "method": "contacts"
     },
-    "prepare_data_backup": {
+    "backup": {
+      "doc": "Export user data as a ZIP archive. Accepts flags: personal (user-owned files/folders), hubs (workspace files where user has download permission), chat (P2P chat history per peer as CSV), logs (services_log + mfs_changelog + contact_activity as CSV). Runs as offline queue job — download link sent via email on completion.",
       "scope": "hub",
       "permission": {
         "src": "owner"
+      },
+      "params": {
+        "flags": {
+          "type": "array",
+          "required": true,
+          "doc": "One or more of: personal, hubs, chat, logs"
+        },
+        "socket_id": {
+          "type": "string",
+          "required": true,
+          "doc": "WebSocket connection ID for real-time progress notifications"
+        }
+      },
+      "returns": {
+        "zipid": {
+          "type": "string",
+          "doc": "Unique job ID — used by frontend to track progress via WebSocket events"
+        },
+        "status": {
+          "type": "string",
+          "doc": "Always 'queued' — confirms the job was accepted"
+        }
       }
     },
     "reset_forgot_password": {
