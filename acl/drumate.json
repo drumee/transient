@@ -769,10 +769,29 @@
       },
       "method": "contacts"
     },
-    "prepare_data_backup": {
+    "backup": {
+      "doc": "Backup user data (files, folders and data)",
       "scope": "hub",
       "permission": {
         "src": "owner"
+      },
+      "params": {
+        "flags": {
+          "type": "object",
+          "required": true,
+          "doc": "personal: backup personal files and folders belonging to the user; hubs: backup personal files and folders from hubs where the user has the download permission; chats: create one csv file per hub_id; logs: create a csv file containing activity logs."
+        },
+        "id": {
+          "type": "string",
+          "required": true,
+          "doc": "The user id"
+        }
+      },
+      "returns": {
+        "status": {
+          "type": "string",
+          "doc": "Status code (OK or FAILED). The actual backup process will be queued. Once it's completed, a download link shall be sent to the user"
+        }
       }
     },
     "reset_forgot_password": {

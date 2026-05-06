@@ -126,6 +126,8 @@ class __private_drumate extends Entity {
    * 
    */
   check_password() {
+    const password = this.input.get(Attr.password);
+    this.debug("AAA:130", password)
     this.yp.call_proc('check_password_next', this.uid, password, this.output.data);
   }
 
@@ -539,6 +541,12 @@ class __private_drumate extends Entity {
     this.output.list(r);
   }
 
+  /**
+   * 
+   */
+  async backup() {
+    this.output.data({ status: "OK" });
+  }
 
   /**
    * Confirm account deletion
@@ -605,20 +613,14 @@ class __private_drumate extends Entity {
    * @constructor
    */
   async delete_account() {
-    let secret = this.input.use(Attr.secret);
-    let code = this.input.use(Attr.code);
-    let otp = await this.yp.await_proc('otp_check', this.uid, secret, code);
-    if (isEmpty(otp)) {
-      this.exception.user('_invalid_key');
-      return;
+    const password = this.input.use(Attr.password);
+    let data = await this.yp.await_proc('check_password_next', this.uid, password);
+    if (isEmpty(data)) {
+      this.output.data({ error: "WRONG_CREDENTIALS" });
+      return
     }
 
-    secret = this.randomString();
-    const fullname = this.user.get(Attr.fullname);
-    let recipient = this.user.get(Attr.profile).email;
-    await this.yp.await_proc('token_generate',
-      recipient, fullname, secret, 'delete_account', this.uid);
-    this.output.data({ secret });
+    this.output.data({ status: 'OK' });
   }
 
   /**
