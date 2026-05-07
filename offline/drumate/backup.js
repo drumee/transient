@@ -174,17 +174,26 @@ class __offline_drumate_backup extends Offline {
   async _exportHubs() {
     const hubs = toArray(await this.yp.await_proc(`${this.db_name}.show_hubs`));
     for (const hub of hubs) {
-      if (!hub.db_name || !hub.home_id) continue;
-      if (hub.id === this.hub_id) continue; // already covered by 'personal'
+      if (!hub.db_name) continue;
+      if (hub.id === this.hub_id) continue; // covered by 'personal'
+
+      const entity = await this.yp.await_query(
+        `SELECT home_id FROM yp.entity WHERE id = '${hub.id}' LIMIT 1`
+      );
+      const home_id = entity && entity.home_id;
+      if (!home_id) continue;
+
       const result = await this.yp.await_proc(
-        `${hub.db_name}.mfs_manifest`, hub.home_id, this.uid, 1
+        `${hub.db_name}.mfs_manifest`, home_id, this.uid, 1
       );
       const files = toArray(result[0]);
       if (!files.length) continue;
+
       const safeName = (hub.name || hub.id).replace(/[^a-zA-Z0-9_\- ]/g, '_');
       this._buildSymlinks(files, resolve(this.data_dir, 'hubs', safeName));
     }
   }
+
 
   /**
    * Chat: P2P chat history, one CSV per peer 

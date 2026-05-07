@@ -20,7 +20,7 @@ const { resolve } = require('path');
 const { isEmpty, isArray } = require('lodash');
 const {
   Attr, toArray, Remit, Constants, sendSms,
-  Messenger, DrumeeCache, RedisStore, sysEnv
+  Messenger, DrumeeCache, RedisStore
 } = require("@drumee/server-essentials")
 
 const {
@@ -549,7 +549,6 @@ class __private_drumate extends Entity {
    */
   async backup() {
     const { spawn } = require('child_process');
-    const { server_location } = sysEnv();
     const SPAWN_OPT = { detached: true, stdio: ['ignore', 'ignore', 'ignore'] };
 
     const flags     = this.input.need(Attr.flags);
@@ -570,7 +569,7 @@ class __private_drumate extends Entity {
       db_name
     };
 
-    const cmd   = resolve(server_location, 'offline', 'drumate', 'backup.js');
+    const cmd = resolve(__dirname, '../../offline/drumate', 'backup.js');
     const child = spawn(cmd, [JSON.stringify(data)], SPAWN_OPT);
     child.unref();
 
