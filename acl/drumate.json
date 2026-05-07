@@ -779,7 +779,7 @@
         "flags": {
           "type": "array",
           "required": true,
-          "doc": "One or more of: personal, hubs, chat, logs"
+          "doc": "One or more of: files (user-owned files/folders), workspace (hub files where user has access), chat (team chat history per hub as CSV), activity (services_log + mfs_changelog + contact_activity as CSV)"
         },
         "socket_id": {
           "type": "string",
