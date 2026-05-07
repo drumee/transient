@@ -23,12 +23,12 @@ const {
   Messenger, toArray
 } = require('@drumee/server-essentials');
 const { archive } = Script;
-const { resolve, dirname } = require('path');
-const { existsSync, symlinkSync, mkdirSync, writeFileSync } = require('fs');
+const { resolve, dirname, join } = require('path');
+const { existsSync, symlinkSync, mkdirSync, writeFileSync, statSync } = require('fs');
 const { spawn } = require('child_process');
 const Moment = require('moment');
 const { isEmpty, isString } = require('lodash');
-const { tmp_dir } = sysEnv();
+const { tmp_dir, data_dir, domain } = sysEnv();
 const { DOWNLOAD_FOLDER } = Constants;
 
 // CSV helpers
@@ -132,6 +132,7 @@ class __offline_drumate_backup extends Offline {
     const total = this.flags.length;
     let step = 0;
 
+    let exportFiles = 0;
     for (const flag of this.flags) {
       step++;
       await this.send({
@@ -141,59 +142,53 @@ class __offline_drumate_backup extends Offline {
         message: 'IN_PREPARATION'
       });
       switch (flag) {
-        case 'files': await this._exportPersonal(); break;
-        case 'workspace': await this._exportWorskspaces(); break;
+        case 'files':
+        case 'workspace':
+          exportFiles = 1;
+          break;
+
         case 'chat': await this._exportChat(); break;
         case 'activity': await this._exportActivity(); break;
         default:
           this.warn(`Unknown backup flag ignored: ${flag}`);
       }
     }
-
+    if (exportFiles) {
+      await this._exportTree()
+    }
     await this._createArchive();
   }
 
   /**
    * personal: user's own files
    */
-  async _exportPersonal() {
+  async _exportTree() {
     const hub = await this.yp.await_proc('get_hub', this.hub_id);
     if (!hub || !hub.db_name || !hub.home_id) {
-      this.warn('_exportPersonal: hub not found for hub_id', this.hub_id);
+      this.warn('_exportTree: hub not found for hub_id', this.hub_id);
       return;
     }
     const result = await this.yp.await_proc(
-      `${hub.db_name}.mfs_manifest`, hub.home_id, this.uid, 1
+      `${hub.db_name}.mfs_manifest`, { nid: hub.home_id, uid: this.uid, show_nodes: 1 }
     );
-    const files = toArray(result[0]);
-    this._buildSymlinks(files, resolve(this.data_dir, 'files'));
-  }
-
-  /**
-   * hubs: files from workspaces where user is member
-   */
-  async _exportWorskspaces() {
-    const hubs = toArray(await this.yp.await_proc(`${this.db_name}.show_hubs`));
-    for (const hub of hubs) {
-      if (!hub.db_name) continue;
-      if (hub.id === this.hub_id) continue; // covered by 'personal'
-
-      const entity = await this.yp.await_query(
-        `SELECT home_id FROM yp.entity WHERE id = '${hub.id}' LIMIT 1`
-      );
-      const home_id = entity && entity.home_id;
-      if (!home_id) continue;
-
-      const result = await this.yp.await_proc(
-        `${hub.db_name}.mfs_manifest`, home_id, this.uid, 1
-      );
-      const files = toArray(result[0]);
-      if (!files.length) continue;
-
-      const safeName = (hub.name || hub.id).replace(/[^a-zA-Z0-9_\- ]/g, '_');
-      this._buildSymlinks(files, resolve(this.data_dir, 'workspace', safeName));
+    let files = [];
+    let workspace = []
+    for (let row of toArray(result[0])) {
+      if (row.area == Attr.personal) {
+        if (row.filetype !== Attr.hub) files.push(row)
+      } else {
+        workspace.push(row)
+      }
     }
+    if (files.length && this.flags.includes('files')) {
+      this._buildSymlinks(files, 'my-files');
+    }
+    if (workspace.length && this.flags.includes('workspace')) {
+      this._buildSymlinks(workspace, 'my-workspaces');
+    }
+
   }
+
 
 
   /**
@@ -299,11 +294,11 @@ class __offline_drumate_backup extends Offline {
    * Archive
    */
   async _createArchive() {
-    const zname = `backup-${(this.sender.fullname || this.uid).replace(/[ \n<>'"()/]/g, '-')}`;
+    const zname = `${(this.sender.fullname || this.email || this.uid).replace(/[ \n<>'"()/]/g, '-')}__${domain}`;
     this.zipname = zname;
-
-    const sp = spawn(`${archive}`, [this.data_dir, 'index']);
-
+    let total = 0
+    const sp = spawn(`${archive}`, [this.data_dir, zname]);
+    let dest = join(this.data_dir, 'index.zip')
     sp.on('exit', async (s) => {
       await this.send({
         exit: s,
@@ -322,9 +317,9 @@ class __offline_drumate_backup extends Offline {
     this.progress = 0;
     sp.stdout.on('data', async (data) => {
       const line = data.toString();
-      const size = line.match(/(^.+) ([0-9]{1,3}\%).+$/);
+      const size = line.match(/([0-9]{1,3}\%)(.+)$/)
       if (size) {
-        const p = parseInt(size[2]);
+        const p = parseInt(size[1]);
         if (p > this.progress) {
           this.progress = p;
           await this.send({
@@ -379,17 +374,20 @@ class __offline_drumate_backup extends Offline {
   /**
    * Helper: symlink file tree
    */
-  _buildSymlinks(files, subdir) {
+  _buildSymlinks(files, type) {
+    this.data_dir = resolve(tmp_dir, DOWNLOAD_FOLDER, this.uid, this.zipid);
+    let subdir = resolve(this.data_dir, type)
     mkdirSync(subdir, { recursive: true });
     for (const file of files) {
       if (!file.home_dir || !file.ownpath) continue;
       if (['folder', 'root', 'hub'].includes(file.filetype)) continue;
-      const src = resolve(file.home_dir.replace(/\/+$/, ''), file.ownpath.replace(/^\/+/, ''));
-      const rel = file.ownpath.replace(/^\/+/, '');
-      const dest = resolve(subdir, rel);
+      const src = resolve('/', file.home_dir, '__storage__', file.nid, `orig.${file.ext}`);
+      const dest = join(subdir, file.filepath);
       mkdirSync(dirname(dest), { recursive: true });
       if (existsSync(src) && !existsSync(dest)) {
         symlinkSync(src, dest);
+      } else {
+        console.warn("Failed to create symlinks", `${dest} -> ${src}`)
       }
     }
   }

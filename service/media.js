@@ -110,7 +110,7 @@ class __media extends Mfs {
  */
   manifest() {
     let { id } = this.granted_node();
-    this.db.call_proc("mfs_manifest", id, this.uid, 1, this.output.list);
+    this.db.call_proc("mfs_manifest", { nid: id, uid: this.uid, show_nodes: 1 }, this.output.list);
   }
 
   /**
@@ -1253,7 +1253,7 @@ class __media extends Mfs {
     let tree = [];
     for (let file of branch) {
       if (file.ftype == "folder") {
-        let nodes = await this.db.await_proc("mfs_manifest", nid, this.uid, 0);
+        let nodes = await this.db.await_proc("mfs_manifest", { nid, uid: this.uid, show_nodes: 0 });
         file.filesize = nodes[0].total_size;
       }
       tree.push(file);
@@ -1641,18 +1641,14 @@ class __media extends Mfs {
     if (isArray(ids)) {
       let res = [];
       for (let n of ids) {
-        r = await this.yp.await_proc(
-          "redirect_proc",
-          n.hub_id,
-          "mfs_manifest",
-          [n.nid, this.uid, 1]
-        );
+        let db_name = await this.yp.await_func("get_db_name", n.hub_id);
+        r = await this.db.await_proc("mfs_manifest", { nid, uid: this.uid, show_nodes: 1 });
         res = res.concat(r[0]);
         size = parseInt(size) + parseInt(r[1].total_size);
       }
       nodes = [res, { size, total_size: size }, { filename }];
     } else {
-      r = await this.db.await_proc("mfs_manifest", nid, this.uid, 1);
+      r = await this.db.await_proc("mfs_manifest", { nid, uid: this.uid, show_nodes: 1 });
       filename = this.granted_node().filename || r[2].filename || "drumee";
       size = parseInt(r[1].total_size);
       nodes = [r[0], { size, total_size: size }, { filename }];
@@ -1745,6 +1741,7 @@ class __media extends Mfs {
    */
   async zip() {
     const id = this.input.need(Attr.id);
+    const zipname = this.input.need("zipname") || `index`;
     // Use this.uid to match the path used by create_small_zip() and
     // create_large_zip(). Using hub_id caused path mismatch in workspaces
     // where hub_id ≠ uid, resulting in 404 on zip retrieval.
@@ -1753,7 +1750,7 @@ class __media extends Mfs {
       DOWNLOAD_FOLDER,
       this.uid,
       id,
-      `index.zip`
+      `${zipname}.zip`
     );
     const target = join(
       mfs_dir,
@@ -1762,7 +1759,7 @@ class __media extends Mfs {
       id
     );
     mkdirSync(target, { recursive: true });
-    const file = join(target, `index.zip`);
+    const file = join(target, `${zipname}.zip`);
     const fileio = new FileIo(this);
 
     // In case of download several time, remove existing symlink
@@ -2003,7 +2000,7 @@ class __media extends Mfs {
         break;
 
       case Attr.folder:
-        info = await this.db.await_proc("mfs_manifest", node.id, this.uid, 0);
+        info = await this.db.await_proc("mfs_manifest", { nid: node.id, uid: this.uid, show_nodes: 0 });
         break;
     }
     if (isEmpty(info)) {

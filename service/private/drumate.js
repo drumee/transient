@@ -431,7 +431,7 @@ class __private_drumate extends Entity {
    * 
    */
   async disk_space() {
-    let data = await this.db.await_proc('mfs_manifest', this.home_id, this.uid, 0);
+    let data = await this.db.await_proc('mfs_manifest', { nid: this.home_id, uid: this.uid, show_nodes: 0 });
     this.output.list(data);
   }
 
@@ -579,7 +579,7 @@ class __private_drumate extends Entity {
    * Confirm account deletion
    * @param {string} token - secret string required to validate account deletion
    */
-  async confirm_delete_account() {
+  async unused_confirm_delete_account() {
     let secret = this.input.need(Attr.secret);
     const data = await this.yp.await_proc('token_get', secret);
     if (isEmpty(data)) {
@@ -646,8 +646,9 @@ class __private_drumate extends Entity {
       this.output.data({ error: "WRONG_CREDENTIALS" });
       return
     }
-
-    this.output.data({ status: 'OK' });
+    await this.yp.await_proc(`drumate_freeze`, this.uid);
+    // this.output.data({ status: 'OK' });
+    this.session.logout({ redirect: "#/welcome" });
   }
 
   /**
