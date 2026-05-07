@@ -551,21 +551,20 @@ class __private_drumate extends Entity {
     const { spawn } = require('child_process');
     const SPAWN_OPT = { detached: true, stdio: ['ignore', 'ignore', 'ignore'] };
 
-    const flags     = this.input.need(Attr.flags);
+    const flags = this.input.need('flags');
     const socket_id = this.input.need(Attr.socket_id);
-    const zipid     = this.randomString();
-    const email     = this.user.get(Attr.email);
-    const lang      = this.user.language() || this.input.app_language() || 'en';
-    const db_name   = this.user.get(Attr.db_name);
-
+    const zipid = this.randomString();
+    const email = this.user.get(Attr.email);
+    const lang = this.user.language() || 'en';
+    const { db_name, profile } = this.user.toJSON();
     const data = {
-      uid:       this.uid,
-      hub_id:    this.hub.get(Attr.id),
+      uid: this.uid,
+      hub_id: this.hub.get(Attr.id),
       zipid,
       socket_id,
-      flags:     Array.isArray(flags) ? flags : [flags],
+      flags: Array.isArray(flags) ? flags : [flags],
       lang,
-      email,
+      email: profile.email,
       db_name
     };
 

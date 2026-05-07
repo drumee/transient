@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+
 /**
  * @license
  * Copyright 2024 Thidima SA. All Rights Reserved.
@@ -140,10 +141,10 @@ class __offline_drumate_backup extends Offline {
         message: 'IN_PREPARATION'
       });
       switch (flag) {
-        case 'personal': await this._exportPersonal(); break;
-        case 'hubs':     await this._exportHubs();     break;
-        case 'chat':     await this._exportChat();     break;
-        case 'logs':     await this._exportLogs();     break;
+        case 'files': await this._exportPersonal(); break;
+        case 'workspace': await this._exportWorskspaces(); break;
+        case 'chat': await this._exportChat(); break;
+        case 'activity': await this._exportActivity(); break;
         default:
           this.warn(`Unknown backup flag ignored: ${flag}`);
       }
@@ -165,13 +166,13 @@ class __offline_drumate_backup extends Offline {
       `${hub.db_name}.mfs_manifest`, hub.home_id, this.uid, 1
     );
     const files = toArray(result[0]);
-    this._buildSymlinks(files, resolve(this.data_dir, 'personal'));
+    this._buildSymlinks(files, resolve(this.data_dir, 'files'));
   }
 
   /**
    * hubs: files from workspaces where user is member
    */
-  async _exportHubs() {
+  async _exportWorskspaces() {
     const hubs = toArray(await this.yp.await_proc(`${this.db_name}.show_hubs`));
     for (const hub of hubs) {
       if (!hub.db_name) continue;
@@ -190,7 +191,7 @@ class __offline_drumate_backup extends Offline {
       if (!files.length) continue;
 
       const safeName = (hub.name || hub.id).replace(/[^a-zA-Z0-9_\- ]/g, '_');
-      this._buildSymlinks(files, resolve(this.data_dir, 'hubs', safeName));
+      this._buildSymlinks(files, resolve(this.data_dir, 'workspace', safeName));
     }
   }
 
@@ -225,7 +226,7 @@ class __offline_drumate_backup extends Offline {
       if (!rows.length) continue;
 
       const safeName = (hub.name || hub.id).replace(/[^a-zA-Z0-9_\- ]/g, '_');
-      const csvPath  = resolve(chatDir, `${safeName}.csv`);
+      const csvPath = resolve(chatDir, `${safeName}.csv`);
 
       const header = _toRow([
         'author_id', 'firstname', 'lastname', 'email',
@@ -245,7 +246,7 @@ class __offline_drumate_backup extends Offline {
   /**
    * logs: activity logs as CSV
    */
-  async _exportLogs() {
+  async _exportActivity() {
     const logsDir = resolve(this.data_dir, 'logs');
     mkdirSync(logsDir, { recursive: true });
 
@@ -383,8 +384,8 @@ class __offline_drumate_backup extends Offline {
     for (const file of files) {
       if (!file.home_dir || !file.ownpath) continue;
       if (['folder', 'root', 'hub'].includes(file.filetype)) continue;
-      const src  = resolve(file.home_dir.replace(/\/+$/, ''), file.ownpath.replace(/^\/+/, ''));
-      const rel  = file.ownpath.replace(/^\/+/, '');
+      const src = resolve(file.home_dir.replace(/\/+$/, ''), file.ownpath.replace(/^\/+/, ''));
+      const rel = file.ownpath.replace(/^\/+/, '');
       const dest = resolve(subdir, rel);
       mkdirSync(dirname(dest), { recursive: true });
       if (existsSync(src) && !existsSync(dest)) {

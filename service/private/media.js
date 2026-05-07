@@ -49,7 +49,7 @@ const Media = require("../media");
 const { stringify } = JSON;
 const { isEmpty, isString, values } = require("lodash");
 const { resolve, basename, extname } = require("path");
-const { existsSync, writeFileSync, readdirSync, statSync} = require("fs");
+const { existsSync, writeFileSync, readdirSync, statSync, copyFileSync, mkdirSync } = require("fs");
 const { writeFileSync: writeJson } = require("jsonfile");
 const SPAWN_OPT = { detached: true, stdio: ["ignore", "ignore", "ignore"] };
 const Spawn = require("child_process").spawn;
@@ -1583,6 +1583,78 @@ class __private_media extends Media {
    * @param {any}
    * Save content into FMS node
    */
+  /**
+   * Snapshot the current on-disk content of `node` into file_version
+   * before it gets overwritten by save/replace. Copies orig.{ext} to
+   * mfs_root/{nid}/versions/{insert_id}.{ext}, inserts the row, and
+   * accounts the snapshot bytes against hub disk_usage.
+   *
+   * Returns the file_version row id, or null if nothing was snapshotted
+   * (no source blob, no md5 change, or the call failed). Failures are
+   * logged but never thrown — versioning must never block a save.
+   */
+  async _snapshot_version(node, opts = {}) {
+    try {
+      if (!node || !node.id || !node.extension) return null;
+      const ext = node.extension;
+      const src = resolve(node.mfs_root, node.id, `orig.${ext}`);
+      if (!existsSync(src)) return null;
+
+      // Skip if the new content hashes to the same bytes as what's
+      // already on disk. Caller passes the new md5 when available.
+      if (opts.newMd5 && node.md5Hash && opts.newMd5 === node.md5Hash) {
+        return null;
+      }
+
+      const filename = node.user_filename || node.filename || "";
+      const filesize = parseInt(node.filesize, 10) || 0;
+
+      // Reserve a row first; we backfill file_path once we know the id.
+      const reserved = await this.db.await_proc(
+        "file_version_create",
+        node.id,
+        filename,
+        filesize,
+        "",
+        this.uid
+      );
+      const row = Array.isArray(reserved) ? reserved[0] : reserved;
+      if (!row || !row.id) return null;
+      const versionId = row.id;
+
+      const versionsDir = resolve(node.mfs_root, node.id, "versions");
+      if (!existsSync(versionsDir)) mkdirSync(versionsDir, { recursive: true });
+      const dest = resolve(versionsDir, `${versionId}.${ext}`);
+      copyFileSync(src, dest);
+
+      await this.db.await_run(
+        `UPDATE file_version SET file_path = ? WHERE id = ?`,
+        [dest, versionId]
+      );
+
+      // Charge the snapshot bytes against the hub's disk_usage so
+      // quota math stays honest. disk_usage trigger will sync quota.
+      const hub_id = node.hub_id || (this.hub && this.hub.get(Attr.id));
+      if (filesize > 0 && hub_id) {
+        try {
+          await this.yp.await_run(
+            `UPDATE yp.disk_usage
+                SET size = GREATEST(0, IFNULL(size, 0) + ?)
+              WHERE hub_id = ?`,
+            [filesize, hub_id]
+          );
+        } catch (e) {
+          this.warn && this.warn("[VERSION] disk_usage update failed:", e.message);
+        }
+      }
+
+      return versionId;
+    } catch (e) {
+      this.warn && this.warn("[VERSION] snapshot failed:", e && e.message);
+      return null;
+    }
+  }
+
   async save() {
     const content = this.input.need(Attr.content);
     let { createHash } = require("crypto");
@@ -1614,6 +1686,10 @@ class __private_media extends Media {
         const old_filesize = attr.filesize || 0;
         const old_category = attr.category || attr.filetype;
         const hub_id = attr.hub_id;
+
+        // Snapshot the pre-save blob into file_version before it's
+        // overwritten. No-op if md5 is unchanged or no source exists.
+        await this._snapshot_version(attr, { newMd5: metadata.md5Hash });
 
         await this.db.await_proc("mfs_set_metadata", nid, metadata, 0);
         await this.replace_content(
@@ -1713,6 +1789,11 @@ class __private_media extends Media {
     let { metadata } = node;
     metadata = cleanSeen(metadata);
     metadata.md5Hash = md5Hash;
+
+    // Snapshot the pre-replace blob into file_version before the new
+    // upload overwrites it. Skipped automatically when md5 matches.
+    await this._snapshot_version(node, { newMd5: md5Hash });
+
     let privilege = node.permission;
     let home_dir = node.home_dir;
     let mfs_root = node.mfs_root;
