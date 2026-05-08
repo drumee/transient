@@ -388,6 +388,7 @@ class __private_hub extends Hub {
       "  LEFT JOIN yp.entity  e " +
       "         ON e.id = JSON_UNQUOTE(JSON_EXTRACT(a.data, '$.hub_id')) " +
       " WHERE a.target_uid = ? AND a.event = 'hub_invite_received' " +
+      "   AND a.dismissed_at IS NULL " +
       " ORDER BY a.timestamp DESC LIMIT 50",
       this.uid
     );

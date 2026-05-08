@@ -651,10 +651,10 @@
       "errors": []
     },
     "bookmark_add": {
-      "doc": "Pin a notification message for quick access",
+      "doc": "Pin a notification message for quick access. Bookmarks live in the caller's drumate DB so any authenticated user with read access to the hub may bookmark a message they can see.",
       "scope": "hub",
       "permission": {
-        "src": "owner"
+        "src": "read"
       },
       "log": false,
       "params": {
@@ -677,10 +677,10 @@
       }
     },
     "bookmark_remove": {
-      "doc": "Unpin a previously bookmarked notification",
+      "doc": "Unpin a previously bookmarked notification. Per-user storage, requires only read access to the hub.",
       "scope": "hub",
       "permission": {
-        "src": "owner"
+        "src": "read"
       },
       "log": false,
       "params": {
@@ -695,10 +695,10 @@
       }
     },
     "bookmark_list": {
-      "doc": "Get paginated list of bookmarked notifications for the current user",
+      "doc": "Get paginated list of bookmarked notifications for the current user. Per-user storage, requires read access only.",
       "scope": "hub",
       "permission": {
-        "src": "owner"
+        "src": "read"
       },
       "log": false,
       "params": {
