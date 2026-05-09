@@ -880,7 +880,7 @@ class __media extends Mfs {
     }
     let res = await this.after_store(pid, incoming_file, node);
     if (res.error || res.done) {
-      return;
+      return res;
     }
 
     let service = "";

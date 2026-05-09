@@ -226,28 +226,29 @@ class __pdf_builder extends Offline {
     const mfs_dir = resolve(mfs_root, node.id);
     const orig_pdf = join(mfs_dir, 'orig.pdf');
     const preview = join(mfs_dir, 'preview.pdf');
-  
+
     let cmd = `${Script.soffice} ${mfs_dir} ${this.info.origFile}`;
+    console.log("AAA:231", cmd)
     this.exec(cmd);
-  
+
     if (!existsSync(orig_pdf)) {
       throw `Failed to build preview with CMD=${cmd}`;
     }
-  
+
     let json = getPdfInfo(orig_pdf);
     json.pdf = preview;
     json.buildState = 'done';
     this.infoFile = resolve(mfs_dir, `info.json`);
     writeFileSync(this.infoFile, json);
-  
+
     // Add rename operation
     this.syslog(`Renaming ${orig_pdf} to ${preview}`);
     renameSync(orig_pdf, preview);
-  
+
     if (!existsSync(preview)) {
       throw `NOENT : buildFromOrig file=${preview}`;
     }
-  
+
     this._preview = preview;
   }
 }

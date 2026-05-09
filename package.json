@@ -17,7 +17,7 @@
   "dependencies": {
     "@drumee/schemas-utils": "^1.0.0",
     "@drumee/server-core": "^1.1.69",
-    "@drumee/server-essentials": "^1.2.38",
+    "@drumee/server-essentials": "^1.2.42",
     "@hyzyla/pdfium": "^2.1.9",
     "accept-language": "^3.0.18",
     "after": "^0.8.2",
@@ -40,7 +40,7 @@
     "excel4node": "^1.7.2",
     "file-type": "^21.3.4",
     "filesize": "^6.1.0",
-    "geoip-lite": "^1.4.2",
+    "geoip-lite": "^1.2.2",
     "gm": "^1.23.1",
     "google-auth-library": "^10.5.0",
     "googleapis": "^65.0.0",

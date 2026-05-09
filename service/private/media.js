@@ -16,7 +16,7 @@
  */
 
 const { Attr, Constants, Permission, Privilege,
-  RedisStore, Cache, toArray, sysEnv
+  RedisStore, Cache, toArray, sysEnv, Script
 } = require("@drumee/server-essentials")
 const {
   BOUND,
@@ -44,18 +44,19 @@ const {
 } = Constants;
 
 const { MfsTools, Generator, Document } = require("@drumee/server-core");
-const { check_base, remove_node, move_node, copy_node, mkdir, cleanSeen} = MfsTools;
+const { check_base, remove_node, move_node, copy_node, mkdir, rmdir, cleanSeen } = MfsTools;
 const Media = require("../media");
 const { stringify } = JSON;
 const { isEmpty, isString, values } = require("lodash");
-const { resolve, basename, extname } = require("path");
-const { existsSync, writeFileSync, readdirSync, statSync, copyFileSync, mkdirSync } = require("fs");
+const { join, resolve, basename, extname } = require("path");
+const { existsSync, readFileSync, writeFileSync, readdirSync, statSync, copyFileSync, mkdirSync } = require("fs");
 const { writeFileSync: writeJson } = require("jsonfile");
 const SPAWN_OPT = { detached: true, stdio: ["ignore", "ignore", "ignore"] };
 const Spawn = require("child_process").spawn;
 const { tmp_dir, quota, server_location } = sysEnv();
 const JSON_OPT = { spaces: 2, EOL: "\r\n" };
 const { emptyTrash } = require('../../offline/queues/trashQueue');
+const indexQueue = require('../../offline/queues/indexQueue');
 
 //########################################
 class __private_media extends Media {
@@ -91,7 +92,6 @@ class __private_media extends Media {
     this.list_server_files = this.list_server_files.bind(this);
     this.server_export = this.server_export.bind(this);
     this.server_import = this.server_import.bind(this);
-    //this.import = this.import.bind(this);
   }
 
   /**
@@ -1655,119 +1655,113 @@ class __private_media extends Media {
     }
   }
 
-  async save() {
-    const content = this.input.need(Attr.content);
-    let { createHash } = require("crypto");
-
-    let md5Hash = createHash("md5");
-    let chunk = Buffer.from(content, "utf8");
-    md5Hash.update(chunk);
-
-    const parent = this.source_granted();
-    const filename = this.randomString() + "-" + this.input.need(Attr.filename);
-    let filepath = resolve(tmp_dir, `${filename}`);
-    const user_filename = this.input.need(Attr.filename);
-    const nid = this.input.get(Attr.id);
-
-    writeFileSync(filepath, content, { encoding: "utf-8" });
-    let pid = this.input.get(Attr.pid) || parent.id;
+  /**
+   * Shared helper: store or update an on-disk file into MFS.
+   * Creates a new node when nid is absent/unknown; replaces the existing
+   * node otherwise. Handles snapshot, filesize sync, and SEO reindex.
+   */
+  async _persist_file(filepath, user_filename, pid, nid, metadata = {}) {
+    const { createHash } = require("crypto");
 
     if (nid) {
       let attr = await this.db.await_proc("mfs_access_node", this.uid, nid);
 
       if (isEmpty(attr)) {
         await this.store(pid, filepath, user_filename);
-      } else {
-        let metadata = this.input.get(Attr.metadata) || {};
-        metadata = cleanSeen(metadata);
-        metadata.md5Hash = md5Hash.digest("hex");
+        return;
+      }
 
-        // Save old values before replacement
-        const old_filesize = attr.filesize || 0;
-        const old_category = attr.category || attr.filetype;
-        const hub_id = attr.hub_id;
+      const hash = createHash("md5").update(readFileSync(filepath)).digest("hex");
+      const merged = cleanSeen({ ...metadata, md5Hash: hash });
 
-        // Snapshot the pre-save blob into file_version before it's
-        // overwritten. No-op if md5 is unchanged or no source exists.
-        await this._snapshot_version(attr, { newMd5: metadata.md5Hash });
+      const old_filesize = attr.filesize || 0;
+      const old_category = attr.category || attr.filetype;
+      const hub_id = attr.hub_id;
 
-        await this.db.await_proc("mfs_set_metadata", nid, metadata, 0);
-        await this.replace_content(
-          attr,
-          filepath,
-          user_filename,
-          metadata.md5Hash
-        );
+      await this._snapshot_version(attr, { newMd5: hash });
+      await this.db.await_proc("mfs_set_metadata", nid, merged, 0);
+      await this.replace_content(attr, filepath, user_filename, hash);
 
-        // Update filesize after content replacement
-        try {
-          // Get actual file path in MFS (file has been moved by replace_content)
-          const mfs_path = resolve(attr.mfs_root, attr.id, `orig.${attr.extension}`);
-
-          if (!existsSync(mfs_path)) {
-            throw new Error(`File not found after replace: ${mfs_path}`);
-          }
-
-          const new_filesize = statSync(mfs_path).size;
-
-          if (old_filesize !== new_filesize) {
-            const delta = new_filesize - old_filesize;
-
-            // Update file record
-            await this.db.await_proc("mfs_set_attr", nid, "filesize", new_filesize);
-
-            // Update disk_usage (trigger will sync quota_usage)
-            await this.yp.await_run(
-              `UPDATE yp.disk_usage 
-              SET size = GREATEST(0, IFNULL(size, 0) + ?) 
-              WHERE hub_id = ?`,
-              [delta, hub_id]
-            );
-
-            this.debug(`[SAVE] Updated filesize: ${old_filesize} → ${new_filesize} (${delta > 0 ? '+' : ''}${delta})`);
-          }
-        } catch (error) {
-          this.warn('[SAVE] Failed to update filesize:', error.message);
+      try {
+        const mfs_path = resolve(attr.mfs_root, attr.id, `orig.${attr.extension}`);
+        if (!existsSync(mfs_path)) throw new Error(`File not found after replace: ${mfs_path}`);
+        const new_filesize = statSync(mfs_path).size;
+        if (old_filesize !== new_filesize) {
+          const delta = Number(new_filesize) - Number(old_filesize);
+          await this.db.await_proc("mfs_set_attr", nid, "filesize", new_filesize);
+          await this.yp.await_run(
+            `UPDATE yp.disk_usage SET size = GREATEST(0, IFNULL(size, 0) + ?) WHERE hub_id = ?`,
+            [delta, hub_id]
+          );
+          this.debug(`[SAVE] Updated filesize: ${old_filesize} → ${new_filesize} (${delta > 0 ? '+' : ''}${delta})`);
         }
+      } catch (error) {
+        this.warn('[SAVE] Failed to update filesize:', error.message);
+      }
 
-        // Reindex if document/image
-        if ([Attr.document, Attr.image].includes(old_category)) {
-          try {
-            // Delete old index first
-            await this.db.await_proc('seo_delete_index', hub_id, nid);
-
-            this.debug(`[SEO] Deleted old index for: ${attr.filename}`);
-
-            // Small delay to ensure file is fully written to disk
-            await new Promise(resolve => setTimeout(resolve, 100));
-
-            // Refresh node data after save (get updated filesize, mtime, etc)
-            const updated_node = await this.db.await_proc("mfs_access_node", this.uid, nid);
-
-            if (isEmpty(updated_node)) {
-              throw new Error('Failed to refresh node data after save');
-            }
-
-            // Queue for reindexing with fresh content
-            const indexQueue = require('../queues/indexQueue');
-
+      if ([Attr.document].includes(old_category)) {
+        try {
+          await this.db.await_proc('seo_delete_index', hub_id, nid);
+          this.debug(`[SEO] Deleted old index for: ${attr.filename}`);
+          await new Promise(r => setTimeout(r, 100));
+          const updated_node = await this.db.await_proc("mfs_access_node", this.uid, nid);
+          if (!isEmpty(updated_node)) {
             await indexQueue.addFile(updated_node, {
               uid: this.uid,
               socket_id: this.input.get(Attr.socket_id),
-              hub_id: hub_id,
-              priority: 8 // High priority for content updates
+              hub_id,
+              priority: 8
             });
-
             this.debug(`[SEO] Queued for reindexing: ${attr.filename}`);
-
-          } catch (error) {
-            this.warn(`[SEO] Failed to reindex after save: ${error.message}`);
           }
+        } catch (error) {
+          this.warn(`[SEO] Failed to reindex after save: ${error.message}`);
         }
       }
     } else {
       await this.store(pid, filepath, user_filename);
     }
+  }
+
+
+  /**
+   */
+  async save() {
+    const content = this.input.need(Attr.content);
+    const convert_to = this.input.need('convert_to');
+    const parent = this.source_granted();
+    const user_filename = this.input.need(Attr.filename);
+    const outdir = resolve(tmp_dir, this.randomString());
+    mkdirSync(outdir, { recursive: true });
+    const filepath = resolve(outdir, user_filename);
+    const nid = this.input.get(Attr.id);
+    const pid = this.input.get(Attr.pid) || parent.id;
+    const metadata = this.input.get(Attr.metadata) || {};
+    let filter = {
+      docx: "docx:Office Open XML Text:EmbedImages",
+      pdf: "pdf:writer_pdf_Export"
+    }
+    switch (convert_to) {
+      case Attr.pdf:
+      case 'docx':
+        const outfile = resolve(outdir, user_filename);
+        let re = new RegExp(`.(${convert_to})$`, 'i')
+        const infile = outfile.replace(re, '.html')
+        writeFileSync(infile, content, { encoding: "utf-8" });
+        let cmd = `${Script.soffice} ${outdir} ${infile} '${filter[convert_to]}'`;
+        if (this.sh_exec(cmd)) {
+          await this._persist_file(outfile, user_filename, pid, nid, metadata);
+        } else {
+          rmdir(outdir)
+          return this.exception.server('PDF_CONVERSION_FAILED');
+        }
+        break;
+      default:
+        writeFileSync(filepath, content, { encoding: "utf-8" });
+        await this._persist_file(filepath, user_filename, pid, nid, metadata);
+    }
+    rmdir(outdir) // Cleanup temp files
+
   }
 
 
