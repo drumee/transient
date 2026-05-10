@@ -243,6 +243,180 @@ class MfsActivity extends Entity {
     const data = toArray(result)[0] || {};
     this.output.data(data);
   }
+
+  /**
+   * Hide a single contact_activity row (hub invite, contact invite, etc.)
+   * from the user's activity feed. Underlying event stays around for audit.
+   * Endpoint: POST /activity.dismiss_contact_event
+   * Input: activity_id (integer)
+   */
+  async dismiss_contact_event() {
+    const activityId = parseInt(this.input.need('activity_id'));
+    const result = await this._callUserProc('contact_activity_dismiss', this.uid, activityId);
+    const data = toArray(result)[0] || {};
+    this.output.data(data);
+  }
+
+  /**
+   * Unified notification dismiss for any rollup returned by drumate.notification_center.
+   * Routes by `category` to the right read-pointer / status update.
+   * Endpoint: POST /activity.notification_dismiss
+   * Input: category (string), key_id (string), hub_id (string), last_id (integer)
+   */
+  async notification_dismiss() {
+    const category = String(this.input.need('category'));
+    const key_id = String(this.input.need('key_id'));
+    const hub_id = String(this.input.use('hub_id') || '');
+    const last_id = parseInt(this.input.use('last_id') || 0);
+    const result = await this._callUserProc(
+      'notification_dismiss',
+      category,
+      key_id,
+      hub_id,
+      last_id
+    );
+    const data = toArray(result)[0] || {};
+    this.output.data(data);
+  }
+
+  // ============================================================
+  // Unified activity API (Approach C: wrap-only consolidation)
+  //
+  // The activity panel and any other client should use only these
+  // four endpoints; underlying tables stay where they are.
+  // ============================================================
+
+  /**
+   * Single-call notification feed. Aggregates the 5 rollup categories from
+   * `notification_center_next` plus the standalone hub-invite stream from
+   * `yp.contact_activity` (event = 'hub_invite_received'). Result is a flat
+   * array; client renders by `category`.
+   *
+   * Endpoint: POST /activity.list
+   */
+  async list() {
+    const [rollups, hubInvites] = await Promise.all([
+      this._callUserProc('notification_center_next'),
+      this._callUserProc('notification_hub_invites'),
+    ]);
+    const rows = toArray(rollups);
+    const hubs = toArray(hubInvites);
+    const items = [
+      ...rows.map((r) => ({
+        category: r.category,
+        key_id: r.key_id,
+        hub_id: r.hub_id,
+        last_id: r.last_id,
+        cnt: r.cnt,
+        ctime: r.ctime,
+        firstname: r.firstname,
+        lastname: r.lastname,
+        surname: r.surname,
+        email: r.email,
+        status: r.status,
+        contact_id: r.contact_id,
+        drumate_id: r.drumate_id,
+        guest_id: r.guest_id,
+        area: r.area,
+        tag_id: r.tag_id,
+      })),
+      ...hubs.map((r) => {
+        let meta = {};
+        if (r.data) {
+          try { meta = typeof r.data === 'string' ? JSON.parse(r.data) : r.data; } catch (_) {}
+        }
+        return {
+          category: 'hub_invite',
+          key_id: String(r.id),
+          hub_id: meta.hub_id || null,
+          last_id: r.id,
+          cnt: 1,
+          ctime: r.ctime,
+          firstname: meta.from_firstname || r.inviter_firstname,
+          lastname: meta.from_lastname || r.inviter_lastname,
+          surname: meta.from_fullname || r.hub_headline,
+          email: r.inviter_email,
+          author_id: r.author_id,
+          hub_name: r.hub_headline || r.hub_ident,
+        };
+      }),
+    ];
+    this.output.list(items);
+  }
+
+  /**
+   * Alias of `notification_dismiss` under the consolidated activity.* API.
+   * Hides the rollup row from the activity feed.
+   * Endpoint: POST /activity.dismiss
+   */
+  async dismiss_rollup() {
+    return this.notification_dismiss();
+  }
+
+  /**
+   * Mark a rollup as read without hiding it. For backends that distinguish
+   * between read-pointer and dismissed-flag (contact, mfs_changelog), we only
+   * advance the read pointer. For the others (chat/teamchat/ticket) read and
+   * dismiss collapse into the same operation, so we just delegate.
+   * Endpoint: POST /activity.read
+   */
+  async read() {
+    const category = String(this.input.need('category'));
+    const key_id = String(this.input.need('key_id'));
+    const hub_id = String(this.input.use('hub_id') || '');
+    const last_id = parseInt(this.input.use('last_id') || 0);
+    const result = await this._callUserProc(
+      'notification_read',
+      category,
+      key_id,
+      hub_id,
+      last_id
+    );
+    const data = toArray(result)[0] || {};
+    this.output.data(data);
+  }
+
+  /**
+   * Publish a new notification. Routes by `category` to the appropriate
+   * underlying table. Public callers rarely need this — most events are
+   * created as side-effects of chat.post / media.new / hub.invite. This
+   * endpoint exists so future system integrations can inject notifications
+   * via the `activity.*` namespace.
+   * Endpoint: POST /activity.create
+   * Input: category (string), key_id (string), hub_id (string), payload (object)
+   */
+  async create() {
+    const category = String(this.input.need('category'));
+    const key_id = String(this.input.need('key_id'));
+    const hub_id = String(this.input.use('hub_id') || '');
+    const payload = this.input.use('payload') || {};
+    const result = await this.yp.await_proc(
+      'activity_publish',
+      category,
+      this.uid,
+      key_id,
+      hub_id,
+      JSON.stringify(payload)
+    );
+    const data = toArray(result)[0] || { status: 'ok', category, key_id };
+    this.output.data(data);
+  }
 }
 
-module.exports = MfsActivity;
+module.exports = MfsActivity;    this.yp.await_query(
+        "SELECT a.id, a.timestamp AS ctime, a.uid AS author_id, " +
+        "       a.target_uid, a.event, a.data, " +
+        "       d.firstname    AS inviter_firstname, " +
+        "       d.lastname     AS inviter_lastname,  " +
+        "       d.email        AS inviter_email,     " +
+        "       e.headline     AS hub_headline,      " +
+        "       e.ident        AS hub_ident          " +
+        "  FROM yp.contact_activity a " +
+        "  LEFT JOIN yp.drumate d ON d.id = a.uid " +
+        "  LEFT JOIN yp.entity  e " +
+        "         ON e.id = JSON_UNQUOTE(JSON_EXTRACT(a.data, '$.hub_id')) " +
+        " WHERE a.target_uid = ? AND a.event = 'hub_invite_received' " +
+        "   AND a.dismissed_at IS NULL " +
+        " ORDER BY a.timestamp DESC LIMIT 50",
+        this.uid
+      ),

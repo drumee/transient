@@ -1540,10 +1540,42 @@ class __private_contact extends Contact {
 
 
   /**
-   * 
+   * Returns contact invitations addressed to the current user.
+   * Each row is enriched with the latest matching `yp.contact_activity.id`
+   * so the activity-panel can dismiss it via `activity.dismiss_contact_event`.
    */
-  invite_get() {
-    this.db.call_proc('contact_notification_get', this.output.list);
+  async invite_get() {
+    const rows = await this.db.await_proc('contact_notification_get');
+    const list = Array.isArray(rows) ? rows : [];
+    if (list.length === 0) {
+      this.output.list(list);
+      return;
+    }
+    const inviterIds = list
+      .map((r) => r.drumate_id)
+      .filter((id) => typeof id === 'string' && id.length);
+    let activityMap = {};
+    if (inviterIds.length) {
+      const placeholders = inviterIds.map(() => '?').join(',');
+      const ids = await this.yp.await_query(
+        "SELECT a.id, a.uid " +
+        "  FROM yp.contact_activity a " +
+        " WHERE a.target_uid = ? " +
+        "   AND a.event = 'invite_received' " +
+        "   AND a.dismissed_at IS NULL " +
+        "   AND a.uid IN (" + placeholders + ") " +
+        " ORDER BY a.timestamp DESC",
+        this.uid, ...inviterIds
+      );
+      for (const row of ids || []) {
+        if (!activityMap[row.uid]) activityMap[row.uid] = row.id;
+      }
+    }
+    const enriched = list.map((r) => ({
+      ...r,
+      activity_id: activityMap[r.drumate_id] || null,
+    }));
+    this.output.list(enriched);
   }
 
   /**
