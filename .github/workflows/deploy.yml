@@ -1,0 +1,76 @@
+name: CD - deploy server-team
+
+on:
+  push:
+    branches: [preview, ci/setup-deploy]
+  workflow_dispatch:
+
+concurrency:
+  group: cd-server-team-${{ github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build
+    runs-on: self-hosted
+    timeout-minutes: 15
+    outputs:
+      endpoint: ${{ steps.ep.outputs.endpoint }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Resolve endpoint
+        id: ep
+        run: |
+          if [ "${{ github.ref_name }}" = "ci/setup-deploy" ]; then
+            EP="liam"
+          else
+            EP="main"
+          fi
+          echo "endpoint=$EP" >> $GITHUB_OUTPUT
+
+      - name: Show env
+        run: |
+          echo "Endpoint: ${{ steps.ep.outputs.endpoint }}"
+          node --version
+          npm --version
+
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+
+  deploy:
+    name: Deploy
+    needs: build
+    runs-on: self-hosted
+    timeout-minutes: 5
+    steps:
+      - name: Sync to runtime dir
+        run: |
+          sudo mkdir -p /srv/drumee/runtime/server/${{ needs.build.outputs.endpoint }}
+          sudo rsync -a --delete \
+            --exclude=.git --exclude=.dev-tools.rc --exclude=.github --exclude=test --exclude=docs \
+            $GITHUB_WORKSPACE/ \
+            /srv/drumee/runtime/server/${{ needs.build.outputs.endpoint }}/
+
+      - name: Restart endpoint
+        run: |
+          sudo /usr/sbin/drumee restart ${{ needs.build.outputs.endpoint }} > /dev/null
+          sudo /usr/sbin/drumee restart ${{ needs.build.outputs.endpoint }}/service > /dev/null
+          echo "Restarted endpoint"
+
+  verify:
+    name: Verify
+    needs: [build, deploy]
+    runs-on: self-hosted
+    timeout-minutes: 3
+    steps:
+      - name: Verify file presence
+        run: |
+          server_dir=/srv/drumee/runtime/server/${{ needs.build.outputs.endpoint }}
+          if [ ! -f "$server_dir/index.js" ] || [ ! -f "$server_dir/service.js" ]; then
+            echo "Missing entry files at $server_dir"
+            exit 1
+          fi
+          deployed_version=$(sudo cat "$server_dir/package.json" | python3 -c "import sys,json; print(json.load(sys.stdin)['version'])")
+          echo "Deployed version: $deployed_version"
