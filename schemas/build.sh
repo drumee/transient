@@ -17,7 +17,7 @@ echo EMAIL ${base} $email $version
 build_dir=$(get_build_dir ${base}/build/$version)
 
 REPO_BASE=git@github.com:drumee
-bundle $base "setup-schemas" "revamp" "" "var/lib/drumee/setup-schemas"
+bundle $base "setup-schemas" "main" "" "var/lib/drumee/setup-schemas"
 
 if [ "$SEEDS_DIR" = "" ]; then
   SEEDS_DIR=$HOME/docker/data/seeds/
@@ -41,7 +41,7 @@ else
   fi
 fi
 
-bundle $base "schemas" "revamp" "" ""
+bundle $base "schemas" "preview" "" ""
 schemas_src=${base}/src/schemas
 cd $schemas_src
 rsync -arv --exclude ".git:.npmrc" ${base}/var $build_dir/files/

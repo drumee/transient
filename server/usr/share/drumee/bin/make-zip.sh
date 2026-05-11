@@ -1,6 +1,5 @@
 #!/bin/bash
 shopt -s extglob dotglob
-
 base=$1
 dest=$2
 if [ -z $base ]; then 
@@ -12,4 +11,4 @@ if [ -z $dest ]; then
   exit 1;
 fi
 cd $base;
-nice 7z a -bsp1 -tzip -l $dest.zip *
+nice 7z a -bsp1 -tzip $dest.zip *
