@@ -364,6 +364,140 @@
           }
         }
       }
+    },
+
+    "dismiss_contact_event": {
+      "doc": "Dismiss a single contact_activity row (hub invite, contact invite, etc.) so it no longer appears in the activity feed. Stamps yp.contact_activity.dismissed_at without deleting the underlying audit row.",
+      "scope": "hub",
+      "permission": {
+        "src": "write"
+      },
+      "params": {
+        "activity_id": {
+          "type": "integer",
+          "required": true,
+          "description": "The yp.contact_activity row ID to dismiss"
+        }
+      },
+      "returns": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "description": "ok on success"
+          },
+          "activity_id": {
+            "type": "integer",
+            "description": "The dismissed contact_activity ID"
+          },
+          "dismissed_at": {
+            "type": "integer",
+            "description": "Unix timestamp when the row was dismissed"
+          }
+        }
+      }
+    },
+
+    "list": {
+      "doc": "Single-call notification feed combining notification_center rollups + standalone hub-invite rows. Returns a flat array; client renders by `category` (chat | contact | media | teamchat | ticket | hub_invite).",
+      "scope": "hub",
+      "permission": { "src": "read" },
+      "params": {},
+      "returns": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "category": { "type": "string" },
+            "key_id": { "type": "string" },
+            "hub_id": { "type": "string" },
+            "last_id": { "type": "integer" },
+            "cnt": { "type": "integer" },
+            "ctime": { "type": "integer" }
+          }
+        }
+      }
+    },
+
+    "dismiss_rollup": {
+      "doc": "Alias of notification_dismiss under the consolidated activity.* API. Hides a rollup row from the feed.",
+      "scope": "hub",
+      "permission": { "src": "write" },
+      "params": {
+        "category": { "type": "string", "required": true },
+        "key_id": { "type": "string", "required": true },
+        "hub_id": { "type": "string", "required": false },
+        "last_id": { "type": "integer", "required": false, "default": 0 }
+      },
+      "returns": { "type": "object" }
+    },
+
+    "read": {
+      "doc": "Mark a rollup as read (advance read pointer) without hiding it. For chat/teamchat/ticket this is identical to dismiss; for media we only advance mfs_ack; for contact this is a no-op (use dismiss to hide).",
+      "scope": "hub",
+      "permission": { "src": "write" },
+      "params": {
+        "category": { "type": "string", "required": true },
+        "key_id": { "type": "string", "required": true },
+        "hub_id": { "type": "string", "required": false },
+        "last_id": { "type": "integer", "required": false, "default": 0 }
+      },
+      "returns": { "type": "object" }
+    },
+
+    "create": {
+      "doc": "Publish a new notification via the activity.* namespace. Routes by category to the underlying table (mfs_changelog for media, contact_activity for invites). chat/teamchat/ticket are not supported here — use the domain endpoint (chat.post / channel.post / ticket.post).",
+      "scope": "hub",
+      "permission": { "src": "write" },
+      "params": {
+        "category": { "type": "string", "required": true },
+        "key_id": { "type": "string", "required": true },
+        "hub_id": { "type": "string", "required": false },
+        "payload": { "type": "object", "required": false }
+      },
+      "returns": { "type": "object" }
+    },
+
+    "notification_dismiss": {
+      "doc": "Unified dismiss for any rollup returned by drumate.notification_center. Routes by category to the right read-pointer/status update (chat → p2p_read, contact → contact.dismissed_at, media → mfs_dismissed, teamchat → <hub>.read_channel, ticket → yp.read_ticket_channel).",
+      "scope": "hub",
+      "permission": {
+        "src": "write"
+      },
+      "params": {
+        "category": {
+          "type": "string",
+          "required": true,
+          "description": "Rollup category: chat | contact | media | teamchat | ticket"
+        },
+        "key_id": {
+          "type": "string",
+          "required": true,
+          "description": "Identifier the rollup uses (peer_id, contact id, hub_id, ticket_id)"
+        },
+        "hub_id": {
+          "type": "string",
+          "required": false,
+          "description": "Hub id for the rollup (required for media + teamchat)"
+        },
+        "last_id": {
+          "type": "integer",
+          "required": false,
+          "default": 0,
+          "description": "Latest ack target (ref_ctime / sys_id / changelog_id)"
+        }
+      },
+      "returns": {
+        "type": "object",
+        "properties": {
+          "status": { "type": "string" },
+          "category": { "type": "string" },
+          "key_id": { "type": "string" },
+          "hub_id": { "type": "string" },
+          "last_id": { "type": "integer" },
+          "dismissed_at": { "type": "integer" }
+        }
+      }
     }
   },
 
