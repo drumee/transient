@@ -1728,7 +1728,7 @@ class __private_media extends Media {
    */
   async save() {
     const content = this.input.need(Attr.content);
-    const convert_to = this.input.need('convert_to');
+    const convert_to = this.input.get('convert_to');
     const parent = this.source_granted();
     const user_filename = this.input.need(Attr.filename);
     const outdir = resolve(tmp_dir, this.randomString());
