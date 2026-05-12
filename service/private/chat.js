@@ -269,13 +269,13 @@ class privateChat extends Entity {
       null,
       null
     );
-    if (isEmpty(contact)) {
-      res.status = "INVALID_CONTACT";
-      return res;
-    }
-    if (contact.uid != entity_id) {
-      res.status = "INVALID_CONTACT";
-      return res;
+    if (isEmpty(contact) || contact.uid != entity_id) {
+      // Not a formal contact — allow if entity_id is a registered drumate (colleague)
+      let drumate = await this.yp.await_proc("drumate_exists", entity_id);
+      if (isEmpty(drumate)) {
+        res.status = "INVALID_CONTACT";
+        return res;
+      }
     }
 
     let invalid_attachment = 0;
@@ -376,7 +376,10 @@ class privateChat extends Entity {
         hisdata.total = hiscount.total;
 
         let hisDest = await this.yp.await_proc("user_sockets", entity_id);
-        await RedisStore.sendData(this.payload(hisdata), hisDest);
+        // peer_id in the WS push must be the sender's ID so the recipient's
+        // chat widget matches it against their peerId (from their perspective,
+        // the peer is the sender, not themselves)
+        await RedisStore.sendData(this.payload({ ...hisdata, peer_id: this.uid }), hisDest);
         temp_result.push(hisdata);
       } else {
         let data = await this.yp.await_proc(
