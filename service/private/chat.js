@@ -419,6 +419,7 @@ class privateChat extends Entity {
     let message = this.input.use(Attr.message) || "";
     let thread_id = this.input.use(Attr.thread_id);
     let attachment = this.input.use(Attr.attachment) || [];
+    let mention_ids = this.input.use('mention_ids');
     let sanity = await this._checkPostSanity(entity_id, thread_id, attachment);
     if (!sanity.ok) {
       this.output.data(sanity);
@@ -458,6 +459,9 @@ class privateChat extends Entity {
     }
     if (!isEmpty(message_id)) {
       input.message_id = message_id;
+    }
+    if (!isEmpty(mention_ids)) {
+      input.mention_ids = mention_ids;
     }
     let res = await this._distributeMessage(input, message, thread_id, [
       entity_id,
