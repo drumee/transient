@@ -152,10 +152,8 @@ class privateChat extends Entity {
       sbox.hub_id
     );
 
-    if (!data || !Array.isArray(data)) {
-      this.error("mfs_move_all returned unexpected result", data);
-      return [];
-    }
+    if (!data) return [];
+    if (!Array.isArray(data)) data = [data];
 
     attachment = [];
     for (let node of data) {
@@ -769,6 +767,7 @@ class privateChat extends Entity {
         const parsed = result && typeof result.result === "string"
           ? this.parseJSON(result.result)
           : (result || {});
+        this.debug("chat.delete p2p", { option, message_id, peer_id, result, parsed });
         if (!parsed.SUCCESS) continue;
         temp_result.push({ message_id });
         // Notify peer so their UI removes the message too
