@@ -48,13 +48,19 @@ class privateChat extends Entity {
    */
   async attachment() {
     let message_id = this.input.use(Attr.message_id);
+    let peer_id = this.input.use(Attr.peer_id);
     let page = this.input.use(Attr.page) || 1;
     let attach = {};
     let data = await this.db.await_proc("channel_get", message_id);
 
     if (isEmpty(data)) {
-      // Fallback: P2P message stored in p2p_channel
+      // Fallback: P2P message stored in sender's p2p_channel
       data = await this.db.await_proc("p2p_get_message", message_id);
+    }
+
+    // Cross-DB fallback for receiver: message is in the sender's (peer's) DB
+    if (isEmpty(data) && peer_id) {
+      data = await this.yp.await_proc("forward_proc", peer_id, "p2p_get_message", `'${message_id}'`);
     }
 
     if (!isEmpty(data) && !isEmpty(data.attachment)) {
