@@ -152,6 +152,11 @@ class privateChat extends Entity {
       sbox.hub_id
     );
 
+    if (!data || !Array.isArray(data)) {
+      this.error("mfs_move_all returned unexpected result", data);
+      return [];
+    }
+
     attachment = [];
     for (let node of data) {
       let dest = {};
@@ -196,7 +201,7 @@ class privateChat extends Entity {
   /**
    *
    */
-  async threadInfo(thread_id, uid) {
+  async threadInfo(thread_id, uid, peer_id) {
     let thread = {};
     let data = await this.yp.await_proc(
       "forward_proc",
@@ -206,10 +211,20 @@ class privateChat extends Entity {
     );
 
     if (isEmpty(data)) {
-      // Fallback: thread may be a P2P message stored in p2p_channel
+      // Fallback: may be a P2P message I sent (in my drumate DB)
       data = await this.yp.await_proc(
         "forward_proc",
         uid,
+        "p2p_get_message",
+        `'${thread_id}'`
+      );
+    }
+
+    if (isEmpty(data) && !isEmpty(peer_id)) {
+      // Fallback: may be a P2P message the peer sent (in peer's drumate DB)
+      data = await this.yp.await_proc(
+        "forward_proc",
+        peer_id,
         "p2p_get_message",
         `'${thread_id}'`
       );
@@ -305,8 +320,17 @@ class privateChat extends Entity {
     if (!isEmpty(thread_id)) {
       let data_thread = await this.db.await_proc("channel_get", thread_id);
       if (isEmpty(data_thread)) {
-        // Fallback: thread may be a P2P message stored in p2p_channel
+        // Fallback: may be a P2P message I sent (in my drumate DB)
         data_thread = await this.db.await_proc("p2p_get_message", thread_id);
+      }
+      if (isEmpty(data_thread)) {
+        // Fallback: may be a P2P message the peer sent (in peer's drumate DB)
+        data_thread = await this.yp.await_proc(
+          "forward_proc",
+          entity_id,
+          "p2p_get_message",
+          `'${thread_id}'`
+        );
       }
       if (isEmpty(data_thread)) {
         res.status = "INVALID_THREAD";
@@ -354,7 +378,7 @@ class privateChat extends Entity {
 
         mydata.entity = await this.entityInfo(this.uid, entity_id);
         if (!isEmpty(thread_id)) {
-          mydata.thread = await this.threadInfo(thread_id, this.uid);
+          mydata.thread = await this.threadInfo(thread_id, this.uid, entity_id);
         }
         let mycount = await this.yp.await_proc(
           "forward_proc",
@@ -650,7 +674,7 @@ class privateChat extends Entity {
         recipients.push(message.author_id);
       }
       if (!isEmpty(message.thread_id)) {
-        message.thread = await this.threadInfo(message.thread_id, this.uid);
+        message.thread = await this.threadInfo(message.thread_id, this.uid, peer_id);
       }
       messages.push(message);
     }
