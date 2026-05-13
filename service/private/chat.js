@@ -206,8 +206,18 @@ class privateChat extends Entity {
     );
 
     if (isEmpty(data)) {
+      // Fallback: thread may be a P2P message stored in p2p_channel
+      data = await this.yp.await_proc(
+        "forward_proc",
+        uid,
+        "p2p_get_message",
+        `'${thread_id}'`
+      );
+    }
+
+    if (isEmpty(data)) {
       thread.message = "DELETED";
-      thread.message_id = data.message_id;
+      thread.message_id = thread_id;
       return thread;
     }
 
@@ -294,6 +304,10 @@ class privateChat extends Entity {
 
     if (!isEmpty(thread_id)) {
       let data_thread = await this.db.await_proc("channel_get", thread_id);
+      if (isEmpty(data_thread)) {
+        // Fallback: thread may be a P2P message stored in p2p_channel
+        data_thread = await this.db.await_proc("p2p_get_message", thread_id);
+      }
       if (isEmpty(data_thread)) {
         res.status = "INVALID_THREAD";
         return res;
@@ -433,18 +447,25 @@ class privateChat extends Entity {
     }
 
     if (!isEmpty(attachment)) {
-      let desdir = await this.yp.await_proc(
-        "forward_proc",
-        sbox.hub_id,
-        "mfs_make_dir",
-        `'${sbox.chat_id}','${stringify([message_id])}',1`
-      );
-      attachment = await this.move_attachemnt(
-        sbox,
-        desdir,
-        attachment,
-        message_id
-      );
+      try {
+        let desdir = await this.yp.await_proc(
+          "forward_proc",
+          sbox.hub_id,
+          "mfs_make_dir",
+          `'${sbox.chat_id}','${stringify([message_id])}',1`
+        );
+        this.debug("chat.post desdir", desdir, "sbox", sbox);
+        attachment = await this.move_attachemnt(
+          sbox,
+          desdir,
+          attachment,
+          message_id
+        );
+        this.debug("chat.post attachment after move", attachment);
+      } catch (e) {
+        this.error("chat.post attachment error", e);
+        throw e;
+      }
     }
     input.author_id = this.uid;
     input.uid = this.uid;
@@ -705,7 +726,19 @@ class privateChat extends Entity {
         } else {
           result = await this.db.await_proc("p2p_delete_me", { message_id });
         }
-        temp_result.push(result);
+        // p2p_delete_* procs return { result: JSON_string } — unwrap it
+        const parsed = result && typeof result.result === "string"
+          ? this.parseJSON(result.result)
+          : (result || {});
+        if (!parsed.SUCCESS) continue;
+        temp_result.push({ message_id });
+        // Notify peer so their UI removes the message too
+        if (option === "all") {
+          const hisDest = await this.yp.await_proc("user_sockets", peer_id);
+          if (!isEmpty(hisDest)) {
+            await RedisStore.sendData(this.payload({ message_id }), hisDest);
+          }
+        }
       }
       return this.output.list(temp_result);
     }
