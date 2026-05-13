@@ -456,7 +456,7 @@ class privateChat extends Entity {
                 this.uid,
                 mentioned_uid,
                 "p2p_mention",
-                { message_id: mydata.message_id, peer_id: entity_id, message: msgPreview }
+                { message_id: mydata.message_id, peer_id: this.uid, message: msgPreview }
               );
             } catch (e) {
               this.warn("[chat._distributeMessage] p2p_mention log failed:", e && e.message);
