@@ -357,6 +357,7 @@ class conference extends __yp {
     if (!isArray(data)) data = [data];
     let payload = {};
     let clients = data.filter(function (e) {
+      if (!e) return false;
       e.caller_id = socket_id;
       e.hub_id = hub_id;
       if (e.socket_id == socket_id) {
@@ -364,6 +365,33 @@ class conference extends __yp {
       }
       return e.socket_id != null;
     });
+
+    // Fallback: the stored proc `conference_revoke` historically only
+    // returned rows when the caller's hub_id resolves to a `hub` table
+    // entry. For P2P calls hub_id is the caller's own user id, so the
+    // proc returned 0 rows and the callee's ringing window stayed open.
+    // When that happens, resolve the callee's active sockets directly so
+    // we can still broadcast `conference.revoke` to them. Independent of
+    // the patched proc — both work, and this keeps prod stable while the
+    // SQL patch rolls out.
+    if (!clients.length && callee && callee.drumate_id) {
+      try {
+        let fallback = await this.yp.await_proc(
+          "socket_user_connections",
+          callee.drumate_id
+        );
+        if (fallback && !isArray(fallback)) fallback = [fallback];
+        clients = (fallback || []).filter((e) => e && e.socket_id);
+        clients.forEach((e) => {
+          e.caller_id = socket_id;
+          e.hub_id = hub_id;
+          e.room_id = room_id;
+        });
+      } catch (e) {
+        if (this.warn) this.warn("conference.revoke fallback failed", e && e.message);
+      }
+    }
+
     let opt = { recipients: clients, payload };
     await this.inform(opt, this.input.get(Attr.service));
     this.input.set({ event: Attr.cancel });
