@@ -442,19 +442,28 @@ class privateChat extends Entity {
     let input = {};
     let message_id = await this.yp.await_func("uniqueId");
     let sbox = await this.db.call_proc("mfs_wicket_home", this.uid);
-    if (sbox[5]) { /** Created by desk_create_hub */
+    if (sbox && sbox[5]) { /** Created by desk_create_hub */
       sbox = { ...sbox[5] }
     }
 
     if (!isEmpty(attachment)) {
+      if (!sbox || !sbox.hub_id || !sbox.chat_id) {
+        this.error("chat.post: mfs_wicket_home returned invalid sbox", sbox);
+        return this.output.data({ status: "SBOX_ERROR", sbox: stringify(sbox) });
+      }
+      let desdir;
       try {
-        let desdir = await this.yp.await_proc(
+        desdir = await this.yp.await_proc(
           "forward_proc",
           sbox.hub_id,
           "mfs_make_dir",
           `'${sbox.chat_id}','${stringify([message_id])}',1`
         );
         this.debug("chat.post desdir", desdir, "sbox", sbox);
+        if (!desdir || desdir.failed || !desdir.id) {
+          this.error("chat.post: mfs_make_dir failed", desdir);
+          return this.output.data({ status: "MKDIR_ERROR", desdir: stringify(desdir) });
+        }
         attachment = await this.move_attachemnt(
           sbox,
           desdir,
@@ -464,7 +473,13 @@ class privateChat extends Entity {
         this.debug("chat.post attachment after move", attachment);
       } catch (e) {
         this.error("chat.post attachment error", e);
-        throw e;
+        return this.output.data({
+          status: "ATTACHMENT_ERROR",
+          message: e && e.message ? e.message : String(e),
+          desdir: stringify(desdir),
+          sbox_hub_id: sbox && sbox.hub_id,
+          sbox_chat_id: sbox && sbox.chat_id,
+        });
       }
     }
     input.author_id = this.uid;
