@@ -159,7 +159,7 @@ class privateChat extends Entity {
       src.push({ nid: media, hub_id: this.uid });
     }
 
-    let data = await this.db.call_proc(
+    let data = await this.db.await_proc(
       "mfs_move_all",
       src,
       this.uid,
@@ -167,6 +167,7 @@ class privateChat extends Entity {
       sbox.hub_id
     );
 
+    this.debug("chat.move_attachemnt mfs_move_all result", data);
     if (!data) return [];
     if (!Array.isArray(data)) data = [data];
 
