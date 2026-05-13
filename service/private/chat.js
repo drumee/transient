@@ -169,7 +169,17 @@ class privateChat extends Entity {
 
     this.debug("chat.move_attachemnt mfs_move_all result", data);
     if (!data) return [];
-    if (!Array.isArray(data)) data = [data];
+    // mfs_move_all returns multi-result: [statusRow, [opRows...]] — flatten to op rows only
+    let rows = [];
+    if (Array.isArray(data)) {
+      for (const item of data) {
+        if (Array.isArray(item)) rows.push(...item);
+        else if (item && item.action) rows.push(item);
+      }
+    } else if (data && data.action) {
+      rows = [data];
+    }
+    data = rows;
 
     attachment = [];
     for (let node of data) {
