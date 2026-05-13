@@ -71,7 +71,6 @@ function export_globals(resolve) {
   window.LetcBox = require("./widgets/box");
   window.LetcList = require("./widgets/list/smart");
   window.LetcText = require("./widgets/text");
-
   window.Platform = new Backbone.Model();
   window.Env = new Backbone.Model();
   window.Host = require('./host')();

@@ -1,9 +1,9 @@
-
+const gsap = require('../../../../vendor').default;
 
 /**
- * 
- * @param {*} p 
- * @returns 
+ *
+ * @param {*} p
+ * @returns
  */
 Backbone.View.prototype.mget = function(p) {
   return this.model.get(p);
@@ -110,17 +110,16 @@ Backbone.View.prototype.selfDestroy = function(o={}, a={}) {
     const trigger  = o.trigger  || this.mget(_a.trigger);
     let anim     = null; 
     if (trigger && typeof trigger.isDestroyed === "function" && !trigger.isDestroyed()) {
-      anim = { 
+      anim = {
         left  : trigger.$el.offset().left - this.parent.$el.offset().left,
         top   : trigger.$el.offset().top - this.parent.$el.offset().top
       };
-      gsap.TweenMax.set(this.$el, {transformOrigin:"0 0"});
+      this.el.style.transformOrigin = "0 0";
     }
-      
-    anim = {autoAlpha:0, scale:0.2, ...anim, ...a};
 
-    const tl = new gsap.TimelineMax({onComplete: _fire});
-    return tl.to(this.$el, duration, anim);
+    anim = { opacity: 0, scale: 0.2, ...anim, ...a };
+    if (anim.autoAlpha !== undefined) { anim.opacity = anim.autoAlpha; delete anim.autoAlpha; }
+    return gsap.to(this.el, { ...anim, duration, onComplete: _fire });
   };
   return _.delay(go, timeout);
 };
@@ -199,10 +198,10 @@ Backbone.View.prototype.renderVector=function(data, use_bg, target) {
  */
 Backbone.View.prototype.anim=function() {
     const args = Array.prototype.slice.call(arguments);
-    const tl = new gsap.TimelineMax();
-    for (let a of Array.from(args)) { 
-      if (_.isArray(a)) { 
-        tl.to(this.$el, a[0], a[1]);
+    const tl = gsap.timeline();
+    for (let a of Array.from(args)) {
+      if (_.isArray(a)) {
+        tl.to(this.el, { duration: a[0], ...a[1] });
       }
     }
   };

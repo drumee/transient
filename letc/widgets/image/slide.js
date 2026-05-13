@@ -124,18 +124,19 @@ class __image_slide extends Marionette.CollectionView {
     if ((anim == null)) {
       return;
     }
+    // options/gsapp/base and options/gsapp/convert must return Anime.js-compatible values
     const settings = anim.settings || require('options/gsapp/base')(_a.defaults);
-    tl.from(this.$el, 0.01, {opacity:0});
+    tl.add(this.$el[0], { opacity: [0, 1], duration: 10 });
     const from = require('options/gsapp/convert')(anim.in, {x:-left});
     if (!_.isEmpty(from)) {
-      tl.from(this.$el, from.duration, from.definition);
+      tl.add(this.$el[0], { ...from.definition, duration: from.duration * 1000 });
     }
-    const to =  require('options/gsapp/convert')(anim.out, {x:left});
+    const to = require('options/gsapp/convert')(anim.out, {x:left});
     if (!_.isEmpty(to)) {
-      tl.to(this.$el, to.duration, to.definition, `+=${settings.pausetime}`);
+      tl.add(this.$el[0], { ...to.definition, duration: to.duration * 1000 }, `+=${settings.pausetime * 1000}`);
     }
-    tl.add(this._playChildren);
-    return tl.to(this.$el, 0.06, {opacity:0});
+    tl.call(this._playChildren);
+    return tl.add(this.$el[0], { opacity: 0, duration: 60 });
   }
 }
 __image_slide.initClass();

@@ -1,11 +1,15 @@
 
 
-const Matrix = require('transformation-matrix');
-
+function _parseMatrix(s) {
+  const m = /matrix\(([^)]+)\)/.exec(s);
+  if (!m) throw new Error('invalid matrix');
+  const [a, b, c, d, e, f] = m[1].split(',').map(Number);
+  return { a, b, c, d, e, f };
+}
 
 /**
- * 
- * @returns 
+ *
+ * @returns
  */
 Backbone.View.prototype.cover = function() {
   return this.$el.attr(_a.data.hide, _a.yes);
@@ -41,7 +45,7 @@ Backbone.View.prototype.isRotated = function() {
     return 0;
   }
   try { 
-    t = Matrix.fromString(t);
+    t = _parseMatrix(t);
     const angle = Math.round(Math.atan2(t.b, t.a) * (180/Math.PI));   
     return angle;
   } catch (e) {
@@ -57,9 +61,9 @@ Backbone.View.prototype.isRotated = function() {
 Backbone.View.prototype.isFlipped = function(axis) {
   let t;
   try {
-    t = Matrix.fromString(this.style.get(_a.transform));
-  } catch (error) { 
-    t = Matrix.identity();
+    t = _parseMatrix(this.style.get(_a.transform));
+  } catch (error) {
+    t = { a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 };
   }
   switch (axis) {
     case _a.horizontal: case _a.x:

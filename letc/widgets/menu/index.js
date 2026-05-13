@@ -1,7 +1,7 @@
 
-
+const { getElStablePosition } = require("@drumee/ui-essentials");
+const gsap = require('../../../vendor').default;
 require('./skin')
-const Rectangle = require('rectangle-node');
 const _default_class = "menu-topic drumee-widget";
 const LetcBox = require('../box');
 class __menu_topic extends LetcBox {
@@ -10,7 +10,6 @@ class __menu_topic extends LetcBox {
     this.onBeforeDestroy = this.onBeforeDestroy.bind(this);
     this._onOpen = this._onOpen.bind(this);
     this._onClosed = this._onClosed.bind(this);
-    this._onStartOpening = this._onStartOpening.bind(this);
     this._closeItems = this._closeItems.bind(this);
   }
 
@@ -228,7 +227,7 @@ class __menu_topic extends LetcBox {
    * 
    * @param {*} child 
    */
-  _prepareItems(child) {
+  async _prepareItems(child) {
     this._animIsActive = false;
     const kids = this.mget(_a.items);
     if (_.isEmpty(kids)) {
@@ -247,7 +246,7 @@ class __menu_topic extends LetcBox {
 
     child.feed(kids);
     this._started = 1;
-
+    this._size = await this._getCoordinates();
     child.onChildAnimCompleted = this.onChildAnimCompleted;
   }
 
@@ -289,142 +288,108 @@ class __menu_topic extends LetcBox {
 
   /**
    * 
+   */
+  async _getCoordinates() {
+    // let { height: items_height, width: items_width } = await getElStablePosition(this.__itemsWrapper.el);
+    // let { height: trigger_height, width: trigger_width } = await getElStablePosition(this.__trigger.el);
+    let items_height = this.__items.$el.height();
+    let trigger_height = this.__trigger.$el.height();
+    let items_width = this.__items.$el.width();
+    let trigger_width = this.__trigger.$el.width();
+    let x = items_height + trigger_height;
+    let y = items_width + trigger_width;
+    return { x, y }
+  }
+
+  /**
+   * 
    * @param {*} e 
    */
-  _onClosed(e) {
+  async _onClosed(e = { duration: 400 }) {
     if (!this.isOpen) return;
     const {
       items
     } = this._branches;
-    gsap.TweenLite.set(items.$el, { y: 0 });
     items.el.dataset.state = _a.closed;
     this.el.dataset.state = 0;
+    this.model.set(_a.state, 0);
     this.isOpen = false;
     this._animIsActive = false;
     let items_height = this.__items.$el.height();
     let trigger_height = this.__trigger.$el.height();
+    const { x, y } = await this._getCoordinates()
     switch (this.mget(_a.direction)) {
       case _a.down:
-        gsap.TweenLite.set(items.$el, { y: -(items_height + trigger_height) });
+        gsap.set(items.el, { y: 0 });
+        this.debug("AAA:308", { translateY: -(items_height + trigger_height) },)
         break;
       case _a.up:
-        gsap.TweenLite.set(this.__items.$el, { y: items_height });
-        gsap.TweenLite.set(this.__itemsWrapper.$el, {
-          y: 0,
-          opacity: 0,
-        });
+        gsap.set(this.__items.el, { y: items_height });
+        gsap.set(this.__itemsWrapper.el, { y: 0, opacity: 0 });
         break;
       case _a.left:
       case _a.right:
-        gsap.TweenLite.set(items.$el, { x: 0 });
-        break;
-    }
-    this.model.set(_a.state, 0);
-    this.__itemsWrapper.el.dataset.state = _a.closed;
-  }
-
-  /**
-   * 
-   * @param {*} e 
-   */
-  _onStartOpening(e) {
-    this.__itemsWrapper.$el.css({ opacity: 0 });
-    this.__items.el.dataset.state = _a.open;
-    this.__itemsWrapper.el.dataset.state = _a.open;
-    this._animIsActive = true;
-    let items_height = this.__itemsWrapper.el.outerHeight();
-    let items_width = this.__itemsWrapper.el.outerWidth();
-    let trigger_height = this.__trigger.$el.height();
-    switch (this.mget(_a.direction)) {
-      case _a.down:
-        gsap.TweenLite.set(this.__items.$el, { y: -(items_height + trigger_height) });
-        gsap.TweenLite.set(this.__itemsWrapper.$el, {
-          y: 0,
-          opacity: 0,
-        });
-        break;
-      case _a.up:
-        gsap.TweenLite.set(this.__items.$el, { y: items_height });
-        gsap.TweenLite.set(this.__itemsWrapper.$el, {
-          y: 0,
-          opacity: 0,
-        });
-        break;
-      case _a.left:
-        gsap.TweenLite.set(this.__items.$el, { x: items_width });
-        break;
-      case _a.right:
-        gsap.TweenLite.set(this.__items.$el, { x: -items_width });
+        gsap.set(items.el, { x: 0 });
         break;
     }
   }
 
   /**
-   * 
-   * @returns 
+   *
+   * @returns
    */
-  _openItems() {
+  async _openItems() {
+    const { x, y } = await this._getCoordinates()
     if (this.isOpen) {
       return;
     }
-    this.isOpen = true;
-    const items = this.__items;
-    items.el.dataset.state = _a.open;
-    this.trigger("change:state", this)
-    this.trigger(_e.open);
     const d = this.mget(_a.duration) || Visitor.timeout(this.mget(_a.duration));
-    let items_height = this.__itemsWrapper.el.outerHeight();
-    let items_width = this.__itemsWrapper.el.outerWidth();
-    // let items_width = this.__items.$el.width();
-    // let items_height = this.__items.$el.height();
-    let trigger_height = this.__trigger.$el.height();
     let opt = {
-      onStart: this._onStartOpening,
       onComplete: this._onOpen,
-      ease: gsap.Expo.easeOut,
+      ease: 'expo.out',
     };
-    let wrapper = this.__itemsWrapper.$el;
+    let wrapper = this.__itemsWrapper;
+    const items = this.__items;
+
+    // Set state and initial positions synchronously before animation starts
+    wrapper.el.dataset.state = _a.open;
+    items.el.dataset.state = _a.open;
+    this.isOpen = true;
+    this._animIsActive = true;
+
+    this.trigger("change:state", this);
+    this.trigger(_e.open);
+
     switch (this.mget(_a.direction)) {
       case _a.down:
-        gsap.TweenLite.to(items.$el, d, {
-          y: 0,
-          ...opt
-        });
+        gsap.set(items.el, { y: -x });
+        gsap.set(wrapper.el, { opacity: 0 });
+        gsap.to(items.el, { y: 0, duration: d, ...opt });
         break;
       case _a.up:
-        gsap.TweenLite.to(items.$el, d, {
-          y: 0,
-          ...opt
-        });
-        gsap.TweenLite.to(this.__itemsWrapper.$el, {
-          y: -(items_height + trigger_height),
-        });
+        gsap.set(items.el, { y: x });
+        gsap.set(wrapper.el, { opacity: 0 });
+        gsap.to(items.el, { y: 0, duration: d, ...opt });
         break;
       case _a.left:
-        gsap.TweenLite.from(items.$el, d, {
-          x: items_width,
-          ...opt
-        });
+        gsap.set(items.el, { x: y });
+        gsap.to(items.el, { x: 0, duration: d, ...opt });
         break;
       case _a.right:
-        gsap.TweenLite.from(items.$el, d, {
-          x: -items_width,
-          ...opt
-        });
+        gsap.set(items.el, { x: -y });
+        gsap.to(items.el, { x: 0, duration: d, ...opt });
         break;
       default:
         this.warn("Unsupported valued", this.mget(_a.direction));
     }
-    gsap.TweenLite.to(wrapper, d, {
-      opacity: 1,
-    });
+    gsap.fromTo(wrapper.el, { opacity: 0 }, { opacity: 1, duration: d });
   }
 
   /**
    * 
    * @param {*} e 
    */
-  _onStartClosing(e) {
+  async _onStartClosing(e) {
     if (!this.isOpen) return;
     this._animIsActive = true;
   }
@@ -450,9 +415,7 @@ class __menu_topic extends LetcBox {
     }
     if (e.target === this.__trigger.el) {
       const r = this.el.getBoundingClientRect();
-      const r1 = new Rectangle(r.x, r.y, r.width, r.height);
-      const r2 = new Rectangle(e.pageX, e.pageY, 4, 4);
-      if (r2.intersection(r1)) {
+      if (e.pageX >= r.x && e.pageX <= r.x + r.width && e.pageY >= r.y && e.pageY <= r.y + r.height) {
         return;
       }
     }
@@ -493,52 +456,44 @@ class __menu_topic extends LetcBox {
    * 
    * @returns 
    */
-  _closeItems() {
+  async _closeItems() {
     if (this.brake) {
       return;
     }
     const items = this.__items;
     const d = this.mget(_a.duration) || Visitor.timeout(this.mget(_a.duration));
-    this.trigger("change:state", this)
-    this.trigger(_e.close);
     let opt = {
       onStart: this._onStartClosing,
       onComplete: this._onClosed,
-      ease: gsap.Expo.easeInOut
+      ease: 'expo.inOut',
     };
-    let items_width = this.__items.$el.width();
-    let items_height = this.__items.$el.height();
+    // let items_width = this.__items.$el.width();
+    // let items_height = this.__items.$el.height();
+    let { height: items_height, width: items_width } = await getElStablePosition(this.__itemsWrapper.el);
+    let { height: trigger_height, width: trigger_width } = await getElStablePosition(this.__trigger.el);
+    let x = items_height + trigger_height;
+    let y = items_width + trigger_width;
     switch (this.mget(_a.direction)) {
       case _a.down:
-        gsap.TweenLite.to(items.$el, d, {
-          y: -items_height,
-          ...opt
-        });
+        gsap.to(items.el, { y: -y, duration: d, ...opt });
         break;
       case _a.up:
-        gsap.TweenLite.to(items.$el, d, {
-          y: items_height,
-          ...opt
-        });
+        gsap.to(items.el, { y: y, duration: d, ...opt });
         break;
       case _a.left:
-        gsap.TweenLite.to(items.$el, d, {
-          x: items_width,
-          ...opt
-        });
+        gsap.to(items.el, { x: x, duration: d, ...opt });
         break;
       case _a.right:
-        gsap.TweenLite.to(items.$el, d, {
-          x: -items_width,
-          ...opt
-        });
+        gsap.to(items.el, { x: -x, duration: d, ...opt });
         break;
       default:
         this.warn("Unsupported valued", this.mget(_a.direction));
     }
-    gsap.TweenLite.to(this.__itemsWrapper.$el, d, {
-      opacity: 0,
-    });
+    // animate({ targets: this.__itemsWrapper.el, opacity: 0, duration: d * 1000 });
+    // setTimeout(() => {
+    //   this.trigger("change:state", this)
+    //   this.trigger(_e.close);
+    // }, d * 1000)
   }
 
 

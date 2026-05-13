@@ -1,7 +1,5 @@
-const {
-  TweenLite
-} = gsap;
-const { fitBoxes } = require("@drumee/ui-essentials")
+const { fitBoxes } = require("@drumee/ui-essentials");
+const gsap = require('../../vendor/gsap').default;
 
 class __image_core extends Marionette.View {
   constructor(...args) {
@@ -140,7 +138,11 @@ class __image_core extends Marionette.View {
     }
     opt.scaleX = opt.scaleX * xform.zoom;
     opt.scaleY = opt.scaleY * xform.zoom;
-    TweenLite.set(this.ui.content, opt);
+    const { transformOrigin, rotation, ...gsapOpt } = opt;
+    const contentEl = this.ui.content[0] || this.ui.content;
+    if (transformOrigin) contentEl.style.transformOrigin = transformOrigin;
+    if (rotation !== undefined) gsapOpt.rotate = rotation;
+    gsap.set(contentEl, gsapOpt);
     return format = this.get(_a.format) || _a.slide;
   }
   // @_shape()
@@ -186,7 +188,10 @@ class __image_core extends Marionette.View {
       transformStyle: "preserve-3d"
     };
     _.merge(opt, deform);
-    return TweenLite.set(this.$el, opt);
+    const { transformPerspective, transformStyle, ...gsapOpt } = opt;
+    if (transformStyle) this.el.style.transformStyle = transformStyle;
+    if (transformPerspective !== undefined) gsapOpt.transformPerspective = transformPerspective;
+    return gsap.set(this.el, gsapOpt);
   }
   //# ========================
   //
