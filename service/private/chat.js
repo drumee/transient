@@ -74,6 +74,16 @@ class privateChat extends Entity {
     const peer_id = this.input.get(Attr.peer_id) || this.input.need(Attr.entity_id);
     const ref_ctime = this.input.use("ref_ctime");
     await this.db.await_proc("p2p_acknowledge", { peer_id, ref_ctime });
+    // Dismiss any P2P mention notifications from this peer
+    try {
+      await this.yp.await_query(
+        "UPDATE yp.contact_activity SET dismissed_at = UNIX_TIMESTAMP() WHERE event = 'p2p_mention' AND target_uid = ? AND uid = ? AND dismissed_at IS NULL",
+        this.uid,
+        peer_id
+      );
+    } catch (e) {
+      this.warn("[chat.acknowledge] p2p_mention dismiss failed:", e && e.message);
+    }
     this.output.data({ peer_id });
   }
 
@@ -422,6 +432,26 @@ class privateChat extends Entity {
         // the peer is the sender, not themselves)
         await RedisStore.sendData(this.payload({ ...hisdata, peer_id: this.uid }), hisDest);
         temp_result.push(hisdata);
+
+        // Log P2P mention to YP so the Mentions tab can surface it
+        if (!isEmpty(input.mention_ids)) {
+          const mentionedIds = isArray(input.mention_ids) ? input.mention_ids : this.parseJSON(input.mention_ids) || [];
+          const msgPreview = typeof message === 'string' ? message.substring(0, 200) : '';
+          for (const mentioned_uid of mentionedIds) {
+            if (mentioned_uid === this.uid) continue;
+            try {
+              await this.yp.await_proc(
+                "contact_log_activity",
+                this.uid,
+                mentioned_uid,
+                "p2p_mention",
+                { message_id: mydata.message_id, peer_id: entity_id, message: msgPreview }
+              );
+            } catch (e) {
+              this.warn("[chat._distributeMessage] p2p_mention log failed:", e && e.message);
+            }
+          }
+        }
       } else {
         let data = await this.yp.await_proc(
           "forward_proc",
