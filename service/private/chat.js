@@ -52,7 +52,12 @@ class privateChat extends Entity {
     let attach = {};
     let data = await this.db.await_proc("channel_get", message_id);
 
-    if (!isEmpty(data.attachment)) {
+    if (isEmpty(data)) {
+      // Fallback: P2P message stored in p2p_channel
+      data = await this.db.await_proc("p2p_get_message", message_id);
+    }
+
+    if (!isEmpty(data) && !isEmpty(data.attachment)) {
       data.attachment = this.parseJSON(data.attachment);
       attach = data.attachment.slice((page - 1) * 5, page * 5);
       if (!isEmpty(attach)) {
