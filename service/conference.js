@@ -186,13 +186,36 @@ class conference extends __yp {
   }
 
   /**
+   * Mark the caller's socket as having left the conference and notify the
+   * remaining peers so their connect/meeting windows can close promptly.
    *
+   * Historical behaviour: `conference_leave` only updated the conference
+   * table; peers waited on Jitsi USER_LEFT (with a 2-second client-side
+   * delay before `room.leave()` actually fired). When that signal raced
+   * with the local goodbye, the other party's `window_connect` got stuck.
+   * Now we explicitly inform the remaining sockets with
+   * `service: "conference.leave"`; the client's push manager routes it to
+   * `currentRoom.goodbye()`.
    */
   async leave() {
     let room_id = this.input.need(Attr.room_id);
     let socket_id = this.input.need(Attr.socket_id);
     let r = await this.yp.await_func('is_socket_bound', socket_id, this.session.sid());
-    await this.yp.await_proc("conference_leave", room_id, socket_id);
+    let remaining = await this.yp.await_proc("conference_leave", room_id, socket_id);
+    if (remaining && !isArray(remaining)) remaining = [remaining];
+    const recipients = (remaining || []).filter(
+      (p) => p && p.socket_id && p.socket_id !== socket_id
+    );
+    if (recipients.length) {
+      try {
+        await this.inform(
+          { recipients, payload: { uid: this.uid, socket_id, room_id } },
+          "conference.leave"
+        );
+      } catch (e) {
+        if (this.warn) this.warn("conference.leave: notify peers failed", e && e.message);
+      }
+    }
     let peers;
     if (!r) {
       peers = await this.pushUserOnlineStatus();
