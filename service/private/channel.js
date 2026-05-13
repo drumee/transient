@@ -787,7 +787,10 @@ class __private_channel extends Entity {
         );
         for (const row of p2pMentions) {
           if (unread_only && row.is_read) continue;
-          row.category = 'chat';
+          // Use contact_invite category so the UI dismisses via contact_activity_dismiss
+          // (sets dismissed_at). The mention_ids field makes the skeleton render it as
+          // a mention ("X mentioned you") despite the contact_invite category.
+          row.category = 'contact_invite';
           all_notifications.push(row);
         }
       } catch (e) {
