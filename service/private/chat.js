@@ -19,6 +19,7 @@ const { Entity, MfsTools } = require("@drumee/server-core");
 const { remove_node, move_node, copy_node } = MfsTools;
 
 const { stringify } = JSON;
+const { mkdirSync } = require("fs");
 const { isEmpty, isArray, map, includes } = require("lodash");
 
 
@@ -199,6 +200,9 @@ class privateChat extends Entity {
             mfs_root: node.des_mfs_root,
           };
           attachment.push({ hub_id: sbox.hub_id, nid: node.des_id });
+          if (node.des_mfs_root) {
+            try { mkdirSync(node.des_mfs_root, { recursive: true }); } catch (_) {}
+          }
           await move_node(src, dest);
           break;
         case "copy":
@@ -558,6 +562,15 @@ class privateChat extends Entity {
               sbox.hub_id,
               "add_member",
               `'${entity_id}', 2, 0`
+            );
+            // Allow anonymous (src:anonymous) media endpoints to serve sbox files.
+            // Files are protected by unguessable UUID nids — same security model as
+            // all chat attachment links. This updates existing sboxes on first use.
+            await this.yp.await_proc(
+              "forward_proc",
+              sbox.hub_id,
+              "permission_grant",
+              `'*', '*', 0, 1, 'system', ''`
             );
           } catch (e) {
             this.warn("chat.post: failed to grant recipient sbox access:", e && e.message);
