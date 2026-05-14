@@ -32,6 +32,8 @@ export const Skeletons = {
     Smart: require("./skeleton/list/smart"),
     Table: require("./skeleton/list/table")
   },
+  
+  Menu: require("./skeleton/menu"),
 
   Menu: require("./skeleton/menu"),
   Messenger: require("./skeleton/messenger"),

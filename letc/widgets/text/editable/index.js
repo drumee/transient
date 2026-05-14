@@ -3,7 +3,7 @@ const _id_tag = 'note-';
 const _default_class = "drumee-widget rich-text";
 const AUTOFOCUS = "autofocus";
 const MULTI_LINE = "multi_line";
-const { Autolinker } = require("autolinker");
+// const { Autolinker } = require("autolinker");
 const { isSelected } = require("../text")
 
 /**
@@ -141,7 +141,7 @@ class __text_editable extends Marionette.View {
 
     if (e.clipboardData.types.indexOf('text/plain') != -1) {
       let text = this.getText();
-      if (this.mget('autolink')) text = Autolinker.link(text);
+      // if (this.mget('autolink')) text = Autolinker.link(text);
       this.triggerHandlers({
         service: `paste-text`,
         text,
@@ -804,9 +804,9 @@ class __text_editable extends Marionette.View {
    */
   setHTML(html) {
     let c = html || this.mget('html');
-    if (this.mget('autolink')) {
-      c = Autolinker.link(c);
-    }
+    // if (this.mget('autolink')) {
+    //   c = Autolinker.link(c);
+    // }
     let tags = this.mget(_a.tags) || _K.allowed_tag;
     const dompurify = require('dompurify');
     this.content.innerHTML = `${dompurify.sanitize(c, { ADD_ATTR: ['target'], ALLOWED_TAGS: tags })}`;

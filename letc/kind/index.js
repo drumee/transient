@@ -94,7 +94,7 @@ class __kind extends Backbone.Model {
           for (let kind in item) {
             Addons.register(kind, item[kind])
           }
-        } else if (_.iaArray(item)) {
+        } else if (_.isArray(item)) {
           Addons.register(item[0], item[1])
         }
       }
