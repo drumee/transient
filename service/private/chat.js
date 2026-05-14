@@ -852,6 +852,7 @@ class privateChat extends Entity {
     let res = {};
     let data = {};
     let temp_result = [];
+    this.debug("chat.delete called", { option, messages, peer_id: this.input.use(Attr.peer_id) });
     if (option != "me" && option != "all") {
       res.status = "INVALID_OPTION";
       return this.output.data(res);
