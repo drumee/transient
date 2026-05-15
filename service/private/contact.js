@@ -1290,7 +1290,8 @@ class __private_contact extends Contact {
         if ((after.status != before.status) && (after.status == 'invitation' || after.status == 'received' || after.status == 'informed')) {
           data = await this.yp.await_proc('forward_proc', drumate.id, 'contact_notification_by_entity', `'${this.uid}'`)
           let sockets = await this.yp.await_proc('user_sockets', drumate.id);
-          await RedisStore.sendData(this.payload(data), sockets);
+          const service = this.input.get(Attr.service);
+          await RedisStore.sendData(this.payload(data, { service }), sockets);
         }
       }
 
