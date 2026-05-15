@@ -1,8 +1,8 @@
 # Contact Invite — Pending Tab Visibility Fix
 
 **Date:** 2026-05-15
-**Status:** Approved
-**Repos affected:** `schemas`, `server-team`
+**Status:** Approved (revised after DB-level diagnosis)
+**Repos affected:** `server-team` only
 
 ## Problem
 
@@ -19,41 +19,65 @@ after User B reopens the Contacts panel or clicks the Pending tab manually.
    only invitations Tran had *sent*; Snake's incoming request was absent.
 3. Called `contact.invite_get` directly (POST) → `data: []` (empty).
 4. Called `activity.list` directly → **returned Snake's row** with
-   `status: "received"`, `drumate_id: "181ffe62181ffe67"`,
-   `email: "vudangnt@gmail.com"`.
-
-The contact row IS created on the receiver's database with `status='received'`.
-The activity feed's `notification_center_next` procedure returns it. The Pending
-tab's `contact_notification_get` procedure does not.
+   `status: "received"`.
 
 ## Root cause
 
-Two independent bugs:
+Two independent bugs, both in `server-team`.
 
-### Bug 1 — `contact_notification_get` returns nothing
+### Bug 1 — `invite_get` discards a single-row result
 
-`contact.invite_get` ([server-team/service/private/contact.js:1563](../../service/private/contact.js))
-calls the `contact_notification_get` stored procedure. That procedure uses:
+The contact row IS created on the receiver's database. Verified directly:
 
-```sql
-FROM contact ci
-INNER JOIN yp.drumate d ON d.id = ci.entity
-WHERE (ci.status="received") OR (ci.status="informed") OR (ci.status="invitation");
+```
+SELECT … FROM `0_52d367d252d367d3`.contact WHERE entity = '181ffe62181ffe67';
+-- sys_id 27, entity 181ffe62181ffe67, status 'received', dismissed_at … , ctime …
 ```
 
-`notification_center_next` (which provably returns the same row for the
-activity feed) uses the equivalent join plus an `ci.dismissed_at IS NULL`
-filter. The Pending tab procedure returns empty in production despite the row
-existing. The `INNER JOIN` on `d.id = ci.entity` is the fragile point: if a
-row's `entity` column holds the inviter's **email** rather than their
-drumate id (which happens when a prior "memory"-status row is upgraded in
-`contact_invite_post`), the join silently drops the row.
+Calling the procedure directly also returns the row:
+
+```
+CALL `0_52d367d252d367d3`.contact_notification_get();
+-- drumate_id 181ffe62181ffe67, email vudangnt@gmail.com, status received, …
+```
+
+So the `contact_notification_get` stored procedure is **correct**. The bug is
+in the server endpoint that wraps it.
+
+`invite_get` ([service/private/contact.js:1563](../../service/private/contact.js)):
+
+```js
+const rows = await this.db.await_proc('contact_notification_get');
+const list = Array.isArray(rows) ? rows : [];
+if (list.length === 0) { this.output.list(list); return; }
+```
+
+`await_proc` runs the call and post-processes the result with the `get_rows()`
+`Array.prototype` helper in
+`@drumee/server-essentials/lib/addons/array.js`. That helper **recursively
+collapses single-element result sets**: when a procedure returns exactly one
+row, `get_rows()` returns the bare **row object**, not a one-element array.
+
+`invite_get` then does `Array.isArray(rows) ? rows : []`. Because `rows` is an
+object, `Array.isArray` is false → `list = []` → the endpoint reports an empty
+Pending tab.
+
+- Receiver has **exactly 1** pending invitation → `rows` is an object → bug.
+- Receiver has **2+** pending invitations → `rows` is an array → works.
+
+This is why a receiver with a single incoming request sees nothing while one
+with several sees them all. `activity.list` is unaffected because it normalises
+its rollup result with `toArray(...)`; and `show_contact` is unaffected because
+it passes the raw result straight to `this.output.list()`, which already wraps
+non-arrays (`if (!isArray(data)) data = [data]`). `invite_get` is the only
+contact endpoint that applies its own `Array.isArray` guard *before* reaching
+`output.list()`.
 
 ### Bug 2 — WS broadcast to the receiver omits the service name
 
 After the contact row is created, the server broadcasts a WebSocket
 notification to the receiver's sockets at
-[server-team/service/private/contact.js:1293](../../service/private/contact.js):
+[service/private/contact.js:1293](../../service/private/contact.js):
 
 ```js
 await RedisStore.sendData(this.payload(data), sockets);
@@ -64,66 +88,50 @@ address-book widget (`onWsMessage`) only refreshes the Pending list when the
 incoming message's `service` equals `SERVICE.contact.invite`. Without an
 explicit service name the message is ignored, so the Pending tab does not
 auto-refresh. The correct pattern is already used elsewhere in the same file —
-e.g. `invite_accept` at line 1532 passes `{ service: this.input.get(Attr.service) }`.
+e.g. `invite_accept` at line 1532 passes
+`{ service: this.input.get(Attr.service) }`.
 
 ## Fix
 
-### Fix 1 — `schemas/drumate/procedures/contact/contact_notification_get.sql`
+Both changes are in `server-team/service/private/contact.js`. No schema change.
 
-Rewrite the procedure to be resilient to email-vs-id `entity` values and to
-align dismissal semantics with the activity feed:
+### Fix 1 — `invite_get` (line ~1565)
 
-```sql
-DELIMITER $
+Use the existing `toArray` helper instead of the `Array.isArray` guard:
 
-DROP PROCEDURE IF EXISTS `contact_notification_get`$
-CREATE PROCEDURE `contact_notification_get`()
-BEGIN
-  SELECT
-    COALESCE(d.id, dm.id) AS drumate_id,
-    COALESCE(d.email, dm.email, ci.entity) AS email,
-    IFNULL(ci.firstname, '') AS firstname,
-    IFNULL(ci.lastname, '') AS lastname,
-    ci.message AS message,
-    ci.status AS status,
-    CASE WHEN JSON_VALUE(ci.metadata, '$.is_auto') = 1
-         THEN COALESCE(d.fullname, dm.fullname)
-         ELSE RTRIM(LTRIM(CONCAT(IFNULL(ci.firstname, ''), ' ', IFNULL(ci.lastname, ''))))
-    END AS fullname
-  FROM contact ci
-  LEFT JOIN yp.drumate d  ON d.id = ci.entity
-  LEFT JOIN yp.drumate dm ON dm.email = ci.entity
-  WHERE ci.status IN ('received', 'informed', 'invitation')
-    AND ci.dismissed_at IS NULL
-    AND COALESCE(d.id, dm.id) IS NOT NULL;
-END$
+```js
+// before
+const list = Array.isArray(rows) ? rows : [];
 
-DELIMITER ;
+// after
+const list = toArray(rows);
 ```
 
-Changes from the existing procedure:
-- `INNER JOIN yp.drumate d ON d.id = ci.entity` becomes two `LEFT JOIN`s — one
-  on drumate id, one on email — so a row whose `entity` is an email still
-  surfaces. `COALESCE(d.id, dm.id)` picks whichever join matched.
-- `WHERE … COALESCE(d.id, dm.id) IS NOT NULL` keeps the "must resolve to a real
-  drumate" guarantee the old `INNER JOIN` provided.
-- Adds `ci.dismissed_at IS NULL` so a request the receiver already dismissed
-  does not reappear — matches `notification_center.sql:41`.
-- `metadata` is explicitly qualified as `ci.metadata`.
-- The `DROP PROCEDURE … CREATE PROCEDURE` redeploy clears any stale cached plan.
+`toArray` is already imported at the top of the file
+(`const { toArray } = utils;`). Its behaviour:
+- single object → `[object]`
+- array → unchanged
+- empty / null / undefined → `[]`
 
-### Fix 2 — `server-team/service/private/contact.js:1293`
+This makes `invite_get` correct for the 1-row, N-row, and empty cases alike.
+
+### Fix 2 — WS broadcast (line 1293)
 
 Attach the request's service name to the broadcast payload:
 
 ```js
+// before
+await RedisStore.sendData(this.payload(data), sockets);
+
+// after
 const service = this.input.get(Attr.service);   // "contact.invite"
 await RedisStore.sendData(this.payload(data, { service }), sockets);
 ```
 
 `this.input.get(Attr.service)` resolves to `contact.invite`, which is exactly
 the value the receiver's `onWsMessage` switch matches against
-(`SERVICE.contact.invite`).
+(`SERVICE.contact.invite`). This mirrors the existing pattern at
+`contact.js:1532`.
 
 ## Data flow after the fix
 
@@ -132,25 +140,28 @@ the value the receiver's `onWsMessage` switch matches against
 2. Server detects `after.status === 'received'`, broadcasts to the receiver's
    sockets **with `service: 'contact.invite'`**.
 3. Receiver's address-book `onWsMessage` matches `SERVICE.contact.invite` →
-   calls `_loadInvitations()` → `contact.invite_get` → `contact_notification_get`
-   now returns the row → Pending tab updates live.
+   calls `_loadInvitations()` → `contact.invite_get` → `invite_get` now wraps
+   the single-row result with `toArray` → Pending tab updates live.
 4. If the WS is missed (cold cache, disconnected client), the receiver clicking
    the Pending tab also calls `_loadInvitations()` and now sees the row.
 
 ## Testing
 
-Manual verification on drumee.in after both fixes deploy:
+Manual verification on drumee.in after deploy:
 
-1. Sign in as Snake, send an invite to Tran's email.
-2. Sign in as Tran in a separate browser context → open Contacts → Pending tab
-   shows Snake's request.
-3. Repeat with Tran's Contacts panel already open during step 1 — the Pending
-   count updates without a manual refresh.
+1. Sign in as Snake, send an invite to a receiver who has **zero** other
+   pending invitations (this is the 1-row case that exposed the bug).
+2. Sign in as the receiver in a separate browser context → open Contacts →
+   Pending tab shows Snake's request.
+3. Repeat with the receiver's Contacts panel already open during step 1 — the
+   Pending count updates without a manual refresh (exercises Fix 2).
 
 ## Out of scope
 
 - No frontend (`ui-team`) changes. The address-book widget already re-fetches
   on tab click, panel mount, and the `SERVICE.contact.invite` WS event.
-- No production data backfill. Receivers who already have rows the old
-  procedure ignored will see those requests surface once the new procedure
-  deploys — this is intended.
+- No schema (`schemas`) changes. `contact_notification_get.sql` is correct.
+- The `get_rows()` single-row-collapsing behaviour in `@drumee/server-essentials`
+  is the deeper cause and affects any caller that does not normalise its result.
+  Auditing every such caller is out of scope here; `toArray` at the `invite_get`
+  call site is the targeted fix. A broader audit can be a follow-up.
