@@ -28,26 +28,44 @@ build_dir=$(get_build_dir ${base}/build/$version)
 
 REPO_BASE=git@github.com:drumee
 
-bundle $base "schemas" "revamp" "" ""
+DEPTH=2
+manifest=""
+
+for arg in "$@"; do
+  case "$arg" in
+    --manifest=*) manifest="${arg#--manifest=}" ;;
+    --manifest)   manifest="auto" ;;
+    [0-9]*)       DEPTH="$arg" ;;
+  esac
+done
+
+if [ -z "$manifest" ]; then
+  echo "No --manifest provided, skipping patch build"
+  exit 0
+fi
+
+bundle $base "schemas" "preview" "" ""
 schemas_src=${base}/src/schemas
 cd $schemas_src
 npm i @drumee/server-essentials
-tmpfile=/tmp/drumee.build.$$
-echo $tmpfile
-DEPTH=$1
-if [ "$DEPTH" = "" ]; then
-  DEPTH=2
-fi
 
-git log -$DEPTH | egrep "^commit" | awk '{print $2}' > $tmpfile
-hash1=$(head -1 $tmpfile)
-hash2=$(tail -1 $tmpfile)
-echo "DEPTH" "$hash1" "$hash2"
-rm -f $tmpfile
-
-if [ "$hash1" != "" -a "$hash2" != "" ]; then
-  echo Building manifest
-  bin/make-manifest $hash1 $hash2
+if [ "$manifest" = "auto" ]; then
+  tmpfile=/tmp/drumee.build.$$
+  echo $tmpfile
+  git log -$DEPTH | egrep "^commit" | awk '{print $2}' > $tmpfile
+  hash1=$(head -1 $tmpfile)
+  hash2=$(tail -1 $tmpfile)
+  echo "DEPTH" "$hash1" "$hash2"
+  rm -f $tmpfile
+  if [ "$hash1" != "" -a "$hash2" != "" ]; then
+    echo Building manifest
+    bin/make-manifest $hash1 $hash2
+  fi
+else
+  if [ ! -f "$manifest" ]; then
+    echo "Manifest file not found: $manifest"
+  fi
+  cp "$manifest" $schemas_src/patches/manifest.txt
 fi
 
 # bundle_schmas_patches $base $src $manifest "var/lib/drumee/patches/schemas"
@@ -61,7 +79,7 @@ if [ -f $schemas_src/patches/manifest.txt ]; then
   cd $schemas_dir
   npm i
 else
-  echo No chage to build patch
+  echo No change to build patch
   exit 1
 fi
 
