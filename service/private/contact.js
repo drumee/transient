@@ -1562,7 +1562,7 @@ class __private_contact extends Contact {
    */
   async invite_get() {
     const rows = await this.db.await_proc('contact_notification_get');
-    const list = Array.isArray(rows) ? rows : [];
+    const list = toArray(rows);
     if (list.length === 0) {
       this.output.list(list);
       return;
