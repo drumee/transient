@@ -1584,7 +1584,7 @@ class __private_contact extends Contact {
         " ORDER BY a.timestamp DESC",
         this.uid, ...inviterIds
       );
-      for (const row of ids || []) {
+      for (const row of toArray(ids)) {
         if (!activityMap[row.uid]) activityMap[row.uid] = row.id;
       }
     }
