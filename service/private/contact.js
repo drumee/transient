@@ -567,16 +567,22 @@ class __private_contact extends Contact {
    */
   async delete_contact() {
     const contact_id = this.input.need(Attr.contact_id);
-    let res = {};
+    const service = this.input.get(Attr.service);
     let mycontact = await this.db.await_proc('my_contact_get_next', contact_id, null)
     mycontact.contact_id = mycontact.id
-    res = await this.db.await_proc('my_contact_delete', contact_id);
-    if (!isEmpty(res)) {
-      let sockets = await this.yp.await_proc('user_sockets', res.his_id);
-      await RedisStore.sendData(this.payload(res), sockets);
+    const res = await this.db.await_proc('my_contact_delete', contact_id);
+    // Notify the other party so their Contacts / Pending list refreshes —
+    // my_contact_delete now hard-deletes the relationship on both sides.
+    // `his_id` comes from the proc; fall back to the contact row in case the
+    // single-row proc result collapsed away. The WS message must carry an
+    // explicit `service` or the receiver's onWsMessage switch ignores it.
+    const his_id = (res && res.his_id) || mycontact.uid || mycontact.entity;
+    if (his_id) {
+      const peerSockets = await this.yp.await_proc('user_sockets', his_id);
+      await RedisStore.sendData(this.payload(mycontact, { service }), peerSockets);
     }
-    let sockets = await this.yp.await_proc('user_sockets', this.uid);
-    await RedisStore.sendData(this.payload(mycontact), sockets);
+    const ownSockets = await this.yp.await_proc('user_sockets', this.uid);
+    await RedisStore.sendData(this.payload(mycontact, { service }), ownSockets);
     this.output.data(res);
   }
 
