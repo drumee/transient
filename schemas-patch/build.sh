@@ -73,7 +73,20 @@ rsync -arv --exclude ".git:.npmrc" ${base}/var $build_dir/files/
 if [ -f $schemas_src/patches/manifest.txt ]; then
   schemas_dir=$build_dir/files/var/lib/drumee/patches/schemas
   mkdir -p $schemas_dir
-  rsync -arv $schemas_src/patches $schemas_dir/
+  filtered_manifest=$(mktemp)
+  while IFS= read -r file; do
+    file="${file#"${file%%[! ]*}"}"
+    [ -z "$file" ] && continue
+    if [ -f "$schemas_src/$file" ]; then
+      echo "$file" >> "$filtered_manifest"
+    else
+      echo "MISSING: $file"
+    fi
+  done < "$schemas_src/patches/manifest.txt"
+  rsync -arv --files-from="$filtered_manifest" "$schemas_src/" "$schemas_dir/"
+  mkdir -p "$schemas_dir/patches"
+  cp "$filtered_manifest" "$schemas_dir/patches/manifest.txt"
+  rm -f "$filtered_manifest"
   rsync -arvp $schemas_src/bin $schemas_dir/
   cp $schemas_src/package.json $schemas_dir/
   cd $schemas_dir

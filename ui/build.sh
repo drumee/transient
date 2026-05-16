@@ -70,17 +70,17 @@ packages=""
 
 export UI_SRC_PATH=${base}/src/ui-team
 export REPO_BASE=git@github.com:drumee
-bundle $base "ui-team" "preview"
+bundle $base "ui-team" "optimization"
+${base}/update-changelog.sh 
 
 echo $UI_SRC_PATH
 export PATH=$UI_SRC_PATH/node_modules/.bin:$PATH
-jitsi_dir=$UI_SRC_PATH/src/vendor/lib-jitsi-meet
 
-cp $jitsi_dir/dist/umd/* $UI_SRC_PATH/src/vendor/lib/jitsi
-echo cp $jitsi_dir/dist/umd/* $UI_SRC_PATH/src/vendor/lib/jitsi
 cd $UI_SRC_PATH
 npx update-browserslist-db@latest
-node webpack/seeds/index.js --from=$UI_SRC_PATH
+npm i
+npm audit fix
+
 config=webpack.js
 echo "BUILDING FROM CONFIG $config" 
 export BUILD_TARGET=app

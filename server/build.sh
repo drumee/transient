@@ -27,7 +27,7 @@ legacy)
   bundle $base "server" "public" "*" $server_target
   ;;
 pod)
-  bundle $base "server-team" "previev" "*" $server_target
+  bundle $base "server-team" "optimization" "*" $server_target
   ;;
 evaluation)
   bundle $base "server" "dist/evaluation" "*" $server_target
@@ -54,6 +54,7 @@ npm i @drumee/server-core
 export REPO_BASE=git@github.com:drumee
 patch_des=/var/lib/drumee/patch/schemas
 bundle $base "schemas-utils" "main" "*" $patch_des
+${base}/update-changelog.sh 
 
 rsync -arp ${server_base}/node_modules $build_dir/files/$server_target
 rsync -arp ${server_base}/offline $build_dir/files/$server_target
