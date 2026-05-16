@@ -1219,13 +1219,20 @@ class __private_contact extends Contact {
     }
 
     try {
-      let a = email.split('@');
-      a[1] = a[0]
-      if (a[0].indexOf('.') !== -1) {
-        a = a[0].split('.');
+      // Only synthesize names from email when the caller didn't supply them.
+      // Without this guard, a local-part with no dot ends up duplicated into
+      // both firstname and lastname.
+      if (isEmpty(firstname) && isEmpty(lastname)) {
+        const localPart = (email.split('@')[0] || '').trim();
+        if (localPart.indexOf('.') !== -1) {
+          const parts = localPart.split('.');
+          firstname = parts[0];
+          lastname = parts.slice(1).join(' ');
+        } else {
+          firstname = localPart;
+          lastname = null;
+        }
       }
-      firstname = a[0]
-      lastname = a[1]
 
       drumate = await this.yp.await_proc('drumate_exists', email);
       if (isArray(drumate)) drumate = drumate[0];
@@ -1535,29 +1542,34 @@ class __private_contact extends Contact {
     await this.handshake(msg_from, peer.id, this.uid)
     await this.handshake(msg_to, this.uid, peer.id)
 
-    let sockets = await this.yp.await_proc('user_sockets', peer.id);
-    await RedisStore.sendData(this.payload(data, { service: this.input.get(Attr.service) }), sockets);
+    // Flip the inviter's contact record to 'informed' BEFORE pushing the
+    // WS — notification_center_next still includes 'informed' rows, so
+    // pushing first would leave the pending rollup on the inviter's panel.
+    try {
+      await this.yp.await_proc(`${peer.db_name}.contact_invite_informed`, this.uid);
+      await this.db.await_proc(`contact_invite_informed`, peer.id);
+    } catch (error) {
+      this.warn('[CONTACT] auto-informed failed:', error.message);
+    }
 
-    // Log invite_accepted activity
     try {
       await this.yp.await_proc(
         'contact_log_activity',
-        this.uid,              // Who accepted 
-        peer.id,            // Who will see this notification
+        this.uid,
+        peer.id,
         'invite_accepted',
         {
           email: peer.email,
           accepter_fullname: this.user.get('fullname')
         }
       );
-      /** Make the peer automatically informed  */
-      await this.yp.await_proc(`${peer.db_name}.contact_invite_informed`, this.uid);
-      await this.db.await_proc(`contact_invite_informed`, peer.id);
     } catch (error) {
       this.warn('[CONTACT] Failed to log accept activity:', error.message);
     }
 
-    this.output.data(res);
+    let sockets = await this.yp.await_proc('user_sockets', peer.id);
+    await RedisStore.sendData(this.payload(data, { service: this.input.get(Attr.service) }), sockets);
+
     this.output.data(res);
   }
 
