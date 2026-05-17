@@ -561,7 +561,7 @@ class privateChat extends Entity {
               "forward_proc",
               sbox.hub_id,
               "add_member",
-              `'${entity_id}', 2, 0`
+              `'${entity_id}', 3, 0`
             );
             // Allow anonymous (src:anonymous) media endpoints to serve sbox files.
             // Files are protected by unguessable UUID nids — same security model as
