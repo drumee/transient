@@ -664,23 +664,21 @@ class __private_hub extends Hub {
         const isDrumate = drumate && drumate.id;
 
         if (isShareLink) {
-          await this._inviteViaToken(email, hubId, privilege, expiryTs, lang, username, hubname);
+          await this._inviteViaToken(email, hubId, privilege, expiryTs, username, hubname);
           results.push({ email, branch: "A", status: "ok" });
         } else if (isDrumate) {
           await this._grantMembership(drumate.id, privilege, 0, message, mfs_home, hubname, username);
-          await this._sendInviteEmail("hub-invite-added", email, lang, {
-            inviter_name: username, workspace_name: hubname,
-            link: `${homepath}#/desk/@${hubId}`,
-          });
+          await this._sendInviteEmail("hub-invite-added", email,
+            `You've been added to ${hubname}`,
+            { inviter_name: username, workspace_name: hubname, link: `${homepath}#/desk/@${hubId}` });
           results.push({ email, branch: "B", status: "ok" });
         } else {
           await this.yp.await_proc(
             "yp_add_pending_invitation", hubId, 0, privilege, email
           );
-          await this._sendInviteEmail("hub-invite-signup", email, lang, {
-            inviter_name: username, workspace_name: hubname,
-            link: `${homepath}#/welcome/signup?email=${encodeURIComponent(email)}`,
-          });
+          await this._sendInviteEmail("hub-invite-signup", email,
+            `${username} invited you to join ${hubname}`,
+            { inviter_name: username, workspace_name: hubname, link: `${homepath}#/welcome/signup?email=${encodeURIComponent(email)}` });
           results.push({ email, branch: "C", status: "ok" });
         }
       } catch (err) {
@@ -694,7 +692,7 @@ class __private_hub extends Hub {
   /**
    * Nhánh A: tạo token mời share-link + gửi email kèm link.
    */
-  async _inviteViaToken(email, hubId, privilege, expiryTs, lang, username, hubname) {
+  async _inviteViaToken(email, hubId, privilege, expiryTs, username, hubname) {
     const { randomBytes } = require("crypto");
     const secret = randomBytes(24).toString("hex");
     const method = `hub_invite:${hubId}`;
@@ -704,31 +702,19 @@ class __private_hub extends Hub {
     );
     const homepath = this.input.homepath();
     const link = `${homepath}#/welcome/signup?invite=${encodeURIComponent(secret)}`;
-    await this._sendInviteEmail("hub-invite-link", email, lang, {
-      inviter_name: username, workspace_name: hubname, link, expiry_days: 7,
-    });
+    await this._sendInviteEmail("hub-invite-link", email,
+      `${username} invited you to ${hubname}`,
+      { inviter_name: username, workspace_name: hubname, link, expiry_days: 7 });
   }
 
   /**
-   * Gửi 1 email mời theo template butler/<tpl>.
+   * Gửi 1 email mời theo template app-local service/private/templates/butler/<tpl>.html
    */
-  async _sendInviteEmail(tpl, recipient, lang, data) {
-    const subjectKey = {
-      "hub-invite-link":   "_hub_invite_link_subject",
-      "hub-invite-added":  "_hub_invite_added_subject",
-      "hub-invite-signup": "_hub_invite_signup_subject",
-    }[tpl];
-    const subject = Cache.message(subjectKey, lang)
-      .format(data.inviter_name, data.workspace_name);
-    const msg = new Messenger({
-      template: `butler/${tpl}`,
-      subject,
-      recipient,
-      lex: Cache.lex(lang),
-      data,
-      handler: this.exception.email,
-    });
-    return msg.send();
+  async _sendInviteEmail(tpl, recipient, subject, data) {
+    const tplPath = resolve(__dirname, "templates", "butler", `${tpl}.html`);
+    const msg = new Messenger({ subject, recipient, handler: this.exception.email });
+    const html = msg.renderFrom(tplPath, data);
+    await msg.send({ html });
   }
 
   /**
