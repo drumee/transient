@@ -32,6 +32,7 @@ const { MfsTools } = require("@drumee/server-core");
 const { remove_dir } = MfsTools;
 const { toArray } = utils;
 const { stringify } = JSON;
+const { writeAudit } = require("./_audit");
 
 const Hub = require("../hub");
 class __private_hub extends Hub {
@@ -203,6 +204,7 @@ class __private_hub extends Hub {
   async update_name() {
     const hub_id = this.hub.get(Attr.id);
     const name = this.input.need(Attr.name);
+    const old_name = this.hub.get(Attr.name) || this.hub.get('hubname');
     let sql = "SELECT * FROM hub WHERE name=?"
     let { id } = await this.yp.await_query(sql, name);
     if (id) {
@@ -219,6 +221,16 @@ class __private_hub extends Hub {
     node.name = hub.hubname;
     node.fieldName = 'hubname';
     await RedisStore.sendData(this.payload(node), recipients);
+
+    await writeAudit(this, {
+      db: this.hub.get(Attr.db_name),
+      uid: this.uid,
+      action: 'changed',
+      category: 'title',
+      entity_id: hub_id,
+      log: `Workspace renamed from '${old_name || hub_id}' to '${name}'`,
+    });
+
     this.output.data(node);
   }
 
@@ -237,19 +249,35 @@ class __private_hub extends Hub {
   update_settings() {
     const vars = this.input.need(Attr.vars);
     const hub_id = this.hub.get(Attr.id);
+    const hub_db = this.hub.get(Attr.db_name);
+    const hub_name = this.hub.get(Attr.name) || hub_id;
+    const self = this;
     async function f() {
       let v;
+      const changed = [];
       for (let k in vars) {
         v = vars[k];
-        await this.yp.await_proc("hub_change_settings", hub_id, k, v);
+        await self.yp.await_proc("hub_change_settings", hub_id, k, v);
+        changed.push(k);
+      }
+      if (changed.length) {
+        await writeAudit(self, {
+          db: hub_db,
+          uid: self.uid,
+          action: 'change_policy',
+          category: 'admin',
+          notify_to: 'admin',
+          entity_id: hub_id,
+          log: `Workspace '${hub_name}' settings updated: ${changed.join(', ')}`,
+        });
       }
       return null;
     }
     f()
       .then(function () {
-        this.yp.call_proc("get_settings", hub_id, this.output.data);
+        self.yp.call_proc("get_settings", hub_id, self.output.data);
       })
-      .catch(this.fallback);
+      .catch(self.fallback);
   }
 
   /**
@@ -941,6 +969,18 @@ class __private_hub extends Hub {
     let old_node = this.granted_node(); //await this.yp.await_proc(`${db_name}.mfs_access_node`, this.uid, hub_id);
     let outout = { ...old_node, uid: this.uid, nid:hub_id, id: hub_id, hub_id }
 
+    // Write to deleter's drumate — hub DB is about to be dropped.
+    const hub_name = data.name || data.filename || hub_id;
+    await writeAudit(this, {
+      db: this.user.get(Attr.db_name),
+      uid: this.uid,
+      action: 'deleted',
+      category: 'admin',
+      notify_to: 'admin',
+      entity_id: hub_id,
+      log: `Workspace '${hub_name}' deleted`,
+    });
+
     let sockets = await this.yp.await_proc("entity_sockets", hub_id);
     await RedisStore.sendData(this.payload(outout), sockets);
 
@@ -1350,6 +1390,8 @@ class __private_hub extends Hub {
 
     let service = "media.remove";
     let hub_id = this.hub.get(Attr.id);
+    const hub_db = this.hub.get(Attr.db_name);
+    const hub_name = this.hub.get(Attr.name) || hub_id;
     for (let uid of members) {
       let { db_name } = await this.yp.await_proc("get_entity", uid);
       await this.yp.await_proc(`${db_name}.leave_hub`, hub_id);
@@ -1358,6 +1400,15 @@ class __private_hub extends Hub {
       let sockets = await this.yp.await_proc("user_sockets", uid);
       let payload = this.payload(node, { service });
       await RedisStore.sendData(payload, sockets);
+      await writeAudit(this, {
+        db: hub_db,
+        uid: this.uid,
+        action: 'removed',
+        category: 'member',
+        notify_to: 'admin',
+        entity_id: uid,
+        log: `Member removed from workspace '${hub_name}'`,
+      });
     }
     users = await this.db.await_proc(
       "hub_get_members_by_type",
@@ -1446,6 +1497,15 @@ class __private_hub extends Hub {
       "system",
       `Granted by ${this.user.get(Attr.email)}`
     )
+    await writeAudit(this, {
+      db: this.hub.get(Attr.db_name),
+      uid: this.uid,
+      action: 'grant_access',
+      category: 'permission',
+      notify_to: 'admin',
+      entity_id: uid,
+      log: `Member privilege set to ${privilege} in workspace '${this.hub.get(Attr.name) || this.hub.get(Attr.id)}'`,
+    });
     let users = await this.db.await_proc(
       "hub_get_members_by_type",
       this.uid,
