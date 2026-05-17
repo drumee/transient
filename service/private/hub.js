@@ -647,6 +647,7 @@ class __private_hub extends Hub {
     const username = this.user.get("fullname");
     const hubId = this.hub.get(Attr.id);
     const hubname = this.hub.get(Attr.name);
+    const homepath = this.input.homepath();
     const area = this.hub.get(Attr.area);
     const isShareLink = (area === "share");
     const EXPIRY_DAYS = 7;
@@ -669,6 +670,7 @@ class __private_hub extends Hub {
           await this._grantMembership(drumate.id, privilege, 0, message, mfs_home, hubname, username);
           await this._sendInviteEmail("hub-invite-added", email, lang, {
             inviter_name: username, workspace_name: hubname,
+            link: `${homepath}#/desk/@${hubId}`,
           });
           results.push({ email, branch: "B", status: "ok" });
         } else {
@@ -677,6 +679,7 @@ class __private_hub extends Hub {
           );
           await this._sendInviteEmail("hub-invite-signup", email, lang, {
             inviter_name: username, workspace_name: hubname,
+            link: `${homepath}#/welcome/signup?email=${encodeURIComponent(email)}`,
           });
           results.push({ email, branch: "C", status: "ok" });
         }
