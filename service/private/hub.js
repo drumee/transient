@@ -523,47 +523,8 @@ class __private_hub extends Hub {
       }
     }
     for (let uid of members) {
-      let r = await this.db.await_proc("add_member", uid, privilege, expiry);
-      if (!r || !r.db_name) continue;
-      rows.push(r);
-      await this.db.await_proc(
-        "permission_grant",
-        "*",
-        uid,
-        expiry,
-        privilege,
-        "system",
-        message
-      );
-      await this.db.await_proc(
-        "permission_grant",
-        mfs_home.chat_upload_id,
-        uid,
-        0,
-        4,
-        "no_traversal",
-        "chat upload permission"
-      );
-      try {
-        await this.yp.await_proc(
-          "contact_log_activity",
-          this.uid,
-          uid,
-          "hub_invite_received",
-          {
-            hub_id: this.hub.get(Attr.id),
-            hub_name: hubname,
-            message: message,
-            from_fullname: username,
-            privilege: privilege
-          }
-        );
-      } catch (err) {
-        this.warn(
-          "[hub] add_contributors: log activity failed for", uid,
-          err && err.message
-        );
-      }
+      const r = await this._grantMembership(uid, privilege, expiry, message, mfs_home, hubname, username);
+      if (r) rows.push(r);
     }
     if (!isEmpty(rows)) {
       for (let recipient of toArray(rows)) {
@@ -629,6 +590,48 @@ class __private_hub extends Hub {
       1
     );
     this.output.data(users);
+  }
+
+  /**
+   * Cấp membership cho một drumate đã có tài khoản vào hub hiện tại.
+   * Dùng chung bởi add_contributors và invite (nhánh B).
+   * @param {string} uid         drumate id
+   * @param {number} privilege   bitmask quyền
+   * @param {number} expiry      số giờ hết hạn (0 = vĩnh viễn)
+   * @param {string} message
+   * @param {object} mfs_home    kết quả mfs_home (có chat_upload_id)
+   * @param {string} hub_name    tên hub (để ghi log activity)
+   * @param {string} from_fullname  tên người mời (để ghi log activity)
+   * @returns {object|null} row từ add_member
+   */
+  async _grantMembership(uid, privilege, expiry, message, mfs_home, hub_name, from_fullname) {
+    const r = await this.db.await_proc("add_member", uid, privilege, expiry);
+    if (!r || !r.db_name) return null;
+    await this.db.await_proc(
+      "permission_grant", "*", uid, expiry, privilege, "system", message
+    );
+    await this.db.await_proc(
+      "permission_grant", mfs_home.chat_upload_id, uid, 0, 4,
+      "no_traversal", "chat upload permission"
+    );
+    try {
+      await this.yp.await_proc(
+        "contact_log_activity", this.uid, uid, "hub_invite_received",
+        {
+          hub_id: this.hub.get(Attr.id),
+          hub_name: hub_name,
+          message: message,
+          from_fullname: from_fullname,
+          privilege: privilege,
+        }
+      );
+    } catch (err) {
+      this.warn(
+        "[hub] _grantMembership: log activity failed for", uid,
+        err && err.message
+      );
+    }
+    return r;
   }
 
   /**
