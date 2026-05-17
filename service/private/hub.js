@@ -742,7 +742,14 @@ class __private_hub extends Hub {
     const tplPath = resolve(__dirname, "templates", "butler", `${tpl}.html`);
     const msg = new Messenger({ subject, recipient, handler: this.exception.email });
     const html = msg.renderFrom(tplPath, data);
-    await msg.send({ html });
+    // Messenger.send() always resolves { recipient, error } — it never rejects
+    // (errors are routed to the handler). Inspect `error` so an SMTP-time
+    // rejection (e.g. unknown mailbox -> 550) surfaces as a failed invitee
+    // instead of a silent status:"ok".
+    const result = await msg.send({ html });
+    if (result && result.error) {
+      throw new Error(`Email delivery to ${recipient} failed: ${result.error}`);
+    }
   }
 
   /**
