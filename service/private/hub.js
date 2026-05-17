@@ -18,7 +18,7 @@ const {
   isEmpty, filter, isArray, difference, map
 } = require("lodash");
 const {
-  utils, RedisStore, Cache, Constants, Attr, Privilege, sysEnv, server_location
+  utils, RedisStore, Cache, Constants, Attr, Privilege, sysEnv, server_location, Messenger
 } = require("@drumee/server-essentials");
 const {
   INTERNAL_ERROR,
@@ -53,6 +53,7 @@ class __private_hub extends Hub {
     this.show_privilege = this.show_privilege.bind(this);
     this.add_contributors = this.add_contributors.bind(this);
     this.invite_received_get = this.invite_received_get.bind(this);
+    this.invite = this.invite.bind(this);
     this.invite_with_roles = this.invite_with_roles.bind(this);
     this.delete_contributor = this.delete_contributor.bind(this);
     this.get_space_usage = this.get_space_usage.bind(this);
@@ -632,6 +633,99 @@ class __private_hub extends Hub {
       );
     }
     return r;
+  }
+
+  /**
+   * Mời người vào workspace. Rẽ nhánh theo area của hub + drumate status.
+   * Input: { hub_id, invitees:[email], permission, message? }
+   */
+  async invite() {
+    let invitees = toArray(this.input.need("invitees"));
+    const privilege = this.input.use(Attr.privilege)
+      || this.hub.get(Attr.settings).default_privilege;
+    const lang = this.user.language() || this.input.app_language();
+    const username = this.user.get("fullname");
+    const hubId = this.hub.get(Attr.id);
+    const hubname = this.hub.get(Attr.name);
+    const area = this.hub.get(Attr.area);
+    const isShareLink = (area === "share");
+    const EXPIRY_DAYS = 7;
+    const expiryTs = Math.floor(Date.now() / 1000) + EXPIRY_DAYS * 86400;
+    const message = this.input.use(Attr.message)
+      || Cache.message("_x_add_you_to_team", lang).format(username, hubname);
+    const mfs_home = await this.db.await_proc("mfs_home");
+    const results = [];
+
+    for (const email of invitees) {
+      try {
+        let drumate = await this.yp.await_proc("drumate_exists", email);
+        if (isArray(drumate)) drumate = drumate[0];
+        const isDrumate = drumate && drumate.id;
+
+        if (isShareLink) {
+          await this._inviteViaToken(email, hubId, privilege, expiryTs, lang, username, hubname);
+          results.push({ email, branch: "A", status: "ok" });
+        } else if (isDrumate) {
+          await this._grantMembership(drumate.id, privilege, 0, message, mfs_home, hubname, username);
+          await this._sendInviteEmail("hub-invite-added", email, lang, {
+            inviter_name: username, workspace_name: hubname,
+          });
+          results.push({ email, branch: "B", status: "ok" });
+        } else {
+          await this.yp.await_proc(
+            "yp_add_pending_invitation", hubId, 0, privilege, email
+          );
+          await this._sendInviteEmail("hub-invite-signup", email, lang, {
+            inviter_name: username, workspace_name: hubname,
+          });
+          results.push({ email, branch: "C", status: "ok" });
+        }
+      } catch (err) {
+        this.warn("[hub] invite failed for", email, err && err.message);
+        results.push({ email, branch: null, status: "failed", reason: err && err.message });
+      }
+    }
+    this.output.data({ results });
+  }
+
+  /**
+   * Nhánh A: tạo token mời share-link + gửi email kèm link.
+   */
+  async _inviteViaToken(email, hubId, privilege, expiryTs, lang, username, hubname) {
+    const { randomBytes } = require("crypto");
+    const secret = randomBytes(24).toString("hex");
+    const method = `hub_invite:${hubId}`;
+    const metadata = JSON.stringify({ hub_id: hubId, permission: privilege });
+    await this.yp.await_proc(
+      "token_hub_invite_add", email, "", secret, method, this.uid, metadata, expiryTs
+    );
+    const homepath = this.input.homepath();
+    const link = `${homepath}#/welcome/signup?invite=${encodeURIComponent(secret)}`;
+    await this._sendInviteEmail("hub-invite-link", email, lang, {
+      inviter_name: username, workspace_name: hubname, link, expiry_days: 7,
+    });
+  }
+
+  /**
+   * Gửi 1 email mời theo template butler/<tpl>.
+   */
+  async _sendInviteEmail(tpl, recipient, lang, data) {
+    const subjectKey = {
+      "hub-invite-link":   "_hub_invite_link_subject",
+      "hub-invite-added":  "_hub_invite_added_subject",
+      "hub-invite-signup": "_hub_invite_signup_subject",
+    }[tpl];
+    const subject = Cache.message(subjectKey, lang)
+      .format(data.inviter_name, data.workspace_name);
+    const msg = new Messenger({
+      template: `butler/${tpl}`,
+      subject,
+      recipient,
+      lex: Cache.lex(lang),
+      data,
+      handler: this.exception.email,
+    });
+    return msg.send();
   }
 
   /**
