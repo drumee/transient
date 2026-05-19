@@ -6,6 +6,8 @@
 -- team_size/intent/challenges/challenge_note.
 --
 -- Safe to run multiple times: uses CHANGE COLUMN IF EXISTS / ADD COLUMN IF NOT EXISTS.
+-- Note: COMMENT clause is intentionally omitted from MODIFY COLUMN IF EXISTS lines
+-- as MariaDB does not support it in that context.
 
 ALTER TABLE `onboarding_responses`
   -- Rename v1 field names
@@ -18,23 +20,16 @@ ALTER TABLE `onboarding_responses`
 
   -- v1 usage_plan was ENUM NOT NULL — convert to JSON NULL to match the v2
   -- table definition and preserve any legacy ENUM values already stored
-  MODIFY COLUMN IF EXISTS `usage_plan` JSON NULL
-    COMMENT 'v1: personal | startup | enterprise (stored as JSON-quoted string)',
+  MODIFY COLUMN IF EXISTS `usage_plan` JSON NULL,
 
   -- v1 current_tools and privacy_concern_level were NOT NULL
-  MODIFY COLUMN IF EXISTS `current_tools`         JSON          NULL DEFAULT NULL,
-  MODIFY COLUMN IF EXISTS `privacy_concern_level` TINYINT UNSIGNED NULL
-    COMMENT 'v1 only: 1..5',
+  MODIFY COLUMN IF EXISTS `current_tools`         JSON             NULL DEFAULT NULL,
+  MODIFY COLUMN IF EXISTS `privacy_concern_level` TINYINT UNSIGNED NULL,
 
   -- New v2 columns
-  ADD COLUMN IF NOT EXISTS `industry` VARCHAR(32) NULL AFTER `country_code`
-    COMMENT 'tech_software | creative_marketing | consulting_agency | legal_compliance | finance_accounting | healthcare | education | real_estate | ecommerce_retail | media_content | operations | other',
-  ADD COLUMN IF NOT EXISTS `role` VARCHAR(32) NULL AFTER `industry`
-    COMMENT 'founder_ceo | manager_team_lead | executive_associate | freelancer_consultant | other',
-  ADD COLUMN IF NOT EXISTS `team_size` ENUM('just_me','2_10','10_50','50_plus') NULL AFTER `role`,
-  ADD COLUMN IF NOT EXISTS `intent` VARCHAR(32) NULL AFTER `team_size`
-    COMMENT 'manage_projects | work_with_clients | store_sensitive | build_workflows | personal_files',
-  ADD COLUMN IF NOT EXISTS `challenges`     JSON          NULL AFTER `current_tools`
-    COMMENT 'Array of pain-point keys selected on the tools step',
-  ADD COLUMN IF NOT EXISTS `challenge_note` VARCHAR(1024) NULL AFTER `challenges`
-    COMMENT 'Free-text tell me more note';
+  ADD COLUMN IF NOT EXISTS `industry`      VARCHAR(32)   NULL AFTER `country_code`,
+  ADD COLUMN IF NOT EXISTS `role`          VARCHAR(32)   NULL AFTER `industry`,
+  ADD COLUMN IF NOT EXISTS `team_size`     ENUM('just_me','2_10','10_50','50_plus') NULL AFTER `role`,
+  ADD COLUMN IF NOT EXISTS `intent`        VARCHAR(32)   NULL AFTER `team_size`,
+  ADD COLUMN IF NOT EXISTS `challenges`    JSON          NULL AFTER `current_tools`,
+  ADD COLUMN IF NOT EXISTS `challenge_note` VARCHAR(1024) NULL AFTER `challenges`;
