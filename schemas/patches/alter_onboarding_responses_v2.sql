@@ -16,9 +16,10 @@ ALTER TABLE `onboarding_responses`
   MODIFY COLUMN IF EXISTS `email`        VARCHAR(255) NULL,
   MODIFY COLUMN IF EXISTS `country_code` CHAR(2)      NULL,
 
-  -- v1 usage_plan was ENUM NOT NULL — make it nullable to not block v2 inserts
-  MODIFY COLUMN IF EXISTS `usage_plan` ENUM('personal','team','storage','other') NULL
-    COMMENT 'v1: personal | team | storage | other',
+  -- v1 usage_plan was ENUM NOT NULL — convert to JSON NULL to match the v2
+  -- table definition and preserve any legacy ENUM values already stored
+  MODIFY COLUMN IF EXISTS `usage_plan` JSON NULL
+    COMMENT 'v1: personal | startup | enterprise (stored as JSON-quoted string)',
 
   -- v1 current_tools and privacy_concern_level were NOT NULL
   MODIFY COLUMN IF EXISTS `current_tools`         JSON          NULL,
