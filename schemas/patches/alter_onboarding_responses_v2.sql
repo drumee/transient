@@ -22,7 +22,7 @@ ALTER TABLE `onboarding_responses`
     COMMENT 'v1: personal | startup | enterprise (stored as JSON-quoted string)',
 
   -- v1 current_tools and privacy_concern_level were NOT NULL
-  MODIFY COLUMN IF EXISTS `current_tools`         JSON          NULL,
+  MODIFY COLUMN IF EXISTS `current_tools`         JSON          NULL DEFAULT NULL,
   MODIFY COLUMN IF EXISTS `privacy_concern_level` TINYINT UNSIGNED NULL
     COMMENT 'v1 only: 1..5',
 
