@@ -10,11 +10,14 @@
 -- as MariaDB does not support it in that context.
 
 ALTER TABLE `onboarding_responses`
-  -- Rename v1 field names
+  -- Rename v1 field names (only triggers if old snake_case names exist)
   CHANGE COLUMN IF EXISTS `first_name`  `firstname` VARCHAR(128) NOT NULL,
   CHANGE COLUMN IF EXISTS `last_name`   `lastname`  VARCHAR(128) NULL,
 
-  -- Relax NOT NULL on optional signup-carry-over fields
+  -- Relax NOT NULL on optional fields — covers tables that already used
+  -- firstname/lastname names (CHANGE COLUMN above would have been a no-op)
+  MODIFY COLUMN IF EXISTS `firstname`    VARCHAR(128) NOT NULL,
+  MODIFY COLUMN IF EXISTS `lastname`     VARCHAR(128) NULL,
   MODIFY COLUMN IF EXISTS `email`        VARCHAR(255) NULL,
   MODIFY COLUMN IF EXISTS `country_code` CHAR(2)      NULL,
 
