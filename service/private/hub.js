@@ -660,6 +660,21 @@ class __private_hub extends Hub {
         err && err.message
       );
     }
+    try {
+      const hub = await this.yp.await_proc(
+        `${r.db_name}.mfs_access_node`, uid, this.hub.get(Attr.id)
+      );
+      if (hub) {
+        hub.message = message;
+        hub.ownpath = '/';
+        hub.hub_id = hub.actual_hub_id;
+        hub.db_name = hub.actual_db_name;
+        const sockets = await this.yp.await_proc('user_sockets', uid);
+        await RedisStore.sendData(this.payload(hub), sockets);
+      }
+    } catch (err) {
+      this.warn("[hub] _grantMembership: ws notify failed for", uid, err && err.message);
+    }
     return r;
   }
 
@@ -691,7 +706,7 @@ class __private_hub extends Hub {
         if (isArray(drumate)) drumate = drumate[0];
         const isDrumate = drumate && drumate.id;
 
-        if (isShareLink) {
+        if (isShareLink && !isDrumate) {
           await this._inviteViaToken(email, hubId, privilege, expiryTs, username, hubname);
           results.push({ email, branch: "A", status: "ok" });
         } else if (isDrumate) {
