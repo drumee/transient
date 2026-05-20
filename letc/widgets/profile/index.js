@@ -17,8 +17,10 @@ class __user_profile extends LetcBox {
     this.declareHandlers();
     let id = opt.id || opt.uid || opt.user_id || opt.drumate_id || opt.entity_id;
     this.mset({ id });
-    this.updateStatus = this.updateStatus.bind(this);
-    RADIO_BROADCAST.on(_e.peerData, this.updateStatus);
+    if (opt.live_status) {
+      this.updateStatus = this.updateStatus.bind(this);
+      RADIO_BROADCAST.on(_e.peerData, this.updateStatus);
+    }
   }
 
 
@@ -26,7 +28,9 @@ class __user_profile extends LetcBox {
    * 
    */
   onBeforeDestroy() {
-    RADIO_BROADCAST.off(_e.peerData, this.updateStatus);
+    if (this.mget(_a.live_status)) {
+      RADIO_BROADCAST.off(_e.peerData, this.updateStatus);
+    }
   }
 
   /**
@@ -202,7 +206,8 @@ class __user_profile extends LetcBox {
     * @param {*} data
     */
   updateStatus(data) {
-    if (data.id != this.mget(_a.id)) return;
+    let id = data.id || data.user_id || data.drumate_id
+    if (id != this.mget(_a.id)) return;
     this.el.dataset.online = data.status;
     this.mset({ online: data.status })
     this.trigger('status_changed', data);
