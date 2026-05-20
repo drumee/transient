@@ -132,7 +132,8 @@ class conference extends __yp {
     let recipients = attendees;
     let payload = user;
     let details = await this.db.await_proc("mfs_node_attr", room_id);
-    if (user.role == "host" && user.uid == this.uid) {
+    const isFirstJoiner = attendees.length === 0;
+    if ((user.role == "host" || isFirstJoiner) && user.uid == this.uid) {
       await this.inform({ recipients, payload }, "conference.start");
       if (room_type == Attr.meeting) {
         try {
