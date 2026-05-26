@@ -319,6 +319,10 @@ class MfsActivity extends Entity {
         guest_id: r.guest_id,
         area: r.area,
         tag_id: r.tag_id,
+        author_id: r.author_id,
+        author_firstname: r.author_firstname,
+        author_lastname: r.author_lastname,
+        author_email: r.author_email,
       })),
       ...hubs.map((r) => {
         let meta = {};
