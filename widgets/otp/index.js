@@ -136,6 +136,17 @@ export default class dtk_otp extends dtk_common {
           this.mset({ payload: data })
           this.displayMessage(LOCALE.NEW_CODE_RESENT)
           this.triggerHandlers({ service: "new-code", data })
+          // Wipe the previous digits so the user can type the new
+          // code into empty cells (otherwise checkForm would
+          // re-submit the stale code immediately).
+          this.ensurePart("digits").then((p) => {
+            for (let c of p.children.toArray()) {
+              if (typeof c.setValue === 'function') c.setValue('');
+            }
+            const first = p.children._views && p.children._views[0];
+            const input = first && first._input && first._input[0];
+            if (input && typeof input.focus === 'function') input.focus();
+          });
         }).catch((e) => {
           this.displayMessage(LOCALE.UNKNOWN_ERROR, 1)
           this.warn("AAA:104 Error sending OTP", e)
