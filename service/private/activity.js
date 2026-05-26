@@ -173,7 +173,7 @@ class MfsActivity extends Entity {
 
     // Query mfs_ack from user's database
     const result = await this.db.await_query(
-      'SELECT user_id, last_read_id, mtime FROM ${userDbName}.mfs_ack WHERE user_id = ?',
+      `SELECT user_id, last_read_id, mtime FROM ${userDbName}.mfs_ack WHERE user_id = ?`,
       this.uid
     );
 
