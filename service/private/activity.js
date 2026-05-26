@@ -2,7 +2,7 @@
 // Purpose: MFS activity notification service - handle read/unread status
 
 const { Entity } = require('@drumee/server-core');
-const { Attr, toArray } = require('@drumee/server-essentials');
+const { RedisStore, Attr, toArray } = require('@drumee/server-essentials');
 
 class MfsActivity extends Entity {
 
