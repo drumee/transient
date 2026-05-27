@@ -137,9 +137,13 @@ class __dmz extends Mfs {
 
     // If not found in dmz_token, check secure_share_token (no-op for normal DMZ tokens)
     if (isEmpty(res) || res.failed) {
-      const secureRes = await this.yp.await_proc('secure_share_info', token);
-      if (!isEmpty(secureRes) && !secureRes.failed) {
-        res = secureRes;
+      try {
+        const secureRes = await this.yp.await_proc('secure_share_info', token);
+        if (!isEmpty(secureRes) && !secureRes.failed) {
+          res = secureRes;
+        }
+      } catch (e) {
+        this.warn('[dmz.info] secure_share_info lookup failed:', e && e.message);
       }
     }
 
@@ -261,9 +265,13 @@ class __dmz extends Mfs {
     let password = this.input.get(Attr.password);
 
     // Check secure_share_token first — leaves normal dmz_token flow completely untouched
-    const secureInfo = await this.yp.await_proc('secure_share_info', token);
-    if (!isEmpty(secureInfo) && !secureInfo.failed) {
-      return this._loginSecureShare(token, secureInfo);
+    try {
+      const secureInfo = await this.yp.await_proc('secure_share_info', token);
+      if (!isEmpty(secureInfo) && !secureInfo.failed) {
+        return this._loginSecureShare(token, secureInfo);
+      }
+    } catch (e) {
+      this.warn('[dmz.login] secure_share_info lookup failed:', e && e.message);
     }
 
     let info = await this.yp.await_proc('dmz_info_next', token);
