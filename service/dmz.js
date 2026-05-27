@@ -230,6 +230,18 @@ class __dmz extends Mfs {
       this.warn('[dmz.login] secure_share access_log failed:', e && e.message);
     }
 
+    // Associate session with share creator so hub endpoints (media.show_node_by) work —
+    // mirrors the cookie_touch done for normal DMZ tokens at login line 330.
+    if (info.creator_id) {
+      try {
+        await this.yp.await_proc('cookie_touch', {
+          sid: this.input.sid(), uid: info.creator_id
+        });
+      } catch (e) {
+        this.warn('[dmz.login] secure_share cookie_touch failed:', e && e.message);
+      }
+    }
+
     // Hub-level expiry display fields (same as normal login)
     let rows = await this.yp.await_proc('forward_proc', info.hub_id, 'dmz_settings', ``);
     if (rows && rows[0]) {
