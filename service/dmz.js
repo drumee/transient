@@ -129,14 +129,27 @@ class __dmz extends Mfs {
 
 
   /**
- * 
+ *
  */
   async info() {
-    let res = await this.yp.await_proc('dmz_info_next', this.input.need(Attr.token));
-    if (isEmpty(res)) {
-      res.status = 'WRONG_TICKET'
+    const token = this.input.need(Attr.token);
+    let res = await this.yp.await_proc('dmz_info_next', token);
+
+    // If not found in dmz_token, check secure_share_token (no-op for normal DMZ tokens)
+    if (isEmpty(res) || res.failed) {
+      const secureRes = await this.yp.await_proc('secure_share_info', token);
+      if (!isEmpty(secureRes) && !secureRes.failed) {
+        res = secureRes;
+      }
+    }
+
+    if (isEmpty(res) || res.failed) {
+      res = res || {};
+      res.status = 'WRONG_TICKET';
+    } else if (res.is_secure) {
+      res.status = res.validity === 'TICKET_OK' ? 'REQUIRED_EMAIL' : res.validity;
     } else if (res.require_password) {
-      res.status = 'REQUIRED_PASSWORD'
+      res.status = 'REQUIRED_PASSWORD';
     }
     const guest_id = Cache.getSysConf("guest_id");
     res.guest_id = guest_id;
@@ -145,11 +158,114 @@ class __dmz extends Mfs {
 
 
   /**
-   * 
+   *
+   */
+  async _loginSecureShare(token, info) {
+    if (info.validity === 'TICKET_REVOKED') {
+      return this.output.data({ status: 'TICKET_REVOKED', is_secure: 1 });
+    }
+    if (info.validity === 'TICKET_EXPIRED') {
+      return this.output.data({ status: 'TICKET_EXPIRED', is_secure: 1 });
+    }
+
+    // Resolve logged-in side user from cookie (mirrors normal login flow)
+    let user = this.user.toJSON();
+    const guest_id = Cache.getSysConf("guest_id");
+    let { regsid } = this.input.get(Attr.cookie);
+    if (regsid) {
+      let u = await this.yp.await_proc("cookie_retrieve_user", regsid);
+      if (u && ![ID_NOBODY, guest_id].includes(u.id)) {
+        if (u.profile) {
+          user.profile = u.profile;
+          user.uid = u.id;
+          user.id  = u.id;
+        }
+      }
+    }
+
+    // Email validation
+    const submittedEmail = (this.input.get(Attr.email) || '').toLowerCase().trim();
+    if (!submittedEmail) {
+      return this.output.data({ ...info, status: 'REQUIRED_EMAIL', is_secure: 1 });
+    }
+
+    const recipientEmail = (info.recipient_email || '').toLowerCase().trim();
+    let emailValid = (submittedEmail === recipientEmail);
+
+    if (!emailValid && info.domain_restriction) {
+      const submittedDomain = submittedEmail.split('@')[1] || '';
+      emailValid = (submittedDomain === info.domain_restriction.toLowerCase().trim());
+    }
+
+    if (!emailValid) {
+      return this.output.data({ status: 'EMAIL_MISMATCH', is_secure: 1 });
+    }
+
+    // Valid access — log it and notify sender in real time
+    const actor_id = (guest_id === user.id) ? null : (user.id || null);
+    try {
+      const track = await this.yp.await_proc('secure_share_access_log', token, actor_id);
+      const row   = toArray(track)[0] || {};
+      if (row.hub_id) {
+        const recipients = await this.yp.await_proc('entity_sockets', { hub_id: row.hub_id });
+        await RedisStore.sendData(
+          this.payload(
+            {
+              event           : 'secure_share_opened',
+              token,
+              nid             : info.node_id,
+              recipient_email : submittedEmail,
+              access_count    : (info.access_count || 0) + 1,
+            },
+            { service: 'share.track_event' }
+          ),
+          recipients
+        );
+      }
+    } catch (e) {
+      this.warn('[dmz.login] secure_share access_log failed:', e && e.message);
+    }
+
+    // Hub-level expiry display fields (same as normal login)
+    let rows = await this.yp.await_proc('forward_proc', info.hub_id, 'dmz_settings', ``);
+    if (rows && rows[0]) {
+      info.hours      = rows[0].hours;
+      info.days       = rows[0].days;
+      info.dmz_expiry = rows[0].dmz_expiry;
+    }
+
+    let area     = this.hub.get(Attr.area);
+    let is_guest = (guest_id === user.id);
+    if (user.profile) {
+      user.profile.is_guest = is_guest;
+    }
+    user.uid = user.id;
+
+    return this.output.data({
+      ...user,
+      ...info,
+      is_secure : 1,
+      status    : 'TICKET_OK',
+      validity  : 'TICKET_OK',
+      guest_id  : info.uid || guest_id,
+      area,
+      is_guest,
+    });
+  }
+
+  /**
+   *
    */
   async login() {
     let token = this.input.need(Attr.token);
     let password = this.input.get(Attr.password);
+
+    // Check secure_share_token first — leaves normal dmz_token flow completely untouched
+    const secureInfo = await this.yp.await_proc('secure_share_info', token);
+    if (!isEmpty(secureInfo) && !secureInfo.failed) {
+      return this._loginSecureShare(token, secureInfo);
+    }
+
     let info = await this.yp.await_proc('dmz_info_next', token);
     if (!info) {
       this.output.data({ status: "TICKET_INVALID" });
