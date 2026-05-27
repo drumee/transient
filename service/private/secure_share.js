@@ -50,7 +50,7 @@ class __secure_share extends Mfs {
     }
 
     const host = this.hub.get(Attr.vhost);
-    const link = `${this.input.homepath(host)}#/dmz/${token}`;
+    const link = `${this.input.homepath(host)}#/dmz/share/${token}`;
 
     if (await shouldSendNotification(this.yp, email)) {
       try {
