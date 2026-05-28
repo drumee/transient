@@ -250,6 +250,20 @@ class __dmz extends Mfs {
       info.dmz_expiry = rows[0].dmz_expiry;
     }
 
+    // If the shared node is a file (not a folder/hub), show_node_by(file_nid) returns
+    // empty because files have no children. Use the parent folder instead so the file
+    // appears in the listing. Keep node_id as-is for reference.
+    try {
+      const nodeRows = await this.yp.await_proc('forward_proc', info.hub_id, 'mfs_node_attr', `'${info.nid}'`);
+      const nodeAttr = toArray(nodeRows)[0] || {};
+      if (nodeAttr.filetype && nodeAttr.filetype !== 'folder' && nodeAttr.filetype !== 'hub' && nodeAttr.pid) {
+        info.file_nid = info.nid;  // specific file — sent to UI for filtering
+        info.nid = nodeAttr.pid;   // parent folder — used by show_node_by
+      }
+    } catch (e) {
+      this.warn('[dmz.login] secure_share node type check failed:', e && e.message);
+    }
+
     let area     = this.hub.get(Attr.area);
     let is_guest = (guest_id === user.id);
     if (user.profile) {
