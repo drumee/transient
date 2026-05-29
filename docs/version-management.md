@@ -82,6 +82,4 @@ Alternatively, let `update-changelog.sh` do it — if the upstream `package.json
 | `drumee-server-pod` | 2.9.44 |
 | `drumee-ui-pod` | 3.2.49 |
 | `drumee-static` | 1.0.3 |
-| `drumee-mfs` | 1.0.0 |
 | `drumee-patch` | 1.1.6 |
-| `drumee-conference` | 1.0.0 |

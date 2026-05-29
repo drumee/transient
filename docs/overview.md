@@ -13,11 +13,9 @@ Each subdirectory is a self-contained package builder that clones source from `g
 | `server/` | `drumee-server-pod` | Backend Node.js services: REST API + WebSocket | `server-team` (preview), `schemas-utils` |
 | `ui/` | `drumee-ui-pod` | Frontend LETC rendering engine | `ui-team` (preview) |
 | `static/` | `drumee-static` | Static assets, fonts, localization files | `static` (main) |
-| `mfs/` | `drumee-mfs` | MFS schema templates | `schemas` (feature/v2.4) |
 | `schemas-patch/` | `drumee-patch` | Incremental DB schema patches | `schemas` (preview) |
 | `builder/` | *(generic)* | Packages pre-built artifacts from `target/` | `setup` (somanos/wip) via GitLab |
 | `admin/` | — | Admin patch runner scripts only — not a standalone package | — |
-| `conference/` | `drumee-conference` | Planned Jitsi conferencing integration (skeleton) | — |
 
 ## Install Order
 
@@ -27,7 +25,7 @@ When deploying from scratch, install packages in this order to satisfy dependenc
 drumee-infra → drumee-schemas → drumee-static → drumee-server-pod → drumee-ui-pod
 ```
 
-`drumee-mfs` depends on `drumee-infra`. `drumee-patch` can be applied after `drumee-schemas` is installed.
+`drumee-patch` can be applied after `drumee-schemas` is installed.
 
 ## Runtime Directory Layout
 
@@ -41,10 +39,9 @@ After installation, Drumee occupies these paths:
 │   ├── ui/              # drumee-ui-pod: LETC frontend engine
 │   │   └── main/        # ui-team source
 │   └── plugins/         # third-party plugin packages
-│       └── server/<user>/<plugin>/
+│       └── server/<endpoint>/<plugin>/
 ├── static/              # drumee-static: assets, locale files
 ├── data/                # user file storage (MFS-managed)
-├── mfs/                 # MFS working directory
 ├── tmp/                 # temporary files (cleaned by cron)
 └── cache/
 

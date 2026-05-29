@@ -16,7 +16,6 @@ schemas/build.sh
 server/build.sh
 ui/build.sh
 static/build.sh
-mfs/build.sh
 schemas-patch/build.sh --manifest=auto
 ```
 
@@ -95,11 +94,8 @@ Use `builder/build.sh pull` to fetch the `setup` repo from GitLab before packagi
 ```
 drumee-infra
     └── drumee-schemas   (mariadb-server, mariadb-client)
-    └── drumee-mfs       (depends: drumee-infra)
         └── drumee-static
         └── drumee-server-pod  (nginx, redis, ffmpeg, libreoffice, ...)
         └── drumee-ui-pod      (nodejs, git)
             └── drumee-patch   (mariadb-server, mariadb-client)
 ```
-
-`drumee-conference` (skeleton) depends on `drumee-infra` plus Jitsi packages (`prosody`, `jitsi-meet`, `jitsi-videobridge2`, etc.).

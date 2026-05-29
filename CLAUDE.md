@@ -44,7 +44,6 @@ schemas/build.sh
 server/build.sh
 ui/build.sh
 static/build.sh
-mfs/build.sh
 schemas-patch/build.sh --manifest=auto
 ```
 
@@ -85,11 +84,9 @@ Set `REPO_BASE` to override the GitHub base URL used by `bundle()` (e.g., for a 
 | `server/` | `drumee-server-pod` | `server-team` (preview branch), `schemas-utils` | nginx, redis, graphicsmagick, ffmpeg, libreoffice |
 | `ui/` | `drumee-ui-pod` | `ui-team` (preview branch) | webpack (runs during build) |
 | `static/` | `drumee-static` | `static` (main) | — |
-| `mfs/` | `drumee-mfs` | `schemas` (feature/v2.4) | — |
 | `schemas-patch/` | `drumee-patch` | `schemas` (preview) | @drumee/server-essentials |
 | `builder/` | generic builder | `setup` (somanos/wip) | uses `target/` dir instead of bundling |
 | `admin/` | — | — | admin scripts only |
-| `conference/` | — | — | skeleton, unused |
 
 ## Version Management
 
