@@ -1,0 +1,74 @@
+# Package: drumee-ui-pod
+
+**Directory:** `ui/`
+**Debian package:** `drumee-ui-pod`
+**Current version:** 3.2.49
+**Debian metadata:** `ui/pod/debian/`
+
+## Purpose
+
+The Drumee frontend rendering engine. Installs the LETC-based UI system that receives JSON widget trees from the server and renders them in the browser via Backbone.Marionette component classes.
+
+The UI is **not** a static single-page app — it renders dynamically from server-transmitted JSON. This means the UI package defines the component registry, not the layout or routes.
+
+## Source Repos
+
+| Repo | Branch | Destination |
+|---|---|---|
+| `ui-team` | preview | `$DRUMEE_UI_HOME/main/` (`/srv/drumee/runtime/ui/main/`) |
+
+## Build
+
+```bash
+ui/build.sh [--version=X.Y.Z] [--force=yes] [--type=<type>] [--compile=yes] [--enable-api] [--email=user@example.com]
+```
+
+`update-changelog.sh` is called automatically at the start of the build.
+
+### Build Types
+
+| `--type` value | Description |
+|---|---|
+| *(default / platform)* | Standard platform build |
+| `pod` | Pod (single-tenant) variant |
+| `dev` | Development build with source maps |
+| `evaluation` | Evaluation/demo variant |
+
+### Webpack Compile Step
+
+The build runs webpack to compile the `app` target. With `--enable-api`, it also compiles the `api` target. Environment variables set during compile:
+
+```bash
+DRUMEE_INSTANCE_NAME=main
+UI_BUILD_MODE=production
+```
+
+Webpack is run from within the `ui-team` source directory. The compiled bundles are packaged into the `.deb`.
+
+Use `--compile=yes` to force a recompile even when a prior build directory exists.
+
+## Installed Paths
+
+```
+/srv/drumee/runtime/ui/main/   # ui-team source + compiled webpack bundles
+```
+
+## Dependencies
+
+```
+binutils, nodejs, git
+```
+
+webpack itself runs during the *build* step (not at install time), so it is not a runtime dependency.
+
+## Post-Install
+
+No special post-install script. The server's `index.js` process serves the UI assets directly from `/srv/drumee/runtime/ui/main/`.
+
+## update-changelog.sh
+
+```bash
+ui/update-changelog.sh [--message="Custom message"] [--email=user@example.com]
+```
+
+Syncs the changelog from `ui-team`'s `package.json`. See [Version Management](version-management.md) for the selection logic.

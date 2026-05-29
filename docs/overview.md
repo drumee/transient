@@ -1,0 +1,70 @@
+# Overview
+
+This repository contains the Debian packaging infrastructure for the **Drumee** platform — a sovereign data infrastructure that functions as a Meta Operating System for self-hosted collaborative workspaces.
+
+Each subdirectory is a self-contained package builder that clones source from `git@github.com:drumee/`, compiles it, and produces a `.deb` file via `dh_make` + `dpkg-buildpackage`.
+
+## Package Map
+
+| Directory | Debian package | Role at runtime | Source repo(s) |
+|---|---|---|---|
+| `infra/` | `drumee-infra` | System foundation: nginx, SSL (acme.sh), cron, utilities | `setup-infra` (main), `acme.sh` (GitHub) |
+| `schemas/` | `drumee-schemas` | MariaDB schema definitions, seed data, install scripts | `setup-schemas` (main), `schemas` (preview) |
+| `server/` | `drumee-server-pod` | Backend Node.js services: REST API + WebSocket | `server-team` (preview), `schemas-utils` |
+| `ui/` | `drumee-ui-pod` | Frontend LETC rendering engine | `ui-team` (preview) |
+| `static/` | `drumee-static` | Static assets, fonts, localization files | `static` (main) |
+| `mfs/` | `drumee-mfs` | MFS schema templates | `schemas` (feature/v2.4) |
+| `schemas-patch/` | `drumee-patch` | Incremental DB schema patches | `schemas` (preview) |
+| `builder/` | *(generic)* | Packages pre-built artifacts from `target/` | `setup` (somanos/wip) via GitLab |
+| `admin/` | — | Admin patch runner scripts only — not a standalone package | — |
+| `conference/` | `drumee-conference` | Planned Jitsi conferencing integration (skeleton) | — |
+
+## Install Order
+
+When deploying from scratch, install packages in this order to satisfy dependencies:
+
+```
+drumee-infra → drumee-schemas → drumee-static → drumee-server-pod → drumee-ui-pod
+```
+
+`drumee-mfs` depends on `drumee-infra`. `drumee-patch` can be applied after `drumee-schemas` is installed.
+
+## Runtime Directory Layout
+
+After installation, Drumee occupies these paths:
+
+```
+/srv/drumee/
+├── runtime/
+│   ├── server/          # drumee-server-pod: Node.js backend
+│   │   └── main/        # server-team source
+│   ├── ui/              # drumee-ui-pod: LETC frontend engine
+│   │   └── main/        # ui-team source
+│   └── plugins/         # third-party plugin packages
+│       └── server/<user>/<plugin>/
+├── static/              # drumee-static: assets, locale files
+├── data/                # user file storage (MFS-managed)
+├── mfs/                 # MFS working directory
+├── tmp/                 # temporary files (cleaned by cron)
+└── cache/
+
+/etc/drumee/
+├── drumee.sh            # runtime environment (sourced by server)
+└── credentials/         # JSON credential files (never committed)
+
+/var/lib/drumee/
+├── setup-infra/         # infra install scripts
+├── setup-schemas/       # schema install scripts
+└── postinstall/
+    └── patch.sh         # pending patches applied at server startup
+
+/opt/drumee/schemas/     # drumee-mfs: MFS schema templates
+```
+
+## Further Reading
+
+- [Build Pipeline](build-pipeline.md) — how to build packages, common flags, GPG signing
+- [Shared Utilities](utilities.md) — `functions.sh` and `env.sh` API reference
+- [Version Management](version-management.md) — changelog lifecycle, `update-changelog.sh`
+- [Deployment Scripts](deployment.md) — `update.sh`, production update workflow
+- Per-package deep-dives: [infra](package-infra.md) · [schemas](package-schemas.md) · [server](package-server.md) · [ui](package-ui.md) · [static](package-static.md) · [schemas-patch](package-schemas-patch.md)
