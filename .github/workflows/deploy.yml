@@ -51,10 +51,11 @@ jobs:
           PREV=\$(git rev-parse HEAD)
           echo ">> Previous commit: \$PREV"
 
-          echo ">> Pulling latest preview"
+          echo ">> Fetching origin/preview and hard-resetting working tree"
           git fetch origin preview
-          git checkout preview
-          git pull --ff-only origin preview
+          git checkout -f preview
+          git reset --hard origin/preview
+          git clean -fd
           echo ">> New commit: \$(git rev-parse HEAD)"
 
           rollback() {
