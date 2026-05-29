@@ -3,7 +3,7 @@
 **Directory:** `ui/`
 **Debian package:** `drumee-ui-pod`
 **Current version:** 3.2.49
-**Debian metadata:** `ui/pod/debian/`
+**Debian metadata:** `ui/debian/`
 
 ## Purpose
 
@@ -20,19 +20,10 @@ The UI is **not** a static single-page app — it renders dynamically from serve
 ## Build
 
 ```bash
-ui/build.sh [--version=X.Y.Z] [--force=yes] [--type=<type>] [--compile=yes] [--enable-api] [--email=user@example.com]
+ui/build.sh [--version=X.Y.Z] [--force=yes] [--compile=yes] [--enable-api] [--email=user@example.com]
 ```
 
 `update-changelog.sh` is called automatically at the start of the build.
-
-### Build Types
-
-| `--type` value | Description |
-|---|---|
-| *(default / platform)* | Standard platform build |
-| `pod` | Pod (single-tenant) variant |
-| `dev` | Development build with source maps |
-| `evaluation` | Evaluation/demo variant |
 
 ### Webpack Compile Step
 
