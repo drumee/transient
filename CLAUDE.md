@@ -131,7 +131,7 @@ builder/build.sh pull   # pull setup repo first, then package
 
 ## Post-Install Behavior
 
-- **infra**: runs `/var/lib/drumee/setup-infra/bin/install`
+- **infra**: runs `/var/lib/drumee/setup-infra/bin/install` (requires root) — full infrastructure configurator: renders 88 config templates into `/etc/drumee/`, `/etc/nginx/`, `/etc/bind/`, `/etc/prosody/`, `/etc/jitsi/`, `/etc/postfix/`, MariaDB, Coturn; sets up SSL (ACME/self-signed/own certs), DNS (BIND9), DKIM, Prosody XMPP, and installs crontab. See [docs/package-infra.md](docs/package-infra.md) for full detail.
 - **schemas**: runs `/var/lib/drumee/setup-schemas/bin/install`
 - **server-pod**: sources `/etc/drumee/drumee.sh`, applies any pending patches from `/var/lib/drumee/postinstall/patch.sh`
 
