@@ -1,7 +1,9 @@
 drumee-static (1.0.3) stable; urgency=medium
-
-  * Added warmup
- -- Somanos Sar <somanos.sar@drumee.com>  Fri, 12 Dec 2025 10:18:42 +0000
+  * Cleaned node_modules
+  * Added .gitignore
+  * update color of loader
+  * update progress bar color
+ -- Somanos Sar <somanos.sar@drumee.com>  Sat, 23 May 2026 15:32:45 +0700
 
 drumee-static (1.0.2) stable; urgency=medium
 

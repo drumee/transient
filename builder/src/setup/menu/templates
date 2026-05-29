@@ -1,0 +1,93 @@
+Template: drumee-infra/description
+Type: string
+Default: My Great Drumee Team
+Description: Please enter the domain name
+ This is the domain name your application will use.
+
+Template: drumee-infra/domain
+Type: string
+Default: example.com
+Description: Please enter the domain name
+ This is the domain name your application will use.
+
+Template: drumee-infra/local_mode
+Type: boolean
+Default: true
+Description: Please confirm only local network
+ You have provided local as domain name. That means that your Drumee instance won't be reachable from the oublica internet.
+
+Template: drumee-infra/service
+Type: string
+Description: Please enter service
+ I don't remember this... :'(
+
+Template: drumee-infra/ip4
+Type: select
+Choices: ${__IP4_LIST__}, other
+Default: other
+Description: Please your server IP V4 address
+ If you set private address, your Drumee won't be rechable from the public Internet.
+
+Template: drumee-infra/public_ip4
+Type: string
+Description: Please your server IP V4 address
+ If you set private address, your Drumee won't be rechable from the public Internet.
+
+Template: drumee-infra/ip6
+Type: select
+Choices: ${__IP6_LIST__}, other
+Default: other
+Description: Please select your server IP V6 address
+ If you select private address, your Drumee won't be rechable from the public Internet.
+
+Template: drumee-infra/public_ip6
+Type: string
+Description: Please your server IP V6 address
+ If you set private address, your Drumee won't be rechable from the public Internet.
+
+Template: drumee-infra/admin_email
+Type: string
+Default: admin@example.com
+Description: Please enter the administrator email 
+ This address will be used as the administrator login ident, as well as to send technical information to. 
+
+Template: drumee-infra/acme_email
+Type: string
+Default: 
+Description: Please enter the ACME email account
+ If you are not using your own SSL certificates, Drumee will use zerossl to automatically issue your SSL certificates. The email will then be provided to zerossl.com as account ident.
+
+Template: drumee-infra/db_dir
+Type: string
+Default: /srv/db
+Description: Please enter the path to your Drumee database
+ This storage area must not be shared with other application or native system path, such as /usr, /sys, ...
+
+Template: drumee-infra/data_dir
+Type: string
+Default: /data
+Description: Please enter the path to your Drumee Filestyme Storage
+ This storage area must not be shared with other application or native system path, such as /usr, /sys, ...
+
+Template: drumee-infra/backup_location
+Type: string
+Description: Please enter the location of your Drumee Backup 
+ It should be located on a diffrent partion from the previous one.
+ For example /my-backup or remote.server.backup:/my-backup. 
+
+Template: drumee-infra/exchange_location
+Type: string
+Default: /exchangearea
+Description: Please enter the location of your exchange area
+ This is a directory where you can transfert files between the host filesystem and Drumee filesystem. This area should not be shared with native system path, such as /usr, /sys, ...
+
+Template: drumee-infra/own_ssl
+Type: boolean
+Default: false
+Description: Do you have your own SSL certificates ?
+ If you are not using your own SSL certificates, Drumee will use zerossl to automatically issue your SSL certificates. The email will then be provided to zerossl.com as account ident.
+
+Template: drumee-infra/own_ssl_path
+Type: string
+Description: Please enter the location of your SSL certificates
+ Certificates must be wildcard and issued to example.com, *.example.com, jit.example.com and *.jit.example.com. 

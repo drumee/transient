@@ -178,12 +178,12 @@ bundle() {
   fi
   if [ -f package.json ]; then
     npm i
-    # set +e
-    # npm audit fix
+    set +e
+    npm audit fix
     if [ "$run" != "" ]; then
       npm run $run
     fi
-    # set -e
+    set -e
   fi
 
   if [ "$dest_base" != "" ]; then

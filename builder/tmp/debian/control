@@ -1,0 +1,13 @@
+Source: mypackage
+Section: misc
+Priority: optional
+Maintainer: Your Name <your.email@example.com>
+Build-Depends: debhelper (>= 11)
+Standards-Version: 4.1.4
+Homepage: http://example.com/
+
+Package: mypackage
+Architecture: all
+Depends: ${misc:Depends}, debconf (>= 0.5) | debconf-2.0
+Description: MyPackage that interacts with the user
+ A brief description of what your package does.

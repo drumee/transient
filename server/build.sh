@@ -27,7 +27,7 @@ legacy)
   bundle $base "server" "public" "*" $server_target
   ;;
 pod)
-  bundle $base "server-team" "optimization" "*" $server_target
+  bundle $base "server-team" "preview" "*" $server_target
   ;;
 evaluation)
   bundle $base "server" "dist/evaluation" "*" $server_target
@@ -37,7 +37,7 @@ evaluation)
   exit 1
   ;;
 esac
-
+${base}/update-changelog.sh 
 
 init_file=${base}/system/usr/sbin/drumee
 chmod a+x $init_file
@@ -48,20 +48,22 @@ rsync $init_file ${base}/etc/rc3.d/S02drumee
 rsync $init_file ${base}/etc/rc6.d/K01drumee
 server_base=${base}/src/server-team
 cd ${server_base}
-npm i @drumee/server-essentials
-npm i @drumee/server-core
+# npm i @drumee/server-essentials
+# npm i @drumee/server-core
+# npm i
+# npm audit fix
 
 export REPO_BASE=git@github.com:drumee
-patch_des=/var/lib/drumee/patch/schemas
-bundle $base "schemas-utils" "main" "*" $patch_des
-${base}/update-changelog.sh 
+# patch_des=/var/lib/drumee/patch/schemas
+# bundle $base "schemas-utils" "main" "*" $patch_des
+# ${base}/update-changelog.sh 
 
 rsync -arp ${server_base}/node_modules $build_dir/files/$server_target
 rsync -arp ${server_base}/offline $build_dir/files/$server_target
 rsync -arp ${server_base}/package* $build_dir/files/$server_target
 rsync -arp ${base}/etc $build_dir/files/
 rsync -arp ${base}/usr $build_dir/files/
-rsync -arp ${base}/patches $build_dir/files/$patch_des/
+# rsync -arp ${base}/patches $build_dir/files/$patch_des/
 rsync -arp ${base}/var $build_dir/files/
 
 cd $build_dir/files/$DRUMEE_SERVER_HOME

@@ -1,0 +1,12 @@
+Template: drumee-test/domain
+Type: string
+Default: example.com
+Description: Please enter the domain name
+ This is the domain name your application will use.
+
+Template: drumee-test/partition
+Type: string
+Default: /dev/sda1
+Description: Please enter the partition name
+ This is the partition your application will use.
+

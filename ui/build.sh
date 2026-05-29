@@ -70,7 +70,7 @@ packages=""
 
 export UI_SRC_PATH=${base}/src/ui-team
 export REPO_BASE=git@github.com:drumee
-bundle $base "ui-team" "optimization"
+bundle $base "ui-team" "preview"
 ${base}/update-changelog.sh 
 
 echo $UI_SRC_PATH

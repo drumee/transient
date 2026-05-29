@@ -1,0 +1,29 @@
+#!/bin/sh
+
+
+set +e
+
+# Source debconf library
+. /usr/share/debconf/confmodule
+/var/lib/drumee/setup/menu/install.sh 
+
+# Ask questions
+# db_input high drumee-test/domain || true
+# db_input high drumee-test/partition || true
+# db_go
+
+# # Get answers
+# db_get drumee-test/domain
+# DOMAIN=$RET
+# db_get drumee-test/partition
+# PARTITION=$RET
+
+# # Use the answers, for example:
+# echo "Domain: $DOMAIN"
+# echo "Partition: $PARTITION"
+
+# # Don't forget to cleanup
+# db_stop
+
+#End of script
+exit 0

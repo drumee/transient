@@ -46,8 +46,7 @@ version=$(get_version $base)
 email=$(get_email $base)
 build_dir=$(get_build_dir ${base}/build/$version)
 bundle $base "static" "main" "" "srv/drumee/static"
-
-
+${base}/update-changelog.sh 
 
 cd $build_dir
 echo "BUILDING PACKAGE ${packagename}_${version} IN $build_dir"
