@@ -10,7 +10,7 @@ Each subdirectory is a self-contained package builder that clones source from `g
 |---|---|---|---|
 | `infra/` | `drumee-infra` | System foundation: nginx, SSL (acme.sh), cron, utilities | `setup-infra` (main), `acme.sh` (GitHub) |
 | `schemas/` | `drumee-schemas` | MariaDB schema definitions, seed data, install scripts | `setup-schemas` (main), `schemas` (preview) |
-| `server/` | `drumee-server-pod` | Backend Node.js services: REST API + WebSocket | `server-team` (preview), `schemas-utils` |
+| `server/` | `drumee-server-pod` | Backend Node.js services: REST API + WebSocket | `server-team` (preview) |
 | `ui/` | `drumee-ui-pod` | Frontend LETC rendering engine | `ui-team` (preview) |
 | `static/` | `drumee-static` | Static assets, fonts, localization files | `static` (main) |
 | `schemas-patch/` | `drumee-patch` | Incremental DB schema patches | `schemas` (preview) |

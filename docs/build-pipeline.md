@@ -75,7 +75,7 @@ The `builder/` package always builds unsigned (`-us -uc`).
 
 `bundle()` clones repos into a `src/` subdirectory of each package directory. On subsequent runs, it does `git pull` instead of a fresh clone. Use `--force=rebuild` to force a clean re-clone.
 
-The source staging area is separate from the `debian/` packaging metadata, which lives in `<package>/debian/` (or `<package>/pod/debian/` for server and ui).
+The source staging area is separate from the `debian/` packaging metadata, which lives in `<package>/debian/` for all packages.
 
 ## The builder/ Package
 
