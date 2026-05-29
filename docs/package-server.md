@@ -3,7 +3,7 @@
 **Directory:** `server/`
 **Debian package:** `drumee-server-pod`
 **Current version:** 2.9.44
-**Debian metadata:** `server/pod/debian/`
+**Debian metadata:** `server/debian/`
 
 ## Purpose
 
@@ -22,23 +22,14 @@ Two Node.js processes run per endpoint: `index.js` (page serving + WebSocket) an
 | Repo | Branch | Destination |
 |---|---|---|
 | `server-team` | preview | `$DRUMEE_SERVER_HOME/main/` (`/srv/drumee/runtime/server/main/`) |
-| `schemas-utils` | *(default)* | bundled into server source |
 
 ## Build
 
 ```bash
-server/build.sh [--version=X.Y.Z] [--force=yes] [--type=<type>] [--email=user@example.com]
+server/build.sh [--version=X.Y.Z] [--force=yes] [--email=user@example.com]
 ```
 
 `update-changelog.sh` is called automatically at the start of the build.
-
-### Build Types
-
-| `--type` value | Source branch | Description |
-|---|---|---|
-| *(default / pod)* | preview | Standard pod build |
-| `legacy` | main (`dist/main`) | Legacy build from dist |
-| `evaluation` | *(separate)* | Evaluation/demo variant |
 
 ### What Gets Packaged
 

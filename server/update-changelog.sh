@@ -3,7 +3,7 @@ set -e
 
 base="$(dirname "$(readlink -f "$0")")"
 pkg_json="${base}/src/server-team/package.json"
-changelog="${base}/pod/debian/changelog"
+changelog="${base}/debian/changelog"
 git_dir="${base}/src/server-team"
 
 for arg in "$@"; do
