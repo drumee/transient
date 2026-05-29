@@ -79,15 +79,21 @@ The source staging area is separate from the `debian/` packaging metadata, which
 
 ## The builder/ Package
 
-`builder/` works differently from all other packages:
+`builder/` produces a `drumee-infra` interactive installer — distinct from `infra/` which is a pre-configured package. Key differences:
 
-- It does **not** clone and compile upstream source.
-- It reads pre-built artifacts from the `target/` directory in the repo root.
-- It references `git@gitlab.drumee.in:drumee` (not `github.com`) via its own `builder/utils/functions.sh`.
-- It builds unsigned (`dpkg-buildpackage -us -uc`).
-- Its `postinst` calls `/var/lib/drumee/setup/menu/install.sh`.
+- Reads pre-built artifacts from the `target/` directory (no upstream compile step).
+- Post-install runs `/var/lib/drumee/setup/menu/install.sh` — an interactive setup wizard.
+- Uses debconf to prompt for domain name and partition during `dpkg -i`.
+- Builds unsigned (`dpkg-buildpackage -us -uc`), no GPG key required.
+- Has its own `builder/utils/` with different env paths and a GitLab fallback in `bundle()`.
+- Does not support `--version`, `--force`, or `--email` flags.
 
-Use `builder/build.sh pull` to fetch the `setup` repo from GitLab before packaging.
+```bash
+builder/build.sh        # package current target/ artifacts
+builder/build.sh pull   # pull setup repo first, then package
+```
+
+See [package-builder.md](package-builder.md) for full details.
 
 ## Package Dependency Chain
 

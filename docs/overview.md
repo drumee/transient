@@ -14,7 +14,7 @@ Each subdirectory is a self-contained package builder that clones source from `g
 | `ui/` | `drumee-ui-pod` | Frontend LETC rendering engine | `ui-team` (preview) |
 | `static/` | `drumee-static` | Static assets, fonts, localization files | `static` (main) |
 | `schemas-patch/` | `drumee-patch` | Incremental DB schema patches | `schemas` (preview) |
-| `builder/` | *(generic)* | Packages pre-built artifacts from `target/` | `setup` (somanos/wip) via GitLab |
+| `builder/` | `drumee-infra` | Interactive first-time installer with debconf setup wizard | `setup` (somanos/wip) |
 | `admin/` | — | Admin patch runner scripts only — not a standalone package | — |
 
 ## Install Order
@@ -55,7 +55,6 @@ After installation, Drumee occupies these paths:
 └── postinstall/
     └── patch.sh         # pending patches applied at server startup
 
-/opt/drumee/schemas/     # drumee-mfs: MFS schema templates
 ```
 
 ## Further Reading
@@ -64,4 +63,4 @@ After installation, Drumee occupies these paths:
 - [Shared Utilities](utilities.md) — `functions.sh` and `env.sh` API reference
 - [Version Management](version-management.md) — changelog lifecycle, `update-changelog.sh`
 - [Deployment Scripts](deployment.md) — `update.sh`, production update workflow
-- Per-package deep-dives: [infra](package-infra.md) · [schemas](package-schemas.md) · [server](package-server.md) · [ui](package-ui.md) · [static](package-static.md) · [schemas-patch](package-schemas-patch.md)
+- Per-package deep-dives: [infra](package-infra.md) · [schemas](package-schemas.md) · [server](package-server.md) · [ui](package-ui.md) · [static](package-static.md) · [schemas-patch](package-schemas-patch.md) · [builder](package-builder.md)

@@ -11,7 +11,7 @@ Debian packaging infrastructure for the [Drumee](https://drumee.com) sovereign d
 - [Deployment](docs/deployment.md) — production update workflow, `drumee` CLI
 
 **Per-package:**
-[infra](docs/package-infra.md) · [schemas](docs/package-schemas.md) · [server](docs/package-server.md) · [ui](docs/package-ui.md) · [static](docs/package-static.md) · [schemas-patch](docs/package-schemas-patch.md)
+[infra](docs/package-infra.md) · [schemas](docs/package-schemas.md) · [server](docs/package-server.md) · [ui](docs/package-ui.md) · [static](docs/package-static.md) · [schemas-patch](docs/package-schemas-patch.md) · [builder](docs/package-builder.md)
 
 ## Quick Start
 
