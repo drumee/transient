@@ -71,7 +71,7 @@ Set `DEB_BUILD_TARGET=/path/to/dir` to automatically copy the built `.deb` to a 
 - `check_version` / `check_email` — interactive prompts to confirm or change version/email, update `debian/control`
 - `copyToTarget <path>` — copy `<path>_all.deb` to `$DEB_BUILD_TARGET` if set
 - `bundle_acme <base> <dest>` — clone `acmesh-official/acme.sh` from GitHub (not Drumee)
-- `parse_args "$@"` — parses `--version`, `--force`, `--type`, `--compile`, `--enable-api`, `--email` flags into exported shell vars
+- `parse_args "$@"` — parses `--version`, `--force`, `--compile`, `--enable-api`, `--email` flags into exported shell vars
 
 Set `REPO_BASE` to override the GitHub base URL used by `bundle()` (e.g., for a local mirror).
 
@@ -81,7 +81,7 @@ Set `REPO_BASE` to override the GitHub base URL used by `bundle()` (e.g., for a 
 |---|---|---|---|
 | `infra/` | `drumee-infra` | `setup-infra` (main), `acme.sh` | nginx, nodejs, npm, git, openssh-client |
 | `schemas/` | `drumee-schemas` | `setup-schemas` (main), `schemas` (preview branch) | mariadb-server |
-| `server/` | `drumee-server-pod` | `server-team` (preview branch), `schemas-utils` | nginx, redis, graphicsmagick, ffmpeg, libreoffice |
+| `server/` | `drumee-server-pod` | `server-team` (preview branch) | nginx, redis, graphicsmagick, ffmpeg, libreoffice |
 | `ui/` | `drumee-ui-pod` | `ui-team` (preview branch) | webpack (runs during build) |
 | `static/` | `drumee-static` | `static` (main) | — |
 | `schemas-patch/` | `drumee-patch` | `schemas` (preview) | @drumee/server-essentials |
@@ -90,7 +90,7 @@ Set `REPO_BASE` to override the GitHub base URL used by `bundle()` (e.g., for a 
 
 ## Version Management
 
-The authoritative version for each package lives in the first line of `<package>/debian/changelog`:
+The authoritative version for each package lives in the first line of `<package>/debian/changelog` (e.g. `server/debian/changelog`, `ui/debian/changelog`):
 ```
 drumee-infra (1.2.11) unstable; urgency=medium
 ```
