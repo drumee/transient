@@ -85,7 +85,7 @@ Set `REPO_BASE` to override the GitHub base URL used by `bundle()` (e.g., for a 
 | `ui/` | `drumee-ui-pod` | `ui-team` (preview branch) | webpack (runs during build) |
 | `static/` | `drumee-static` | `static` (main) | — |
 | `schemas-patch/` | `drumee-patch` | `schemas` (preview) | @drumee/server-essentials |
-| `builder/` | generic builder | `setup` (somanos/wip) | uses `target/` dir instead of bundling |
+| `builder/` | `drumee-infra` (interactive installer) | `setup` (somanos/wip) | debconf only |
 | `admin/` | — | — | admin scripts only |
 
 ## Version Management
@@ -107,11 +107,27 @@ server/update-changelog.sh --message="Custom message" --email=user@example.com
 
 Without `--message`, it pulls the last 5 non-merge git commits from the source repo as bullet points.
 
+## builder/ Package
+
+`builder/` produces a `drumee-infra` **interactive installer** — distinct from `infra/` which is pre-configured. Key behaviours:
+
+- Does **not** clone and compile upstream source. Packages pre-built artifacts from the `target/` directory in the repo root.
+- Post-install runs `/var/lib/drumee/setup/menu/install.sh` — an interactive setup wizard.
+- Prompts for domain name and data partition via debconf during `dpkg -i`.
+- Builds **unsigned** (`dpkg-buildpackage -us -uc`) — no GPG key required.
+- Does **not** accept `--version`, `--force`, or `--email` flags.
+- Has its own `builder/utils/env.sh` and `builder/utils/functions.sh` with different path constants and a GitLab fallback: when `REPO_BASE` is unset, `bundle()` defaults to `git@gitlab.drumee.in:drumee/` instead of GitHub.
+
+```bash
+builder/build.sh        # package current target/ artifacts
+builder/build.sh pull   # pull setup repo first, then package
+```
+
 ## schemas Build Prerequisites
 
 `schemas/build.sh` requires a seeds archive. It looks for `var/tmp/drumee/seeds.tgz` inside the schemas directory; if absent, it tries to create it from `$SEEDS_DIR` (defaults to `$HOME/docker/data/seeds/`). The build will exit if neither exists.
 
-The `schemas/seeds/` directory in this repo contains pre-seeded data files (UUID-named) that are packaged into the `.deb`.
+`schemas/seeds/` is gitignored — it contains large MariaDB binary files unsuitable for version control.
 
 ## Post-Install Behavior
 
