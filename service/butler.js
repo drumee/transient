@@ -758,6 +758,149 @@ class __butler extends Mfs {
       "/data",
     ]);
   }
+
+  /**
+   * Public OAuth callback for the Drive-scope flow initiated by
+   * `google_drive.connect`. Upserts the user's oauth_accounts row
+   * (provider='google') with access_token + refresh_token + scope +
+   * expires_at — creating it when the user has no prior Google link —
+   * then returns a small HTML page that signals the opener (via
+   * BroadcastChannel + localStorage + postMessage) before closing.
+   */
+  async google_drive_callback() {
+    const code = this.input.use('code');
+    const state = this.input.use('state');
+    if (!code || !state) {
+      return this._closingPage(false, 'missing_code_or_state');
+    }
+    let payload;
+    try {
+      const raw = await this.yp.await_proc('get_redirect_state', state);
+      const meta = raw && raw.metadata;
+      payload = typeof meta === 'string' ? this.parseJSON(meta) : meta;
+    } catch (e) {
+      this.warn('[google_drive_callback] state lookup failed:', e && e.message);
+      return this._closingPage(false, 'invalid_state');
+    }
+    // Single-use: consume the state row immediately so it can't be replayed
+    // (the same `state` token attaching tokens onto a victim uid, or being
+    // re-submitted after the window closed). Delete regardless of whether
+    // the exchange below succeeds — a failed attempt must not leave a
+    // reusable token behind.
+    try {
+      await this.yp.await_query('DELETE FROM yp.redirect_state WHERE id=?', state);
+    } catch (e) {
+      this.warn('[google_drive_callback] state consume failed:', e && e.message);
+    }
+    if (!payload || !payload.uid || payload.intent !== 'gdrive_migrate') {
+      return this._closingPage(false, 'state_mismatch');
+    }
+
+    const { google } = require('googleapis');
+    const { sysEnv } = require('@drumee/server-essentials');
+    const { googleDriveCredentials } = require('./lib/google_credentials');
+    const { id: client_id, secret: client_secret } = googleDriveCredentials();
+    // Must stay byte-identical to google_drive._oauthClient() — Google
+    // verifies this redirect_uri against the value used at generateAuthUrl.
+    // svc_location is the endpoint-aware service path (same idiom as
+    // loby/service/google.js); never hardcode it — it yields the correct
+    // callback URL on every endpoint automatically.
+    const { main_domain, svc_location } = sysEnv();
+    const redirect_uri = `https://${main_domain}${svc_location}/butler.google_drive_callback?`;
+    const oauth2 = new google.auth.OAuth2(client_id, client_secret, redirect_uri);
+
+    let tokens;
+    try {
+      const res = await oauth2.getToken(code);
+      tokens = res.tokens;
+    } catch (e) {
+      this.warn('[google_drive_callback] exchange failed:', e && e.message);
+      return this._closingPage(false, 'exchange_failed');
+    }
+    if (!tokens || !tokens.access_token) {
+      return this._closingPage(false, 'no_access_token');
+    }
+
+    // Identify the Google account from the id_token (email+profile scope is
+    // requested in google_drive.connect). provider_user_id (the `sub`) is
+    // part of the oauth_accounts UNIQUE key, so it's required to upsert the
+    // row — without it an email/password user (no prior Google-linked row)
+    // would have nothing to UPDATE and the token would be silently dropped.
+    let googleSub = null, googleEmail = '';
+    try {
+      if (tokens.id_token) {
+        const ticket = await oauth2.verifyIdToken({ idToken: tokens.id_token, audience: client_id });
+        const p = ticket.getPayload() || {};
+        googleSub = p.sub || null;
+        googleEmail = p.email || '';
+      }
+    } catch (e) {
+      this.warn('[google_drive_callback] id_token verify failed:', e && e.message);
+    }
+    if (!googleSub) {
+      return this._closingPage(false, 'no_identity');
+    }
+
+    const scope = tokens.scope || '';
+    const expiresAt = tokens.expiry_date
+      ? Math.floor(tokens.expiry_date / 1000)
+      : Math.floor(Date.now() / 1000) + 3500;
+
+    // Upsert keyed on the UNIQUE (provider, provider_user_id): creates the
+    // row for a first-time connector (no prior Google login) and updates it
+    // on re-grant. refresh_token is overwritten only when Google returns a
+    // fresh one (prompt=consent forces it on first grant); otherwise the
+    // stored one is preserved.
+    await this.yp.await_query(
+      `INSERT INTO oauth_accounts
+         (user_id, provider, provider_user_id, email, access_token, refresh_token, scope, expires_at, ctime, mtime)
+       VALUES (?, 'google', ?, ?, ?, ?, ?, ?, UNIX_TIMESTAMP(), UNIX_TIMESTAMP())
+       ON DUPLICATE KEY UPDATE
+         user_id       = VALUES(user_id),
+         email         = VALUES(email),
+         access_token  = VALUES(access_token),
+         refresh_token = IF(VALUES(refresh_token) IS NOT NULL AND VALUES(refresh_token) <> '', VALUES(refresh_token), refresh_token),
+         scope         = VALUES(scope),
+         expires_at    = VALUES(expires_at),
+         mtime         = UNIX_TIMESTAMP()`,
+      payload.uid, googleSub, googleEmail, tokens.access_token, tokens.refresh_token || null, scope, expiresAt
+    );
+
+    return this._closingPage(true);
+  }
+
+  /**
+   * Minimal HTML that posts a status message to the opener window and
+   * closes itself. The FE popup listens for `message` events filtered
+   * by `type === 'gdrive-connected'`.
+   */
+  _closingPage(ok, reason) {
+    const payloadJson = JSON.stringify({ type: 'gdrive-connected', ok: !!ok, reason: reason || null });
+    const statusText = JSON.stringify(
+      ok ? 'Connected. You can close this window.'
+        : 'Connection failed: ' + (reason || 'unknown')
+    );
+    // Google's consent screen ships Cross-Origin-Opener-Policy, which severs
+    // window.opener for this popup's browsing context for the rest of its
+    // life. So postMessage to the opener silently no-ops AND window.close()
+    // is typically blocked. Signal the still-open app via same-origin
+    // channels that survive opener severance: BroadcastChannel + a
+    // localStorage write (which fires a `storage` event in the app document).
+    // postMessage is kept as a bonus for browsers where the opener survives.
+    const body = `<!doctype html><html><body>
+<script>
+(function () {
+  var payload = ${payloadJson};
+  try { var bc = new BroadcastChannel('gdrive-oauth'); bc.postMessage(payload); bc.close(); } catch (e) {}
+  try { payload.ts = Date.now(); localStorage.setItem('gdrive-oauth-result', JSON.stringify(payload)); } catch (e) {}
+  try { if (window.opener && !window.opener.closed) window.opener.postMessage(payload, window.location.origin); } catch (e) {}
+  try { window.close(); } catch (e) {}
+  document.body.innerText = ${statusText};
+})();
+</script>
+</body></html>`;
+    this.output.html(body);
+  }
 }
 
 module.exports = __butler;

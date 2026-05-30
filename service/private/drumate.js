@@ -124,9 +124,8 @@ class __private_drumate extends Entity {
       return;
     }
 
-    const profile = this.user.profile() || this.parseJSON(this.user.get(Attr.profile)) || {};
-    const passwordSet = profile.password_set;
-    const usePassword = passwordSet === undefined || parseInt(passwordSet) === 1;
+    const profile = this.parseJSON(this.user.get(Attr.profile)) || {};
+    const usePassword = await this._resolveUsePassword(profile);
 
     if (usePassword) {
       const password = this.input.need(Attr.password);
@@ -681,9 +680,8 @@ class __private_drumate extends Entity {
    * backward compatibility with legacy users.
    */
   async delete_account() {
-    const profile = this.user.profile() || this.parseJSON(this.user.get(Attr.profile)) || {};
-    const passwordSet = profile.password_set;
-    const usePassword = passwordSet === undefined || parseInt(passwordSet) === 1;
+    const profile = this.parseJSON(this.user.get(Attr.profile)) || {};
+    const usePassword = await this._resolveUsePassword(profile);
 
     if (usePassword) {
       const password = this.input.use(Attr.password);
@@ -730,23 +728,73 @@ class __private_drumate extends Entity {
    *
    * Sensitive — gated by the same password-or-OTP fork as delete_account.
    */
+  /**
+   * Mirror of settings_main._reconcilePasswordSet on the FE.
+   * For legacy accounts where profile.password_set is unset, fall back
+   * to "has at least one oauth row" → password_set=0 (OTP path).
+   * Otherwise the FE picks OTP but the server demands a password.
+   */
+  async _resolveUsePassword(profile) {
+    let passwordSet = profile && profile.password_set;
+    if (passwordSet === undefined || passwordSet === null) {
+      const row = await this.yp.await_query(
+        'SELECT COUNT(*) AS n FROM oauth_accounts WHERE user_id = ?',
+        this.uid
+      );
+      const hasOauth = ((row && row.n) || 0) > 0;
+      passwordSet = hasOauth ? 0 : 1;
+    }
+    return parseInt(passwordSet) === 1;
+  }
+
   async unlink_oauth() {
     const provider = this.input.need('provider');
 
-    const profile = this.user.profile() || this.parseJSON(this.user.get(Attr.profile)) || {};
-    const passwordSet = profile.password_set;
-    const usePassword = passwordSet === undefined || parseInt(passwordSet) === 1;
+    // Accept EITHER credential — FE picks which to ask based on whether
+    // 2FA is enabled and whether the user has a password. The server
+    // doesn't trust profile.password_set (it can drift out of sync with
+    // the actual fingerprint column) — it just verifies whichever
+    // credential is sent.
+    const password = this.input.use(Attr.password);
+    const secret = this.input.use(Attr.secret);
+    const code = this.input.use(Attr.code);
 
-    if (usePassword) {
-      const password = this.input.need(Attr.password);
+    let userHasPassword = false;
+
+    if (password) {
       const ok = await this.yp.await_proc('check_password_next', this.uid, password);
       if (isEmpty(ok)) {
         this.output.data({ error: "WRONG_CREDENTIALS" });
         return;
       }
+      userHasPassword = true;
+      // Self-heal: successful password verification proves the user has
+      // a password set, so reconcile the flag for future step-up flows.
+      const profile = this.parseJSON(this.user.get(Attr.profile)) || {};
+      if (parseInt(profile.password_set) !== 1) {
+        try {
+          await this.yp.call_proc('drumate_update_profile', this.uid, { password_set: 1 });
+        } catch (e) {
+          this.warn('unlink_oauth: failed to self-heal password_set', e);
+        }
+      }
+    } else if (secret && code) {
+      const otp = await this.yp.await_proc("secret_check", this.uid, secret, code);
+      if (!otp || otp.code != code) {
+        this.output.data({ error: "INVALID_CODE" });
+        return;
+      }
+      await this.yp.await_proc("secret_clear", this.uid, "all");
+      const profile = this.parseJSON(this.user.get(Attr.profile)) || {};
+      userHasPassword = parseInt(profile.password_set) === 1;
     } else {
-      // OAuth-only user trying to unlink — make sure they're not about
-      // to lock themselves out. Count remaining links AFTER the unlink.
+      this.output.data({ error: "VERIFICATION_REQUIRED" });
+      return;
+    }
+
+    // Lockout guard: only block if the user genuinely has no other way
+    // back in. With password set, removing all oauth is safe.
+    if (!userHasPassword) {
       const remaining = await this.yp.await_query(
         'SELECT COUNT(*) AS n FROM oauth_accounts WHERE user_id = ? AND provider != ?',
         this.uid, provider
@@ -756,14 +804,6 @@ class __private_drumate extends Entity {
         this.output.data({ error: "LAST_AUTH_METHOD" });
         return;
       }
-      const secret = this.input.need(Attr.secret);
-      const code = this.input.need(Attr.code);
-      const otp = await this.yp.await_proc("secret_check", this.uid, secret, code);
-      if (!otp || otp.code != code) {
-        this.output.data({ error: "INVALID_CODE" });
-        return;
-      }
-      await this.yp.await_proc("secret_clear", this.uid, "all");
     }
 
     await this.yp.await_query(
@@ -782,7 +822,7 @@ class __private_drumate extends Entity {
    * way. Refuses if password_set=1 already (use change_password instead).
    */
   async set_initial_password() {
-    const profile = this.user.profile() || this.parseJSON(this.user.get(Attr.profile)) || {};
+    const profile = this.parseJSON(this.user.get(Attr.profile)) || {};
     if (parseInt(profile.password_set) === 1) {
       this.output.data({ error: "ALREADY_HAS_PASSWORD" });
       return;
