@@ -20,6 +20,7 @@ const {
 const { Mfs } = require('@drumee/server-core');
 const { isEmpty } = require('lodash');
 const { shouldSendNotification } = require('../lib/email-policy');
+const { hashPassword } = require('../lib/secure-share-password');
 
 class __secure_share extends Mfs {
 
@@ -40,9 +41,12 @@ class __secure_share extends Mfs {
     const fullname = this.user.get('fullname');
     const lang     = this.user.language() || this.input.app_language();
 
+    const rawPassword = this.input.get('password') || '';
+    const passwordHash = rawPassword.trim() ? hashPassword(rawPassword.trim()) : '';
+
     const row = await this.yp.await_proc(
       'secure_share_create',
-      token, hub_id, nid, this.uid, email, domain, expiryHours
+      token, hub_id, nid, this.uid, email, domain, expiryHours, passwordHash
     );
 
     if (isEmpty(row)) {
@@ -88,8 +92,9 @@ class __secure_share extends Mfs {
   async list() {
     const nid    = this.input.need(Attr.nid);
     const hub_id = this.hub.get(Attr.id);
-    const rows   = await this.yp.await_proc('secure_share_list', hub_id, nid, this.uid);
-    this.output.list(toArray(rows));
+    const rows   = toArray(await this.yp.await_proc('secure_share_list', hub_id, nid, this.uid));
+    const base   = this.input.homepath(this.hub.get(Attr.vhost));
+    this.output.list(rows.map(r => ({ ...r, link: `${base}#/dmz/share/${r.id}` })));
   }
 
   /**
@@ -106,22 +111,33 @@ class __secure_share extends Mfs {
 
     // Only broadcast if the revoke actually happened (procedure returns empty otherwise)
     if (!isEmpty(row) && row.revoked_at) {
+      const eventData = {
+        event           : 'secure_share_revoked',
+        token,
+        nid             : row.node_id,
+        recipient_email : row.recipient_email,
+      };
+      const svcOpt = { service: 'share.track_event' };
+
       try {
+        // Broadcast to hub members (sender's window refreshes its list)
         const recipients = await this.yp.await_proc('entity_sockets', { hub_id });
-        await RedisStore.sendData(
-          this.payload(
-            {
-              event           : 'secure_share_revoked',
-              token,
-              nid             : row.node_id,
-              recipient_email : row.recipient_email,
-            },
-            { service: 'share.track_event' }
-          ),
-          recipients
-        );
+        await RedisStore.sendData(this.payload(eventData, svcOpt), recipients);
       } catch (e) {
-        this.warn('[secure_share.revoke] broadcast failed:', e && e.message);
+        this.warn('[secure_share.revoke] hub broadcast failed:', e && e.message);
+      }
+
+      // Also target the recipient's socket directly using the socket_id stored at
+      // access time — entity_sockets() won't include guest sockets.
+      if (row.active_socket_id) {
+        try {
+          await RedisStore.sendData(
+            this.payload(eventData, svcOpt),
+            [{ socket_id: row.active_socket_id }]
+          );
+        } catch (e) {
+          this.warn('[secure_share.revoke] recipient broadcast failed:', e && e.message);
+        }
       }
     }
 

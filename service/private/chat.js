@@ -42,6 +42,7 @@ class privateChat extends Entity {
     this.count_all = this.count_all.bind(this);
     this.attachment = this.attachment.bind(this);
     this.change_status = this.change_status.bind(this);
+    this.typing = this.typing.bind(this);
   }
 
   /**
@@ -91,7 +92,49 @@ class privateChat extends Entity {
     } catch (e) {
       this.warn("[chat.acknowledge] p2p_mention dismiss failed:", e && e.message);
     }
+    // Notify the sender (peer_id) that I've read up to ref_ctime, so their chat
+    // widget can place my "seen" avatar live (Messenger-style). This covers the
+    // case where I read a freshly-received message while the chat is already
+    // open — the on-load read-receipt push lives in messages(). peer_id in the
+    // payload is MY uid so the recipient matches it against their own peerId (I
+    // am their peer); ctime carries the read cursor for applyReadReceipt().
+    try {
+      const cursor = ref_ctime || Math.floor(Date.now() / 1000);
+      const recipients = await this.yp.await_proc("user_sockets", peer_id);
+      await RedisStore.sendData(
+        this.payload([{ peer_id: this.uid, ctime: cursor }], { service: "chat.acknowledge" }),
+        recipients
+      );
+    } catch (e) {
+      this.warn("[chat.acknowledge] read-receipt push failed:", e && e.message);
+    }
     this.output.data({ peer_id });
+  }
+
+  /**
+   * Ephemeral typing indicator for P2P chat. Broadcasts the caller's typing
+   * state over WebSocket to the peer's active sessions only. Nothing persisted.
+   * peer_id in the payload is the sender's uid so the recipient's chat widget
+   * matches it against their own peerId (the peer is the sender from their
+   * perspective) — same convention used by chat.post.
+   */
+  async typing() {
+    const entity_id = this.input.need(Attr.entity_id);
+    const profile = this.user.get("profile") || {};
+    const data = {
+      author_id: this.uid,
+      uid: this.uid,
+      firstname: this.user.get(Attr.firstname),
+      lastname: profile.lastname,
+      peer_id: this.uid,
+      state: this.input.use("state", 1),
+    };
+    const recipients = await this.yp.await_proc("user_sockets", entity_id);
+    await RedisStore.sendData(
+      this.payload(data, { service: "chat.typing" }),
+      recipients,
+    );
+    this.output.data({ ok: 1 });
   }
 
   /**

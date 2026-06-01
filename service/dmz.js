@@ -20,6 +20,7 @@ const { isEmpty } = require('lodash');
 const {
   ID_NOBODY
 } = Constants;
+const { verifyPassword: verifySecureSharePassword } = require('./lib/secure-share-password');
 
 
 //########################################
@@ -141,6 +142,7 @@ class __dmz extends Mfs {
         const secureRes = await this.yp.await_proc('secure_share_info', token);
         if (!isEmpty(secureRes) && !secureRes.failed) {
           res = secureRes;
+          delete res.password_hash;
         }
       } catch (e) {
         this.warn('[dmz.info] secure_share_info lookup failed:', e && e.message);
@@ -165,6 +167,10 @@ class __dmz extends Mfs {
    *
    */
   async _loginSecureShare(token, info) {
+    // Extract password_hash before any early returns — never expose it to the client
+    const storedPasswordHash = info.password_hash || null;
+    delete info.password_hash;
+
     if (info.validity === 'TICKET_REVOKED') {
       return this.output.data({ status: 'TICKET_REVOKED', is_secure: 1 });
     }
@@ -187,8 +193,27 @@ class __dmz extends Mfs {
       }
     }
 
-    // Email validation
-    const submittedEmail = (this.input.get(Attr.email) || '').toLowerCase().trim();
+    // Email validation — logged-in Drumee members skip the form if their account
+    // email matches the share (session auth is stronger proof than typing an email)
+    let submittedEmail = (this.input.get(Attr.email) || '').toLowerCase().trim();
+
+    if (!submittedEmail && user.id && ![ID_NOBODY, guest_id].includes(user.id)) {
+      try {
+        const p = typeof user.profile === 'string' ? JSON.parse(user.profile) : (user.profile || {});
+        const accountEmail = (p.email || '').toLowerCase().trim();
+        if (accountEmail) {
+          const recipientCheck = (info.recipient_email || '').toLowerCase().trim();
+          let autoMatch = (accountEmail === recipientCheck);
+          if (!autoMatch && info.domain_restriction) {
+            autoMatch = (accountEmail.split('@')[1] || '') === info.domain_restriction.toLowerCase().trim();
+          }
+          if (autoMatch) submittedEmail = accountEmail;
+        }
+      } catch (e) {
+        this.warn('[dmz.login] secure_share auto-grant parse failed:', e && e.message);
+      }
+    }
+
     if (!submittedEmail) {
       return this.output.data({ ...info, status: 'REQUIRED_EMAIL', is_secure: 1 });
     }
@@ -205,10 +230,21 @@ class __dmz extends Mfs {
       return this.output.data({ status: 'EMAIL_MISMATCH', is_secure: 1 });
     }
 
+    // Password gate — only evaluated after email is confirmed valid
+    if (info.require_password) {
+      const submittedPassword = (this.input.get(Attr.password) || '').trim();
+      if (!submittedPassword) {
+        return this.output.data({ status: 'REQUIRED_PASSWORD', is_secure: 1 });
+      }
+      if (!verifySecureSharePassword(submittedPassword, storedPasswordHash)) {
+        return this.output.data({ status: 'WRONG_PASSWORD', is_secure: 1 });
+      }
+    }
+
     // Valid access — log it and notify sender in real time
     const actor_id = (guest_id === user.id) ? null : (user.id || null);
     try {
-      const track = await this.yp.await_proc('secure_share_access_log', token, actor_id);
+      const track = await this.yp.await_proc('secure_share_access_log', token, actor_id, this.input.get(Attr.socket_id));
       const row   = toArray(track)[0] || {};
       if (row.hub_id) {
         const recipients = await this.yp.await_proc('entity_sockets', { hub_id: row.hub_id });
@@ -232,10 +268,14 @@ class __dmz extends Mfs {
 
     // Associate session with share creator so hub endpoints (media.show_node_by) work —
     // mirrors the cookie_touch done for normal DMZ tokens at login line 330.
+    // socket_id must be passed so entity_sockets() includes this guest socket in
+    // hub broadcasts (e.g. secure_share_revoked) — same pattern as session.dmz_login.
     if (info.creator_id) {
       try {
         await this.yp.await_proc('cookie_touch', {
-          sid: this.input.sid(), uid: info.creator_id
+          sid       : this.input.sid(),
+          uid       : info.creator_id,
+          socket_id : this.input.get(Attr.socket_id)
         });
       } catch (e) {
         this.warn('[dmz.login] secure_share cookie_touch failed:', e && e.message);
