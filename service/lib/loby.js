@@ -224,8 +224,22 @@ class Account extends Entity {
       // CASE A: Sign-in successful
       if (sessionData && sessionData.status === 'ok') {
         this.debug(`[Auth] Sign-in successful for ${email}`, sessionData);
+        // Don't clobber a Drive-migration token. Google *login* and Drive
+        // *connect* use DIFFERENT OAuth clients but share one oauth_accounts
+        // row (keyed by provider + provider_user_id). A refresh_token is bound
+        // to the client that minted it, and the migration worker refreshes with
+        // the Drive client — so overwriting the row's tokens with login-client
+        // tokens makes that refresh throw invalid_grant (surfaced to the user as
+        // NEEDS_RECONNECT) even though the login itself succeeded. When the row
+        // already carries drive.readonly scope, leave its access_token/
+        // refresh_token untouched and only bump mtime; otherwise behave as
+        // before (store the fresh login tokens).
         await this.yp.await_query(
-          'UPDATE oauth_accounts SET access_token = ?, refresh_token = ?, mtime = UNIX_TIMESTAMP() WHERE user_id = ? AND provider = ?',
+          `UPDATE oauth_accounts
+             SET access_token  = IF(scope IS NOT NULL AND scope LIKE '%drive.readonly%', access_token, ?),
+                 refresh_token = IF(scope IS NOT NULL AND scope LIKE '%drive.readonly%', refresh_token, ?),
+                 mtime = UNIX_TIMESTAMP()
+           WHERE user_id = ? AND provider = ?`,
           access_token, refresh_token, sessionData.id, provider
         );
         sessionData.method = 'signin';
