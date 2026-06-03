@@ -87,4 +87,4 @@ gsap.registerPlugin(CSSPlugin);
 
 export default gsap;
 export { gsap };
-export { TweenMax, TweenLite, Expo, Cubic, Linear }
+export { TweenMax, TweenLite, TimelineMax, Expo, Cubic, Linear }
