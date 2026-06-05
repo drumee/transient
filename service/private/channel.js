@@ -266,6 +266,167 @@ class __private_channel extends Entity {
   }
 
   /**
+   * Folder-scoped posts: split staged attachments (/__chat__/__upload__/)
+   * into device uploads (client asked to promote them into the folder via
+   * folder_attachment) and workspace copies (link-only, purged after send).
+   * Staging is writable by every hub member, so each node must be anchored
+   * to the hub's real chat_upload_id parent AND owned by the caller —
+   * a client-supplied id alone authorizes nothing.
+   */
+  async _classify_staged_attachment(attachment, folder_attachment) {
+    const res = { device: [], workspace: [] };
+    let mfs_home = await this.db.call_proc("mfs_home");
+    const staging_id = mfs_home && mfs_home.chat_upload_id;
+    if (!staging_id) return res;
+    const wanted = new Set(toArray(folder_attachment).map(String));
+    for (let nid of toArray(attachment)) {
+      let rows = await this.db.await_query(
+        "SELECT id, parent_id, owner_id, origin_id, category FROM media WHERE id=?",
+        `${nid}`,
+      );
+      let node = toArray(rows)[0];
+      // Anchor on the actual staging parent — not a file_path substring,
+      // which a user-created folder literally named __chat__ could spoof.
+      if (!node || `${node.parent_id}` !== `${staging_id}`) continue;
+      if (["folder", "hub"].includes(node.category)) continue;
+      if (
+        `${node.owner_id}` !== `${this.uid}` &&
+        `${node.origin_id}` !== `${this.uid}`
+      ) {
+        this.warn("channel.post: staged attachment not owned by caller", nid);
+        continue;
+      }
+      if (wanted.has(`${nid}`)) {
+        res.device.push(`${nid}`);
+      } else {
+        res.workspace.push(`${nid}`);
+      }
+    }
+    return res;
+  }
+
+  /**
+   * Move staged device uploads into the scoped folder so the original lands
+   * in the folder's Files tab, exactly like a direct upload would have.
+   * Same-hub moves keep the node id (mfs_move_all only updates parent_id);
+   * a cross-hub move re-creates the node, so remap old id -> des_id.
+   */
+  async _promote_staged_to_folder(deviceNids, folderNid) {
+    const hub_id = this.hub.get(Attr.id);
+    const src = deviceNids.map((nid) => ({ nid, hub_id }));
+    let data = await this.db.call_proc(
+      "mfs_move_all",
+      stringify(src),
+      this.uid,
+      folderNid,
+      hub_id,
+    );
+    data = toArray(data);
+    const remap = {};
+    for (let node of data) {
+      if (node.action === "move" && node.des_id) {
+        await move_node(
+          { nid: node.nid, mfs_root: node.src_mfs_root },
+          { nid: node.des_id, hub_id, mfs_root: node.des_mfs_root },
+        );
+        remap[`${node.nid}`] = `${node.des_id}`;
+      }
+      // 'show'/'same' rows = same-hub move: parent updated in place, no
+      // physical relocation, id unchanged.
+    }
+    return remap;
+  }
+
+  /**
+   * Promotion is confirmed by the node actually sitting under the folder —
+   * not by the SP returning without error.
+   */
+  async _confirm_promoted(nids, folderNid) {
+    const confirmed = [];
+    for (let nid of toArray(nids)) {
+      try {
+        let rows = await this.db.await_query(
+          "SELECT id FROM media WHERE id=? AND parent_id=?",
+          `${nid}`,
+          `${folderNid}`,
+        );
+        if (!isEmpty(toArray(rows))) confirmed.push(`${nid}`);
+      } catch (e) {
+        this.warn(
+          "channel.post: promotion confirm failed",
+          nid,
+          e && e.message,
+        );
+      }
+    }
+    return confirmed;
+  }
+
+  /**
+   * Staged workspace copies are duplicates (the original never left the
+   * desk) — delete them only AFTER the message and its attachment records
+   * are committed, so a failed post can still be retried from staging.
+   */
+  async _purge_staged_copies(nids) {
+    if (isEmpty(nids)) return;
+    let mfs_home = await this.db.call_proc("mfs_home");
+    if (!mfs_home || !mfs_home.home_dir) return;
+    for (let nid of nids) {
+      try {
+        await this.db.await_proc("mfs_attachment_remove", nid);
+        await remove_node({
+          nid,
+          hub_id: this.hub.get(Attr.id),
+          mfs_root: `${mfs_home.home_dir}/__storage__/`,
+        });
+      } catch (e) {
+        this.warn(
+          "channel.post: failed to purge staged copy",
+          nid,
+          e && e.message,
+        );
+      }
+    }
+  }
+
+  /**
+   * Folder windows live-append nodes from "media.new" payloads
+   * (window/utils handleWsEvent) — the chat broadcast alone never reaches
+   * the Files tab. Mirrors media.sendNodeAttributes.
+   */
+  async _notify_folder_new_nodes(nids, folderNid) {
+    if (isEmpty(nids)) return;
+    const hub_id = this.hub.get(Attr.id);
+    let recipients = toArray(
+      await this.yp.await_proc("entity_sockets", { hub_id }),
+    );
+    if (isEmpty(recipients)) return;
+    for (let nid of nids) {
+      const nodes = {};
+      for (let r of recipients) {
+        if (!r || !r.uid) continue;
+        let attr =
+          nodes[r.uid] ||
+          (await this.db.await_proc("mfs_access_node", r.uid, nid));
+        nodes[r.uid] = attr;
+        if (isEmpty(attr) || !attr.nid) continue;
+        try {
+          await RedisStore.sendData(
+            this.payload(attr, { service: "media.new" }),
+            r,
+          );
+        } catch (e) {
+          this.warn(
+            "channel.post: media.new notify failed",
+            nid,
+            e && e.message,
+          );
+        }
+      }
+    }
+  }
+
+  /**
    *
    * @param {*} thread_id
    * @param {*} uid
@@ -770,9 +931,23 @@ class __private_channel extends Entity {
     let message = this.input.use(Attr.message, "");
     const thread_id = this.input.use(Attr.thread_id);
     let attachment = this.input.use(Attr.attachment, []);
+    let folder_attachment = this.input.use("folder_attachment", []);
     let exclude = this.input.need(Attr.socket_id);
     if (exclude) exclude = [exclude];
     let input = {};
+
+    attachment = toArray(attachment).map(String);
+    folder_attachment = toArray(folder_attachment).map(String);
+    // Client-supplied ids flow into proc-call strings below — hard-reject
+    // anything that is not a plain node id before any interpolation.
+    const ID_RE = /^[0-9a-zA-Z_-]{1,32}$/;
+    for (let id of [...attachment, ...folder_attachment]) {
+      if (!ID_RE.test(id)) {
+        this.warn("channel.post: malformed attachment id", id);
+        return this.output.data({ status: "INVALID_ATTACHMENT" });
+      }
+    }
+
     let message_id = await this.db.await_proc("message_id");
     let sbox;
     message_id = message_id.id;
@@ -783,9 +958,62 @@ class __private_channel extends Entity {
       sbox = await this.db.call_proc("mfs_home");
     }
     const nid = this.input.use(Attr.nid);
-    // Folder-scoped posts upload into the folder; copy (not move) so the
-    // originals remain visible in the folder's Files tab.
+    // Folder-scoped posts: device uploads sit in the hub's chat staging
+    // until the message is sent. Promote them into the scoped folder first
+    // (the original lands in the Files tab), then copy (not move) every
+    // attachment into the sbox so the message keeps its own copy.
     const copy_only = !isEmpty(nid);
+    let staged = { device: [], workspace: [] };
+    let promoted = [];
+    if (copy_only && !isEmpty(attachment)) {
+      staged = await this._classify_staged_attachment(
+        attachment,
+        folder_attachment,
+      );
+      if (!isEmpty(staged.device)) {
+        // Moving a file INTO the folder is a write — channel.post itself is
+        // only read-gated, so check the destination node explicitly.
+        // privilege check matches ui _K.permission.write: privilege&perm > 0
+        const MFS_PERM_WRITE = 0b0001000;
+        let folder = await this.db.await_proc("mfs_access_node", this.uid, nid);
+        if (!isEmpty(folder) && Number(folder.privilege) & MFS_PERM_WRITE) {
+          const remap = await this._promote_staged_to_folder(
+            staged.device,
+            nid,
+          );
+          attachment = attachment.map((n) => remap[n] || n);
+          promoted = staged.device.map((n) => remap[n] || n);
+          // A device nid the SP did not confirm stays in staging: its sbox
+          // copy below is independent, so purge it like a workspace copy
+          // rather than leaving a silent orphan.
+          const confirmed = new Set(
+            await this._confirm_promoted(promoted, nid),
+          );
+          const failed = [];
+          promoted = promoted.filter((n) => {
+            if (confirmed.has(`${n}`)) return true;
+            failed.push(`${n}`);
+            return false;
+          });
+          if (!isEmpty(failed)) {
+            this.warn(
+              "channel.post: promotion unconfirmed, purging from staging",
+              failed,
+            );
+            staged.workspace.push(...failed);
+          }
+        } else {
+          this.warn(
+            "channel.post: caller lacks write on folder, staged uploads stay sbox-only",
+            nid,
+          );
+          // Demote: keep them in the message (sbox copy) but never in the
+          // folder; their staging copies get purged like workspace ones.
+          staged.workspace.push(...staged.device);
+          staged.device = [];
+        }
+      }
+    }
     if (!isEmpty(attachment)) {
       let desdir = await this.yp.await_proc(
         "forward_proc",
@@ -833,6 +1061,11 @@ class __private_channel extends Entity {
       );
       data.is_attachment = 1;
     }
+    // Only after the message and its attachment records are committed:
+    // remove the now-redundant staging copies and surface the promoted
+    // files in everyone's open folder window.
+    await this._purge_staged_copies(staged.workspace);
+    await this._notify_folder_new_nodes(promoted, nid);
 
     if (!isEmpty(thread_id)) {
       data.thread = await this.threadInfo(thread_id, this.hub.get(Attr.id));
