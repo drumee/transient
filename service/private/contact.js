@@ -1436,7 +1436,6 @@ class __private_contact extends Contact {
     }
 
     let data = await this.db.await_proc('contact_invite_refuse', drumate.id);
-    _.merge(res, data);
     res = { ...res, ...data };
     let sockets = await this.yp.await_proc('user_sockets', drumate.id);
     await RedisStore.sendData(this.payload(res), sockets);
@@ -1457,7 +1456,7 @@ class __private_contact extends Contact {
       this.warn('[CONTACT] Failed to log refuse activity:', error.message);
     }
 
-    this.output.data(r);
+    this.output.data(res);
 
   }
 
