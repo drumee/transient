@@ -490,7 +490,7 @@ class __private_contact extends Contact {
     const lang = this.user.language() || this.input.app_language();
     const subject = `${Cache.message('_network_non_drumate_subject', lang).format(username)}`;
 
-    const link = `${this.input.homepath()}#/welcome/invitation/${token}`;
+    const link = `${this.input.homepath()}#/welcome/signup/${token}`;
     const tplPath = resolve(__dirname, 'templates', 'butler', 'contact-add-non-drumate.html');
     const msg = new Messenger({
       subject,
@@ -1436,10 +1436,17 @@ class __private_contact extends Contact {
     }
 
     let data = await this.db.await_proc('contact_invite_refuse', drumate.id);
-    _.merge(res, data);
     res = { ...res, ...data };
+
+    try {
+      await this.yp.await_proc('forward_proc', drumate.id, 'contact_invite_refused_peer', `'${this.uid}'`);
+    } catch (error) {
+      this.warn('[CONTACT] contact_invite_refused_peer failed:', error.message);
+    }
+
+    const service = this.input.get(Attr.service);
     let sockets = await this.yp.await_proc('user_sockets', drumate.id);
-    await RedisStore.sendData(this.payload(res), sockets);
+    await RedisStore.sendData(this.payload(res, { service }), sockets);
 
     // Log invite_refused activity
     try {
@@ -1457,7 +1464,7 @@ class __private_contact extends Contact {
       this.warn('[CONTACT] Failed to log refuse activity:', error.message);
     }
 
-    this.output.data(r);
+    this.output.data(res);
 
   }
 

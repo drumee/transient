@@ -156,6 +156,26 @@
       "errors": []
     },
 
+    "accept_invite": {
+      "doc": "Redeem a hub invite token and join the workspace. Called by the FE after sign-in when the welcome URL carries ?invite=SECRET.",
+      "scope": "hub",
+      "permission": {
+        "src": "anonymous",
+        "fast_check": "public-api"
+      },
+      "params": {
+        "token": {
+          "type": "string",
+          "required": true,
+          "doc": "The invite token secret from the email link"
+        }
+      },
+      "returns": {
+        "hub_id": { "type": "string", "doc": "Workspace ID on success" },
+        "status": { "type": "string", "doc": "Error code when not ok: invalid | expired | already_used | hub_not_found | not_authenticated" }
+      }
+    },
+
     "invite": {
       "doc": "Invite one or more emails into this workspace, branching on area (share-link vs restricted) and drumate status.",
       "scope": "hub",
