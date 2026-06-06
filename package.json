@@ -4,7 +4,6 @@
   "description": "Drumee Infrastructure",
   "main": "index.js",
   "scripts": {
-    "postinstall": "patch-package",
     "dev": "drumee-server-devel",
     "add-dev-endpoint": "drumee-server-endpoint add --endpoin=devel --watchDirs=/mnt/devel --baseDir=/mnt/devel",
     "deploy": "drumee-server-deploy",
