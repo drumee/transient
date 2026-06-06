@@ -153,7 +153,22 @@ class __private_task extends Entity {
     let priority = this.input.use('priority', null);
     const due_date = this.input.use('due_date', null);
 
+    // Diagnostic: the server rejects INVALID_PRIORITY on the test env but not
+    // locally. Log the raw incoming priority (use() turns absent/null into the
+    // default, but an empty string "" is passed through verbatim) so we can see
+    // exactly what the FE sent.
+    const rawPriority = this.input.get('priority');
+    this.debug(
+      `[TASK_UPDATE] id=${id} priority(use)=${JSON.stringify(priority)} ` +
+      `raw=${JSON.stringify(rawPriority)} typeof=${typeof rawPriority} ` +
+      `keys=${JSON.stringify(Object.keys(this.input.attributes || {}))}`
+    );
+
     if (priority != null && !VALID_PRIORITIES.includes(priority)) {
+      this.warn(
+        `[TASK_UPDATE] rejecting INVALID_PRIORITY id=${id} ` +
+        `priority=${JSON.stringify(priority)} (raw=${JSON.stringify(rawPriority)})`
+      );
       return this.exception.user('INVALID_PRIORITY');
     }
 
