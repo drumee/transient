@@ -681,7 +681,7 @@ class __private_hub extends Hub {
       || this.hub.get(Attr.hubname)
       || this.hub.get(Attr.name)
       || hubId;
-    const homepath = this.input.homepath();
+    const homepath = this.input.homepath().replace(/\/-\/$/, '/');
     const area = this.hub.get(Attr.area);
     const isShareLink = (area === "share");
     // Workspace-level shared/restricted flag (same rule as the app's security
@@ -774,7 +774,7 @@ class __private_hub extends Hub {
     await this.yp.await_proc(
       "token_hub_invite_add", email, "", secret, method, this.uid, metadata, expiryTs
     );
-    const homepath = this.input.homepath();
+    const homepath = this.input.homepath().replace(/\/-\/$/, '/');
     const link = `${homepath}#/welcome/signup?invite=${encodeURIComponent(secret)}`;
     await this._sendInviteEmail("hub-invite-link", email,
       `${username} invited you to ${hubname}`,
