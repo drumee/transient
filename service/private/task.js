@@ -103,6 +103,22 @@ class __private_task extends Entity {
   }
 
   /**
+   * Read the requested priority from the request BODY only.
+   *
+   * `priority` collides with the standard HTTP `Priority` request header
+   * (RFC 9218 fetch-priority hints, e.g. "u=1, i"), which @drumee/server-core
+   * merges into the input namespace alongside body params. As a result
+   * this.input.use('priority') can return the browser-sent header value rather
+   * than the field the FE submitted — which is why update() rejected
+   * INVALID_PRIORITY on a real browser (header present) but not locally
+   * (no such header). Reading _body sidesteps the collision.
+   */
+  _readPriority(def = null) {
+    const body = this.input._body || {};
+    return body.priority != null ? body.priority : def;
+  }
+
+  /**
    * Create a new task in the current hub (folder).
    * Params: title (required), description, status, priority, due_date, assignee_uid (all optional)
    */
@@ -110,7 +126,7 @@ class __private_task extends Entity {
     const title = this.input.need(Attr.title);
     const description = this.input.use('description', null);
     let status = this.input.use(Attr.status, 'todo');
-    let priority = this.input.use('priority', 'medium');
+    let priority = this._readPriority('medium');
     const due_date = this.input.use('due_date', null);
     // Folder scope: media node id of the folder the task belongs to (nullable).
     const nid = this.input.use('nid', null);
@@ -150,25 +166,10 @@ class __private_task extends Entity {
     const id = this.input.need(Attr.id);
     const title = this.input.use(Attr.title, null);
     const description = this.input.use('description', null);
-    let priority = this.input.use('priority', null);
+    const priority = this._readPriority(null);
     const due_date = this.input.use('due_date', null);
 
-    // Diagnostic: the server rejects INVALID_PRIORITY on the test env but not
-    // locally. Log the raw incoming priority (use() turns absent/null into the
-    // default, but an empty string "" is passed through verbatim) so we can see
-    // exactly what the FE sent.
-    const rawPriority = this.input.get('priority');
-    this.debug(
-      `[TASK_UPDATE] id=${id} priority(use)=${JSON.stringify(priority)} ` +
-      `raw=${JSON.stringify(rawPriority)} typeof=${typeof rawPriority} ` +
-      `keys=${JSON.stringify(Object.keys(this.input.attributes || {}))}`
-    );
-
     if (priority != null && !VALID_PRIORITIES.includes(priority)) {
-      this.warn(
-        `[TASK_UPDATE] rejecting INVALID_PRIORITY id=${id} ` +
-        `priority=${JSON.stringify(priority)} (raw=${JSON.stringify(rawPriority)})`
-      );
       return this.exception.user('INVALID_PRIORITY');
     }
 
