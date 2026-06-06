@@ -733,7 +733,7 @@ class __private_hub extends Hub {
           }
           await this._sendInviteEmail("hub-invite-added", email,
             `You've been added to ${hubname}`,
-            { inviter_name: username, workspace_name: hubname, link: `${homepath}#/desk/@${hubId}`, preview_items, workspace_restricted, recent_messages });
+            { inviter_name: username, workspace_name: hubname, link: `${homepath}#/desk/wm/open/?hub_id=${hubId}&nid=0&filetype=folder&pid=0`, preview_items, workspace_restricted, recent_messages });
           results.push({ email, branch: "B", status: "ok" });
         } else {
           // non-drumate, restricted workspace: generate a token (so already-online
