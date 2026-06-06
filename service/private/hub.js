@@ -733,15 +733,26 @@ class __private_hub extends Hub {
           }
           await this._sendInviteEmail("hub-invite-added", email,
             `You've been added to ${hubname}`,
-            { inviter_name: username, workspace_name: hubname, link: `${homepath}#/welcome/signup?email=${encodeURIComponent(email)}`, preview_items, workspace_restricted, recent_messages });
+            { inviter_name: username, workspace_name: hubname, link: `${homepath}#/desk/@${hubId}`, preview_items, workspace_restricted, recent_messages });
           results.push({ email, branch: "B", status: "ok" });
         } else {
+          // non-drumate, restricted workspace: generate a token (so already-online
+          // users can join) and also add to pending_invitation (fallback for fresh
+          // signups in case the FE token flow doesn't complete).
+          const { randomBytes } = require("crypto");
+          const cSecret = randomBytes(24).toString("hex");
+          const cMethod = `hub_invite:${hubId}`;
+          const cMeta = JSON.stringify({ hub_id: hubId, permission: privilege });
+          await this.yp.await_proc(
+            "token_hub_invite_add", email, "", cSecret, cMethod, this.uid, cMeta, expiryTs
+          );
           await this.yp.await_proc(
             "yp_add_pending_invitation", hubId, 0, privilege, email
           );
+          const inviteLink = `${homepath}#/welcome/signup?invite=${encodeURIComponent(cSecret)}`;
           await this._sendInviteEmail("hub-invite-signup", email,
             `${username} invited you to join ${hubname}`,
-            { inviter_name: username, workspace_name: hubname, link: `${homepath}#/welcome/signup?email=${encodeURIComponent(email)}`, preview_items, workspace_restricted, recent_messages });
+            { inviter_name: username, workspace_name: hubname, link: inviteLink, preview_items, workspace_restricted, recent_messages });
           results.push({ email, branch: "C", status: "ok" });
         }
       } catch (err) {
@@ -768,6 +779,54 @@ class __private_hub extends Hub {
     await this._sendInviteEmail("hub-invite-link", email,
       `${username} invited you to ${hubname}`,
       { inviter_name: username, workspace_name: hubname, link, expiry_days: 7, preview_items, workspace_restricted, recent_messages });
+  }
+
+  /**
+   * Redeem a hub_invite token and join the workspace.
+   * Called by the FE after sign-in when the welcome URL carries ?invite=SECRET.
+   * Scope is "anonymous" because the user may have just signed up (session is
+   * fresh); this.uid is checked manually to enforce authentication.
+   */
+  async accept_invite() {
+    if (!this.uid) {
+      return this.output.data({ status: 'not_authenticated' });
+    }
+    const secret = this.input.need('token');
+    const tokenRow = await this.yp.await_proc('token_get_next', secret);
+    if (!tokenRow || !tokenRow.secret) {
+      return this.output.data({ status: 'invalid' });
+    }
+    const method = tokenRow.method || '';
+    if (!method.startsWith('hub_invite:')) {
+      return this.output.data({ status: 'invalid' });
+    }
+    const hub_id = method.slice('hub_invite:'.length);
+    const now = Math.floor(Date.now() / 1000);
+    if (tokenRow.expiry > 0 && now > tokenRow.expiry) {
+      return this.output.data({ status: 'expired', hub_id });
+    }
+    if (tokenRow.status !== 'active') {
+      // Already redeemed — user is already a member; return hub_id for navigation.
+      return this.output.data({ status: 'already_used', hub_id });
+    }
+    const db_name = await this.yp.await_func('get_db_name', hub_id);
+    if (!db_name) {
+      return this.output.data({ status: 'hub_not_found' });
+    }
+    let meta = {};
+    try {
+      meta = typeof tokenRow.metadata === 'string'
+        ? JSON.parse(tokenRow.metadata)
+        : (tokenRow.metadata || {});
+    } catch (e) { }
+    const permission = meta.permission || 7;
+    await this.yp.await_proc(`${db_name}.add_member`, this.uid, permission, 0);
+    await this.yp.await_proc(
+      `${db_name}.permission_grant`,
+      '*', this.uid, 0, permission, 'system', 'Redeemed hub invite token'
+    );
+    await this.yp.await_proc('token_hub_invite_set_status', secret, 'accepted', null);
+    this.output.data({ hub_id });
   }
 
   /**
