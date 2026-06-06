@@ -1437,8 +1437,16 @@ class __private_contact extends Contact {
 
     let data = await this.db.await_proc('contact_invite_refuse', drumate.id);
     res = { ...res, ...data };
+
+    try {
+      await this.yp.await_proc('forward_proc', drumate.id, 'contact_invite_refused_peer', `'${this.uid}'`);
+    } catch (error) {
+      this.warn('[CONTACT] contact_invite_refused_peer failed:', error.message);
+    }
+
+    const service = this.input.get(Attr.service);
     let sockets = await this.yp.await_proc('user_sockets', drumate.id);
-    await RedisStore.sendData(this.payload(res), sockets);
+    await RedisStore.sendData(this.payload(res, { service }), sockets);
 
     // Log invite_refused activity
     try {
