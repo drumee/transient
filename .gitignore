@@ -29,3 +29,7 @@ package-lock.json
 /package-lock.json
 .dev-tools.rc
 .claude/
+
+# BMad (bmad-method) — generated, do not commit
+_bmad/
+_bmad-output/
