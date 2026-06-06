@@ -23,7 +23,7 @@
     <title>
       <%= title %>
     </title>
-    <link rel="icon" href="<%= icon %>" type="image/svg+xml">
+    <link rel="icon" href="<%= icon %>?v=3" type="image/svg+xml">
     <link rel="stylesheet" href="/-/static/styles/loader.css?v=1.0.3">
     <link rel="stylesheet" href="/-/static/fonts/Armin-Grotesk/stylesheet.css">
     

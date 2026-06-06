@@ -10,7 +10,6 @@ function load_bundle(id, src){
   el.type = type;
   el.setAttribute('async', "true");
   el.setAttribute('charset', "utf-8");
-  el.setAttribute('crossorigin', "true");
   el.setAttribute('id', id);
   el.onload = (e) => {
     count++;

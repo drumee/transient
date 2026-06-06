@@ -247,7 +247,7 @@ class Acl {
       Acl.getModule(service, session.isAnonymous());
 
     if (error) {
-      console.warn(reason);
+      console.info(reason);
       session.exception.unauthorized(error);
       return;
     }

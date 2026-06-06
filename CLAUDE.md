@@ -24,15 +24,7 @@ Configuration is loaded from `/etc/drumee/conf.d/drumee.json` (global) and optio
 
 ## Tests
 
-```bash
-npm run test:db       # MariaDB connectivity
-npm run test:acl      # ACL resolution
-npm run test:redis    # Redis connectivity
-npm run test:cache    # Cache layer
-npm run test:modules  # Module loading
-```
-
-Tests live in `test/`. There is no test runner framework; each is a standalone Node script.
+There is no test runner framework. The only checked-in test files are standalone Node scripts under `offline/test/` (`redis/`, `sms.js`), run directly with `node`.
 
 ## Architecture
 
