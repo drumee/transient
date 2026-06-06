@@ -301,6 +301,10 @@ class MfsActivity extends Entity {
     ]);
     const rows = toArray(rollups);
     const hubs = toArray(hubInvites);
+    let refused = [];
+    try {
+      refused = toArray(await this._callUserProc('notification_contact_refused'));
+    } catch (_) { }
     const items = [
       ...rows.map((r) => ({
         category: r.category,
@@ -346,6 +350,18 @@ class MfsActivity extends Entity {
           hub_name: r.hub_headline || r.hub_ident,
         };
       }),
+      ...refused.map((r) => ({
+        category: 'contact_refused',
+        key_id: String(r.id),
+        last_id: r.id,
+        cnt: 1,
+        ctime: r.ctime,
+        firstname: r.firstname,
+        lastname: r.lastname,
+        email: r.email,
+        author_id: r.author_id,
+        drumate_id: r.author_id,
+      })),
     ];
     this.output.list(items);
   }
