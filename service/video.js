@@ -132,7 +132,12 @@ class Video extends Mfs {
       }
     }
 
-    this.output.response.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+    const asciiName = filename.replace(/[^\x20-\x7e]/g, "_").replace(/["\\]/g, "_");
+    const encodedName = encodeURIComponent(filename);
+    this.output.response.setHeader(
+      "Content-Disposition",
+      `attachment; filename="${asciiName}"; filename*=UTF-8''${encodedName}`
+    );
     this.output.response.setHeader("Content-Length", str.length);
     this.output.write(str, mimetype);
   }
