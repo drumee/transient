@@ -1338,6 +1338,44 @@ class __private_channel extends Entity {
       }
     }
 
+    // Include task @-mentions (logged by task._notifyMentions) for mention/all.
+    // `name` carries the task title so the item renders "mentioned you in <task>".
+    if (type === "mention" || type === "all") {
+      try {
+        const taskMentions = toArray(
+          await this.yp.await_query(
+            `SELECT ca.id, ca.timestamp AS ctime, ca.uid AS author_id,
+              JSON_UNQUOTE(JSON_EXTRACT(ca.data, '$.task_id')) AS task_id,
+              JSON_UNQUOTE(JSON_EXTRACT(ca.data, '$.hub_id')) AS hub_id,
+              JSON_UNQUOTE(JSON_EXTRACT(ca.data, '$.title')) AS name,
+              CONCAT('["', ca.target_uid, '"]') AS mention_ids,
+              COALESCE(CONCAT(d.firstname, ' ', d.lastname), d.email, '') AS fullname,
+              COALESCE(d.firstname, '') AS firstname,
+              COALESCE(d.lastname, '') AS lastname,
+              0 AS is_read
+            FROM yp.contact_activity ca
+            LEFT JOIN yp.drumate d ON d.id = ca.uid
+            WHERE ca.target_uid = ? AND ca.event = 'task_mention' AND ca.dismissed_at IS NULL
+            ORDER BY ca.timestamp DESC LIMIT 45`,
+            this.uid,
+          ),
+        );
+        for (const row of taskMentions) {
+          if (unread_only && row.is_read) continue;
+          // contact_invite category → dismissed via contact_activity_dismiss;
+          // mention_ids makes the skeleton render it as a mention.
+          row.category = "contact_invite";
+          row.event = "task_mention";
+          all_notifications.push(row);
+        }
+      } catch (e) {
+        this.warn(
+          "[channel.list_notifications] task mention query failed:",
+          e && e.message,
+        );
+      }
+    }
+
     // Sort merged results by ctime DESC then apply pagination
     all_notifications.sort((a, b) => b.ctime - a.ctime);
 

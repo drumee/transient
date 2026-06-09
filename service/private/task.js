@@ -55,6 +55,48 @@ class __private_task extends Entity {
   }
 
   /**
+   * Notify members @-mentioned in a task description. Logs a `task_mention`
+   * activity (surfaced by channel.list_notifications) and live-pushes to the
+   * mentioned users' sockets so their activity badge updates immediately.
+   * Mirrors the chat/channel mention path. `mentionUids` is the set to notify —
+   * create() passes all tagged uids, update() passes only the newly-added ones.
+   */
+  async _notifyMentions(data, mentionUids) {
+    const uids = toArray(mentionUids).filter((u) => u && u !== this.uid);
+    if (isEmpty(uids)) return;
+    const hub_id = this.hub && this.hub.get(Attr.id);
+    const task_id = data && data.id;
+    const meta = { task_id, hub_id, title: (data && data.title) || '' };
+    for (const target_uid of uids) {
+      try {
+        await this.yp.await_proc(
+          'contact_log_activity',
+          this.uid,
+          target_uid,
+          'task_mention',
+          meta,
+        );
+      } catch (e) {
+        this.warn('[task._notifyMentions] log failed:', e && e.message);
+      }
+    }
+    try {
+      const recipients = await this.yp.await_proc('user_sockets', uids);
+      if (!isEmpty(recipients)) {
+        await RedisStore.sendData(
+          this.payload(
+            { ...data, event: 'task_mention', hub_id, task_id },
+            { service: 'task.mention' },
+          ),
+          recipients,
+        );
+      }
+    } catch (e) {
+      this.warn('[task._notifyMentions] push failed:', e && e.message);
+    }
+  }
+
+  /**
    * List tasks scoped to a folder node.
    * Params: nid (folder node id; null/absent = legacy unscoped), include_unscoped
    * (1 on the workspace-root view to also surface legacy nid-less tasks).
@@ -153,6 +195,8 @@ class __private_task extends Entity {
       );
     }
     await this._broadcast('task.create', data);
+    // Every tagged member is newly mentioned on create.
+    await this._notifyMentions(data, this.input.use('mention_uids', null));
     this.output.data(data);
   }
 
@@ -181,6 +225,8 @@ class __private_task extends Entity {
       return this.exception.user('TASK_NOT_FOUND');
     }
     await this._broadcast('task.update', data);
+    // Client sends only the newly-added mentions in `mention_uids`.
+    await this._notifyMentions(data, this.input.use('mention_uids', null));
     this.output.data(data);
   }
 

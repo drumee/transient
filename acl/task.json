@@ -93,6 +93,12 @@
           "type": "string",
           "required": false,
           "doc": "Deprecated single-assignee form (use assignee_uids). Still accepted."
+        },
+        "mention_uids": {
+          "type": "array",
+          "required": false,
+          "doc": "UIDs @-mentioned in the description. Server notifies each (excluding self).",
+          "items": { "type": "string" }
         }
       },
       "returns": {
@@ -135,6 +141,12 @@
           "type": "string",
           "required": false,
           "doc": "New due date in YYYY-MM-DD format. Pass null to clear."
+        },
+        "mention_uids": {
+          "type": "array",
+          "required": false,
+          "doc": "UIDs newly @-mentioned in this edit. Server notifies each (excluding self).",
+          "items": { "type": "string" }
         }
       },
       "returns": {
