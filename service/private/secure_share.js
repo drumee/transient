@@ -25,13 +25,12 @@ const { hashPassword } = require('../lib/secure-share-password');
 class __secure_share extends Mfs {
 
   /**
-   * Create a per-email unique secure share token for a file or folder.
-   * Sends an invitation email and returns the share link.
+   * Create a secure share token for a file or folder.
+   * v2: permission_level + allowed_emails array (null = public share, no email gate).
+   * Backward compat: still accepts legacy email + domain_restriction fields.
    */
   async create() {
     const nid    = this.input.need(Attr.nid);
-    const email  = this.input.need(Attr.email);
-    const domain = this.input.get('domain_restriction') || '';
     const days   = this.input.get(Attr.days)  || 0;
     const hours  = this.input.get(Attr.hours) || 0;
     const expiryHours = (days * 24) + (hours * 1);
@@ -41,19 +40,31 @@ class __secure_share extends Mfs {
     const fullname = this.user.get('fullname');
     const lang     = this.user.language() || this.input.app_language();
 
+    const VALID_LEVELS = ['can_view', 'can_download', 'can_chat', 'can_edit'];
+    const rawLevel = (this.input.get('permission_level') || '').trim();
+    const permissionLevel = VALID_LEVELS.includes(rawLevel) ? rawLevel : 'can_view';
+
+    const rawEmails = this.input.get('allowed_emails');
+    const allowedEmails = (Array.isArray(rawEmails) && rawEmails.length > 0)
+      ? rawEmails.map(e => String(e).toLowerCase().trim()).filter(Boolean)
+      : undefined;
+    // undefined → key omitted from JSON.stringify → SP reads SQL NULL → public share
+
     const rawPassword = this.input.get('password') || '';
     const passwordHash = rawPassword.trim() ? hashPassword(rawPassword.trim()) : '';
 
-    const row = await this.yp.await_proc('secure_share_create', {
+    const procArgs = {
       token,
       hub_id,
-      node_id        : nid,
-      creator_id     : this.uid,
-      recipient_email: email,
-      domain_restriction: domain  || null,
-      expiry_hours   : expiryHours,
-      password_hash  : passwordHash || null,
-    });
+      node_id       : nid,
+      creator_id    : this.uid,
+      permission_level: permissionLevel,
+      expiry_hours  : expiryHours,
+      password_hash : passwordHash || null,
+    };
+    if (allowedEmails) procArgs.allowed_emails = allowedEmails;
+
+    const row = await this.yp.await_proc('secure_share_create', procArgs);
 
     if (isEmpty(row)) {
       return this.output.data({ status: 'CREATE_FAILED' });
@@ -62,7 +73,12 @@ class __secure_share extends Mfs {
     const host = this.hub.get(Attr.vhost);
     const link = `${this.input.homepath(host)}#/dmz/share/${token}`;
 
-    if (await shouldSendNotification(this.yp, email)) {
+    // Send invitation email only when sharing with exactly one named recipient (not domain, not public)
+    const singleEmail = allowedEmails && allowedEmails.length === 1
+      && allowedEmails[0].includes('@') && !allowedEmails[0].startsWith('@')
+      ? allowedEmails[0] : null;
+
+    if (singleEmail && await shouldSendNotification(this.yp, singleEmail)) {
       try {
         const attr    = await this.db.await_proc('mfs_node_attr', nid) || {};
         const filesize = require('filesize');
@@ -70,14 +86,14 @@ class __secure_share extends Mfs {
         const msg = new Messenger({
           template  : 'butler/outbound',
           subject   : `Drumee: ${subject}`,
-          recipient : email,
+          recipient : singleEmail,
           lex       : Cache.lex(lang),
           data      : {
             icon      : this.hub.get(Attr.icon),
             files     : [{ filename: attr.filename || '', filesize: filesize(attr.filesize || 0) }],
             subject   : Cache.message('_outbound_default_msg', lang).format(fullname),
             message   : '',
-            recipient : email.replace(/@.+$/, ''),
+            recipient : singleEmail.replace(/@.+$/, ''),
             signature : fullname,
             link,
           },
@@ -148,6 +164,17 @@ class __secure_share extends Mfs {
     }
 
     this.output.data(row);
+  }
+
+  /**
+   * Return the full share list for a node — same data as list(), used by the v2 panel.
+   */
+  async access_list() {
+    const nid    = this.input.need(Attr.nid);
+    const hub_id = this.hub.get(Attr.id);
+    const rows   = toArray(await this.yp.await_proc('secure_share_list', hub_id, nid, this.uid));
+    const base   = this.input.homepath(this.hub.get(Attr.vhost));
+    this.output.list(rows.map(r => ({ ...r, link: `${base}#/dmz/share/${r.id}` })));
   }
 
   /**

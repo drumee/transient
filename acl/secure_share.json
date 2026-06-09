@@ -5,7 +5,7 @@
   },
   "services": {
     "create": {
-      "doc": "Create a per-email unique secure share token for a file or folder. Stores the token in secure_share_token (yellow_page), sends an invitation email to the recipient, and returns the share link.",
+      "doc": "Create a secure share token for a file or folder. v2: email is optional (omit for a public link). Sends an invitation email only when exactly one named recipient email is provided.",
       "scope": "hub",
       "permission": {
         "src": "write",
@@ -18,15 +18,16 @@
           "required": true,
           "doc": "Node ID of the file or folder to share"
         },
-        "email": {
-          "type": "string",
-          "required": true,
-          "doc": "Recipient email. Access is restricted to this address unless domain_restriction is also set."
-        },
-        "domain_restriction": {
+        "permission_level": {
           "type": "string",
           "required": false,
-          "doc": "Optional domain restriction (e.g. company.com). When set, any email from that domain may use the link."
+          "default": "can_view",
+          "doc": "Access level granted to recipients: can_view, can_download, can_chat, can_edit"
+        },
+        "allowed_emails": {
+          "type": "array",
+          "required": false,
+          "doc": "Optional list of allowed emails or @domain patterns. Omit for a public (no email gate) share."
         },
         "days": {
           "type": "integer",
@@ -43,19 +44,35 @@
         "password": {
           "type": "string",
           "required": false,
-          "doc": "Optional password the recipient must enter after email verification. Communicated out-of-band. Stored as salted PBKDF2-SHA512 hash — never in plain text."
+          "doc": "Optional password. Stored as salted PBKDF2-SHA512 hash — never in plain text."
         }
       },
       "returns": {
         "id":              { "type": "string",  "doc": "Unique share token" },
-        "link":            { "type": "string",  "doc": "Full share URL to send to the recipient" },
-        "recipient_email": { "type": "string" },
+        "link":            { "type": "string",  "doc": "Full share URL" },
+        "permission_level":{ "type": "string" },
+        "allowed_emails":  { "type": "array" },
         "expiry_time":     { "type": "integer", "doc": "Unix timestamp, 0 = no expiry" }
       },
       "errors": [
         { "code": "CREATE_FAILED", "message": "Token creation failed" },
-        { "code": "MISSING_PARAM", "message": "nid and email are required", "http_status": 400 }
+        { "code": "MISSING_PARAM", "message": "nid is required", "http_status": 400 }
       ]
+    },
+    "access_list": {
+      "doc": "List all secure share tokens for a node including v2 fields (permission_level, allowed_emails). Same data as list, used by the v2 share panel.",
+      "scope": "hub",
+      "permission": {
+        "src": "write",
+        "fast_check": "user_permission"
+      },
+      "params": {
+        "nid": {
+          "type": "string",
+          "required": true,
+          "doc": "Node ID to list secure share tokens for"
+        }
+      }
     },
     "list": {
       "doc": "List all secure share tokens created by the current user for a given node, including status (active / expired / revoked) and access counts.",

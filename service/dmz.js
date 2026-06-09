@@ -22,6 +22,33 @@ const {
 } = Constants;
 const { verifyPassword: verifySecureSharePassword } = require('./lib/secure-share-password');
 
+function _emailMatchesAllowed(email, info) {
+  let allowedList = null;
+  if (info.allowed_emails) {
+    try {
+      const parsed = typeof info.allowed_emails === 'string'
+        ? JSON.parse(info.allowed_emails)
+        : info.allowed_emails;
+      if (Array.isArray(parsed) && parsed.length > 0) allowedList = parsed;
+    } catch (e) { /* malformed JSON — treat as no restriction */ }
+  }
+  if (allowedList) {
+    const domain = email.split('@')[1] || '';
+    return allowedList.some(entry => {
+      const e = (entry || '').toLowerCase().trim();
+      return e === email || (e.startsWith('@') && e.slice(1) === domain);
+    });
+  }
+  // Legacy fallback for pre-v2 shares without allowed_emails
+  const recipientEmail = (info.recipient_email || '').toLowerCase().trim();
+  if (!recipientEmail) return false;
+  if (email === recipientEmail) return true;
+  if (info.domain_restriction) {
+    return (email.split('@')[1] || '') === info.domain_restriction.toLowerCase().trim();
+  }
+  return false;
+}
+
 
 //########################################
 class __dmz extends Mfs {
@@ -178,6 +205,10 @@ class __dmz extends Mfs {
       return this.output.data({ status: 'TICKET_EXPIRED', is_secure: 1 });
     }
 
+    if (info.is_locked) {
+      return this.output.data({ status: 'TICKET_LOCKED', is_secure: 1 });
+    }
+
     // Resolve logged-in side user from cookie (mirrors normal login flow)
     let user = this.user.toJSON();
     const guest_id = Cache.getSysConf("guest_id");
@@ -193,50 +224,42 @@ class __dmz extends Mfs {
       }
     }
 
-    // Email validation — logged-in Drumee members skip the form if their account
-    // email matches the share (session auth is stronger proof than typing an email)
+    // Email gate: active for restricted shares (require_email=1 via v2 allowed_emails,
+    // or legacy recipient_email set). Skipped entirely for public shares.
+    const emailGateActive = !!info.require_email || !!(info.recipient_email);
     let submittedEmail = (this.input.get(Attr.email) || '').toLowerCase().trim();
 
-    if (!submittedEmail && user.id && ![ID_NOBODY, guest_id].includes(user.id)) {
-      try {
-        const p = typeof user.profile === 'string' ? JSON.parse(user.profile) : (user.profile || {});
-        const accountEmail = (p.email || '').toLowerCase().trim();
-        if (accountEmail) {
-          const recipientCheck = (info.recipient_email || '').toLowerCase().trim();
-          let autoMatch = (accountEmail === recipientCheck);
-          if (!autoMatch && info.domain_restriction) {
-            autoMatch = (accountEmail.split('@')[1] || '') === info.domain_restriction.toLowerCase().trim();
+    if (emailGateActive) {
+      // Auto-grant logged-in Drumee members whose account email matches the share
+      if (!submittedEmail && user.id && ![ID_NOBODY, guest_id].includes(user.id)) {
+        try {
+          const p = typeof user.profile === 'string' ? JSON.parse(user.profile) : (user.profile || {});
+          const accountEmail = (p.email || '').toLowerCase().trim();
+          if (accountEmail && _emailMatchesAllowed(accountEmail, info)) {
+            submittedEmail = accountEmail;
           }
-          if (autoMatch) submittedEmail = accountEmail;
+        } catch (e) {
+          this.warn('[dmz.login] secure_share auto-grant parse failed:', e && e.message);
         }
-      } catch (e) {
-        this.warn('[dmz.login] secure_share auto-grant parse failed:', e && e.message);
+      }
+
+      if (!submittedEmail) {
+        return this.output.data({ ...info, status: 'REQUIRED_EMAIL', is_secure: 1 });
+      }
+
+      if (!_emailMatchesAllowed(submittedEmail, info)) {
+        return this.output.data({ status: 'EMAIL_MISMATCH', is_secure: 1 });
       }
     }
 
-    if (!submittedEmail) {
-      return this.output.data({ ...info, status: 'REQUIRED_EMAIL', is_secure: 1 });
-    }
-
-    const recipientEmail = (info.recipient_email || '').toLowerCase().trim();
-    let emailValid = (submittedEmail === recipientEmail);
-
-    if (!emailValid && info.domain_restriction) {
-      const submittedDomain = submittedEmail.split('@')[1] || '';
-      emailValid = (submittedDomain === info.domain_restriction.toLowerCase().trim());
-    }
-
-    if (!emailValid) {
-      return this.output.data({ status: 'EMAIL_MISMATCH', is_secure: 1 });
-    }
-
-    // Password gate — only evaluated after email is confirmed valid
+    // Password gate — only evaluated after email gate passes (or was skipped for public shares)
     if (info.require_password) {
       const submittedPassword = (this.input.get(Attr.password) || '').trim();
       if (!submittedPassword) {
         return this.output.data({ status: 'REQUIRED_PASSWORD', is_secure: 1 });
       }
       if (!verifySecureSharePassword(submittedPassword, storedPasswordHash)) {
+        try { await this.yp.await_proc('secure_share_increment_attempts', token); } catch (e) {}
         return this.output.data({ status: 'WRONG_PASSWORD', is_secure: 1 });
       }
     }
@@ -316,10 +339,11 @@ class __dmz extends Mfs {
     return this.output.data({
       ...user,
       ...info,
-      is_secure : 1,
-      status    : 'TICKET_OK',
-      validity  : 'TICKET_OK',
-      guest_id  : info.uid || guest_id,
+      is_secure        : 1,
+      status           : 'TICKET_OK',
+      validity         : 'TICKET_OK',
+      permission_level : info.permission_level || 'can_view',
+      guest_id         : info.uid || guest_id,
       area,
       is_guest,
     });
