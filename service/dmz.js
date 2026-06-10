@@ -260,7 +260,15 @@ class __dmz extends Mfs {
       }
       if (!verifySecureSharePassword(submittedPassword, storedPasswordHash)) {
         try { await this.yp.await_proc('secure_share_increment_attempts', token); } catch (e) {}
-        return this.output.data({ status: 'WRONG_PASSWORD', is_secure: 1 });
+        // SP locks when new count >= 3; info.failed_attempts is the pre-increment value
+        const attemptsUsed      = (info.failed_attempts || 0) + 1;
+        const attemptsRemaining = Math.max(0, 3 - attemptsUsed);
+        // Token is now locked — tell the client immediately instead of making them
+        // submit again only to receive TICKET_LOCKED on the next request.
+        if (attemptsRemaining === 0) {
+          return this.output.data({ status: 'TICKET_LOCKED', is_secure: 1 });
+        }
+        return this.output.data({ status: 'WRONG_PASSWORD', is_secure: 1, attempts_remaining: attemptsRemaining });
       }
     }
 
@@ -336,13 +344,21 @@ class __dmz extends Mfs {
     }
     user.uid = user.id;
 
+    // Translate the share's permission_level to the privilege bitmask the UI
+    // uses for show/hide decisions (_K.privilege: read=3, download=7, write=15
+    // in lex/constants.js). Placed after the spreads so it always wins over
+    // whatever ...user or ...info happen to carry.
+    const resolvedPermLevel = info.permission_level || 'can_view';
+    const LEVEL_TO_PRIVILEGE = { can_view: 3, can_download: 7, can_chat: 7, can_edit: 15 };
+
     return this.output.data({
       ...user,
       ...info,
       is_secure        : 1,
       status           : 'TICKET_OK',
       validity         : 'TICKET_OK',
-      permission_level : info.permission_level || 'can_view',
+      permission_level : resolvedPermLevel,
+      privilege        : LEVEL_TO_PRIVILEGE[resolvedPermLevel] || 3,
       guest_id         : info.uid || guest_id,
       area,
       is_guest,
