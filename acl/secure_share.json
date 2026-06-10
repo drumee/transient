@@ -118,6 +118,22 @@
           "doc": "Token to permanently delete. Must already be revoked or expired."
         }
       }
+    },
+    "respond_to_access_request": {
+      "doc": "Approve or deny a pending secure share access request. Caller must be the share creator. Notifies the guest socket and broadcasts to hub members in real time.",
+      "scope": "hub",
+      "permission": {
+        "src": "write"
+      },
+      "log": true,
+      "params": {
+        "request_id":    { "type": "string", "required": true,  "doc": "ID of the access request to respond to" },
+        "action":        { "type": "string", "required": true,  "doc": "approve or deny" },
+        "granted_level": { "type": "string", "required": false, "doc": "Access level to grant — required when action is approve. can_view, can_download, can_chat, or can_edit" }
+      },
+      "returns": {
+        "status": { "type": "string", "doc": "APPROVED, DENIED, INVALID_ACTION, INVALID_LEVEL, or INVALID_REQUEST" }
+      }
     }
   }
 }

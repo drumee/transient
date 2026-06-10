@@ -145,6 +145,24 @@
         }
       }
     },
+    "request_access": {
+      "doc": "Submit a request for elevated access to a secure share. Creates or returns an existing pending request for the given token+email combination. Notifies the share creator via WebSocket.",
+      "scope": "hub",
+      "permission": {
+        "src": "anonymous",
+        "fast_check": "public-api"
+      },
+      "params": {
+        "token":           { "type": "string", "required": true,  "doc": "Secure share token" },
+        "email":           { "type": "string", "required": true,  "doc": "Requester email address" },
+        "requested_level": { "type": "string", "required": true,  "doc": "can_download, can_chat, or can_edit" },
+        "message":         { "type": "string", "required": false, "doc": "Optional message to the share owner" }
+      },
+      "returns": {
+        "status":     { "type": "string", "doc": "REQUEST_SENT, INVALID_TOKEN, or INVALID_LEVEL" },
+        "request_id": { "type": "string", "doc": "ID of the created or existing pending request" }
+      }
+    },
     "signup": {
       "doc": "Initiate the signup flow for a user invited via a DMZ share link. Validates the token via dmz_info_next, verifies the guest session cookie, checks that the email is not already registered, generates a signup token, sends an activation email with a link to the signup page, and updates the token metadata with the share hub context. Returns an object containing the signup link on success, or a status string indicating the failure reason.",
       "scope": "hub",

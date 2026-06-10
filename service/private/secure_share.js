@@ -188,6 +188,79 @@ class __secure_share extends Mfs {
     this.output.data(res);
   }
 
+  /**
+   * Approve or deny a pending secure share access request.
+   * Caller must be the share creator. Notifies the guest and broadcasts to hub.
+   */
+  async respond_to_access_request() {
+    const VALID_ACTIONS = ['approve', 'deny'];
+    const VALID_LEVELS  = ['can_view', 'can_download', 'can_chat', 'can_edit'];
+    const LEVEL_TO_PRIVILEGE = { can_view: 3, can_download: 7, can_chat: 7, can_edit: 15 };
+
+    const requestId    = this.input.need('request_id');
+    const action       = (this.input.get('action') || '').trim();
+    const grantedLevel = (this.input.get('granted_level') || '').trim() || null;
+
+    if (!VALID_ACTIONS.includes(action)) {
+      return this.output.data({ status: 'INVALID_ACTION' });
+    }
+    if (action === 'approve' && (!grantedLevel || !VALID_LEVELS.includes(grantedLevel))) {
+      return this.output.data({ status: 'INVALID_LEVEL' });
+    }
+
+    const row = toArray(
+      await this.yp.await_proc(
+        'secure_share_respond_to_access_request',
+        requestId, this.uid, action, grantedLevel || ''
+      )
+    )[0] || {};
+
+    if (!row.id || row.error) {
+      return this.output.data({ status: row.error || 'INVALID_REQUEST' });
+    }
+
+    // Notify the guest's socket directly
+    if (row.guest_socket_id) {
+      try {
+        await RedisStore.sendData(
+          this.payload(
+            {
+              event         : 'secure_share_access_responded',
+              request_id    : row.id,
+              action,
+              granted_level : row.granted_level,
+              privilege     : LEVEL_TO_PRIVILEGE[row.granted_level] || 3,
+            },
+            { service: 'share.track_event' }
+          ),
+          [{ socket_id: row.guest_socket_id }]
+        );
+      } catch (e) {
+        this.warn('[secure_share.respond] guest notify failed:', e && e.message);
+      }
+    }
+
+    // Broadcast to all hub members so the sender window can refresh
+    try {
+      const hub_id = this.hub.get(Attr.id);
+      const recipients = await this.yp.await_proc('entity_sockets', { hub_id });
+      await RedisStore.sendData(
+        this.payload(
+          { event: 'secure_share_access_responded', request_id: row.id, action },
+          { service: 'share.track_event' }
+        ),
+        recipients
+      );
+    } catch (e) {
+      this.warn('[secure_share.respond] hub broadcast failed:', e && e.message);
+    }
+
+    return this.output.data({
+      ...row,
+      status: action === 'approve' ? 'APPROVED' : 'DENIED',
+    });
+  }
+
 }
 
 module.exports = __secure_share;

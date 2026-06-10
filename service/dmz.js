@@ -344,6 +344,21 @@ class __dmz extends Mfs {
     }
     user.uid = user.id;
 
+    // If the guest previously had an approved access request, upgrade their
+    // permission_level before computing the privilege bitmask.
+    if (submittedEmail) {
+      try {
+        const grantRow = toArray(
+          await this.yp.await_proc('secure_share_get_access_grant', token, submittedEmail)
+        )[0] || {};
+        if (grantRow.granted_level) {
+          info.permission_level = grantRow.granted_level;
+        }
+      } catch (e) {
+        this.warn('[dmz.login] secure_share_get_access_grant failed:', e && e.message);
+      }
+    }
+
     // Translate the share's permission_level to the privilege bitmask the UI
     // uses for show/hide decisions (_K.privilege: read=3, download=7, write=15
     // in lex/constants.js). Placed after the spreads so it always wins over
@@ -514,7 +529,62 @@ class __dmz extends Mfs {
   }
 
   /**
-   * 
+   * Submit a request for elevated access to a secure share.
+   */
+  async request_access() {
+    const VALID_LEVELS = ['can_download', 'can_chat', 'can_edit'];
+    const token          = this.input.need(Attr.token);
+    const rawEmail       = (this.input.get(Attr.email) || '').toLowerCase().trim();
+    const requestedLevel = (this.input.get('requested_level') || '').trim();
+    const message        = (this.input.get('message') || '').trim() || null;
+
+    if (!rawEmail || !rawEmail.includes('@')) {
+      return this.output.data({ status: 'INVALID_EMAIL' });
+    }
+    if (!VALID_LEVELS.includes(requestedLevel)) {
+      return this.output.data({ status: 'INVALID_LEVEL' });
+    }
+
+    const args = { token_id: token, requester_email: rawEmail, requested_level: requestedLevel };
+    if (message) args.message = message;
+
+    const row = toArray(
+      await this.yp.await_proc('secure_share_create_access_request', args)
+    )[0] || {};
+
+    if (!row.id || row.status === 'INVALID_TOKEN') {
+      return this.output.data({ status: 'INVALID_TOKEN' });
+    }
+
+    if (row.hub_id) {
+      try {
+        const recipients = await this.yp.await_proc('entity_sockets', { hub_id: row.hub_id });
+        await RedisStore.sendData(
+          this.payload(
+            {
+              event           : 'secure_share_access_requested',
+              request_id      : row.id,
+              token_id        : token,
+              hub_id          : row.hub_id,
+              node_id         : row.node_id,
+              requester_email : rawEmail,
+              requested_level : requestedLevel,
+              message,
+            },
+            { service: 'share.track_event' }
+          ),
+          recipients
+        );
+      } catch (e) {
+        this.warn('[dmz.request_access] notify creator failed:', e && e.message);
+      }
+    }
+
+    return this.output.data({ status: 'REQUEST_SENT', request_id: row.id });
+  }
+
+  /**
+   *
    */
   notification_list() {
     this.output.data([]);
