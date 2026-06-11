@@ -421,7 +421,6 @@ class SeoIndexer {
       // produced a poster, COMPLETE the job — failing here only burns 3 Bull
       // retries (each re-running soffice) and leaves the node with no poster.
       if (!text || text.trim().length === 0) {
-<<<<<<< HEAD
         return {
           success: true,
           filename: node.filename,
@@ -429,7 +428,6 @@ class SeoIndexer {
           duration : 0,
           extension: ext
         };
-=======
         if (posterDone) {
           const duration = Date.now() - startTime;
           this.log(`Poster ready (no text) for ${node.filename} in ${duration}ms`);
@@ -443,7 +441,6 @@ class SeoIndexer {
           };
         }
         throw new Error('No text extracted from file');
->>>>>>> 77a6ca14a65a93efaa77ab3faddbaba84c219818
       }
 
       // Process words
