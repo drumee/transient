@@ -23,7 +23,7 @@ class ExtImport extends Mfs {
     }
     
     const tokenData = toArray(await this.yp.await_query(
-      'SELECT access_token FROM oauth_accounts WHERE user_id = ? AND provider = ?',
+      'SELECT access_token FROM oauth_accounts WHERE user_id = ? AND provider = ? ORDER BY (scope LIKE "%drive.%") DESC, mtime DESC LIMIT 1',
       userId, provider
     ))[0];
     
@@ -48,8 +48,11 @@ class ExtImport extends Mfs {
    */
   async ensureFreshToken(provider) {
     if (!this.uid) throw new Error('User is not authenticated.');
+    // Several google rows can coexist per user (login client vs Drive client,
+    // distinct provider_user_id) — refresh with the DRIVE row, never whichever
+    // the DB happens to return first.
     const row = toArray(await this.yp.await_query(
-      'SELECT access_token, refresh_token, expires_at, scope FROM oauth_accounts WHERE user_id=? AND provider=?',
+      'SELECT access_token, refresh_token, expires_at, scope FROM oauth_accounts WHERE user_id=? AND provider=? ORDER BY (scope LIKE "%drive.%") DESC, mtime DESC LIMIT 1',
       this.uid, provider
     ))[0];
     if (!row) throw new Error('NEEDS_RECONNECT');
@@ -88,7 +91,10 @@ class ExtImport extends Mfs {
       : Math.floor(Date.now() / 1000) + 3500;
 
     await this.yp.await_query(
-      'UPDATE oauth_accounts SET access_token=?, expires_at=?, mtime=UNIX_TIMESTAMP() WHERE user_id=? AND provider=?',
+      // Persist on the DRIVE row only — without the scope filter this hits
+      // every google row for the user, stamping the Drive token over the
+      // login client's row too.
+      'UPDATE oauth_accounts SET access_token=?, expires_at=?, mtime=UNIX_TIMESTAMP() WHERE user_id=? AND provider=? AND scope LIKE "%drive.%"',
       credentials.access_token, newExpiresAt, this.uid, provider
     );
     return credentials.access_token;
