@@ -342,8 +342,9 @@ class GoogleDriveImporter {
       // drive.file gotcha: picking a FOLDER often grants only the folder
       // node — its children list back EMPTY (silently, no 403). Without
       // this hint the user sees "imported 0 files, 0 errors" and assumes
-      // the feature is broken.
-      if (this.totalFiles === filesBefore) {
+      // the feature is broken. NOT for SA jobs: the SA has real read access,
+      // so an empty result there just means the folder IS empty.
+      if (this.totalFiles === filesBefore && this.data.auth_kind !== 'sa') {
         this.errors.push({ folder: meta.name, code: 'NOT_GRANTED', reason: 'folder children not granted' });
       }
     }
