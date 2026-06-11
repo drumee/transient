@@ -236,8 +236,8 @@ class Account extends Entity {
         // before (store the fresh login tokens).
         await this.yp.await_query(
           `UPDATE oauth_accounts
-             SET access_token  = IF(scope IS NOT NULL AND scope LIKE '%drive.readonly%', access_token, ?),
-                 refresh_token = IF(scope IS NOT NULL AND scope LIKE '%drive.readonly%', refresh_token, ?),
+             SET access_token  = IF(scope IS NOT NULL AND (scope LIKE '%drive.readonly%' OR scope LIKE '%drive.file%'), access_token, ?),
+                 refresh_token = IF(scope IS NOT NULL AND (scope LIKE '%drive.readonly%' OR scope LIKE '%drive.file%'), refresh_token, ?),
                  mtime = UNIX_TIMESTAMP()
            WHERE user_id = ? AND provider = ?`,
           access_token, refresh_token, sessionData.id, provider
