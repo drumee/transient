@@ -412,7 +412,13 @@ class SeoIndexer {
 
       // Validate extraction
       if (!text || text.trim().length === 0) {
-        throw new Error('No text extracted from file');
+        return {
+          success: true,
+          filename: node.filename,
+          words: 0,
+          duration : 0,
+          extension: ext
+        };
       }
 
       // Process words
