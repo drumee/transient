@@ -2,9 +2,18 @@
 
 Debian packaging infrastructure for the [Drumee](https://drumee.com) sovereign data platform. Each subdirectory builds a `.deb` package from source.
 
+## Self-hosting
+
+- [Quickstart](docs/quickstart.md) — get Drumee running in ~10 minutes (both channels)
+- [Configuration](config/README.md) — `drumee.yaml` single source of truth → `.env` / compose / debconf preseed
+- [Container channel](deploy/docker/README.md) · [Native channel](docs/native-channel.md) · [Lifecycle](docs/lifecycle.md) · [Security](docs/security.md)
+- [Roadmap](ROADMAP.md) — path to a SOTA, easy-to-self-host product
+
 ## Documentation
 
 - [Overview](docs/overview.md) — package map, runtime layout, install order
+- [Database schema & init](docs/schema-init.md) — how Drumee uses MariaDB + container init gaps
+- [Reproducible builds](docs/reproducible-builds.md) · [Release engineering](docs/release.md)
 - [Build Pipeline](docs/build-pipeline.md) — how to build, flags, GPG signing
 - [Shared Utilities](docs/utilities.md) — `functions.sh` and `env.sh` reference
 - [Version Management](docs/version-management.md) — changelog lifecycle, `update-changelog.sh`

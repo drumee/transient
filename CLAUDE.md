@@ -85,7 +85,7 @@ Set `REPO_BASE` to override the GitHub base URL used by `bundle()` (e.g., for a 
 | `ui/` | `drumee-ui-pod` | `ui-team` (preview branch) | webpack (runs during build) |
 | `static/` | `drumee-static` | `static` (main) | — |
 | `schemas-patch/` | `drumee-patch` | `schemas` (preview) | @drumee/server-essentials |
-| `builder/` | `drumee-infra` (interactive installer) | `setup` (somanos/wip) | debconf only |
+| `builder/` | `drumee-bootstrap` (interactive installer) | `setup` (somanos/wip) | debconf only |
 | `admin/` | — | — | admin scripts only |
 
 ## Version Management
@@ -109,14 +109,14 @@ Without `--message`, it pulls the last 5 non-merge git commits from the source r
 
 ## builder/ Package
 
-`builder/` produces a `drumee-infra` **interactive installer** — distinct from `infra/` which is pre-configured. Key behaviours:
+`builder/` produces the `drumee-bootstrap` **interactive installer** — distinct from `infra/`, which produces the canonical pre-configured `drumee-infra`. The rename ended an earlier collision where both trees built `drumee-infra`. Key behaviours:
 
 - Does **not** clone and compile upstream source. Packages pre-built artifacts from the `target/` directory in the repo root.
 - Post-install runs `/var/lib/drumee/setup/menu/install.sh` — an interactive setup wizard.
 - Prompts for domain name and data partition via debconf during `dpkg -i`.
 - Builds **unsigned** (`dpkg-buildpackage -us -uc`) — no GPG key required.
 - Does **not** accept `--version`, `--force`, or `--email` flags.
-- Has its own `builder/utils/env.sh` and `builder/utils/functions.sh` with different path constants and a GitLab fallback: when `REPO_BASE` is unset, `bundle()` defaults to `git@gitlab.drumee.in:drumee/` instead of GitHub.
+- Sources the shared root `utils/env.sh` and `utils/functions.sh` (no separate fork). `builder/build.sh` sets `REPO_BASE_DEFAULT=git@gitlab.drumee.in:drumee` and `NPM_AUDIT_FIX=no` before sourcing, so when `REPO_BASE` is unset `bundle()` falls back to GitLab instead of GitHub.
 
 ```bash
 builder/build.sh        # package current target/ artifacts

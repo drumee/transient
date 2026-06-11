@@ -131,6 +131,20 @@ dist
 # Drumee build artifacts
 schemas/seeds/
 
+# Rendered config (may contain pinned secrets) — keep only the example
+config/drumee.yaml
+/out/
+
+# dpkg-buildpackage / debhelper outputs (regenerated every build, never source)
+*/debian/.debhelper/
+*/debian/*.debhelper/
+*/debian/debhelper-build-stamp
+*/debian/*.substvars
+*/debian/*.debhelper
+*/debian/*.debhelper.log
+*/debian/files
+builder/tmp/
+
 # Other
 ._.DS_Store
 .DS_Store
@@ -145,3 +159,5 @@ build/
 t
 .dev-tools-rc/*
 src/*
+# demo stack scratch dir
+tests/.demo-run/
