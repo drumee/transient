@@ -170,7 +170,7 @@ MariaDB (marker procedure applied and callable).
 | **System accounts** (`nobody`/`guest`/`system`) | Confirmed absent from the factory seed, schema procedures, and server services. Runtime paths (guest sessions, system-owned content, MFS `nobody` checks) need them. |
 | **RSA keypair** (`/etc/drumee/credentials/crypto`) | `bootstrap.js publicKey` serves it; auth/token features need it. |
 | **Wallpapers / tutorials / welcome email** | Onboarding / cosmetic. |
-| **Quota triggers** | Skipped due to the make-templates bug above. |
+| ~~**Quota triggers**~~ | Resolved: the patch step recreates them from `yellow_page/triggers/` on fresh installs and upgrades. |
 | **`--conf-path` (`etc/drumee/conf.d`)** | Server needs it (separate from the DB); produced by the infra package. |
 
 Next step to a fully-serving instance: replicate the system-account + RSA-key bootstrap

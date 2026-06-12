@@ -51,7 +51,7 @@ else
   root mailserver < "$FACTORY/seed/mailserver.sql"
   root template   < "$FACTORY/seed/template.sql"
   root trash      < "$FACTORY/seed/trash.sql"
-  echo "   note: yp quota-maintenance triggers skipped (corrupt in factory dump)"
+  echo "   note: yp quota triggers corrupt in dump — healed by the patch step below"
 
   echo "==> Configuring main domain (dom_id=1) -> $DOMAIN"
   # The factory seed does NOT insert a domain row (it's environment-specific;
@@ -89,8 +89,11 @@ root -e "CREATE USER IF NOT EXISTS '$APP_USER'@'%' IDENTIFIED BY '$APP_PW';
 # Hash-tracked in yp.__container_meta (a dedicated bookkeeping table — NOT
 # sys_conf: the app's Cache.load iterates sys_conf and its DB wrapper returns a
 # bare object for single-row results, so seeding a lone row there crashes the
-# populate step). Unchanged manifests are a no-op; fresh installs record the
-# level without applying (the factory seed ships current).
+# populate step). Unchanged manifests are a no-op. Fresh installs apply the
+# manifest too: routines/triggers are idempotent, hub/drumate/common entries
+# resolve to zero DBs at this point (pool comes later), and crucially the
+# yellow_page trigger entries HEAL the 3 quota triggers that make-templates
+# corrupts in the factory dump (see the rootf note above).
 SCHEMAS_DIR="${SCHEMAS_DIR:-/schemas}"
 targets_for() {
   case "$1" in
@@ -111,19 +114,26 @@ if [ -f "$MANIFEST" ]; then
   APPLIED=$(root -N -e "SELECT v FROM yp.__container_meta WHERE k='patch_hash'" 2>/dev/null | tr -d '\r')
   if [ "$APPLIED" = "$HASH" ]; then
     echo "==> Schema patches up to date"
-  elif [ "$FRESH" = 1 ]; then
-    echo "==> Fresh install — factory seed is current; recording patch level"
-    root -e "REPLACE INTO yp.__container_meta VALUES ('patch_hash', '$HASH')"
   else
-    echo "==> Applying schema patches (manifest changed)"
+    if [ "$FRESH" = 1 ]; then
+      echo "==> Applying schema patches (fresh install — heals dump-corrupted triggers)"
+    else
+      echo "==> Applying schema patches (manifest changed)"
+    fi
     # upstream pins this before patching (make-templates/patch-from-manifest)
     root -e "SET GLOBAL character_set_collations='utf8mb4=utf8mb4_general_ci'" 2>/dev/null || true
     for entry in $(cat "$MANIFEST"); do
       file="$SCHEMAS_DIR/$entry"
       [ -f "$file" ] || { echo "   WARN missing patch file: $entry"; continue; }
       class="${entry%%/*}"
+      case "$class" in
+        yellow_page|utils|mailserver|hub|drumate|common) : ;;
+        *) echo "   WARN unknown class '$class' for: $entry"; continue ;;
+      esac
       tgts="$(targets_for "$class")"
-      [ -n "$tgts" ] || { echo "   WARN unknown class '$class' for: $entry"; continue; }
+      # hub/drumate/common resolve to zero DBs on a fresh install (pool not yet
+      # stocked) — genesis templates carry those changes; nothing to patch here.
+      [ -n "$tgts" ] || { echo "   (no '$class' DBs yet — skipping $entry)"; continue; }
       for db in $tgts; do
         echo "   patch $entry -> $db"
         rootf "$db" < "$file" 2>&1 | grep -iE '^ERROR' | head -3 || true

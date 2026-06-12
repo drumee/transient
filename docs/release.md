@@ -1,5 +1,28 @@
 # Release engineering
 
+## Hard rule: regenerate the schema starter kit before tagging
+
+Drumee's per-hub sharding duplicates stored procedures into every hub/drumate
+database; the `schemas` repo's `templates/factory/` dumps ("starter kit") are what
+fresh installs seed from and what the container `factory` daemon fabricates new
+pool databases from. If a release ships schema changes without regenerated dumps,
+**new pool entities are built stale** (existing DBs still get the delta via the
+manifest patch step).
+
+So before tagging a release, on the reference host (the team flow):
+
+```bash
+ssh <reference-host>            # a live, fully-patched Drumee (e.g. drumee.in)
+cd <schemas-checkout> && git pull && npm i
+bin/make-templates              # re-dump every DB class into templates/factory/
+git commit && git push          # commit the regenerated starter kit
+```
+
+Then build/publish images from that schemas commit. (Known upstream bug: each
+`make-templates` run corrupts the 3 `disk_usage` quota triggers in `seed/yp.sql`
+— a greedy DEFINER-stripping sed. Until fixed, `schemas-init` heals them on fresh
+installs by applying the patch manifest, which recreates the triggers from source.)
+
 ## Coherent versioning
 
 `release-manifest.yaml` is the authoritative version of every package in a release
