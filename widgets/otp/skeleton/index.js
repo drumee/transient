@@ -4,7 +4,8 @@ function __skl_welcome_signup(ui) {
   const fig = ui.fig.family
   let digits = []
   let { title, message } = ui.model.toJSON()
-  for (let i = 0; i < 6; i++) {
+  const len = ui.model.get('length') || 6
+  for (let i = 0; i < len; i++) {
     digits.push(
       Skeletons.Entry({
         name: `digit-${i}`,
@@ -16,9 +17,7 @@ function __skl_welcome_signup(ui) {
     kidsOpt: {
       className: `${fig}__digit`,
       placeholder: "",
-      min: 0,
-      max: 9,
-      maxlength: 6,
+      maxlength: 1,
       interactive: 1
     },
     className: `${fig}__digits`,
