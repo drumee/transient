@@ -22,12 +22,29 @@
           "type": "string",
           "required": false,
           "default": "can_view",
-          "doc": "Access level granted to recipients: can_view, can_download, can_chat, can_edit"
+          "doc": "Legacy single access level: can_view, can_download, can_chat, can_edit. Derived from capabilities when that is provided."
+        },
+        "capabilities": {
+          "type": "array",
+          "required": false,
+          "doc": "v2 multi-select capability set granted to recipients, any of can_download, can_chat, can_edit. can_view is the implicit baseline. Source of truth when provided."
         },
         "allowed_emails": {
           "type": "array",
           "required": false,
-          "doc": "Optional list of allowed emails or @domain patterns. Omit for a public (no email gate) share."
+          "doc": "Optional list of allowed emails or @domain patterns that further restricts who may view. Leave empty to accept any email when require_email is set."
+        },
+        "require_email": {
+          "type": "boolean",
+          "required": false,
+          "default": false,
+          "doc": "When true, viewers must enter an email to access. Decoupled from allowed_emails — set without a list to require any email."
+        },
+        "notify_on_open": {
+          "type": "integer",
+          "required": false,
+          "default": 1,
+          "doc": "When 1 (default), the sender is notified in real time each time a recipient opens the share. Set 0 to suppress open notifications."
         },
         "days": {
           "type": "integer",

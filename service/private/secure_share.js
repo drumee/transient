@@ -44,11 +44,31 @@ class __secure_share extends Mfs {
     const rawLevel = (this.input.get('permission_level') || '').trim();
     const permissionLevel = VALID_LEVELS.includes(rawLevel) ? rawLevel : 'can_view';
 
+    // v2 multi-select: an independent capability set (download/chat/edit). When
+    // present it is the source of truth; the SP derives permission_level from it
+    // for back-compat. Legacy single-select callers send only permission_level
+    // and the SP derives the set from that. can_view is implicit (the baseline),
+    // so we drop it from the stored set.
+    const rawCaps = this.input.get('capabilities');
+    const capabilities = Array.isArray(rawCaps)
+      ? rawCaps.filter(c => VALID_LEVELS.includes(c) && c !== 'can_view')
+      : undefined;
+
     const rawEmails = this.input.get('allowed_emails');
     const allowedEmails = (Array.isArray(rawEmails) && rawEmails.length > 0)
       ? rawEmails.map(e => String(e).toLowerCase().trim()).filter(Boolean)
       : undefined;
     // undefined → key omitted from JSON.stringify → SP reads SQL NULL → public share
+
+    // v2: require_email is decoupled from allowed_emails. When set, viewers must
+    // enter any email to access; an optional allowed_emails list further restricts
+    // which emails are accepted. Sent as integer 1/0 (SP reads it via JSON_VALUE).
+    const requireEmail = this.input.get('require_email') ? 1 : 0;
+
+    // Notify the sender in real time when a recipient opens the share. Defaults
+    // to ON (1) when the field is omitted, preserving the previous always-notify
+    // behaviour. Coerced to integer 1/0 to avoid the JSON-bool→TINYINT trap.
+    const notifyOnOpen = (this.input.get('notify_on_open') === 0 || this.input.get('notify_on_open') === false) ? 0 : 1;
 
     const rawPassword = this.input.get('password') || '';
     const passwordHash = rawPassword.trim() ? hashPassword(rawPassword.trim()) : '';
@@ -60,9 +80,12 @@ class __secure_share extends Mfs {
       creator_id    : this.uid,
       permission_level: permissionLevel,
       expiry_hours  : expiryHours,
+      require_email : requireEmail,
+      notify_on_open: notifyOnOpen,
       password_hash : passwordHash || null,
     };
     if (allowedEmails) procArgs.allowed_emails = allowedEmails;
+    if (capabilities)  procArgs.capabilities  = capabilities;
 
     const row = await this.yp.await_proc('secure_share_create', procArgs);
 
@@ -195,7 +218,9 @@ class __secure_share extends Mfs {
   async respond_to_access_request() {
     const VALID_ACTIONS = ['approve', 'deny'];
     const VALID_LEVELS  = ['can_view', 'can_download', 'can_chat', 'can_edit'];
-    const LEVEL_TO_PRIVILEGE = { can_view: 3, can_download: 7, can_chat: 7, can_edit: 15 };
+    // CUMULATIVE privilege masks, consistent with dmz._loginSecureShare: can_chat
+    // carries NO download bit (it is gated by the can_chat flag, not the bitmask).
+    const LEVEL_TO_PRIVILEGE = { can_view: 3, can_download: 7, can_chat: 3, can_edit: 15 };
 
     const requestId    = this.input.need('request_id');
     const action       = (this.input.get('action') || '').trim();
@@ -219,6 +244,17 @@ class __secure_share extends Mfs {
       return this.output.data({ status: row.error || 'INVALID_REQUEST' });
     }
 
+    // On approval, grant the requester workspace membership with the granted
+    // capability. Best-effort: a failure here must not block the response or the
+    // notifications below.
+    if (action === 'approve') {
+      try {
+        await this._grantHubMembership(row);
+      } catch (e) {
+        this.warn('[secure_share.respond] membership grant failed:', e && e.message);
+      }
+    }
+
     // Notify the guest's socket directly
     if (row.guest_socket_id) {
       try {
@@ -230,6 +266,10 @@ class __secure_share extends Mfs {
               action,
               granted_level : row.granted_level,
               privilege     : LEVEL_TO_PRIVILEGE[row.granted_level] || 3,
+              capabilities  : (row.granted_level && row.granted_level !== 'can_view') ? [row.granted_level] : [],
+              can_download  : row.granted_level === 'can_download' ? 1 : 0,
+              can_chat      : row.granted_level === 'can_chat' ? 1 : 0,
+              can_edit      : row.granted_level === 'can_edit' ? 1 : 0,
             },
             { service: 'share.track_event' }
           ),
@@ -259,6 +299,60 @@ class __secure_share extends Mfs {
       ...row,
       status: action === 'approve' ? 'APPROVED' : 'DENIED',
     });
+  }
+
+  /**
+   * Grant the approved requester membership of the shared workspace.
+   * Mirrors signup._resolve_pending_invitation:
+   *  - existing account  → add_member + permission_grant + WS notify (desk sidebar)
+   *  - no account yet    → queue a pending_invitation so signup adds them later
+   * The granted_level maps to the same cumulative privilege masks used elsewhere
+   * in the secure-share flow (can_chat carries no download bit).
+   * @param {object} row  the row returned by secure_share_respond_to_access_request
+   */
+  async _grantHubMembership(row) {
+    const LEVEL_TO_PRIVILEGE = { can_view: 3, can_download: 7, can_chat: 3, can_edit: 15 };
+    const privilege = LEVEL_TO_PRIVILEGE[row.granted_level] || 3;
+    const hub_id    = row.hub_id;
+    const email     = (row.requester_email || '').toLowerCase().trim();
+    if (!hub_id || !email) return;
+
+    const db_name = await this.yp.await_func('get_db_name', hub_id);
+    if (!db_name) return;
+
+    let member = await this.yp.await_proc('drumate_exists', email);
+    if (Array.isArray(member)) member = member[0];
+    const uid = member && member.id ? member.id : null;
+
+    // No account yet — queue a pending invitation; signup._resolve_pending_invitation
+    // will add them to the hub with this privilege when they register.
+    if (!uid) {
+      await this.yp.await_proc('yp_add_pending_invitation', hub_id, 0, privilege, email);
+      return;
+    }
+
+    // Existing user — add to the hub now (same calls as signup-time invite resolution).
+    await this.yp.await_proc(`${db_name}.add_member`, uid, privilege, 0);
+    await this.yp.await_proc(
+      `${db_name}.permission_grant`,
+      '*', uid, 0, privilege, 'system', 'Secure share access approved'
+    );
+
+    // Notify the (now member) user so their desk sidebar picks up the workspace.
+    try {
+      let hub = await this.yp.await_proc(`${db_name}.mfs_access_node`, uid, hub_id);
+      if (Array.isArray(hub)) hub = hub[0];
+      if (hub) {
+        hub.ownpath = '/';
+        hub.hub_id  = hub.actual_hub_id;
+        hub.db_name = hub.actual_db;
+        const sockets = await this.yp.await_proc('user_sockets', uid);
+        await RedisStore.sendData(this.payload(hub, { service: 'hub.invite_received' }), sockets);
+        await RedisStore.sendData(this.payload(hub, { service: 'hub.add_contributors' }), sockets);
+      }
+    } catch (err) {
+      this.warn('[secure_share.respond] member WS notify failed:', err && err.message);
+    }
   }
 
 }

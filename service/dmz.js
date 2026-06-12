@@ -41,7 +41,11 @@ function _emailMatchesAllowed(email, info) {
   }
   // Legacy fallback for pre-v2 shares without allowed_emails
   const recipientEmail = (info.recipient_email || '').toLowerCase().trim();
-  if (!recipientEmail) return false;
+  // No allowed list and no legacy recipient → the share only requires that *some*
+  // email be entered (require_email decoupled from an allow-list), so any email is
+  // accepted here. Pre-v2 / list-restricted shares always have one of the above set,
+  // so their matching behaviour is unchanged.
+  if (!recipientEmail) return true;
   if (email === recipientEmail) return true;
   if (info.domain_restriction) {
     return (email.split('@')[1] || '') === info.domain_restriction.toLowerCase().trim();
@@ -224,6 +228,16 @@ class __dmz extends Mfs {
       }
     }
 
+    // Sanitized copy of info for the gate responses. The recipient gate card
+    // needs display fields (title, sender, require_email, require_password,
+    // recipient_email) but must NOT receive secrets — strip the password hash
+    // and the allowed-emails list before sending to an unauthenticated viewer.
+    // Both gate statuses carry it so the unified gate card (email and/or
+    // password) can render the right fields in one step.
+    const safeInfo = { ...info };
+    delete safeInfo.password_hash;
+    delete safeInfo.allowed_emails;
+
     // Email gate: active for restricted shares (require_email=1 via v2 allowed_emails,
     // or legacy recipient_email set). Skipped entirely for public shares.
     const emailGateActive = !!info.require_email || !!(info.recipient_email);
@@ -244,7 +258,7 @@ class __dmz extends Mfs {
       }
 
       if (!submittedEmail) {
-        return this.output.data({ ...info, status: 'REQUIRED_EMAIL', is_secure: 1 });
+        return this.output.data({ ...safeInfo, status: 'REQUIRED_EMAIL', is_secure: 1 });
       }
 
       if (!_emailMatchesAllowed(submittedEmail, info)) {
@@ -256,7 +270,7 @@ class __dmz extends Mfs {
     if (info.require_password) {
       const submittedPassword = (this.input.get(Attr.password) || '').trim();
       if (!submittedPassword) {
-        return this.output.data({ status: 'REQUIRED_PASSWORD', is_secure: 1 });
+        return this.output.data({ ...safeInfo, status: 'REQUIRED_PASSWORD', is_secure: 1 });
       }
       if (!verifySecureSharePassword(submittedPassword, storedPasswordHash)) {
         try { await this.yp.await_proc('secure_share_increment_attempts', token); } catch (e) {}
@@ -277,7 +291,10 @@ class __dmz extends Mfs {
     try {
       const track = await this.yp.await_proc('secure_share_access_log', token, actor_id, this.input.get(Attr.socket_id));
       const row   = toArray(track)[0] || {};
-      if (row.hub_id) {
+      // The access counter always updates above; the SENDER notification only
+      // fires when the share has notify_on_open enabled (default 1; legacy rows
+      // without the field keep notifying). info comes from secure_share_info.
+      if (row.hub_id && info.notify_on_open != 0) {
         const recipients = await this.yp.await_proc('entity_sockets', { hub_id: row.hub_id });
         await RedisStore.sendData(
           this.payload(
@@ -344,8 +361,24 @@ class __dmz extends Mfs {
     }
     user.uid = user.id;
 
-    // If the guest previously had an approved access request, upgrade their
-    // permission_level before computing the privilege bitmask.
+    // Resolve the granted capability SET. v2 stores an independent set
+    // (`capabilities`, e.g. ["can_download","can_chat","can_edit"]); legacy rows
+    // fall back to the single `permission_level` enum. secure_share_info already
+    // derives the array for legacy rows, but we re-derive defensively here in
+    // case the JSON column arrives as a string from the driver.
+    let caps = [];
+    const rawCaps = info.capabilities;
+    if (Array.isArray(rawCaps)) {
+      caps = rawCaps.slice();
+    } else if (typeof rawCaps === 'string' && rawCaps.trim()) {
+      try { const p = JSON.parse(rawCaps); if (Array.isArray(p)) caps = p; } catch (e) { /* ignore */ }
+    }
+    if (!caps.length && info.permission_level && info.permission_level !== 'can_view') {
+      caps = [info.permission_level];
+    }
+
+    // If the guest previously had an approved access request, that grant
+    // REPLACES the base set (the sender deliberately chose what to grant).
     if (submittedEmail) {
       try {
         const grantRow = toArray(
@@ -353,18 +386,27 @@ class __dmz extends Mfs {
         )[0] || {};
         if (grantRow.granted_level) {
           info.permission_level = grantRow.granted_level;
+          caps = (grantRow.granted_level === 'can_view') ? [] : [grantRow.granted_level];
         }
       } catch (e) {
         this.warn('[dmz.login] secure_share_get_access_grant failed:', e && e.message);
       }
     }
 
-    // Translate the share's permission_level to the privilege bitmask the UI
-    // uses for show/hide decisions (_K.privilege: read=3, download=7, write=15
-    // in lex/constants.js). Placed after the spreads so it always wins over
-    // whatever ...user or ...info happen to carry.
-    const resolvedPermLevel = info.permission_level || 'can_view';
-    const LEVEL_TO_PRIVILEGE = { can_view: 3, can_download: 7, can_chat: 7, can_edit: 15 };
+    // Translate the capability set to the privilege bitmask the UI uses for
+    // show/hide decisions (_K.privilege in lex/constants.js: read=3, download=7,
+    // write=15 — CUMULATIVE masks). We OR each capability's cumulative mask onto
+    // the read/view baseline so existing canDownload()/canUpload() bit checks keep
+    // working unchanged. can_chat carries NO extra privilege bit (permission.chat
+    // overlaps read, so it can't be represented independently in the bitmask, and
+    // mapping it to download was the old bug that leaked the download button); it
+    // is surfaced as the explicit `can_chat` flag that the recipient UI gates the
+    // chat tab on. Placed after the spreads so it always wins over ...user/...info.
+    const CAP_PRIVILEGE = { can_view: 0b0000011, can_download: 0b0000111, can_edit: 0b0001111 };
+    let privilege = 0b0000011; // read/view baseline
+    for (const c of caps) privilege |= (CAP_PRIVILEGE[c] || 0);
+
+    const hasCap = (c) => (caps.indexOf(c) !== -1 ? 1 : 0);
 
     return this.output.data({
       ...user,
@@ -372,8 +414,12 @@ class __dmz extends Mfs {
       is_secure        : 1,
       status           : 'TICKET_OK',
       validity         : 'TICKET_OK',
-      permission_level : resolvedPermLevel,
-      privilege        : LEVEL_TO_PRIVILEGE[resolvedPermLevel] || 3,
+      permission_level : info.permission_level || 'can_view',
+      capabilities     : caps,
+      can_download     : hasCap('can_download'),
+      can_chat         : hasCap('can_chat'),
+      can_edit         : hasCap('can_edit'),
+      privilege,
       guest_id         : info.uid || guest_id,
       area,
       is_guest,
