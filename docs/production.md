@@ -103,6 +103,8 @@ install time instead.
 DRUMEE_DIR=./drumee bin/drumee-ctl status     # health
 DRUMEE_DIR=./drumee bin/drumee-ctl backup     # DB + data + config -> BACKUP_LOCATION
 DRUMEE_DIR=./drumee bin/drumee-ctl upgrade    # pre-backup, pull new tags, restart
+                                              # (schemas-init re-runs and applies any
+                                              #  schema patches shipped in the new image)
 DRUMEE_DIR=./drumee bin/drumee-ctl rollback   # restore last pre-upgrade backup
 ```
 

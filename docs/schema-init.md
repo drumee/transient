@@ -143,6 +143,23 @@ Two container adaptations were required and are encoded:
   `mariadb <db> < template.sql` (which takes no connection args) connects over TCP instead
   of the absent local socket. The container entrypoint writes this from `db.json`.
 
+## Schema upgrades (containers)
+
+`schemas-init` is also the **upgrade path**: the image ships the schema class dirs
+plus `patches/manifest.txt`, and on every run it compares the manifest's hash with
+`yp.__container_meta('patch_hash')` (a dedicated bookkeeping table — kept out of app-owned `sys_conf`):
+
+- **fresh install** — factory seed is already current → record the level, apply nothing
+- **unchanged manifest** — no-op
+- **changed manifest** (new image version) — apply each entry to its class targets
+  (`yellow_page`→`yp`, `hub`/`drumate`/`common`→discovered entity DBs incl. the pool,
+  `utils`/`mailserver` direct), `--force` like upstream's `--ignore-error`, then
+  re-record the hash
+
+So `drumee-ctl upgrade` (compose pull + up) automatically brings the schema along
+with the code. Validated: fresh/no-op/apply/re-no-op all exercised against a live
+MariaDB (marker procedure applied and callable).
+
 ## Remaining gaps (setup-schemas parity)
 
 `schemas-init` covers the **DB + schema + grant** phase. These are still done only by

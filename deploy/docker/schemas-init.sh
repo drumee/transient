@@ -34,9 +34,11 @@ done
 root -e 'SELECT 1' >/dev/null 2>&1 || { echo "MariaDB not reachable" >&2; exit 1; }
 
 # --- base databases + factory seed (skip if already initialized) ---
+FRESH=0
 if root -e "SHOW TABLES IN yp" 2>/dev/null | grep -q .; then
   echo "==> 'yp' already initialized — skipping schema load"
 else
+  FRESH=1
   echo "==> Creating base databases"
   for db in yp utils mailserver template trash; do
     root -e "CREATE DATABASE IF NOT EXISTS \`$db\` CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci"
@@ -76,5 +78,62 @@ root -e "CREATE USER IF NOT EXISTS '$APP_USER'@'%' IDENTIFIED BY '$APP_PW';
          REVOKE ALL PRIVILEGES, GRANT OPTION FROM '$APP_USER'@'%';
          GRANT $APP_GRANTS ON *.* TO '$APP_USER'@'%';
          FLUSH PRIVILEGES;"
+
+# --- schema patches (the container upgrade path) -----------------------------
+# Mirrors the schemas repo's bin/patch-from-manifest: each manifest line is a
+# path whose first segment is the DB class; class -> target databases:
+#   yellow_page -> yp        utils -> utils        mailserver -> mailserver
+#   hub/drumate -> all matching entity DBs         common -> both
+# Applied with --force (like upstream --ignore-error: routines are idempotent
+# DROP-IF-EXISTS+CREATE; already-applied ALTERs may error harmlessly).
+# Hash-tracked in yp.__container_meta (a dedicated bookkeeping table — NOT
+# sys_conf: the app's Cache.load iterates sys_conf and its DB wrapper returns a
+# bare object for single-row results, so seeding a lone row there crashes the
+# populate step). Unchanged manifests are a no-op; fresh installs record the
+# level without applying (the factory seed ships current).
+SCHEMAS_DIR="${SCHEMAS_DIR:-/schemas}"
+targets_for() {
+  case "$1" in
+    yellow_page) echo yp ;;
+    utils)       echo utils ;;
+    mailserver)  echo mailserver ;;
+    hub)         root -N -e "SELECT db_name FROM yp.entity WHERE type='hub'" 2>/dev/null ;;
+    drumate)     root -N -e "SELECT db_name FROM yp.entity WHERE type='drumate'" 2>/dev/null ;;
+    common)      root -N -e "SELECT db_name FROM yp.entity WHERE type IN ('hub','drumate')" 2>/dev/null ;;
+    *)           echo "" ;;
+  esac
+}
+
+MANIFEST="$SCHEMAS_DIR/patches/manifest.txt"
+if [ -f "$MANIFEST" ]; then
+  root -e "CREATE TABLE IF NOT EXISTS yp.__container_meta (k VARCHAR(64) PRIMARY KEY, v TEXT)"
+  HASH=$(sha256sum "$MANIFEST" | cut -d' ' -f1)
+  APPLIED=$(root -N -e "SELECT v FROM yp.__container_meta WHERE k='patch_hash'" 2>/dev/null | tr -d '\r')
+  if [ "$APPLIED" = "$HASH" ]; then
+    echo "==> Schema patches up to date"
+  elif [ "$FRESH" = 1 ]; then
+    echo "==> Fresh install — factory seed is current; recording patch level"
+    root -e "REPLACE INTO yp.__container_meta VALUES ('patch_hash', '$HASH')"
+  else
+    echo "==> Applying schema patches (manifest changed)"
+    # upstream pins this before patching (make-templates/patch-from-manifest)
+    root -e "SET GLOBAL character_set_collations='utf8mb4=utf8mb4_general_ci'" 2>/dev/null || true
+    for entry in $(cat "$MANIFEST"); do
+      file="$SCHEMAS_DIR/$entry"
+      [ -f "$file" ] || { echo "   WARN missing patch file: $entry"; continue; }
+      class="${entry%%/*}"
+      tgts="$(targets_for "$class")"
+      [ -n "$tgts" ] || { echo "   WARN unknown class '$class' for: $entry"; continue; }
+      for db in $tgts; do
+        echo "   patch $entry -> $db"
+        rootf "$db" < "$file" 2>&1 | grep -iE '^ERROR' | head -3 || true
+      done
+    done
+    root -e "REPLACE INTO yp.__container_meta VALUES ('patch_hash', '$HASH')"
+    echo "   patch level recorded"
+  fi
+else
+  echo "==> No patch manifest shipped — skipping patch step"
+fi
 
 echo "==> schemas-init complete"
