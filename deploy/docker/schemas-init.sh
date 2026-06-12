@@ -60,12 +60,21 @@ else
 fi
 
 # --- application user (always reconcile; idempotent) ---
-# Broad privileges: the server provisions per-hub/drumate databases at runtime
-# (yellow_page/procedures/entity/create.sql runs CREATE DATABASE).
+# Privileges mirror upstream setup-schemas/lib/utils.js GRANTS (global, because
+# the app provisions per-hub/drumate databases at runtime via CREATE DATABASE),
+# plus CREATE/ALTER ROUTINE + VIEW: in containers the factory/populate load the
+# entity templates (procedures, views) as this user, whereas natively that runs
+# as the unix-socket system user. No GRANT OPTION — the app never grants SQL
+# privileges (its permission model is application-level tables).
+APP_GRANTS="SELECT, INSERT, UPDATE, DELETE, CREATE, DROP, PROCESS, REFERENCES, \
+INDEX, ALTER, CREATE TEMPORARY TABLES, LOCK TABLES, EXECUTE, EVENT, TRIGGER, \
+CREATE TABLESPACE, REPLICATION CLIENT, SLAVE MONITOR, \
+CREATE ROUTINE, ALTER ROUTINE, CREATE VIEW, SHOW VIEW"
 echo "==> Reconciling application user '$APP_USER'"
 root -e "CREATE USER IF NOT EXISTS '$APP_USER'@'%' IDENTIFIED BY '$APP_PW';
          ALTER USER '$APP_USER'@'%' IDENTIFIED BY '$APP_PW';
-         GRANT ALL PRIVILEGES ON *.* TO '$APP_USER'@'%' WITH GRANT OPTION;
+         REVOKE ALL PRIVILEGES, GRANT OPTION FROM '$APP_USER'@'%';
+         GRANT $APP_GRANTS ON *.* TO '$APP_USER'@'%';
          FLUSH PRIVILEGES;"
 
 echo "==> schemas-init complete"

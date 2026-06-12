@@ -93,4 +93,9 @@ Without it, `/-/static/*` returns 404 (harmless) and the splash uses fallback fo
 - **Schema seed** — server needs the DB schema restored before it serves; this is
   the `schemas-init` + bootstrap-seed work (Phase 0.6, `make-seed.sh`). Until then
   server-pod will start but error against an empty database.
-- **Healthcheck** — `/-/svc/system.ping`: confirm a cheap always-available method.
+- ~~**Healthcheck**~~ — resolved: probes the page listener (`:23000/` → 200). `/-/svc/*`
+  replies 401 without a session, which `curl -f` treats as failure (container was
+  marked permanently unhealthy).
+- **Pool replenisher** — resolved: the `factory` service (same image as
+  `schemas-populate`, running `container-factory.js`) keeps the hub/drumate entity
+  pool at `POOL_WATERMARK` (default 10) so signups never hit `EMPTY_FACTORY`.

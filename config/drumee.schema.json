@@ -108,6 +108,14 @@
         "schemas": { "type": "string", "default": "latest" },
         "static": { "type": "string", "default": "latest" }
       }
+    },
+    "images": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Container image source. Set registry to where publish-images.sh pushed (e.g. ghcr.io/drumee).",
+      "properties": {
+        "registry": { "type": "string", "default": "drumee", "description": "Image namespace/registry prefix for the drumee/* images." }
+      }
     }
   }
 }

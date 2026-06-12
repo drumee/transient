@@ -24,6 +24,7 @@ ENV MAIN=/srv/drumee/runtime/server/main
 COPY --from=setup . ${MAIN}/setup-schemas/
 COPY --from=schemas templates/factory /factory
 COPY --from=helpers container-populate.js ${MAIN}/container-populate.js
+COPY --from=helpers container-factory.js ${MAIN}/container-factory.js
 COPY --from=helpers populate-entrypoint.sh /usr/local/bin/drumee-populate
 
 # punycode is required by setup-schemas/lib/drumate.js (userland, not the Node

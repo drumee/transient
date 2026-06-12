@@ -17,6 +17,11 @@ const HTTP_PORT = process.env.HTTP_PORT || 80;
 const HTTPS_PORT = process.env.HTTPS_PORT || 443;
 const CONF_PATH = process.env.CONF_PATH || '/';
 
+// Container-idiomatic logging: pm2-runtime already streams app output to the
+// container's stdout/stderr (where Docker handles rotation/retention). Disable
+// pm2's duplicate file logs, which would grow unbounded inside the container.
+const NO_FILE_LOGS = { out_file: '/dev/null', error_file: '/dev/null' };
+
 module.exports = {
   apps: [
     {
@@ -31,6 +36,7 @@ module.exports = {
       autorestart: true,
       max_restarts: 10,
       env: { NODE_ENV: 'production' },
+      ...NO_FILE_LOGS,
     },
     {
       name: 'service',        // REST API (/-/svc/module.method)
@@ -42,6 +48,7 @@ module.exports = {
       autorestart: true,
       max_restarts: 10,
       env: { NODE_ENV: 'production' },
+      ...NO_FILE_LOGS,
     },
   ],
 };

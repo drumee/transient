@@ -62,6 +62,9 @@ ports:
   api: 24000             # service.js REST listener (--restPort), proxied at /-/*
   ui: 23000              # index.js page + WebSocket listener (--pushPort)
 
+images:
+  registry: drumee       # where publish-images.sh pushed, e.g. ghcr.io/drumee
+
 versions:
   server: 2.9.44
   ui: 3.2.49

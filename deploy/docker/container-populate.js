@@ -48,13 +48,18 @@ async function rsaKeys() {
 async function stockFactory(yp) {
   const Schema = require(path.join(SERVER_MAIN, 'offline', 'factory', 'schema'));
   for (const type of ['drumate', 'hub']) {
+    // Idempotent: top up to POOL_COUNT, don't blindly add (this one-shot re-runs
+    // on every `compose up` after a config change/upgrade).
+    const free = Number(await yp.await_func('pool_free', type));
+    const need = Math.max(0, POOL_COUNT - free);
+    if (!need) { console.log(`   '${type}' pool already at ${free} — skipping`); continue; }
     const script = path.join(GENESIS_DIR, `${type}.sql`);
-    for (let i = 0; i < POOL_COUNT; i++) {
+    for (let i = 0; i < need; i++) {
       const s = new Schema({ type, script, folders: [], lang: 'en', verbose: 0, yp });
       await s.create_entity();
       s.destroy();
     }
-    console.log(`   stocked ${POOL_COUNT} '${type}' pool entities`);
+    console.log(`   stocked ${need} '${type}' pool entities (now ${free + need})`);
   }
 }
 

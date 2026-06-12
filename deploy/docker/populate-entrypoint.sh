@@ -56,4 +56,9 @@ chown -R www-data:www-data /srv/drumee "${DRUMEE_DATA_DIR:-/data}" /etc/drumee 2
 # USER=drumee-app: create_vfs_root()'s `new Mariadb({user: process.env.USER})` must
 # resolve to the app user (the only TCP-granted login).
 export USER=drumee-app HOME=/root
+# Default: run the one-shot populate. With args (e.g. the factory replenisher
+# daemon: `node .../container-factory.js`), exec those instead — same config env.
+if [ "$#" -gt 0 ]; then
+  exec "$@"
+fi
 exec node /srv/drumee/runtime/server/main/container-populate.js

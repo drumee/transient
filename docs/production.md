@@ -49,6 +49,8 @@ email:                             # SMTP relay -> welcome/reset emails
   secure: false
   user: butler@example.com
   password: <smtp-password>        # or leave null + pin in a secret store
+images:
+  registry: ghcr.io/<org>          # where step 1 pushed
 versions:                          # the tags you published in step 1
   server: 2.9.45
   ui: 3.3.1
@@ -58,10 +60,10 @@ database: { host: mariadb }
 redis:    { host: redis }
 ```
 
-Point the images at your registry by editing the `image:` namespace (the compose
-uses `drumee/<name>:<tag>`; set your registry via the compose `image` prefix or a
-registry mirror). Pin `database.password` / `database.root_password` for stable
-re-renders.
+Set `images.registry` to where step 1 pushed (e.g. `ghcr.io/<org>`) — the compose
+then pulls `<registry>/<name>:<tag>` directly. Pin `database.password` /
+`database.root_password` for stable re-renders (the rendered `.env` is written
+mode 0600 — it contains the DB root credentials).
 
 ## 3. Render and launch
 
