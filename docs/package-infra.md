@@ -21,8 +21,10 @@ The foundation package. Must be installed first on any Drumee server. Its post-i
 ## Build
 
 ```bash
-infra/build.sh [--version=X.Y.Z] [--force=yes] [--email=user@example.com]
+infra/build.sh
 ```
+
+`infra/build.sh` takes no flags — version and maintainer email are read from `infra/debian/changelog`. (The `--…` arguments below belong to the `infra.js` runtime configurator that runs at install time, not to the build script.)
 
 ## Installed Paths
 
@@ -94,7 +96,7 @@ Runs as root. Orchestrates the full infrastructure setup in this order:
 | `--private-domain` | LAN/private domain name |
 | `--public-ip4` / `--public-ip6` | Override auto-detected public IP |
 | `--private-ip4` / `--private-ip6` | Override auto-detected private IP |
-| `--data-dir` | Override user data directory (default: `/srv/drumee/data`) |
+| `--data-dir` | Override user data directory (default: `/data`) |
 | `--db-dir` | Override MariaDB data directory |
 | `--own-certs-dir` | Use pre-existing certificates from this path |
 | `--no-jitsi` / `--only-infra` | Skip Jitsi configuration |

@@ -29,7 +29,7 @@ schemas-patch/build.sh --manifest=auto 3
 schemas-patch/build.sh --manifest=/path/to/manifest.txt
 ```
 
-Additional flags: `--version=X.Y.Z`, `--force=yes`, `--email=user@example.com`
+`schemas-patch/build.sh` only recognises `--manifest` and an optional positional commit depth — version and email come from `schemas-patch/debian/changelog`.
 
 ## Manifest System
 
@@ -50,13 +50,17 @@ Copies the given file directly to `patches/manifest.txt`. Use this when you have
 ## Installed Paths
 
 ```
-/opt/drumee/schemas/patches/
-├── manifest.txt         # list of patch files to apply
+/var/lib/drumee/patches/schemas/
+├── manifest.txt         # list of patch files to apply (under patches/)
+├── bin/                 # patch runner scripts
+├── package.json         # + installed node_modules
 └── <patch-files>        # SQL/JS schema migration files
 
 /var/lib/drumee/postinstall/
 └── patch.sh             # applied automatically at server startup
 ```
+
+> The `admin/` package (`drumee-schemas-patch`) is the production variant and installs its runner under `/opt/drumee/schemas/patches/` instead.
 
 ## Patch Runner Scripts
 
