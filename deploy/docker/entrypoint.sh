@@ -31,13 +31,17 @@ cat > "$CRED/redis.json" <<JSON
 }
 JSON
 
+# nodemailer shape: the server reads email.json.auth.{user,pass} (server-essentials
+# messenger.js, otp.js). A flat shape triggers "No credenial for email. Ignored."
 cat > "$CRED/email.json" <<JSON
 {
   "host": "${SMTP_HOST:-}",
   "port": ${SMTP_PORT:-587},
   "secure": ${SMTP_SECURE:-false},
-  "user": "${SMTP_USER:-}",
-  "pass": $( [ -n "${SMTP_PASSWORD:-}" ] && printf '"%s"' "$SMTP_PASSWORD" || printf 'null' ),
+  "auth": {
+    "user": "${SMTP_USER:-}",
+    "pass": $( [ -n "${SMTP_PASSWORD:-}" ] && printf '"%s"' "$SMTP_PASSWORD" || printf 'null' )
+  },
   "rejectUnauthorized": false
 }
 JSON

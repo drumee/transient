@@ -7,6 +7,7 @@ Debian packaging infrastructure for the [Drumee](https://drumee.com) sovereign d
 - [Quickstart](docs/quickstart.md) — get Drumee running in ~10 minutes (both channels)
 - [Configuration](config/README.md) — `drumee.yaml` single source of truth → `.env` / compose / debconf preseed
 - [Container channel](deploy/docker/README.md) · [Native channel](docs/native-channel.md) · [Lifecycle](docs/lifecycle.md) · [Security](docs/security.md)
+- [Production](docs/production.md) — publish images, real domain + TLS, SMTP, day-2 ops
 - [Roadmap](ROADMAP.md) — path to a SOTA, easy-to-self-host product
 
 ## Documentation

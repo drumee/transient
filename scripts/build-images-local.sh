@@ -43,13 +43,22 @@ docker buildx build \
   --build-arg INSTALL_DEPS=0 \
   -t "drumee/ui-build:$TAG" --load "$UI_SRC"
 
+STATIC_SRC="${STATIC_SRC:-$HOME/static}"
+if [ -d "$STATIC_SRC" ]; then
+  say "Building drumee/static:$TAG from $STATIC_SRC (splash/fonts/logo)"
+  docker buildx build -f "$root/deploy/docker/Dockerfile.static" -t "drumee/static:$TAG" --load "$STATIC_SRC"
+else
+  say "Skipping drumee/static (no source at $STATIC_SRC). UI works without it; enable later"
+  say "  by cloning the 'static' repo there, rebuilding, and COMPOSE_PROFILES=static."
+fi
+
 say "Building drumee/schemas-populate:$TAG (FROM server-pod + setup-schemas + genesis templates)"
 docker buildx build \
   -f "$root/deploy/docker/Dockerfile.populate" \
   --build-context "helpers=$root/deploy/docker" \
   --build-context "setup=$SETUP_SCHEMAS_SRC" \
   --build-context "schemas=$SCHEMAS_SRC" \
-  --build-arg "SERVER_TAG=$TAG" \
+  --build-arg "SERVER_IMAGE=drumee/server-pod:$TAG" \
   -t "drumee/schemas-populate:$TAG" --load "$root/deploy/docker"
 
 say "Done. Images:"

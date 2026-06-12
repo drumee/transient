@@ -34,36 +34,34 @@ versions:
   static: local
 YAML
 
+# render.mjs writes .env, docker-compose.yml, install.conf, and the Caddyfile.
+# domain=localhost -> the Caddyfile is plain HTTP on :80 (no ACME).
 node "$root/config/render.mjs" all --config "$W/drumee.yaml" --out-dir "$W" >/dev/null
 
-# Local HTTP Caddyfile (no ACME). /-/svc/* -> REST (service.js); everything else,
-# including UI bundles and the WebSocket, -> index.js.
-cat > "$W/Caddyfile" <<'CADDY'
-:80 {
-	handle_path /-/app/* {
-		root * /srv/ui/main/app
-		file_server
-	}
-	handle /-/svc/* {
-		reverse_proxy server-pod:24000
-	}
-	reverse_proxy server-pod:23000
-}
-CADDY
-
-# Provision an admin account so you can log in (prints a password-reset link).
+# Provision an admin account so you can log in. ADMIN_PASSWORD (if set) is used;
+# otherwise schemas-populate generates one and prints it (no SMTP needed).
 echo "CREATE_ADMIN=${CREATE_ADMIN:-1}" >> "$W/.env"
+[ -n "${ADMIN_PASSWORD:-}" ] && echo "ADMIN_PASSWORD=${ADMIN_PASSWORD}" >> "$W/.env"
 
-docker compose -f "$W/docker-compose.yml" --env-file "$W/.env" -p "$PROJECT" up -d
+DC="docker compose -f $W/docker-compose.yml --env-file $W/.env -p $PROJECT"
+$DC up -d
 
-cat <<MSG
-
-Drumee dev stack starting (project: $PROJECT).
-  Open:    http://localhost/
-  Status:  docker compose -p $PROJECT ps
-  Logs:    docker compose -p $PROJECT logs -f server-pod
-  Stop:    scripts/dev-down.sh
-
-First start runs schemas-init + ui-build + schemas-populate (one-off) before
-server-pod comes up — give it ~60-90s, then refresh.
-MSG
+echo
+echo "Drumee dev stack starting (project: $PROJECT)."
+echo "  Open:    http://localhost/"
+echo "  Status:  docker compose -p $PROJECT ps"
+echo "  Logs:    docker compose -p $PROJECT logs -f server-pod"
+echo "  Stop:    scripts/dev-down.sh"
+echo
+echo "Waiting for first-run setup (schemas-init / ui-build / schemas-populate)..."
+for _ in $(seq 1 60); do
+  st=$($DC ps -a --format '{{.Service}}:{{.State}}:{{.ExitCode}}' 2>/dev/null | grep '^schemas-populate:' || true)
+  echo "$st" | grep -q 'exited:0' && break
+  echo "$st" | grep -qE 'exited:[1-9]' && { echo "  schemas-populate failed — see: docker compose -p $PROJECT logs schemas-populate"; break; }
+  sleep 5
+done
+echo
+echo "================ LOGIN ================"
+$DC logs schemas-populate 2>/dev/null | grep -aA3 'ADMIN LOGIN' | grep -aE 'email:|password:' | sed 's/^[^ ]*[ ]*|//'
+echo "  URL:       http://localhost/   (give server-pod a few more seconds)"
+echo "======================================"

@@ -68,6 +68,22 @@ images). server-pod boots pm2 + index.js/service.js against MariaDB/Redis.
   `--restPort/--pushPort/--http-port/--conf-path` args (the scripts exit with
   "unrecognized arguments" without them).
 
+## Static assets (`drumee-static`)
+
+The app's UI styles ship in the webpack bundles (served from `/-/app/`), so the
+stack is fully usable without `drumee-static`. That package only provides the
+pre-boot **splash CSS, fonts, and logo** (`/-/static/*`, `/-/images/*`). It's
+wired but **opt-in**:
+
+- `Dockerfile.static` builds `drumee/static` from the `static` source repo.
+- A profile-gated `static` service publishes the assets into a `static_assets`
+  volume the proxy serves from `/srv/static`.
+- To enable: clone the `static` repo (e.g. `~/static`), `scripts/build-images-local.sh`
+  (it builds `drumee/static` when the source is present), then bring the stack up with
+  `COMPOSE_PROFILES=static`.
+
+Without it, `/-/static/*` returns 404 (harmless) and the splash uses fallback fonts.
+
 ## Remaining gates to a fully-serving real instance
 
 - **`--conf-path`** — index.js/service.js load `<conf-path>/etc/drumee/conf.d`.

@@ -35,6 +35,11 @@ detect_channel() {
 
 compose() { ( cd "$DRUMEE_DIR" && docker compose --env-file .env "$@" ); }
 
+# Read a variable from the rendered .env (container channel).
+envval() { grep -E "^$1=" "$DRUMEE_DIR/.env" 2>/dev/null | head -1 | cut -d= -f2- | tr -d '"'; }
+# Root DB credentials for admin operations (dump/restore/health).
+db_root_args() { local p; p="$(envval DB_ROOT_PASSWORD)"; [ -n "$p" ] && printf -- '-uroot -p%s' "$p" || printf -- '-uroot'; }
+
 backup_dir() {
   if [ -f "$DRUMEE_DIR/.env" ]; then
     grep -E '^BACKUP_LOCATION=' "$DRUMEE_DIR/.env" 2>/dev/null | cut -d= -f2- | tr -d '"' || true
@@ -64,7 +69,7 @@ cmd_doctor() {
     compose ps --format '{{.Service}} {{.State}}' 2>/dev/null | while read -r svc state; do
       [ "$state" = running ] && ok "service $svc running" || warn "service $svc: $state"
     done
-    compose exec -T mariadb sh -c 'mariadb -uroot -e "SELECT 1" >/dev/null 2>&1' \
+    compose exec -T mariadb sh -c "mariadb $(db_root_args) -e 'SELECT 1'" >/dev/null 2>&1 \
       && ok "mariadb answering" || warn "mariadb not answering yet"
     compose exec -T redis redis-cli ping >/dev/null 2>&1 && ok "redis answering" || warn "redis not answering"
   else
@@ -104,7 +109,7 @@ cmd_backup() {
   local work; work="$(mktemp -d)"; trap 'rm -rf "$work"' RETURN
   log "Backing up to $arc"
   if [ "$ch" = container ]; then
-    compose exec -T mariadb sh -c 'exec mariadb-dump -uroot --all-databases' > "$work/db.sql"
+    compose exec -T mariadb sh -c "exec mariadb-dump $(db_root_args) --all-databases" > "$work/db.sql"
     cp "$DRUMEE_DIR/.env" "$work/.env" 2>/dev/null || true
     tar czf "$work/data.tgz" -C "$(grep -E '^DRUMEE_DATA_DIR=' "$DRUMEE_DIR/.env" | cut -d= -f2- | tr -d '"')" . 2>/dev/null || true
   else
@@ -126,7 +131,7 @@ cmd_restore() {
   tar xzf "$file" -C "$work"
   [ -f "$work/db.sql" ] || die "archive missing db.sql"
   if [ "$ch" = container ]; then
-    compose exec -T mariadb sh -c 'exec mariadb -uroot' < "$work/db.sql"
+    compose exec -T mariadb sh -c "exec mariadb $(db_root_args)" < "$work/db.sql"
   else
     . /etc/drumee/drumee.sh
     mariadb -uroot < "$work/db.sql"

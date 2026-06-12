@@ -76,6 +76,9 @@ the container channel above.
 
 ---
 
+> **Running for real users (published images, real domain + TLS, SMTP)?**
+> See [docs/production.md](production.md).
+
 ## Option B — Native Debian/Ubuntu
 
 **Requirements:** a dedicated Debian/Ubuntu host (it configures the whole machine).

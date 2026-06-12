@@ -50,7 +50,9 @@ MSG
   exit 0
 fi
 
-# --- render artifacts (.env, docker-compose.yml, install.conf) ---
+# --- render artifacts (.env, docker-compose.yml, Caddyfile, install.conf) ---
+# The Caddyfile is rendered from drumee.yaml (TLS follows tls.mode + domain:
+# automatic HTTPS for a real domain, plain HTTP for localhost).
 say "Rendering deployment artifacts from drumee.yaml"
 if [ -n "$REPO_ROOT" ] && [ -f "$REPO_ROOT/config/render.mjs" ]; then
   node "$REPO_ROOT/config/render.mjs" all --config drumee.yaml --out-dir .
@@ -58,7 +60,6 @@ else
   fetch config/render.mjs render.mjs
   node render.mjs all --config drumee.yaml --out-dir .
 fi
-fetch deploy/docker/Caddyfile Caddyfile
 
 # --- launch ---
 say "Starting Drumee (docker compose up -d)"

@@ -20,6 +20,13 @@ cat > "$CRED/redis.json" <<JSON
   "liveUpdateChannel": "${LIVE_UPDATE_CHANNEL:-LIVE_UPDATE_CHANNEL}" }
 JSON
 
+# email.json (nodemailer shape) so the welcome/butler mail step has credentials.
+cat > "$CRED/email.json" <<JSON
+{ "host": "${SMTP_HOST:-}", "port": ${SMTP_PORT:-587}, "secure": ${SMTP_SECURE:-false},
+  "auth": { "user": "${SMTP_USER:-}", "pass": $( [ -n "${SMTP_PASSWORD:-}" ] && printf '"%s"' "$SMTP_PASSWORD" || printf 'null' ) },
+  "rejectUnauthorized": false }
+JSON
+
 # drumee.json — what server-essentials sysEnv() reads. system_user=www-data so the
 # MFS roots populate creates are owned by the runtime user (server-pod runs as it).
 cat > /etc/drumee/drumee.json <<JSON

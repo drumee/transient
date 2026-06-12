@@ -22,6 +22,7 @@ const GENESIS_DIR = process.env.GENESIS_DIR || '/factory';
 // In production the offline factory daemon keeps the pool topped up to a watermark.
 const POOL_COUNT = parseInt(process.env.POOL_COUNT || '10', 10);
 
+const { randomBytes } = require('node:crypto');
 const { Cache, subtleCrypto, Mariadb } = require('@drumee/server-essentials');
 const Organization = require(path.join(SS_DIR, 'lib', 'organization'));
 
@@ -75,7 +76,18 @@ async function main() {
   if (process.env.CREATE_ADMIN === '1') {
     console.log('==> createAdmin()');
     const admin = await org.createAdmin(sys.media);
-    console.log('   admin reset link:', admin.reset_link);
+    // No-SMTP self-host can't receive the emailed reset link, so set a usable
+    // password directly (ADMIN_PASSWORD if provided, else generated) via the
+    // app's own set_password proc, and print the credentials.
+    const email = process.env.ADMIN_EMAIL || admin.email;
+    const password = process.env.ADMIN_PASSWORD || randomBytes(9).toString('base64url');
+    await org.yp.await_proc('set_password', admin.id, password);
+    console.log('\n========================================================');
+    console.log('  ADMIN LOGIN');
+    console.log(`  email:     ${email}`);
+    console.log(`  password:  ${password}`);
+    console.log(`  (reset link, if mail is configured: ${admin.reset_link})`);
+    console.log('========================================================\n');
   }
   await rsaKeys();
   console.log('container-populate complete');

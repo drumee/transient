@@ -29,20 +29,29 @@ jobs:
   images:
     needs: guard
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        include:
-          - { name: server-pod, dockerfile: deploy/docker/Dockerfile.server, repo: server-team }
-          - { name: ui-pod,     dockerfile: deploy/docker/Dockerfile.ui,     repo: ui-team }
+    env:
+      REGISTRY: ghcr.io/${{ github.repository_owner }}
+      BRANCH: preview
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3
+      - name: Skip notice
+        if: ${{ secrets.DRUMEE_SSH_KEY == '' }}
+        run: echo "DRUMEE_SSH_KEY not set — skipping image build/publish."
       - name: Configure source access (SSH deploy key)
         if: ${{ secrets.DRUMEE_SSH_KEY != '' }}
         run: |
           mkdir -p ~/.ssh && echo "${{ secrets.DRUMEE_SSH_KEY }}" > ~/.ssh/id_ed25519
           chmod 600 ~/.ssh/id_ed25519
           ssh-keyscan github.com >> ~/.ssh/known_hosts
+      - name: Clone component sources
+        if: ${{ secrets.DRUMEE_SSH_KEY != '' }}
+        run: |
+          for r in server-team ui-team schemas setup-schemas static; do
+            git clone -b "$BRANCH" "git@github.com:drumee/$r.git" "$HOME/$r" \
+              || git clone "git@github.com:drumee/$r.git" "$HOME/$r" || true
+            ( cd "$HOME/$r" && [ -f package.json ] && (npm ci || npm install) ) || true
+          done
       - name: Registry login
         if: ${{ secrets.REGISTRY_TOKEN != '' }}
         uses: docker/login-action@v3
@@ -50,20 +59,12 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.REGISTRY_TOKEN }}
-      - name: Build (and push if credentials present)
+      - name: Build and push all images
         if: ${{ secrets.DRUMEE_SSH_KEY != '' }}
-        uses: docker/build-push-action@v6
-        with:
-          context: deploy/docker
-          file: ${{ matrix.dockerfile }}
-          build-args: |
-            REPO_BASE=git@github.com:drumee
-            BRANCH=preview
-          push: ${{ secrets.REGISTRY_TOKEN != '' }}
-          tags: ghcr.io/drumee/${{ matrix.name }}:${{ github.ref_name }}
-      - name: Skip notice
-        if: ${{ secrets.DRUMEE_SSH_KEY == '' }}
-        run: echo "DRUMEE_SSH_KEY not set — skipping image build for ${{ matrix.name }}."
+        env:
+          TAG: ${{ github.ref_name }}
+          PUSH: ${{ secrets.REGISTRY_TOKEN != '' && '1' || '0' }}
+        run: scripts/publish-images.sh
 
   debs:
     needs: guard
