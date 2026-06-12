@@ -91,6 +91,35 @@
         }
       }
     },
+    "list_access_events": {
+      "doc": "List per-access-event rows for a node (one row per visit): recipient email, entered_at, last_seen_at and duration. Creator-scoped by the SP. Backs the v2 'View access list' table.",
+      "scope": "hub",
+      "permission": {
+        "src": "write",
+        "fast_check": "user_permission"
+      },
+      "params": {
+        "nid": {
+          "type": "string",
+          "required": true,
+          "doc": "Node ID to list access events for"
+        }
+      }
+    },
+    "revoke_recipient": {
+      "doc": "Revoke a single recipient's current access grant for a shared node (removes their hub permission grant). Re-requestable — does not blocklist the email. Also clears that recipient's access-event rows so they drop off the access list. Caller must be the share creator.",
+      "scope": "hub",
+      "permission": {
+        "src": "write",
+        "fast_check": "user_permission"
+      },
+      "log": true,
+      "params": {
+        "nid":   { "type": "string", "required": true,  "doc": "Node ID the share belongs to" },
+        "email": { "type": "string", "required": false, "doc": "Recipient email to revoke (from the access-list row)" },
+        "uid":   { "type": "string", "required": false, "doc": "Recipient user id, when known (from the access-list row actor_id)" }
+      }
+    },
     "list": {
       "doc": "List all secure share tokens created by the current user for a given node, including status (active / expired / revoked) and access counts.",
       "scope": "hub",
@@ -104,6 +133,13 @@
           "required": true,
           "doc": "Node ID to list secure share tokens for"
         }
+      }
+    },
+    "list_requests": {
+      "doc": "List pending secure-share access requests addressed to the current user (the share creator). Backs the sender notification-panel entries. Read-only; the SP filters by creator_id so callers only see their own pending requests.",
+      "scope": "hub",
+      "permission": {
+        "src": "read"
       }
     },
     "revoke": {

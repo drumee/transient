@@ -143,6 +143,17 @@ class __secure_share extends Mfs {
   }
 
   /**
+   * List pending access requests addressed to the current user (share creator).
+   * Backs the sender's notification-panel entries (Figma 62). Read-only; the SP
+   * filters by creator_id = this.uid, so it only ever returns the caller's own
+   * pending requests.
+   */
+  async list_requests() {
+    const rows = toArray(await this.yp.await_proc('secure_share_list_requests', this.uid));
+    this.output.list(rows);
+  }
+
+  /**
    * Revoke a secure share token (soft delete).
    * Broadcasts a real-time event so the recipient loses access immediately.
    */
@@ -198,6 +209,67 @@ class __secure_share extends Mfs {
     const rows   = toArray(await this.yp.await_proc('secure_share_list', hub_id, nid, this.uid));
     const base   = this.input.homepath(this.hub.get(Attr.vhost));
     this.output.list(rows.map(r => ({ ...r, link: `${base}#/dmz/share/${r.id}` })));
+  }
+
+  /**
+   * Per-access-event list for the v2 "View access list" table — one row per visit
+   * (recipient email, access time, duration). Creator-scoped inside the SP, so a
+   * caller only sees events for shares they own on this node.
+   */
+  async list_access_events() {
+    const nid    = this.input.need(Attr.nid);
+    const hub_id = this.hub.get(Attr.id);
+    const rows   = toArray(
+      await this.yp.await_proc('secure_share_list_access_events', hub_id, nid, this.uid)
+    );
+    this.output.list(rows);
+  }
+
+  /**
+   * Revoke a single recipient's current access grant for this node and drop their
+   * rows from the access-event log. "Revoke current grant only" — the email is NOT
+   * blocklisted, so the recipient can request access again later. Best-effort and
+   * idempotent: a recipient with no standing grant (e.g. an anonymous public viewer)
+   * simply has their log rows cleared, with no permission change.
+   */
+  async revoke_recipient() {
+    const nid    = this.input.need(Attr.nid);
+    const hub_id = this.hub.get(Attr.id);
+    let   email  = (this.input.get(Attr.email) || '').toLowerCase().trim();
+    let   uid    = (this.input.get(Attr.uid) || '').trim() || null;
+
+    // Resolve the uid from the email when the row didn't carry one (signed-in
+    // recipients have actor_id; anonymous public viewers do not).
+    if (!uid && email) {
+      let member = await this.yp.await_proc('drumate_exists', email);
+      if (Array.isArray(member)) member = member[0];
+      uid = member && member.id ? member.id : null;
+    }
+
+    let revoked = false;
+    if (uid) {
+      try {
+        const db_name = await this.yp.await_func('get_db_name', hub_id);
+        if (db_name) {
+          // Inverse of the secure-share grant (permission_grant('*', uid, ...)).
+          await this.yp.await_proc(`${db_name}.permission_revoke`, '*', uid);
+          revoked = true;
+        }
+      } catch (e) {
+        this.warn('[secure_share.revoke_recipient] permission_revoke failed:', e && e.message);
+      }
+    }
+
+    // Clear the recipient's access-event rows so they drop off the list.
+    if (email) {
+      try {
+        await this.yp.await_proc('secure_share_delete_access_events', hub_id, nid, this.uid, email);
+      } catch (e) {
+        this.warn('[secure_share.revoke_recipient] delete_access_events failed:', e && e.message);
+      }
+    }
+
+    this.output.data({ status: 'OK', revoked, email, uid });
   }
 
   /**

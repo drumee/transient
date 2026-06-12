@@ -290,6 +290,17 @@ class __dmz extends Mfs {
     const actor_id = (guest_id === user.id) ? null : (user.id || null);
     try {
       const track = await this.yp.await_proc('secure_share_access_log', token, actor_id, this.input.get(Attr.socket_id));
+      // v2: also record a per-visit access event (entered_at / last_seen_at) backing
+      // the "View access list" table. Isolated in its own try so a failure can never
+      // block the access counter, sender notification, or session binding below.
+      try {
+        await this.yp.await_proc(
+          'secure_share_log_access_event',
+          token, submittedEmail || null, actor_id, this.input.get(Attr.socket_id)
+        );
+      } catch (e) {
+        this.warn('[dmz.login] secure_share access_event failed:', e && e.message);
+      }
       const row   = toArray(track)[0] || {};
       // The access counter always updates above; the SENDER notification only
       // fires when the share has notify_on_open enabled (default 1; legacy rows
