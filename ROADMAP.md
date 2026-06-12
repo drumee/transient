@@ -77,6 +77,12 @@ These are blocked on your infrastructure or internal knowledge, not on more code
 - APT repo hosting + project GPG signing key.
 - `--conf-path` provisioning for containers (a populated `etc/drumee/conf.d`, today produced by the infra package).
 
+**Service-config parity (from analyzing `setup-infra` — see `docs/infra-init.md`):**
+- [x] Feasibility validated: `infra.js --chroot` renders the full 39-file native config
+  tree (bind/postfix/opendkim/nginx/mysql/conf.d) from env vars — no host writes.
+- [ ] Implement the `infra-init` run-once service + adapter (jitsi/mail/dns profiles).
+- [ ] Upstream: `args.drumee_root` crash (1-line fix) + `exchange.json.tpl` key drift.
+
 **Schema/DB (from analyzing the `schemas` repo — see `docs/schema-init.md`):**
 - [x] **`schemas-init` built + validated**: `Dockerfile.schemas` + `schemas-init.sh` create
   `yp/utils/mailserver/template/trash` from `templates/factory/`, configure the domain, and

@@ -14,6 +14,7 @@ Debian packaging infrastructure for the [Drumee](https://drumee.com) sovereign d
 
 - [Overview](docs/overview.md) — package map, runtime layout, install order
 - [Database schema & init](docs/schema-init.md) — how Drumee uses MariaDB + container init gaps
+- [infra-init design](docs/infra-init.md) — setup-infra renderer analysis → Jitsi/mail/DNS parity plan
 - [Reproducible builds](docs/reproducible-builds.md) · [Release engineering](docs/release.md)
 - [Build Pipeline](docs/build-pipeline.md) — how to build, flags, GPG signing
 - [Shared Utilities](docs/utilities.md) — `functions.sh` and `env.sh` reference
