@@ -29,7 +29,7 @@ const { join, extname } = require('path');
 const { createHash } = require('crypto');
 const { google } = require('googleapis');
 const { isCancelled } = require('../../queues/migrationQueue');
-const { googleDriveCredentials } = require('../../../service/lib/google_credentials');
+const { googleDriveCredentials, googleDriveServiceAccount } = require('../../../service/lib/google_credentials');
 
 const PROGRESS_BATCH = 5;
 const PAGE_SIZE = 1000;
@@ -129,6 +129,9 @@ class GoogleDriveImporter {
       // migration never scatters loose files into their home. Idempotent:
       // a re-run reuses the existing folder instead of duplicating it.
       const rootFolder = await this._createFolder('GoogleDriveMigration', destFolder, hubDb, user_id);
+      // Exposed in the job result so the FE "Open in Drumee" lands on THIS
+      // folder (the actual import root), not the destination's parent.
+      this._destNidOut = rootFolder && rootFolder.nid;
 
       if (mode === 'selected' && selections) {
         await this._migrateSelected({
@@ -176,6 +179,7 @@ class GoogleDriveImporter {
       total_files: this.totalFiles,
       total_folders: this.totalFolders,
       errors: this.errors,
+      dest_nid: this._destNidOut || null,
     };
   }
 
@@ -190,8 +194,28 @@ class GoogleDriveImporter {
     if (this._tokenCache && this._tokenCache.expires_at - TOKEN_SAFETY_SEC > now) {
       return this._tokenCache.access_token;
     }
+    // Service-account jobs (whole-folder import via share-to-SA): the SA
+    // reads with its OWN auth — no oauth_accounts row involved at all.
+    if (this.data.auth_kind === 'sa') {
+      const sa = googleDriveServiceAccount();
+      if (!sa) throw new Error('SA_NOT_CONFIGURED');
+      const jwt = new google.auth.JWT({
+        email: sa.client_email,
+        key: sa.private_key,
+        scopes: ['https://www.googleapis.com/auth/drive.readonly'],
+      });
+      const { access_token, expiry_date } = await jwt.authorize();
+      if (!access_token) throw new Error('SA_AUTH_FAILED');
+      this._tokenCache = {
+        access_token,
+        expires_at: expiry_date ? Math.floor(expiry_date / 1000) : now + 3500,
+      };
+      return access_token;
+    }
     const row = toArray(await this.yp.await_query(
-      'SELECT access_token, refresh_token, expires_at, scope FROM oauth_accounts WHERE user_id=? AND provider=?',
+      // Several google rows can coexist per user (login vs Drive client) —
+      // the worker must refresh with the DRIVE row.
+      'SELECT access_token, refresh_token, expires_at, scope FROM oauth_accounts WHERE user_id=? AND provider=? ORDER BY (scope LIKE "%drive.%") DESC, mtime DESC LIMIT 1',
       this._userId, 'google'
     ))[0];
     if (!row) throw new Error('NEEDS_RECONNECT');
@@ -237,7 +261,8 @@ class GoogleDriveImporter {
       ? Math.floor(credentials.expiry_date / 1000)
       : now + 3500;
     await this.yp.await_query(
-      'UPDATE oauth_accounts SET access_token=?, expires_at=?, mtime=UNIX_TIMESTAMP() WHERE user_id=? AND provider=?',
+      // Persist on the DRIVE row only — see ext_import.ensureFreshToken.
+      'UPDATE oauth_accounts SET access_token=?, expires_at=?, mtime=UNIX_TIMESTAMP() WHERE user_id=? AND provider=? AND scope LIKE "%drive.%"',
       credentials.access_token, newExpiresAt, this._userId, 'google'
     );
     this._tokenCache = { access_token: credentials.access_token, expires_at: newExpiresAt };
@@ -306,13 +331,22 @@ class GoogleDriveImporter {
       try {
         meta = await this._getMeta(folderId);
       } catch (e) {
-        this.errors.push({ folder: folderId, code: 'META_FAILED', reason: e.message });
+        this.errors.push({ folder: folderId, code: this._grantCode(e, 'META_FAILED'), reason: e.message });
         await this._pushProgress(base);
         continue;
       }
       const sub = await this._createFolder(meta.name, rootFolder, opts.hubDb, opts.userId);
+      const filesBefore = this.totalFiles;
       await this._traverse({ ...base, folderId, destFolder: sub });
       if (this._cancelled) return;
+      // drive.file gotcha: picking a FOLDER often grants only the folder
+      // node — its children list back EMPTY (silently, no 403). Without
+      // this hint the user sees "imported 0 files, 0 errors" and assumes
+      // the feature is broken. NOT for SA jobs: the SA has real read access,
+      // so an empty result there just means the folder IS empty.
+      if (this.totalFiles === filesBefore && this.data.auth_kind !== 'sa') {
+        this.errors.push({ folder: meta.name, code: 'NOT_GRANTED', reason: 'folder children not granted' });
+      }
     }
 
     for (const fileId of (selections.file_ids || [])) {
@@ -321,7 +355,7 @@ class GoogleDriveImporter {
       try {
         meta = await this._getMeta(fileId);
       } catch (e) {
-        this.errors.push({ file: fileId, code: 'META_FAILED', reason: e.message });
+        this.errors.push({ file: fileId, code: this._grantCode(e, 'META_FAILED'), reason: e.message });
         await this._pushProgress(base);
         continue;
       }
@@ -331,10 +365,21 @@ class GoogleDriveImporter {
         this.processedFiles += 1;
         await this._pushProgress(base, meta.name);
       } catch (e) {
-        this.errors.push({ file: meta.name, code: 'IMPORT_FAILED', reason: e.message });
+        this.errors.push({ file: meta.name, code: this._grantCode(e, 'IMPORT_FAILED'), reason: e.message });
         await this._pushProgress(base);
       }
     }
+  }
+
+  /**
+   * drive.file 403/404 on an id usually means the per-app Picker grant did
+   * not cover it (e.g. children of a picked folder the Picker never "saw").
+   * Surface it as NOT_GRANTED so the FE can tell the user to re-pick those
+   * items, instead of a generic failure.
+   */
+  _grantCode(e, fallback) {
+    const status = e && e.response && e.response.status;
+    return (status === 403 || status === 404) ? 'NOT_GRANTED' : fallback;
   }
 
   async _traverse(opts) {
@@ -345,10 +390,20 @@ class GoogleDriveImporter {
     try {
       items = await this._listFolder(opts.folderId, opts.includeSharedDrives);
     } catch (e) {
-      this.errors.push({ folder: opts.folderId, code: 'LIST_FAILED', reason: e.message });
+      this.errors.push({ folder: opts.folderId, code: this._grantCode(e, 'LIST_FAILED'), reason: e.message });
       await this._pushProgress(opts);
       return;
     }
+    // Shortcuts can point anywhere — other drives, loops, or (under the
+    // drive.file scope) targets the user never granted. Same policy as
+    // uppy's picker importer: never follow them, record the skip.
+    items = items.filter((i) => {
+      if (i.mimeType === 'application/vnd.google-apps.shortcut') {
+        this.errors.push({ file: i.name, code: 'SHORTCUT_SKIPPED', reason: 'shortcuts are not followed' });
+        return false;
+      }
+      return true;
+    });
     this.totalFolders += 1;
     this.totalFiles += items.filter((i) => i.mimeType !== 'application/vnd.google-apps.folder').length;
     await this._pushProgress(opts);

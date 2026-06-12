@@ -17,7 +17,7 @@ const { Attr, Cache, Constants, toArray, sysEnv } = require('@drumee/server-esse
 const { google } = require('googleapis');
 const axios = require('axios');
 const ExtImport = require('../lib/ext_import');
-const { googleDriveCredentials } = require('../lib/google_credentials');
+const { googleDriveCredentials, googleDriveServiceAccount } = require('../lib/google_credentials');
 const {
   addMigration,
   getJobStatus,
@@ -25,7 +25,15 @@ const {
   cancelJob,
 } = require('../../offline/queues/migrationQueue');
 
-const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.readonly';
+// drive.file is NON-SENSITIVE: no CASA / restricted-scope verification needed
+// for external accounts. The app only sees files the user explicitly picked
+// via the Google Picker (FE) plus files it created. The previous
+// drive.readonly (RESTRICTED — 100-user cap + 7-day tokens while unverified)
+// is still ACCEPTED on existing oauth_accounts rows so users who granted it
+// before the switch keep working — see DRIVE_SCOPE_RE.
+const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file';
+// Either grant lets the worker read the content it is asked to import.
+const DRIVE_SCOPE_RE = /drive\.(file|readonly)/;
 
 class GoogleDrive extends ExtImport {
 
@@ -36,16 +44,120 @@ class GoogleDrive extends ExtImport {
 
   /**
    * Returns `{ ok: true }` if the user already has a stored Google
-   * access_token whose scope includes drive.readonly AND has a refresh_token
-   * so we can recover from expiry.
+   * access_token whose scope includes a usable Drive grant (drive.file, or
+   * legacy drive.readonly) AND has a refresh_token so we can recover from
+   * expiry.
    */
   async has_drive_scope() {
     const row = toArray(await this.yp.await_query(
-      'SELECT scope, refresh_token FROM oauth_accounts WHERE user_id=? AND provider=?',
+      // A user can hold SEVERAL google rows (login client vs Drive connect —
+      // different provider_user_id). Always pick the one carrying the Drive
+      // grant, never whichever the DB returns first.
+      'SELECT scope, refresh_token FROM oauth_accounts WHERE user_id=? AND provider=? ORDER BY (scope LIKE "%drive.%") DESC, mtime DESC LIMIT 1',
       this.uid, 'google'
     ))[0];
-    const ok = !!(row && row.refresh_token && row.scope && row.scope.includes('drive.readonly'));
+    const ok = !!(row && row.refresh_token && row.scope && DRIVE_SCOPE_RE.test(row.scope));
     this.output.data({ ok });
+  }
+
+  /**
+   * Access token + config for the FE Google Picker (drive.file flow). The
+   * OAuth client, the REST API key and the appId (Cloud project NUMBER — not
+   * the project id) MUST all belong to the same Cloud project, otherwise
+   * Drive answers 403/404 on the very ids the user just picked.
+   *   out: { access_token, api_key, app_id }
+   */
+  async picker_token() {
+    const creds = googleDriveCredentials();
+    if (!creds.api_key || !creds.project_number) {
+      // google/drive.json lacks api_key/project_number — FE shows a clear
+      // "feature not configured" message instead of a broken picker.
+      throw new Error('PICKER_NOT_CONFIGURED');
+    }
+    let access_token;
+    try {
+      access_token = await this.ensureFreshToken('google');
+    } catch (e) {
+      throw new Error('NEEDS_RECONNECT');
+    }
+    this.output.data({
+      access_token,
+      api_key: creds.api_key,
+      app_id: String(creds.project_number),
+    });
+  }
+
+  // ───────── Service-account whole-folder import (share-to-SA) ─────────
+  // The Picker's drive.file grant does NOT cover a picked folder's children
+  // (live-verified). For true whole-tree import the user SHARES the folder
+  // with our service account's email; the SA then reads the entire tree
+  // with its own auth — no OAuth scopes, no verification.
+
+  /** Mint a short-lived SA access token (drive.readonly on shared items). */
+  async _saToken() {
+    const sa = googleDriveServiceAccount();
+    if (!sa) throw new Error('SA_NOT_CONFIGURED');
+    const jwt = new google.auth.JWT({
+      email: sa.client_email,
+      key: sa.private_key,
+      scopes: ['https://www.googleapis.com/auth/drive.readonly'],
+    });
+    const { access_token } = await jwt.authorize();
+    if (!access_token) throw new Error('SA_AUTH_FAILED');
+    return access_token;
+  }
+
+  /** Accepts a Drive folder URL or a bare id; returns the id or null. */
+  _parseFolderId(input) {
+    const s = String(input || '').trim();
+    const m = s.match(/\/folders\/([A-Za-z0-9_-]{10,})/) || s.match(/[?&]id=([A-Za-z0-9_-]{10,})/);
+    if (m) return m[1];
+    if (/^[A-Za-z0-9_-]{10,}$/.test(s)) return s;
+    return null;
+  }
+
+  /**
+   * The folder must be visible to the SA AND owned by the caller's linked
+   * Google account. Without the owner check, anyone could import ANY folder
+   * ever shared with the SA by someone else (cross-user data leak).
+   */
+  async _saVerifyFolder(folder_id) {
+    const rowE = toArray(await this.yp.await_query(
+      'SELECT email FROM oauth_accounts WHERE user_id=? AND provider=? AND email IS NOT NULL ORDER BY (scope LIKE "%drive.%") DESC, mtime DESC LIMIT 1',
+      this.uid, 'google'
+    ))[0];
+    const userEmail = rowE && rowE.email;
+    if (!userEmail) throw new Error('SA_NEEDS_GOOGLE');
+    const token = await this._saToken();
+    let res;
+    try {
+      res = await axios.get(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(folder_id)}`, {
+        headers: { Authorization: `Bearer ${token}` },
+        params: { fields: 'id,name,mimeType,owners(emailAddress)', supportsAllDrives: true },
+      });
+    } catch (e) {
+      // 404 for the SA = the share hasn't reached it (or wrong id).
+      throw new Error('SA_NOT_SHARED');
+    }
+    const f = res.data || {};
+    if (f.mimeType !== 'application/vnd.google-apps.folder') throw new Error('SA_NOT_A_FOLDER');
+    const owners = (f.owners || []).map((o) => (o.emailAddress || '').toLowerCase());
+    if (!owners.includes(String(userEmail).toLowerCase())) throw new Error('SA_NOT_OWNER');
+    return { id: f.id, name: f.name };
+  }
+
+  /** FE setup card: the email the user must share their folder with. */
+  async sa_info() {
+    const sa = googleDriveServiceAccount();
+    this.output.data({ configured: sa ? 1 : 0, email: sa ? sa.client_email : null });
+  }
+
+  /** Validate a pasted folder link/id before starting; returns its name. */
+  async sa_check() {
+    const folder_id = this._parseFolderId(this.input.need('folder'));
+    if (!folder_id) throw new Error('SA_BAD_LINK');
+    const f = await this._saVerifyFolder(folder_id);
+    this.output.data({ ok: 1, folder_id: f.id, name: f.name });
   }
 
   /**
@@ -145,8 +257,19 @@ class GoogleDrive extends ExtImport {
     const source_folder_id = this.input.use('source_folder_id', 'root');
     const include_shared_drives = this.input.use('include_shared_drives', 0) ? 1 : 0;
     const conflict_policy = this.input.use('conflict_policy', 'skip');
-    const mode = this.input.use('mode', 'all') === 'selected' ? 'selected' : 'all';
+    const auth_kind = this.input.use('auth_kind', 'user') === 'sa' ? 'sa' : 'user';
+    let mode = this.input.use('mode', 'all') === 'selected' ? 'selected' : 'all';
     let selections = this.input.use('selections', null);
+    if (auth_kind === 'sa') {
+      // Whole-folder import via share-to-SA: re-validate server-side (never
+      // trust the FE's sa_check) and shape it as a single-folder selection —
+      // the importer path is identical, only the token source differs.
+      const folder_id = this._parseFolderId(this.input.need('sa_folder'));
+      if (!folder_id) throw new Error('SA_BAD_LINK');
+      const f = await this._saVerifyFolder(folder_id);
+      mode = 'selected';
+      selections = JSON.stringify({ folder_ids: [f.id], file_ids: [] });
+    }
     // The input layer may deliver the object as a JSON string — normalize.
     if (typeof selections === 'string') {
       try { selections = JSON.parse(selections); } catch (_) { selections = null; }
@@ -180,13 +303,26 @@ class GoogleDrive extends ExtImport {
 
     // Refuse if not connected; FE should have called has_drive_scope first
     // but we double-check so the worker doesn't waste a slot.
-    const scopeRow = toArray(await this.yp.await_query(
-      'SELECT scope, refresh_token FROM oauth_accounts WHERE user_id=? AND provider=?',
-      this.uid, 'google'
-    ))[0];
-    if (!scopeRow || !scopeRow.refresh_token || !(scopeRow.scope || '').includes('drive.readonly')) {
-      throw new Error('NEEDS_RECONNECT');
+    if (auth_kind === 'user') {
+      const scopeRow = toArray(await this.yp.await_query(
+        // A user can hold SEVERAL google rows (login client vs Drive connect —
+        // different provider_user_id). Always pick the one carrying the Drive
+        // grant, never whichever the DB returns first.
+        'SELECT scope, refresh_token FROM oauth_accounts WHERE user_id=? AND provider=? ORDER BY (scope LIKE "%drive.%") DESC, mtime DESC LIMIT 1',
+        this.uid, 'google'
+      ))[0];
+      if (!scopeRow || !scopeRow.refresh_token || !DRIVE_SCOPE_RE.test(scopeRow.scope || '')) {
+        throw new Error('NEEDS_RECONNECT');
+      }
+      // A drive.file grant only sees items the user picked — a whole-Drive
+      // walk ("all" mode) would import (nearly) nothing and confuse the
+      // user. Only legacy drive.readonly rows may still run mode=all.
+      if (mode === 'all' && !(scopeRow.scope || '').includes('drive.readonly')) {
+        throw new Error('SELECTED_MODE_REQUIRED');
+      }
     }
+    // (auth_kind 'sa': no oauth row needed — the SA authenticates itself and
+    // _saVerifyFolder above already proved share + ownership.)
 
     // Write-privilege gate on the DESTINATION node. ACL (scope=hub,
     // src=owner) already proves the caller owns `hub_id`, but `nid` can be
@@ -209,6 +345,7 @@ class GoogleDrive extends ExtImport {
       conflict_policy,
       mode,
       selections,
+      auth_kind,
     });
 
     // Mark the migration prompt as "user has interacted" so the Desk
@@ -246,6 +383,8 @@ class GoogleDrive extends ExtImport {
       total_folders:   prog.total_folders   || ret.total_folders   || 0,
       current_filename: prog.current_filename || null,
       errors:           ret.errors || prog.errors || [],
+      // The GoogleDriveMigration folder's nid — "Open in Drumee" target.
+      dest_nid:         ret.dest_nid || null,
       attempts:         snap.attempts,
       failed_reason:    snap.failedReason,
       started_at:       snap.processedOn ? Math.floor(snap.processedOn / 1000) : null,
@@ -277,14 +416,34 @@ class GoogleDrive extends ExtImport {
    */
   async get_state() {
     const scopeRow = toArray(await this.yp.await_query(
-      'SELECT scope, refresh_token FROM oauth_accounts WHERE user_id=? AND provider=?',
+      // A user can hold SEVERAL google rows (login client vs Drive connect —
+      // different provider_user_id). Always pick the one carrying the Drive
+      // grant, never whichever the DB returns first.
+      'SELECT scope, refresh_token FROM oauth_accounts WHERE user_id=? AND provider=? ORDER BY (scope LIKE "%drive.%") DESC, mtime DESC LIMIT 1',
       this.uid, 'google'
     ))[0];
-    const ok = !!(scopeRow && scopeRow.refresh_token && scopeRow.scope && scopeRow.scope.includes('drive.readonly'));
+    const scope = (scopeRow && scopeRow.scope) || '';
+    const ok = !!(scopeRow && scopeRow.refresh_token && DRIVE_SCOPE_RE.test(scope));
+    // FE branches its picker UI on this: 'readonly' keeps the legacy in-app
+    // tree (whole-Drive capable), 'file' switches to the Google Picker.
+    const scope_kind = scope.includes('drive.readonly')
+      ? 'readonly'
+      : (scope.includes('drive.file') ? 'file' : null);
+    let picker = 0;
+    try {
+      const creds = googleDriveCredentials();
+      picker = creds.api_key && creds.project_number ? 1 : 0;
+    } catch (_) { /* credentials missing — picker stays 0 */ }
+    // Whole-folder import path (share-to-SA) availability + the email to
+    // share with — the FE only offers it when the key file is present.
+    let sa = 0;
+    let sa_email = null;
+    const saCreds = googleDriveServiceAccount();
+    if (saCreds) { sa = 1; sa_email = saCreds.client_email; }
     const snap = await getUserJob(this.uid);
     const job = snap ? this._shapeStatus(snap) : null;
     const seen_job_id = await this._getSeenJob();
-    this.output.data({ ok, job, seen_job_id });
+    this.output.data({ ok, scope_kind, picker, sa, sa_email, job, seen_job_id });
   }
 
   /** Read profile.gdrive_seen_job (id of the last result the user dismissed). */

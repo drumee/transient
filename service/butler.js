@@ -884,6 +884,22 @@ class __butler extends Mfs {
       ? Math.floor(tokens.expiry_date / 1000)
       : Math.floor(Date.now() / 1000) + 3500;
 
+    // Observability: a re-grant that replaces a legacy drive.readonly row
+    // with drive.file flips the user to the Picker UI. By design the scope
+    // column must describe the STORED token (a union would let mode=all run
+    // against a file-only token), and the FE only re-OAuths when the old
+    // grant is already dead — but log the transition so support can explain
+    // "my whole-Drive option disappeared" reports.
+    try {
+      const prior = (await this.yp.await_query(
+        'SELECT scope FROM oauth_accounts WHERE provider=? AND provider_user_id=?',
+        'google', googleSub
+      ))[0];
+      if (prior && /drive\.readonly/.test(prior.scope || '') && !/drive\.readonly/.test(scope)) {
+        this.warn(`[google_drive_callback] scope downgrade readonly→file for uid=${payload.uid}`);
+      }
+    } catch (_) { /* log-only */ }
+
     // Upsert keyed on the UNIQUE (provider, provider_user_id): creates the
     // row for a first-time connector (no prior Google login) and updates it
     // on re-grant. refresh_token is overwritten only when Google returns a
@@ -912,11 +928,14 @@ class __butler extends Mfs {
     // surface it now as a failed connection instead of a false "connected".
     const { toArray } = require('@drumee/server-essentials').utils;
     const saved = toArray(await this.yp.await_query(
-      'SELECT refresh_token, scope FROM oauth_accounts WHERE user_id=? AND provider=?',
+      // The user may hold several google rows (login client vs Drive client,
+      // distinct provider_user_id) — the upsert above touched the DRIVE one,
+      // so validate THAT row, not whichever the DB returns first.
+      'SELECT refresh_token, scope FROM oauth_accounts WHERE user_id=? AND provider=? ORDER BY (scope LIKE "%drive.%") DESC, mtime DESC LIMIT 1',
       payload.uid, 'google'
     ))[0];
     if (!saved || !saved.refresh_token
-        || !(saved.scope && saved.scope.includes('drive.readonly'))) {
+        || !(saved.scope && /drive\.(file|readonly)/.test(saved.scope))) {
       this.warn('[google_drive_callback] connection unusable after upsert: has_refresh='
         + !!(saved && saved.refresh_token) + ' scope=' + (saved && saved.scope));
       return this._closingPage(false, 'needs_consent');
