@@ -320,6 +320,9 @@ volumes:
   ui_assets: {}
   static_assets: {}
   drumee_cred: {}
+  infra_jitsi: {}
+  infra_mail: {}
+  infra_dns: {}
 
 services:
   mariadb:
@@ -459,11 +462,35 @@ services:
       # Static assets (splash/fonts/logo); empty unless the 'static' profile ran.
       - static_assets:/srv/static:ro
 
+  # Run-once: render the canonical optional-service configs (Jitsi/Prosody/Coturn,
+  # Postfix/OpenDKIM, BIND) with setup-infra's own engine into the infra_* volumes
+  # the service containers below consume. Runs if any optional profile is active.
+  infra-init:
+    profiles: ["jitsi", "mail", "dns"]
+    image: \${IMAGE_REGISTRY}/infra-init:\${SERVER_TAG}
+    networks: [drumee]
+    env_file: [.env]
+    environment:
+      INFRA_PARTS: "jitsi mail dns"
+      WITH_JITSI: "1"
+    volumes:
+      - infra_jitsi:/out/jitsi
+      - infra_mail:/out/mail
+      - infra_dns:/out/dns
+    restart: "no"
+
   jitsi:
     profiles: ["jitsi"]
     image: jitsi/web:stable
     restart: unless-stopped
     networks: [drumee]
+    depends_on:
+      infra-init:
+        condition: service_completed_successfully
+    # consumes infra_jitsi (conference.json + prosody/jicofo/jvb/web configs);
+    # mount paths depend on the upstream image layout — see docs/infra-init.md TODO.
+    volumes:
+      - infra_jitsi:/drumee-infra:ro
 
   prosody:
     profiles: ["prosody"]

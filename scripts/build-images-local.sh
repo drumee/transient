@@ -14,6 +14,7 @@ SERVER_SRC="${SERVER_SRC:-$HOME/server-team}"
 UI_SRC="${UI_SRC:-$HOME/ui-team}"
 SCHEMAS_SRC="${SCHEMAS_SRC:-$HOME/schemas}"
 SETUP_SCHEMAS_SRC="${SETUP_SCHEMAS_SRC:-$HOME/setup-schemas}"
+SETUP_INFRA_SRC="${SETUP_INFRA_SRC:-$HOME/setup-infra}"
 TAG="${TAG:-local}"
 MEDIA_DEPS="${MEDIA_DEPS:-0}"
 say() { printf '\033[1;36m==>\033[0m %s\n' "$*"; }
@@ -60,6 +61,16 @@ docker buildx build \
   --build-context "schemas=$SCHEMAS_SRC" \
   --build-arg "SERVER_IMAGE=drumee/server-pod:$TAG" \
   -t "drumee/schemas-populate:$TAG" --load "$root/deploy/docker"
+
+if [ -d "$SETUP_INFRA_SRC" ]; then
+  say "Building drumee/infra-init:$TAG (FROM server-pod + setup-infra + opendkim-tools)"
+  docker buildx build -f "$root/deploy/docker/Dockerfile.infra-init" \
+    --build-context "helpers=$root/deploy/docker" --build-context "infra=$SETUP_INFRA_SRC" \
+    --build-arg "SERVER_IMAGE=drumee/server-pod:$TAG" \
+    -t "drumee/infra-init:$TAG" --load "$root/deploy/docker"
+else
+  say "Skipping drumee/infra-init (no setup-infra source at $SETUP_INFRA_SRC)"
+fi
 
 say "Done. Images:"
 docker image ls --format '  {{.Repository}}:{{.Tag}}  {{.Size}}' | grep "drumee/.*:$TAG" || true
