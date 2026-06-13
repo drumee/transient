@@ -1,5 +1,7 @@
 # Production self-host (container channel)
 
+> For a step-by-step first real-server deployment (with verification + troubleshooting), see [first-deploy.md](first-deploy.md).
+
 How to run Drumee for real users — with published images, automatic HTTPS, and
 working email. The code/CI is in this repo; you provide the **registry, domain, and
 SMTP relay**.

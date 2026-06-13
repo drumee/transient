@@ -8,6 +8,7 @@ Debian packaging infrastructure for the [Drumee](https://drumee.com) sovereign d
 - [Configuration](config/README.md) — `drumee.yaml` single source of truth → `.env` / compose / debconf preseed
 - [Container channel](deploy/docker/README.md) · [Native channel](docs/native-channel.md) · [Lifecycle](docs/lifecycle.md) · [Security](docs/security.md)
 - [Production](docs/production.md) — publish images, real domain + TLS, SMTP, day-2 ops
+- [First deploy runbook](docs/first-deploy.md) — step-by-step first real-server deployment
 - [Roadmap](ROADMAP.md) — path to a SOTA, easy-to-self-host product
 
 ## Documentation
