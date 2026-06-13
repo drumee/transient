@@ -28,7 +28,7 @@ Each deployed endpoint runs **two Node.js processes**: `index.js` (page serving 
 
 ### Runtime Paths
 
-- Credentials: `/etc/drumee/credentials/` (JSON files, never committed to source control)
+- Credentials: `/etc/drumee/credential/` (JSON files, never committed to source control)
 - Runtime config: accessed via `yp.sys_conf` (not environment files)
 - Plugin directory: `/srv/drumee/runtime/plugins/server/<user>/<plugin>/`
 - Plugin service URLs: `/-/<endpoint>/svc/module.method`
@@ -52,14 +52,14 @@ Build all main packages at once:
 ./build-all.sh   # builds infra, schemas, ui, server in order
 ```
 
-Common flags accepted by most build scripts:
-- `--version=X.Y.Z` — override the version (default: read from `debian/changelog`)
-- `--force=yes` / `--force=rebuild` — skip the "rebuild existing?" prompt
-- `--email=user@example.com` — override maintainer email
+Flags: the main build scripts (`infra`, `schemas`, `server`) take **no** flags — version and maintainer email are read from `<package>/debian/changelog` via `get_version` / `get_email`, and `get_build_dir` always wipes and rebuilds (so `--force` is unnecessary). The generic `parse_args` / `check_version` / `check_email` / `check_build_dir` helpers in `utils/functions.sh` are no longer called by these scripts — only `admin/build.sh` still uses the interactive `check_*` flow. Scripts that do take flags:
+- `ui/build.sh` — `--compile=yes|no` (default yes), `--enable-api=yes|no` (default no)
+- `schemas-patch/build.sh` — `--manifest=auto|<file>` (required) plus an optional positional commit depth
+- `static/build.sh` — parses `--version/--force/--email` but overrides them from the changelog, so they have no effect
 
-GPG signing uses the maintainer email from `debian/changelog`. The key must be present in the local keyring.
+GPG signing uses the maintainer email from `debian/changelog`. The key must be present in the local keyring. (`builder/` builds unsigned.)
 
-Set `DEB_BUILD_TARGET=/path/to/dir` to automatically copy the built `.deb` to a target directory after each build.
+Set `DEB_BUILD_TARGET=/path/to/dir` to copy the built `.deb` there after the build — only `infra`, `schemas`, and `server` do this; `ui`, `static`, `schemas-patch`, and `builder` do not.
 
 ## Shared Utilities
 
@@ -68,10 +68,11 @@ Set `DEB_BUILD_TARGET=/path/to/dir` to automatically copy the built `.deb` to a 
 `utils/functions.sh` — provides:
 - `bundle <base> <repo-name> <branch> [src-files] [dest-path] [npm-script]` — clone or pull `git@github.com:drumee/<repo-name>.git`, run `npm i` if `package.json` exists, rsync files to the build dir
 - `get_version <base>` / `get_email <base>` — parse from `debian/changelog`
-- `check_version` / `check_email` — interactive prompts to confirm or change version/email, update `debian/control`
+- `check_version` / `check_email` / `check_build_dir` — interactive prompts that update `debian/control` / manage the build dir; **only `admin/build.sh` calls these now**
+- `get_build_dir <dir>` — unconditionally wipe + recreate the build staging dir (what the main scripts use)
 - `copyToTarget <path>` — copy `<path>_all.deb` to `$DEB_BUILD_TARGET` if set
 - `bundle_acme <base> <dest>` — clone `acmesh-official/acme.sh` from GitHub (not Drumee)
-- `parse_args "$@"` — parses `--version`, `--force`, `--compile`, `--enable-api`, `--email` flags into exported shell vars
+- `parse_args "$@"` — defined but **not called** by any current build script; would parse `--version/--force/--type/--compile/--enable-api/--email` into exported vars
 
 Set `REPO_BASE` to override the GitHub base URL used by `bundle()` (e.g., for a local mirror).
 

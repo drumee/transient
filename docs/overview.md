@@ -16,7 +16,7 @@ Each subdirectory is a self-contained package builder that clones source from `g
 | `schemas-patch/` | `drumee-patch` | Incremental DB schema patches | `schemas` (preview) |
 | `builder/` | `drumee-bootstrap` | Interactive first-time installer with debconf setup wizard | `setup` (somanos/wip) |
 | `meta/` | `drumee` | Metapackage — `apt install drumee` pulls the full runtime | — |
-| `admin/` | — | Admin patch runner scripts only — not a standalone package | — |
+| `admin/` | `drumee-schemas-patch` | Production schema-patch runner (interactive build via `check_*`) | local `opt/` scripts |
 
 ## Install Order
 
@@ -39,16 +39,18 @@ After installation, Drumee occupies these paths:
 │   │   └── main/        # server-team source
 │   ├── ui/              # drumee-ui-pod: LETC frontend engine
 │   │   └── main/        # ui-team source
+│   ├── tmp/             # temporary files (cleaned by cron)
 │   └── plugins/         # third-party plugin packages
 │       └── server/<endpoint>/<plugin>/
 ├── static/              # drumee-static: assets, locale files
-├── data/                # user file storage (MFS-managed)
-├── tmp/                 # temporary files (cleaned by cron)
 └── cache/
+
+/data/                   # user file storage (DRUMEE_DATA_DIR, MFS-managed)
+└── mfs/
 
 /etc/drumee/
 ├── drumee.sh            # runtime environment (sourced by server)
-└── credentials/         # JSON credential files (never committed)
+└── credential/          # JSON credential files (never committed)
 
 /var/lib/drumee/
 ├── setup-infra/         # infra install scripts
@@ -63,5 +65,5 @@ After installation, Drumee occupies these paths:
 - [Build Pipeline](build-pipeline.md) — how to build packages, common flags, GPG signing
 - [Shared Utilities](utilities.md) — `functions.sh` and `env.sh` API reference
 - [Version Management](version-management.md) — changelog lifecycle, `update-changelog.sh`
-- [Deployment Scripts](deployment.md) — `update.sh`, production update workflow
+- [Deployment](deployment.md) — manual deployment workflow, `drumee` CLI
 - Per-package deep-dives: [infra](package-infra.md) · [schemas](package-schemas.md) · [server](package-server.md) · [ui](package-ui.md) · [static](package-static.md) · [schemas-patch](package-schemas-patch.md) · [builder](package-builder.md)

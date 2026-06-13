@@ -2,7 +2,7 @@
 
 **Directory:** `schemas/`
 **Debian package:** `drumee-schemas`
-**Current version:** 2.6.7
+**Current version:** 2.6.99
 **Helper source:** `git@github.com:drumee/setup-schemas` → `/var/lib/drumee/setup-schemas/`
 
 ## Purpose
@@ -40,8 +40,10 @@ Provides a containerised build environment for producing seeds without a local M
 ## Build
 
 ```bash
-schemas/build.sh [--version=X.Y.Z] [--force=yes] [--email=user@example.com]
+schemas/build.sh
 ```
+
+`schemas/build.sh` takes no flags — version and email come from `schemas/debian/changelog`. Set `SEEDS_DIR` to point at the mariabackup snapshot used to create the seeds archive (see Build Prerequisites). Invoking the script with `rebuild` in its path forces the existing `seeds.tgz` to be regenerated.
 
 ## Installed Paths
 
