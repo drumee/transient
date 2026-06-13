@@ -150,6 +150,19 @@ class __secure_share extends Mfs {
    */
   async list_requests() {
     const rows = toArray(await this.yp.await_proc('secure_share_list_requests', this.uid));
+    // Enrich each row with the SHARED node's own filename so the sender notification
+    // shows the shared subfolder (e.g. "vb"), not just the workspace root name.
+    // Best-effort + per-row guarded — pending requests are few, and a lookup failure
+    // must never drop the row.
+    for (const r of rows) {
+      if (!r || !r.hub_id || !r.node_id) continue;
+      try {
+        const a = toArray(
+          await this.yp.await_proc('forward_proc', r.hub_id, 'mfs_node_attr', `'${r.node_id}'`)
+        )[0] || {};
+        if (a.filename) r.node_name = a.filename;
+      } catch (e) { /* keep workspace_name fallback */ }
+    }
     this.output.list(rows);
   }
 
@@ -251,8 +264,10 @@ class __secure_share extends Mfs {
       try {
         const db_name = await this.yp.await_func('get_db_name', hub_id);
         if (db_name) {
-          // Inverse of the secure-share grant (permission_grant('*', uid, ...)).
-          await this.yp.await_proc(`${db_name}.permission_revoke`, '*', uid);
+          // Exact inverse of the node-scoped secure-share grant
+          // (permission_grant(node_id, uid, ...) in _grantHubMembership). nid is the
+          // shared node carried by the access-list row.
+          await this.yp.await_proc(`${db_name}.permission_revoke`, nid, uid);
           revoked = true;
         }
       } catch (e) {
@@ -327,44 +342,36 @@ class __secure_share extends Mfs {
       }
     }
 
-    // Notify the guest's socket directly
-    if (row.guest_socket_id) {
-      try {
-        await RedisStore.sendData(
-          this.payload(
-            {
-              event         : 'secure_share_access_responded',
-              request_id    : row.id,
-              action,
-              granted_level : row.granted_level,
-              privilege     : LEVEL_TO_PRIVILEGE[row.granted_level] || 3,
-              capabilities  : (row.granted_level && row.granted_level !== 'can_view') ? [row.granted_level] : [],
-              can_download  : row.granted_level === 'can_download' ? 1 : 0,
-              can_chat      : row.granted_level === 'can_chat' ? 1 : 0,
-              can_edit      : row.granted_level === 'can_edit' ? 1 : 0,
-            },
-            { service: 'share.track_event' }
-          ),
-          [{ socket_id: row.guest_socket_id }]
-        );
-      } catch (e) {
-        this.warn('[secure_share.respond] guest notify failed:', e && e.message);
-      }
-    }
-
-    // Broadcast to all hub members so the sender window can refresh
+    // Real-time notify. The FULL grant payload (privilege/caps) must travel with the
+    // event so the recipient unlocks correctly — the old hub broadcast carried only
+    // {event,request_id,action}, which would reload the recipient as view-only.
+    // requester_email lets each recipient match ITS own approval (a hub broadcast
+    // reaches every viewer of the share). Broadcast to entity_sockets(hub_id): the
+    // guest's DMZ socket is included there (cookie_touch passes socket_id for exactly
+    // this), which is reliable — unlike the single, often-stale active_socket_id.
+    const respondedPayload = {
+      event          : 'secure_share_access_responded',
+      request_id     : row.id,
+      action,
+      requester_email: (row.requester_email || '').toLowerCase().trim(),
+      granted_level  : row.granted_level,
+      privilege      : LEVEL_TO_PRIVILEGE[row.granted_level] || 3,
+      capabilities   : (row.granted_level && row.granted_level !== 'can_view') ? [row.granted_level] : [],
+      can_download   : row.granted_level === 'can_download' ? 1 : 0,
+      can_chat       : row.granted_level === 'can_chat' ? 1 : 0,
+      can_edit       : row.granted_level === 'can_edit' ? 1 : 0,
+    };
     try {
       const hub_id = this.hub.get(Attr.id);
-      const recipients = await this.yp.await_proc('entity_sockets', { hub_id });
+      const targets = await this.yp.await_proc('entity_sockets', { hub_id });
+      // Include the recipient's last-known socket too, in case it isn't in the hub set.
+      if (row.guest_socket_id) targets.push({ socket_id: row.guest_socket_id });
       await RedisStore.sendData(
-        this.payload(
-          { event: 'secure_share_access_responded', request_id: row.id, action },
-          { service: 'share.track_event' }
-        ),
-        recipients
+        this.payload(respondedPayload, { service: 'share.track_event' }),
+        targets
       );
     } catch (e) {
-      this.warn('[secure_share.respond] hub broadcast failed:', e && e.message);
+      this.warn('[secure_share.respond] access-responded notify failed:', e && e.message);
     }
 
     return this.output.data({
@@ -403,16 +410,21 @@ class __secure_share extends Mfs {
       return;
     }
 
-    // Existing user — add to the hub now (same calls as signup-time invite resolution).
-    await this.yp.await_proc(`${db_name}.add_member`, uid, privilege, 0);
+    // Existing user — grant access to the SHARED NODE only (e.g. subfolder "vb"),
+    // NOT membership of the whole workspace root. add_member/join_hub + a '*' grant
+    // would make them a full root member — that is the bug being fixed (an approved
+    // recipient was auto-joining the parent workspace, not just the shared folder).
+    // node-scoped permission_grant is the exact inverse of revoke_recipient's
+    // node-scoped permission_revoke.
     await this.yp.await_proc(
       `${db_name}.permission_grant`,
-      '*', uid, 0, privilege, 'system', 'Secure share access approved'
+      row.node_id, uid, 0, privilege, 'system', 'Secure share access approved'
     );
 
-    // Notify the (now member) user so their desk sidebar picks up the workspace.
+    // Notify the user so their desk picks up the shared node (scoped to node_id, not
+    // the workspace root, to match the node-scoped grant above).
     try {
-      let hub = await this.yp.await_proc(`${db_name}.mfs_access_node`, uid, hub_id);
+      let hub = await this.yp.await_proc(`${db_name}.mfs_access_node`, uid, row.node_id);
       if (Array.isArray(hub)) hub = hub[0];
       if (hub) {
         hub.ownpath = '/';

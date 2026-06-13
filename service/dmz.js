@@ -216,6 +216,12 @@ class __dmz extends Mfs {
     // Resolve logged-in side user from cookie (mirrors normal login flow)
     let user = this.user.toJSON();
     const guest_id = Cache.getSysConf("guest_id");
+    // Reliable "this viewer has their own authenticated session" signal — set ONLY
+    // when regsid resolves to a real (non-guest/non-nobody) account. `is_guest`
+    // alone is unreliable for public shares (server returns is_guest=false for
+    // anonymous viewers), so the recipient UI keys its viral-landing chrome off
+    // this flag instead. Captured BEFORE the cookie_touch rebind below.
+    let isAuthenticated = false;
     let { regsid } = this.input.get(Attr.cookie);
     if (regsid) {
       let u = await this.yp.await_proc("cookie_retrieve_user", regsid);
@@ -224,6 +230,7 @@ class __dmz extends Mfs {
           user.profile = u.profile;
           user.uid = u.id;
           user.id  = u.id;
+          isAuthenticated = true;
         }
       }
     }
@@ -357,6 +364,12 @@ class __dmz extends Mfs {
     try {
       const nodeRows = await this.yp.await_proc('forward_proc', info.hub_id, 'mfs_node_attr', `'${info.nid}'`);
       const nodeAttr = toArray(nodeRows)[0] || {};
+      // Title must reflect the SHARED node (e.g. subfolder "vb"), not the workspace
+      // root. secure_share_info returns the hub name as title; override it with the
+      // node's own name. mfs_node_attr.filename = user_filename for a non-root node,
+      // or the hub name for the root/hub node — correct in both cases. Capture before
+      // the file→pid swap below so a file share titles on the file, not its parent.
+      if (nodeAttr.filename) info.title = nodeAttr.filename;
       if (nodeAttr.filetype && nodeAttr.filetype !== 'folder' && nodeAttr.filetype !== 'hub' && nodeAttr.pid) {
         info.file_nid = info.nid;  // specific file — sent to UI for filtering
         info.nid = nodeAttr.pid;   // parent folder — used by show_node_by
@@ -390,10 +403,32 @@ class __dmz extends Mfs {
 
     // If the guest previously had an approved access request, that grant
     // REPLACES the base set (the sender deliberately chose what to grant).
-    if (submittedEmail) {
+    // The grant is keyed by requester_email. The email gate provides submittedEmail,
+    // but a PUBLIC share has no gate — so a logged-in recipient who requested access
+    // (the Request Access popup prefills their account email as requester_email) had
+    // no email to match on refresh, and the approved grant was never applied → the
+    // download/chat stayed gated even after approval. Fall back to the account email.
+    let grantEmail = submittedEmail;
+    // Explicit grant-lookup email replayed by the recipient UI from localStorage
+    // (the email they sent the Request Access with). Used ONLY to match an approved
+    // grant — never the email gate (the gate uses submittedEmail) — so it cannot let
+    // anyone bypass a restricted share; it only resolves a grant already issued to
+    // that exact email. Lets anonymous (incognito) recipients keep access after a
+    // refresh, where there is no account email to key on.
+    if (!grantEmail) {
+      const ge = (this.input.get('grant_email') || '').toLowerCase().trim();
+      if (ge) grantEmail = ge;
+    }
+    if (!grantEmail && isAuthenticated && user.profile) {
+      try {
+        const p = typeof user.profile === 'string' ? JSON.parse(user.profile) : user.profile;
+        grantEmail = (p.email || '').toLowerCase().trim();
+      } catch (e) { /* ignore */ }
+    }
+    if (grantEmail) {
       try {
         const grantRow = toArray(
-          await this.yp.await_proc('secure_share_get_access_grant', token, submittedEmail)
+          await this.yp.await_proc('secure_share_get_access_grant', token, grantEmail)
         )[0] || {};
         if (grantRow.granted_level) {
           info.permission_level = grantRow.granted_level;
@@ -401,6 +436,28 @@ class __dmz extends Mfs {
         }
       } catch (e) {
         this.warn('[dmz.login] secure_share_get_access_grant failed:', e && e.message);
+      }
+    }
+
+    // Detect whether the viewer is a real workspace MEMBER (or the owner) of the
+    // shared node — resolved via mfs_access_node, whose `privilege` is the
+    // authoritative user_permission(uid,node) and returns 0 for a non-member.
+    // is_member is used ONLY to drop the guest chrome (the viral landing / "request
+    // access" banner) for members — it does NOT elevate the share's capabilities.
+    // The SHARE'S configured level always determines the functional experience, so a
+    // view-only link presents view-only even to the owner/a member (e.g. previewing
+    // their own link); a member who wants full access uses their own desk. Uses the
+    // real recipient uid (resolved above), not the creator-bound session.
+    let is_member = 0;
+    if (isAuthenticated && user.id) {
+      try {
+        const accessRows = await this.yp.await_proc(
+          'forward_proc', info.hub_id, 'mfs_access_node', `'${user.id}','${info.nid}'`
+        );
+        const memberPriv = parseInt((toArray(accessRows)[0] || {}).privilege, 10) || 0;
+        if (memberPriv > 0) is_member = 1;
+      } catch (e) {
+        this.warn('[dmz.login] secure_share member access check failed:', e && e.message);
       }
     }
 
@@ -434,6 +491,15 @@ class __dmz extends Mfs {
       guest_id         : info.uid || guest_id,
       area,
       is_guest,
+      // Reliable auth-state flags for the recipient UI (additive — does not change
+      // any existing field). is_authenticated: the viewer has their own logged-in
+      // session (vs anonymous). is_owner: that account is the share creator.
+      is_authenticated : isAuthenticated ? 1 : 0,
+      is_owner         : (isAuthenticated && String(user.id) === String(info.creator_id)) ? 1 : 0,
+      // is_member: the viewer already has standing ACL on the shared node (a real
+      // workspace member). The recipient UI uses it to suppress the guest "limited
+      // access" banner / viral chrome for members.
+      is_member        : is_member,
     });
   }
 
