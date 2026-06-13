@@ -78,12 +78,20 @@ This honors single-source-of-truth per concern: instance config + core creds fro
 ## Status / follow-ups
 
 - [x] Feasibility validated (39-file render under `--chroot`, no host writes).
+- [x] **`infra-init` image + adapter built and validated.** `Dockerfile.infra-init`
+      (FROM server-pod + setup-infra + opendkim-tools + @assetval/ip; `NODE_PATH`
+      resolves @drumee deps; `infra-root-shim.js` works around the upstream crash).
+      Run-once entrypoint: DKIM keygen → `infra.js`/`jitsi.js --chroot=/render` →
+      adapter publishes per-part subtrees into `infra_{jitsi,mail,dns}` volumes.
+      Verified: mail (postfix main.cf w/ domain + TLS, generated DKIM key, virtual
+      maps), dns (named.conf + forward/reverse zones), jitsi (conference.json +
+      prosody.cfg.lua + jicofo/jvb/web). `jitsi.js` rendered fine under `--chroot`.
+      Wired profile-gated into compose + build/publish scripts.
+- [ ] **Next (infra-gated):** the consuming service containers —
+      prosody/jicofo/jvb/coturn (jitsi), postfix/opendkim (mail), bind (dns).
+      Each needs the upstream image's config mount paths confirmed + a real
+      domain/IP/DNS to validate serving. infra-init already produces their configs.
 - [ ] Upstream: fix `args.drumee_root` (1-line) — issue draft in
       `/tmp/issue-setup-infra-drumee-root.md`.
 - [ ] Upstream nit: `exchange.json.tpl` key drift vs `sysEnv` (`exportFolder` →
       `export_dir`).
-- [ ] Implement the `infra-init` image + adapter + jitsi/mail/dns profiles
-      (the actual service containers consume the rendered configs).
-- [ ] `jitsi.js` render path needs the same chroot treatment (reads
-      `drumee.json` via `sysEnv()` — verify chroot-awareness during
-      implementation).
