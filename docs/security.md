@@ -9,7 +9,7 @@
 - **Not in git.** `drumee.yaml` and rendered `out/` are git-ignored; the only
   committed credential files (`target/etc/drumee/credential/*.json`) are
   placeholders (`password: null`).
-- **Tight perms.** The container entrypoint writes `/etc/drumee/credentials/*.json`
+- **Tight perms.** The container entrypoint writes `/etc/drumee/credential/*.json`
   as `0600`. Native installs should match (setup-infra).
 - **Reproducibility tradeoff.** Re-rendering regenerates unpinned secrets. For
   stable deploys, pin them in `drumee.yaml` (kept out of git) or source them from a

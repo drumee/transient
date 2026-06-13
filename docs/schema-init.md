@@ -35,7 +35,7 @@ loads the `hub`/`drumate` template into it. So the connected DB user must hold
 **global `CREATE DATABASE`** + access to all those DBs — not rights on one schema.
 
 **Connection** (`server-essentials/lib/configs.js` + `mariadb.js`): reads
-`/etc/drumee/credentials/db.json`. If it has `host/port/user/password` it connects
+`/etc/drumee/credential/db.json`. If it has `host/port/user/password` it connects
 over **TCP**; otherwise it falls back to a **unix socket**
 (`/var/run/mysqld/mysqld.sock`). So a networked `mariadb` container is viable —
 but the schema tooling (`bin/patch.js`, `bin/build-seeds`) assumes the **local
@@ -168,7 +168,7 @@ MariaDB (marker procedure applied and callable).
 | Gap | Impact |
 |---|---|
 | **System accounts** (`nobody`/`guest`/`system`) | Confirmed absent from the factory seed, schema procedures, and server services. Runtime paths (guest sessions, system-owned content, MFS `nobody` checks) need them. |
-| **RSA keypair** (`/etc/drumee/credentials/crypto`) | `bootstrap.js publicKey` serves it; auth/token features need it. |
+| **RSA keypair** (`/etc/drumee/credential/crypto`) | `bootstrap.js publicKey` serves it; auth/token features need it. |
 | **Wallpapers / tutorials / welcome email** | Onboarding / cosmetic. |
 | ~~**Quota triggers**~~ | Resolved: the patch step recreates them from `yellow_page/triggers/` on fresh installs and upgrades. |
 | **`--conf-path` (`etc/drumee/conf.d`)** | Server needs it (separate from the DB); produced by the infra package. |
