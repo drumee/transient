@@ -471,7 +471,15 @@ class GoogleDrive extends ExtImport {
       catch (_) { profile = {}; }
     }
     profile.gdrive_seen_job = job_id;
-    await this.yp.await_proc('drumate_update_profile', this.uid, JSON.stringify(profile));
+    // Write the merged profile DIRECTLY — NOT via drumate_update_profile. That
+    // proc rebuilds `profile` from a fixed whitelist of keys and silently DROPS
+    // anything not on it; gdrive_seen_job isn't whitelisted, so going through it
+    // never persists the ack and the finished job replays as "Migration failed /
+    // access expired" forever (even after a healthy reconnect). A plain UPDATE
+    // of the full JSON keeps every existing key AND the new gdrive_seen_job.
+    await this.yp.await_query(
+      `UPDATE drumate SET profile=? WHERE id=?`, JSON.stringify(profile), this.uid
+    );
     this.output.data({ ok: true });
   }
 
