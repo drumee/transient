@@ -22,6 +22,37 @@ const {
 } = Constants;
 const { verifyPassword: verifySecureSharePassword } = require('./lib/secure-share-password');
 
+function _emailMatchesAllowed(email, info) {
+  let allowedList = null;
+  if (info.allowed_emails) {
+    try {
+      const parsed = typeof info.allowed_emails === 'string'
+        ? JSON.parse(info.allowed_emails)
+        : info.allowed_emails;
+      if (Array.isArray(parsed) && parsed.length > 0) allowedList = parsed;
+    } catch (e) { /* malformed JSON — treat as no restriction */ }
+  }
+  if (allowedList) {
+    const domain = email.split('@')[1] || '';
+    return allowedList.some(entry => {
+      const e = (entry || '').toLowerCase().trim();
+      return e === email || (e.startsWith('@') && e.slice(1) === domain);
+    });
+  }
+  // Legacy fallback for pre-v2 shares without allowed_emails
+  const recipientEmail = (info.recipient_email || '').toLowerCase().trim();
+  // No allowed list and no legacy recipient → the share only requires that *some*
+  // email be entered (require_email decoupled from an allow-list), so any email is
+  // accepted here. Pre-v2 / list-restricted shares always have one of the above set,
+  // so their matching behaviour is unchanged.
+  if (!recipientEmail) return true;
+  if (email === recipientEmail) return true;
+  if (info.domain_restriction) {
+    return (email.split('@')[1] || '') === info.domain_restriction.toLowerCase().trim();
+  }
+  return false;
+}
+
 
 //########################################
 class __dmz extends Mfs {
@@ -178,9 +209,19 @@ class __dmz extends Mfs {
       return this.output.data({ status: 'TICKET_EXPIRED', is_secure: 1 });
     }
 
+    if (info.is_locked) {
+      return this.output.data({ status: 'TICKET_LOCKED', is_secure: 1 });
+    }
+
     // Resolve logged-in side user from cookie (mirrors normal login flow)
     let user = this.user.toJSON();
     const guest_id = Cache.getSysConf("guest_id");
+    // Reliable "this viewer has their own authenticated session" signal — set ONLY
+    // when regsid resolves to a real (non-guest/non-nobody) account. `is_guest`
+    // alone is unreliable for public shares (server returns is_guest=false for
+    // anonymous viewers), so the recipient UI keys its viral-landing chrome off
+    // this flag instead. Captured BEFORE the cookie_touch rebind below.
+    let isAuthenticated = false;
     let { regsid } = this.input.get(Attr.cookie);
     if (regsid) {
       let u = await this.yp.await_proc("cookie_retrieve_user", regsid);
@@ -189,55 +230,66 @@ class __dmz extends Mfs {
           user.profile = u.profile;
           user.uid = u.id;
           user.id  = u.id;
+          isAuthenticated = true;
         }
       }
     }
 
-    // Email validation — logged-in Drumee members skip the form if their account
-    // email matches the share (session auth is stronger proof than typing an email)
+    // Sanitized copy of info for the gate responses. The recipient gate card
+    // needs display fields (title, sender, require_email, require_password,
+    // recipient_email) but must NOT receive secrets — strip the password hash
+    // and the allowed-emails list before sending to an unauthenticated viewer.
+    // Both gate statuses carry it so the unified gate card (email and/or
+    // password) can render the right fields in one step.
+    const safeInfo = { ...info };
+    delete safeInfo.password_hash;
+    delete safeInfo.allowed_emails;
+
+    // Email gate: active for restricted shares (require_email=1 via v2 allowed_emails,
+    // or legacy recipient_email set). Skipped entirely for public shares.
+    const emailGateActive = !!info.require_email || !!(info.recipient_email);
     let submittedEmail = (this.input.get(Attr.email) || '').toLowerCase().trim();
 
-    if (!submittedEmail && user.id && ![ID_NOBODY, guest_id].includes(user.id)) {
-      try {
-        const p = typeof user.profile === 'string' ? JSON.parse(user.profile) : (user.profile || {});
-        const accountEmail = (p.email || '').toLowerCase().trim();
-        if (accountEmail) {
-          const recipientCheck = (info.recipient_email || '').toLowerCase().trim();
-          let autoMatch = (accountEmail === recipientCheck);
-          if (!autoMatch && info.domain_restriction) {
-            autoMatch = (accountEmail.split('@')[1] || '') === info.domain_restriction.toLowerCase().trim();
+    if (emailGateActive) {
+      // Auto-grant logged-in Drumee members whose account email matches the share
+      if (!submittedEmail && user.id && ![ID_NOBODY, guest_id].includes(user.id)) {
+        try {
+          const p = typeof user.profile === 'string' ? JSON.parse(user.profile) : (user.profile || {});
+          const accountEmail = (p.email || '').toLowerCase().trim();
+          if (accountEmail && _emailMatchesAllowed(accountEmail, info)) {
+            submittedEmail = accountEmail;
           }
-          if (autoMatch) submittedEmail = accountEmail;
+        } catch (e) {
+          this.warn('[dmz.login] secure_share auto-grant parse failed:', e && e.message);
         }
-      } catch (e) {
-        this.warn('[dmz.login] secure_share auto-grant parse failed:', e && e.message);
+      }
+
+      if (!submittedEmail) {
+        return this.output.data({ ...safeInfo, status: 'REQUIRED_EMAIL', is_secure: 1 });
+      }
+
+      if (!_emailMatchesAllowed(submittedEmail, info)) {
+        return this.output.data({ status: 'EMAIL_MISMATCH', is_secure: 1 });
       }
     }
 
-    if (!submittedEmail) {
-      return this.output.data({ ...info, status: 'REQUIRED_EMAIL', is_secure: 1 });
-    }
-
-    const recipientEmail = (info.recipient_email || '').toLowerCase().trim();
-    let emailValid = (submittedEmail === recipientEmail);
-
-    if (!emailValid && info.domain_restriction) {
-      const submittedDomain = submittedEmail.split('@')[1] || '';
-      emailValid = (submittedDomain === info.domain_restriction.toLowerCase().trim());
-    }
-
-    if (!emailValid) {
-      return this.output.data({ status: 'EMAIL_MISMATCH', is_secure: 1 });
-    }
-
-    // Password gate — only evaluated after email is confirmed valid
+    // Password gate — only evaluated after email gate passes (or was skipped for public shares)
     if (info.require_password) {
       const submittedPassword = (this.input.get(Attr.password) || '').trim();
       if (!submittedPassword) {
-        return this.output.data({ status: 'REQUIRED_PASSWORD', is_secure: 1 });
+        return this.output.data({ ...safeInfo, status: 'REQUIRED_PASSWORD', is_secure: 1 });
       }
       if (!verifySecureSharePassword(submittedPassword, storedPasswordHash)) {
-        return this.output.data({ status: 'WRONG_PASSWORD', is_secure: 1 });
+        try { await this.yp.await_proc('secure_share_increment_attempts', token); } catch (e) {}
+        // SP locks when new count >= 3; info.failed_attempts is the pre-increment value
+        const attemptsUsed      = (info.failed_attempts || 0) + 1;
+        const attemptsRemaining = Math.max(0, 3 - attemptsUsed);
+        // Token is now locked — tell the client immediately instead of making them
+        // submit again only to receive TICKET_LOCKED on the next request.
+        if (attemptsRemaining === 0) {
+          return this.output.data({ status: 'TICKET_LOCKED', is_secure: 1 });
+        }
+        return this.output.data({ status: 'WRONG_PASSWORD', is_secure: 1, attempts_remaining: attemptsRemaining });
       }
     }
 
@@ -245,8 +297,22 @@ class __dmz extends Mfs {
     const actor_id = (guest_id === user.id) ? null : (user.id || null);
     try {
       const track = await this.yp.await_proc('secure_share_access_log', token, actor_id, this.input.get(Attr.socket_id));
+      // v2: also record a per-visit access event (entered_at / last_seen_at) backing
+      // the "View access list" table. Isolated in its own try so a failure can never
+      // block the access counter, sender notification, or session binding below.
+      try {
+        await this.yp.await_proc(
+          'secure_share_log_access_event',
+          token, submittedEmail || null, actor_id, this.input.get(Attr.socket_id)
+        );
+      } catch (e) {
+        this.warn('[dmz.login] secure_share access_event failed:', e && e.message);
+      }
       const row   = toArray(track)[0] || {};
-      if (row.hub_id) {
+      // The access counter always updates above; the SENDER notification only
+      // fires when the share has notify_on_open enabled (default 1; legacy rows
+      // without the field keep notifying). info comes from secure_share_info.
+      if (row.hub_id && info.notify_on_open != 0) {
         const recipients = await this.yp.await_proc('entity_sockets', { hub_id: row.hub_id });
         await RedisStore.sendData(
           this.payload(
@@ -298,6 +364,12 @@ class __dmz extends Mfs {
     try {
       const nodeRows = await this.yp.await_proc('forward_proc', info.hub_id, 'mfs_node_attr', `'${info.nid}'`);
       const nodeAttr = toArray(nodeRows)[0] || {};
+      // Title must reflect the SHARED node (e.g. subfolder "vb"), not the workspace
+      // root. secure_share_info returns the hub name as title; override it with the
+      // node's own name. mfs_node_attr.filename = user_filename for a non-root node,
+      // or the hub name for the root/hub node — correct in both cases. Capture before
+      // the file→pid swap below so a file share titles on the file, not its parent.
+      if (nodeAttr.filename) info.title = nodeAttr.filename;
       if (nodeAttr.filetype && nodeAttr.filetype !== 'folder' && nodeAttr.filetype !== 'hub' && nodeAttr.pid) {
         info.file_nid = info.nid;  // specific file — sent to UI for filtering
         info.nid = nodeAttr.pid;   // parent folder — used by show_node_by
@@ -313,15 +385,121 @@ class __dmz extends Mfs {
     }
     user.uid = user.id;
 
+    // Resolve the granted capability SET. v2 stores an independent set
+    // (`capabilities`, e.g. ["can_download","can_chat","can_edit"]); legacy rows
+    // fall back to the single `permission_level` enum. secure_share_info already
+    // derives the array for legacy rows, but we re-derive defensively here in
+    // case the JSON column arrives as a string from the driver.
+    let caps = [];
+    const rawCaps = info.capabilities;
+    if (Array.isArray(rawCaps)) {
+      caps = rawCaps.slice();
+    } else if (typeof rawCaps === 'string' && rawCaps.trim()) {
+      try { const p = JSON.parse(rawCaps); if (Array.isArray(p)) caps = p; } catch (e) { /* ignore */ }
+    }
+    if (!caps.length && info.permission_level && info.permission_level !== 'can_view') {
+      caps = [info.permission_level];
+    }
+
+    // If the guest previously had an approved access request, that grant
+    // REPLACES the base set (the sender deliberately chose what to grant).
+    // The grant is keyed by requester_email. The email gate provides submittedEmail,
+    // but a PUBLIC share has no gate — so a logged-in recipient who requested access
+    // (the Request Access popup prefills their account email as requester_email) had
+    // no email to match on refresh, and the approved grant was never applied → the
+    // download/chat stayed gated even after approval. Fall back to the account email.
+    let grantEmail = submittedEmail;
+    // Explicit grant-lookup email replayed by the recipient UI from localStorage
+    // (the email they sent the Request Access with). Used ONLY to match an approved
+    // grant — never the email gate (the gate uses submittedEmail) — so it cannot let
+    // anyone bypass a restricted share; it only resolves a grant already issued to
+    // that exact email. Lets anonymous (incognito) recipients keep access after a
+    // refresh, where there is no account email to key on.
+    if (!grantEmail) {
+      const ge = (this.input.get('grant_email') || '').toLowerCase().trim();
+      if (ge) grantEmail = ge;
+    }
+    if (!grantEmail && isAuthenticated && user.profile) {
+      try {
+        const p = typeof user.profile === 'string' ? JSON.parse(user.profile) : user.profile;
+        grantEmail = (p.email || '').toLowerCase().trim();
+      } catch (e) { /* ignore */ }
+    }
+    if (grantEmail) {
+      try {
+        const grantRow = toArray(
+          await this.yp.await_proc('secure_share_get_access_grant', token, grantEmail)
+        )[0] || {};
+        if (grantRow.granted_level) {
+          info.permission_level = grantRow.granted_level;
+          caps = (grantRow.granted_level === 'can_view') ? [] : [grantRow.granted_level];
+        }
+      } catch (e) {
+        this.warn('[dmz.login] secure_share_get_access_grant failed:', e && e.message);
+      }
+    }
+
+    // Detect whether the viewer is a real workspace MEMBER (or the owner) of the
+    // shared node — resolved via mfs_access_node, whose `privilege` is the
+    // authoritative user_permission(uid,node) and returns 0 for a non-member.
+    // is_member is used ONLY to drop the guest chrome (the viral landing / "request
+    // access" banner) for members — it does NOT elevate the share's capabilities.
+    // The SHARE'S configured level always determines the functional experience, so a
+    // view-only link presents view-only even to the owner/a member (e.g. previewing
+    // their own link); a member who wants full access uses their own desk. Uses the
+    // real recipient uid (resolved above), not the creator-bound session.
+    let is_member = 0;
+    if (isAuthenticated && user.id) {
+      try {
+        const accessRows = await this.yp.await_proc(
+          'forward_proc', info.hub_id, 'mfs_access_node', `'${user.id}','${info.nid}'`
+        );
+        const memberPriv = parseInt((toArray(accessRows)[0] || {}).privilege, 10) || 0;
+        if (memberPriv > 0) is_member = 1;
+      } catch (e) {
+        this.warn('[dmz.login] secure_share member access check failed:', e && e.message);
+      }
+    }
+
+    // Translate the capability set to the privilege bitmask the UI uses for
+    // show/hide decisions (_K.privilege in lex/constants.js: read=3, download=7,
+    // write=15 — CUMULATIVE masks). We OR each capability's cumulative mask onto
+    // the read/view baseline so existing canDownload()/canUpload() bit checks keep
+    // working unchanged. can_chat carries NO extra privilege bit (permission.chat
+    // overlaps read, so it can't be represented independently in the bitmask, and
+    // mapping it to download was the old bug that leaked the download button); it
+    // is surfaced as the explicit `can_chat` flag that the recipient UI gates the
+    // chat tab on. Placed after the spreads so it always wins over ...user/...info.
+    const CAP_PRIVILEGE = { can_view: 0b0000011, can_download: 0b0000111, can_edit: 0b0001111 };
+    let privilege = 0b0000011; // read/view baseline
+    for (const c of caps) privilege |= (CAP_PRIVILEGE[c] || 0);
+
+    const hasCap = (c) => (caps.indexOf(c) !== -1 ? 1 : 0);
+
     return this.output.data({
       ...user,
       ...info,
-      is_secure : 1,
-      status    : 'TICKET_OK',
-      validity  : 'TICKET_OK',
-      guest_id  : info.uid || guest_id,
+      is_secure        : 1,
+      status           : 'TICKET_OK',
+      validity         : 'TICKET_OK',
+      permission_level : info.permission_level || 'can_view',
+      capabilities     : caps,
+      can_download     : hasCap('can_download'),
+      can_chat         : hasCap('can_chat'),
+      can_edit         : hasCap('can_edit'),
+      privilege,
+      guest_id         : info.uid || guest_id,
       area,
       is_guest,
+      // Reliable auth-state flags for the recipient UI (additive — does not change
+      // any existing field). is_authenticated: the viewer has their own logged-in
+      // session (vs anonymous). is_owner: that account is the share creator.
+      is_authenticated : isAuthenticated ? 1 : 0,
+      is_owner         : (isAuthenticated && String(user.id) === String(info.creator_id)) ? 1 : 0,
+      // is_member: the viewer already has standing ACL on the shared node (a real
+      // workspace member). The recipient UI uses it to suppress the guest "limited
+      // access" banner / viral chrome for members.
+      is_member        : is_member,
     });
   }
 
@@ -474,7 +652,62 @@ class __dmz extends Mfs {
   }
 
   /**
-   * 
+   * Submit a request for elevated access to a secure share.
+   */
+  async request_access() {
+    const VALID_LEVELS = ['can_download', 'can_chat', 'can_edit'];
+    const token          = this.input.need(Attr.token);
+    const rawEmail       = (this.input.get(Attr.email) || '').toLowerCase().trim();
+    const requestedLevel = (this.input.get('requested_level') || '').trim();
+    const message        = (this.input.get('message') || '').trim() || null;
+
+    if (!rawEmail || !rawEmail.includes('@')) {
+      return this.output.data({ status: 'INVALID_EMAIL' });
+    }
+    if (!VALID_LEVELS.includes(requestedLevel)) {
+      return this.output.data({ status: 'INVALID_LEVEL' });
+    }
+
+    const args = { token_id: token, requester_email: rawEmail, requested_level: requestedLevel };
+    if (message) args.message = message;
+
+    const row = toArray(
+      await this.yp.await_proc('secure_share_create_access_request', args)
+    )[0] || {};
+
+    if (!row.id || row.status === 'INVALID_TOKEN') {
+      return this.output.data({ status: 'INVALID_TOKEN' });
+    }
+
+    if (row.hub_id) {
+      try {
+        const recipients = await this.yp.await_proc('entity_sockets', { hub_id: row.hub_id });
+        await RedisStore.sendData(
+          this.payload(
+            {
+              event           : 'secure_share_access_requested',
+              request_id      : row.id,
+              token_id        : token,
+              hub_id          : row.hub_id,
+              node_id         : row.node_id,
+              requester_email : rawEmail,
+              requested_level : requestedLevel,
+              message,
+            },
+            { service: 'share.track_event' }
+          ),
+          recipients
+        );
+      } catch (e) {
+        this.warn('[dmz.request_access] notify creator failed:', e && e.message);
+      }
+    }
+
+    return this.output.data({ status: 'REQUEST_SENT', request_id: row.id });
+  }
+
+  /**
+   *
    */
   notification_list() {
     this.output.data([]);
