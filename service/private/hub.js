@@ -28,6 +28,25 @@ const {
   ID_NOT_FOUND,
 } = Constants;
 const { resolve } = require("path");
+
+/**
+ * Configured envelope sender (email.json -> auth.user), resolved once. Used to
+ * build a "Drumee" <addr> display-name From for butler invite emails, matching
+ * the contact-add emails. The address is read at runtime (it differs per
+ * deployment) rather than hardcoded.
+ */
+let _butlerSender;
+function butlerSender() {
+  if (_butlerSender !== undefined) return _butlerSender;
+  try {
+    const { readFileSync } = require("fs");
+    const f = resolve(sysEnv().credential_dir, "email.json");
+    _butlerSender = (JSON.parse(readFileSync(f, "utf8")).auth || {}).user || null;
+  } catch (e) {
+    _butlerSender = null;
+  }
+  return _butlerSender;
+}
 const { MfsTools } = require("@drumee/server-core");
 const { remove_dir } = MfsTools;
 const { toArray } = utils;
@@ -147,6 +166,45 @@ class __private_hub extends Hub {
     let link = `${this.input.homepath(this.hub.get(Attr.hostname))}${pathname}`;
     if (token) return link + token;
     return link;
+  }
+
+  /**
+   * Anonymous/guest permission for this hub's public share, derived from the
+   * workspace area (same rule as workspace_restricted):
+   *   - restricted workspace -> Privilege.VIEW     (browse/read only)
+   *   - shared workspace      -> Privilege.DOWNLOAD (browse + download)
+   * This is the single source of truth for the permission granted to anyone
+   * opening a public hub link (invite emails, copy_link, external-room share).
+   */
+  _publicSharePermission() {
+    const area = this.hub.get(Attr.area);
+    const restricted = !(area === "share" || area === "dmz");
+    return restricted ? Privilege.VIEW : Privilege.DOWNLOAD;
+  }
+
+  /**
+   * Return the hub's anonymous public share link (#/dmz/share/<token>), creating
+   * the external room on first use. Invite emails point here so recipients can
+   * open the workspace with no login (the dmz module + dmz.login + show_node_by
+   * are all anonymous-scoped), instead of the private #/desk/wm/hub/ route.
+   *
+   * On an existing room the area-based permission is re-applied via
+   * dmz_update_permission_next so the share token is preserved (not regenerated)
+   * for previously-sent links.
+   */
+  async _ensurePublicShareLink() {
+    const nid = this.home_id;
+    const hub_id = this.hub.get(Attr.id);
+    let rows = await this.db.await_proc("dmz_settings") || [];
+    let res = rows.shift();
+    if (isEmpty(res)) {
+      await this._update_external_room();
+      rows = await this.db.await_proc("dmz_settings") || [];
+      res = rows.shift();
+    } else {
+      await this.yp.await_proc("dmz_update_permission_next", hub_id, nid, this._publicSharePermission());
+    }
+    return this._getShareLink(res && res.link);
   }
 
   /**
@@ -681,7 +739,6 @@ class __private_hub extends Hub {
       || this.hub.get(Attr.hubname)
       || this.hub.get(Attr.name)
       || hubId;
-    const homepath = this.input.homepath().replace(/\/-\/$/, '/');
     const area = this.hub.get(Attr.area);
     const isShareLink = (area === "share");
     // Workspace-level shared/restricted flag (same rule as the app's security
@@ -700,6 +757,10 @@ class __private_hub extends Hub {
     // Latest 2 non-meeting messages for the "Recent Activity" preview; shown
     // (clear) for shared workspaces, kept redacted for restricted ones.
     const recent_messages = await this._recentMessages();
+    // Anonymous public share link for the hub — every invite email points here so
+    // recipients open the workspace without signing in. Computed once (one shared
+    // token per hub); guest permission follows workspace_restricted.
+    const publicLink = await this._ensurePublicShareLink();
     const results = [];
 
     for (const email of invitees) {
@@ -709,7 +770,7 @@ class __private_hub extends Hub {
         const isDrumate = drumate && drumate.id;
 
         if (isShareLink && !isDrumate) {
-          await this._inviteViaToken(email, hubId, privilege, expiryTs, username, hubname, preview_items, workspace_restricted, recent_messages);
+          await this._inviteViaToken(email, hubId, privilege, expiryTs, username, hubname, preview_items, workspace_restricted, recent_messages, publicLink);
           results.push({ email, branch: "A", status: "ok" });
         } else if (isDrumate) {
           const r = await this._grantMembership(drumate.id, privilege, 0, message, mfs_home, hubname, username);
@@ -733,7 +794,7 @@ class __private_hub extends Hub {
           }
           await this._sendInviteEmail("hub-invite-added", email,
             `You've been added to ${hubname}`,
-            { inviter_name: username, workspace_name: hubname, link: `${homepath}#/desk/wm/hub/?hub_id=${hubId}`, preview_items, workspace_restricted, recent_messages });
+            { inviter_name: username, workspace_name: hubname, link: publicLink, preview_items, workspace_restricted, recent_messages });
           results.push({ email, branch: "B", status: "ok" });
         } else {
           // non-drumate, restricted workspace: generate a token (so already-online
@@ -749,10 +810,9 @@ class __private_hub extends Hub {
           await this.yp.await_proc(
             "yp_add_pending_invitation", hubId, 0, privilege, email
           );
-          const inviteLink = `${homepath}#/welcome/signup?invite=${encodeURIComponent(cSecret)}`;
           await this._sendInviteEmail("hub-invite-signup", email,
             `${username} invited you to join ${hubname}`,
-            { inviter_name: username, workspace_name: hubname, link: inviteLink, preview_items, workspace_restricted, recent_messages });
+            { inviter_name: username, workspace_name: hubname, link: publicLink, preview_items, workspace_restricted, recent_messages });
           results.push({ email, branch: "C", status: "ok" });
         }
       } catch (err) {
@@ -766,7 +826,7 @@ class __private_hub extends Hub {
   /**
    * Nhánh A: tạo token mời share-link + gửi email kèm link.
    */
-  async _inviteViaToken(email, hubId, privilege, expiryTs, username, hubname, preview_items, workspace_restricted, recent_messages) {
+  async _inviteViaToken(email, hubId, privilege, expiryTs, username, hubname, preview_items, workspace_restricted, recent_messages, publicLink) {
     const { randomBytes } = require("crypto");
     const secret = randomBytes(24).toString("hex");
     const method = `hub_invite:${hubId}`;
@@ -774,11 +834,9 @@ class __private_hub extends Hub {
     await this.yp.await_proc(
       "token_hub_invite_add", email, "", secret, method, this.uid, metadata, expiryTs
     );
-    const homepath = this.input.homepath().replace(/\/-\/$/, '/');
-    const link = `${homepath}#/welcome/signup?invite=${encodeURIComponent(secret)}`;
     await this._sendInviteEmail("hub-invite-link", email,
       `${username} invited you to ${hubname}`,
-      { inviter_name: username, workspace_name: hubname, link, expiry_days: 7, preview_items, workspace_restricted, recent_messages });
+      { inviter_name: username, workspace_name: hubname, link: publicLink, expiry_days: 7, preview_items, workspace_restricted, recent_messages });
   }
 
   /**
@@ -912,11 +970,16 @@ class __private_hub extends Hub {
     const tplPath = resolve(__dirname, "templates", "butler", `${tpl}.html`);
     const msg = new Messenger({ subject, recipient, handler: this.exception.email });
     const html = msg.renderFrom(tplPath, data);
+    // Display-name From ("Drumee" <butler@...>) so the inbox shows "Drumee",
+    // matching the contact-add emails. Falls back to the default sender when
+    // no address is configured.
+    const sender = butlerSender();
+    const from = sender ? `"Drumee" <${sender}>` : undefined;
     // Messenger.send() always resolves { recipient, error } — it never rejects
     // (errors are routed to the handler). Inspect `error` so an SMTP-time
     // rejection (e.g. unknown mailbox -> 550) surfaces as a failed invitee
     // instead of a silent status:"ok".
-    const result = msg.dispatch({ html });
+    const result = msg.dispatch(from ? { html, from } : { html });
     if (result && result.error) {
       throw new Error(`Email delivery to ${recipient} failed: ${result.error}`);
     }
@@ -1162,9 +1225,21 @@ class __private_hub extends Hub {
     await RedisStore.sendData(this.payload(outout), sockets);
 
     await this.db.await_proc(`remove_all_members`, 0);
-    let entity = await this.yp.await_proc("entity_delete", hub_id);
-    remove_dir(entity.home_dir, 1);
+    // Respond BEFORE entity_delete: that proc drops the hub's whole database,
+    // which scales with workspace size (seconds+ for big hubs) and used to
+    // hold the HTTP response — the deleting client sat frozen for all of it.
+    // Every client was already notified via the WS broadcast above, and the
+    // directory removal is a detached `rm -rf` child process either way.
+    // Deferring the drop only risks a brief flicker on a hard refresh while
+    // it completes; failures are logged for ops.
     this.output.data(outout);
+    this.yp.await_proc("entity_delete", hub_id)
+      .then((entity) => {
+        if (entity && entity.home_dir) remove_dir(entity.home_dir, 1);
+      })
+      .catch((e) => {
+        this.warn(`delete_hub: deferred entity_delete failed for ${hub_id}`, (e && e.message) || e);
+      });
   }
 
   /**
@@ -1228,7 +1303,9 @@ class __private_hub extends Hub {
    *
    */
   async update_external_settings() {
-    const permission = this.input.use(Attr.permission) || Privilege.GUEST;
+    // Guest permission is area-driven (restricted -> view, shared -> download),
+    // not a manual picker — consistent with invite links and copy_link.
+    const permission = this._publicSharePermission();
     const passwordSet = this.input.use("passwordSet") || 0;
     const password = this.input.get(Attr.password) || "";
     const days = this.input.get(Attr.days) || 0;
@@ -1311,7 +1388,7 @@ class __private_hub extends Hub {
     let rows = (await this.db.await_proc("dmz_settings")) || [];
     let settings = rows.shift();
 
-    const permission = settings.permission || 1;
+    const permission = this._publicSharePermission();
     const expiry = settings.expiry_time || 0;
     const fingerprint = settings.fingerprint || "";
     await this.yp.await_proc(
@@ -1337,7 +1414,7 @@ class __private_hub extends Hub {
 
     let rows = (await this.db.await_proc("dmz_settings")) || [];
     let settings = rows.shift();
-    const permission = settings.permission || 1;
+    const permission = this._publicSharePermission();
     const expiry = settings.expiry_time || 0;
     const fingerprint = settings.fingerprint || "";
 
@@ -1399,7 +1476,7 @@ class __private_hub extends Hub {
     let rows = (await this.db.await_proc("dmz_settings")) || [];
     let settings = rows.shift();
 
-    const permission = settings.permission || 1;
+    const permission = this._publicSharePermission();
     const expiry = settings.expiry_time || 0;
     const fingerprint = settings.fingerprint || "";
 
@@ -1437,18 +1514,19 @@ class __private_hub extends Hub {
   async _update_external_room(opt = {}) {
     let {
       emails = [],
-      permission = Privilege.WRITE,
       pw,
       validityMode = "infinity",
       days = 0,
       hours = 0
     } = opt;
 
+    // Anonymous/guest permission always follows workspace area (restricted ->
+    // view, shared -> download), consistent with invite links.
+    const permission = this._publicSharePermission();
+
     let expiry = hours * 1 + days * 24;
 
     if (validityMode == "infinity") expiry = 0;
-
-    if (permission > Privilege.WRITE) permission = Privilege.WRITE;
 
     let nid = this.home_id;
     let hub_id = this.hub.get(Attr.id);
@@ -1503,13 +1581,12 @@ class __private_hub extends Hub {
    */
   async update_external_room() {
     let emails = this.input.use(Attr.emails) || this.input.use(Attr.email) || [];
-    let permission = this.input.use(Attr.permission) || Privilege.GUEST;
     const pw = this.input.get(Attr.password);
     const validityMode = this.input.get("validity_mode") || "infinity";
     const days = this.input.get(Attr.days) || 0;
     const hours = this.input.get(Attr.hours) || 0;
     await this._update_external_room({
-      emails, permission, pw, validityMode, days, hours
+      emails, pw, validityMode, days, hours
     })
 
     this.output.data({ emails });
