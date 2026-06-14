@@ -419,6 +419,15 @@ services:
     volumes:
       - \${DRUMEE_DATA_DIR}:/data
       - drumee_cred:/etc/drumee/credential
+    # Override the HTTP healthcheck inherited from the server-pod base image:
+    # the factory is a headless daemon with no listening port, so probe that the
+    # daemon process is alive instead (node:20-slim has no pgrep — scan /proc).
+    healthcheck:
+      test: ["CMD-SHELL", "grep -slae container-factory /proc/[0-9]*/cmdline >/dev/null 2>&1 || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
 
   server-pod:
     image: \${IMAGE_REGISTRY}/server-pod:\${SERVER_TAG}
