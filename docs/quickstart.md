@@ -6,22 +6,32 @@ Two ways to run Drumee. Most people want the **container channel**.
 
 ## Option A — Containers (recommended)
 
-**Requirements:** a Linux host with Docker Engine + Docker Compose v2, a domain
-pointed at the host's public IP, ports 80/443 open.
+**Requirements:** a Linux host. That's it — the installer can install Docker for
+you, and you don't need a domain (it offers automatic HTTPS by IP, or local-only).
+
+**One command. Answer 3–4 questions. Done:**
 
 ```bash
-# 1. Bootstrap (creates ./drumee/drumee.yaml on first run)
-curl -fsSL https://get.drumee.io | bash
-
-# 2. Edit the config — at minimum set instance.domain and instance.admin_email
-nano drumee/drumee.yaml
-
-# 3. Render + start
 curl -fsSL https://get.drumee.io | bash
 ```
 
-That renders `.env` + `docker-compose.yml` + `Caddyfile` and runs
-`docker compose up -d`. Caddy obtains TLS automatically.
+The installer asks:
+
+1. **A name** for the instance.
+2. **How people will reach it** — pick one:
+   - **a domain** you own (real HTTPS via Let's Encrypt), or
+   - **this server's IP, no domain** (automatic HTTPS via `sslip.io`), or
+   - **local / testing** (`http://localhost`, no HTTPS).
+3. **Admin email** (your login).
+4. **Admin password** (leave blank to auto-generate — printed at the end).
+
+It then generates all secrets, renders the stack, starts it, waits until it's
+healthy, and prints your **URL + login**. Nothing to hand-edit; re-running is safe.
+
+> No prompts (automation)? Preset the answers, e.g.:
+> `ACCESS_MODE=domain DRUMEE_DOMAIN=cloud.example.com ADMIN_EMAIL=you@example.com ASSUME_YES=1 curl -fsSL https://get.drumee.io | bash`
+
+Manage it afterwards:
 
 ```bash
 cd drumee
@@ -29,15 +39,10 @@ DRUMEE_DIR=. drumee-ctl status     # service health
 DRUMEE_DIR=. drumee-ctl doctor     # deeper checks
 ```
 
-Visit `https://<your-domain>`.
-
-**From a checkout** (no curl-to-bash):
+**From a checkout** (no curl-to-bash) — same wizard:
 
 ```bash
-cp config/drumee.example.yaml config/drumee.yaml   # edit it
-node config/render.mjs all --config config/drumee.yaml --out-dir ./drumee
-cp deploy/docker/Caddyfile ./drumee/
-cd drumee && docker compose --env-file .env up -d
+scripts/get-drumee.sh
 ```
 
 ---

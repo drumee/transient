@@ -46,5 +46,8 @@ fi
 hdr "7. Operator CLI guards"
 run "drumee-ctl usage guard" "DRUMEE_DIR=/nonexistent bin/drumee-ctl bogus; test \$? -ne 0"
 
+hdr "8. Installer wizard (render-only)"
+if tests/wizard-install.sh >/dev/null 2>&1; then good "wizard-install.sh"; else bad "wizard-install.sh"; fi
+
 printf '\n\033[1m== %d passed, %d failed ==\033[0m\n' "$pass" "$fail"
 [ "$fail" = 0 ]
