@@ -183,6 +183,16 @@ class __secure_share extends Mfs {
    */
   async list_open_notifications() {
     const rows = toArray(await this.yp.await_proc('secure_share_list_open_notifications', this.uid));
+    // TEMP DIAGNOSTIC (debug-level → not alerting). Compares the SP output (filtered)
+    // against the raw access events for this creator, to see if a logged-in open is
+    // recorded but filtered, or never recorded. Remove after diagnosing.
+    try {
+      const raw = toArray(await this.yp.await_query(
+        "SELECT e.actor_id, e.recipient_email, e.socket_id, e.last_seen_at, t.creator_id, t.notify_on_open " +
+        "FROM secure_share_access_event e JOIN secure_share_token t ON t.id = e.token_id " +
+        "WHERE t.creator_id = ? ORDER BY e.last_seen_at DESC LIMIT 10", this.uid));
+      this.debug('[SS-OPEN-DBG] creator=' + this.uid + ' SP_returned=' + rows.length + ' RAW=' + JSON.stringify(raw));
+    } catch (e) { this.debug('[SS-OPEN-DBG] raw query failed: ' + (e && e.message)); }
     for (const r of rows) {
       if (!r || !r.hub_id || !r.node_id) continue;
       try {
