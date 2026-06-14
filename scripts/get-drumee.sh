@@ -17,7 +17,10 @@
 #   ADMIN_PASSWORD=        # blank = auto-generate and print
 #   INSTANCE_NAME=         # human label for the instance
 #   DRUMEE_DIR=./drumee    # where to install
-#   ASSUME_YES=1           # answer "yes" to install-Docker / firewall prompts
+#   ASSUME_YES=1           # auto-confirm install prompts (Docker install, etc.)
+#   DRUMEE_NONINTERACTIVE=1# never prompt; every value from env or default
+#   RECONFIGURE=1          # overwrite an existing drumee.yaml (default: keep it)
+#   DRUMEE_NO_START=1      # render the files but don't start (CI / inspection)
 set -uo pipefail
 
 # ----------------------------------------------------------------------------- ui
@@ -31,7 +34,9 @@ hr()   { printf "${c_dim}%s${c_off}\n" "----------------------------------------
 # Prompts must read from the terminal even under `curl … | bash` (where stdin is
 # the script). /dev/tty is the real keyboard; fall back to defaults if absent.
 TTY=/dev/tty
-have_tty() { { true <"$TTY"; } 2>/dev/null; }
+# DRUMEE_NONINTERACTIVE=1 forces the no-prompt path (CI/automation), even when a
+# terminal is attached: every value must then come from an env var or default.
+have_tty() { [ "${DRUMEE_NONINTERACTIVE:-0}" = "1" ] && return 1; { true <"$TTY"; } 2>/dev/null; }
 ask() { # ask <var> <prompt> <default>   — env override wins; blank answer -> default
   local __v="$1" __p="$2" __d="$3" __a="" __e="${!1:-}"
   if [ -n "$__e" ]; then printf -v "$__v" '%s' "$__e"; return; fi
@@ -51,12 +56,27 @@ ask_secret() { # ask_secret <var> <prompt>   — hidden input; env override wins
   fi
   printf -v "$__v" '%s' "$__a"
 }
-confirm() { # confirm <prompt>   — default yes; ASSUME_YES / no TTY -> yes
+confirm() { # confirm <prompt>   — default YES; ASSUME_YES / no TTY -> yes
   [ "${ASSUME_YES:-0}" = "1" ] && return 0
   have_tty || return 0
   local __a=""; printf "  %s ${c_dim}[Y/n]${c_off} " "$1" >"$TTY"; IFS= read -r __a <"$TTY" || true
   case "${__a,,}" in n|no) return 1;; *) return 0;; esac
 }
+confirm_no() { # confirm_no <prompt>  — default NO; ASSUME_YES does NOT force it
+  have_tty || return 1                # unattended -> keep the safe default (no)
+  local __a=""; printf "  %s ${c_dim}[y/N]${c_off} " "$1" >"$TTY"; IFS= read -r __a <"$TTY" || true
+  case "${__a,,}" in y|yes) return 0;; *) return 1;; esac
+}
+valid_email() { [[ "$1" =~ ^[^@[:space:]]+@[^@[:space:]]+\.[^@[:space:]]+$ ]]; }
+yaml_get() { awk -F': *' -v k="  $1:" '$0 ~ "^"k {print $2; exit}' drumee.yaml; }
+
+case "${1:-}" in
+  -h|--help)
+    # Print the leading comment block (skip the shebang, stop at the first code line).
+    awk 'NR==1{next} /^#/{sub(/^# ?/,""); print; next} {exit}' "${BASH_SOURCE[0]:-$0}" 2>/dev/null \
+      || echo "Drumee installer — see https://get.drumee.io"
+    exit 0 ;;
+esac
 
 # --------------------------------------------------------------------- locate src
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd || echo)"
@@ -97,7 +117,15 @@ ensure_docker
 DRUMEE_DIR="${DRUMEE_DIR:-./drumee}"
 mkdir -p "$DRUMEE_DIR"; cd "$DRUMEE_DIR"; DRUMEE_DIR="$(pwd)"
 
-if [ -f drumee.yaml ] && ! confirm "Found an existing config here ($DRUMEE_DIR/drumee.yaml). Reconfigure?"; then
+# An existing config is KEPT by default (idempotent re-runs). Reconfigure only on
+# an explicit RECONFIGURE=1 or an interactive "yes" (default no).
+reconfigure=1
+if [ -f drumee.yaml ]; then
+  if [ "${RECONFIGURE:-0}" = "1" ]; then reconfigure=1
+  elif confirm_no "Found an existing config ($DRUMEE_DIR/drumee.yaml). Reconfigure?"; then reconfigure=1
+  else reconfigure=0; fi
+fi
+if [ "$reconfigure" = "0" ]; then
   say "Keeping existing config — re-rendering and (re)starting"
 else
   say "Let's set up your Drumee. Press Enter to accept the [default]."
@@ -127,6 +155,7 @@ else
   case "$ACCESS_MODE" in
     domain)
       ask DRUMEE_DOMAIN "Your domain (DNS A-record must point here)" "example.com"
+      [ "$DRUMEE_DOMAIN" = "example.com" ] && warn "example.com is a placeholder — TLS will fail until you use a real domain."
       TLS_MODE=acme; LOCAL_MODE=false ;;
     ip)
       is_public_ip "${PUBIP:-}" || ask PUBIP "This server's public IP" ""
@@ -138,6 +167,11 @@ else
   esac
 
   ask ADMIN_EMAIL "Administrator email (your login)" "admin@${DRUMEE_DOMAIN}"
+  while ! valid_email "$ADMIN_EMAIL"; do
+    warn "\"$ADMIN_EMAIL\" doesn't look like an email address."
+    have_tty || die "ADMIN_EMAIL is invalid: $ADMIN_EMAIL"
+    ADMIN_EMAIL=""; ask ADMIN_EMAIL "Administrator email (your login)" "admin@${DRUMEE_DOMAIN}"
+  done
   ask_secret ADMIN_PASSWORD "Administrator password"
 
   # ---- pick images: local build if present, else the published registry ----
@@ -175,6 +209,11 @@ else
   ok "Wrote $DRUMEE_DIR/drumee.yaml"
 fi
 
+# Resolve the values the summary needs from the config on disk, so the
+# "keep existing config" path (where the wizard block was skipped) works too.
+DRUMEE_DOMAIN="${DRUMEE_DOMAIN:-$(yaml_get domain)}"
+ADMIN_EMAIL="${ADMIN_EMAIL:-$(yaml_get admin_email)}"
+
 # --------------------------------------------------------------- 3. render + run
 say "Rendering deployment files from drumee.yaml"
 if [ -n "$REPO_ROOT" ]; then node "$REPO_ROOT/config/render.mjs" all --config drumee.yaml --out-dir .
@@ -198,7 +237,13 @@ if [ "${DRUMEE_NO_START:-0}" = "1" ]; then
 fi
 
 say "Starting Drumee — first run initializes the database (this can take a couple of minutes)"
-$DOCKER compose --env-file .env up -d || die "docker compose up failed (see: $DOCKER compose logs)"
+if ! up_out="$($DOCKER compose --env-file .env up -d 2>&1)"; then
+  echo "$up_out" | sed 's/^/    /'
+  if echo "$up_out" | grep -qiE 'address already in use|port is already allocated|bind for'; then
+    die "Ports 80/443 are already in use. Stop the other web server (nginx/apache, or another Drumee stack) and re-run."
+  fi
+  die "docker compose up failed (see output above)."
+fi
 
 # ------------------------------------------------------------------- 4. wait + show
 say "Waiting for first-run setup (schema + UI build + accounts)…"
@@ -211,13 +256,24 @@ populate_done=""; for _ in $(seq 1 120); do
 done
 [ -n "$populate_done" ] && ok "Database initialized + admin provisioned"
 
+# Once the admin exists, scrub the password from .env so it doesn't sit in
+# plaintext, and stop re-provisioning on future re-runs (the account is created).
+if [ -n "$populate_done" ] && grep -q '^ADMIN_PASSWORD=' .env 2>/dev/null; then
+  sed -i '/^ADMIN_PASSWORD=/d' .env 2>/dev/null && sed -i 's/^CREATE_ADMIN=.*/CREATE_ADMIN=0/' .env 2>/dev/null \
+    && ok "Removed the admin password from .env"
+fi
+
 # Wait for the app to answer (server-pod healthy).
-for _ in $(seq 1 30); do
-  $DC ps --format '{{.Service}}:{{.Status}}' 2>/dev/null | grep -q '^server-pod:.*healthy' && break; sleep 4
+healthy=""; for _ in $(seq 1 30); do
+  $DC ps --format '{{.Service}}:{{.Status}}' 2>/dev/null | grep -q '^server-pod:.*healthy' && { healthy=1; break; }; sleep 4
 done
 
 if [ "$DRUMEE_DOMAIN" = "localhost" ]; then URL="http://localhost/"; else URL="https://${DRUMEE_DOMAIN}/"; fi
-echo; hr; printf "${c_grn}  Drumee is up.${c_off}\n"; hr
+echo; hr
+if [ -n "$healthy" ]; then printf "${c_grn}  Drumee is up.${c_off}\n"
+else warn "server-pod is not healthy yet — it may still be starting."
+     printf "${c_yel}  Drumee is starting — give it a minute, then open the URL below.${c_off}\n"; fi
+hr
 printf "  Open:     %s\n" "$URL"
 printf "  Login:    %s\n" "$ADMIN_EMAIL"
 if [ -n "${ADMIN_PASSWORD:-}" ]; then

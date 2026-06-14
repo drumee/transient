@@ -13,7 +13,7 @@ chk(){ if eval "$2" >/dev/null 2>&1; then ok "$1"; else no "$1"; fi; }
 W="$(mktemp -d)"; trap 'rm -rf "$W"' EXIT
 run_wizard(){ # run_wizard <subdir> <env...>
   local d="$W/$1"; shift
-  env DRUMEE_DIR="$d" DRUMEE_NO_START=1 ASSUME_YES=1 "$@" \
+  env DRUMEE_DIR="$d" DRUMEE_NO_START=1 ASSUME_YES=1 DRUMEE_NONINTERACTIVE=1 "$@" \
     bash scripts/get-drumee.sh >"$d.log" 2>&1
 }
 
@@ -38,6 +38,17 @@ printf '\033[1;36m── installer: IP mode (sslip.io magic DNS)\033[0m\n'
 run_wizard ip ACCESS_MODE=ip PUBIP=203.0.113.10 ADMIN_EMAIL=me@acme.com ADMIN_PASSWORD=x
 chk "sslip.io domain from IP" "grep -q 'domain: 203-0-113-10.sslip.io' $W/ip/drumee.yaml"
 chk "tls mode acme"           "grep -q 'mode: acme'                    $W/ip/drumee.yaml"
+
+printf '\033[1;36m── installer: input validation + safety\033[0m\n'
+# --help works and doesn't start anything.
+chk "--help exits 0"          "bash scripts/get-drumee.sh --help"
+# Invalid admin email is rejected up front (non-interactive -> die, non-zero).
+run_wizard bad ACCESS_MODE=local ADMIN_EMAIL='not-an-email' ADMIN_PASSWORD=x
+chk "invalid email rejected"  "test -f $W/bad.log && ! test -f $W/bad/docker-compose.yml"
+# Re-running with an existing config (keep path) must not crash (set -u / unbound).
+run_wizard reuse ACCESS_MODE=local ADMIN_EMAIL=me@acme.com ADMIN_PASSWORD=x
+chk "second run keeps config"  "env DRUMEE_DIR=$W/reuse DRUMEE_NO_START=1 ASSUME_YES=1 DRUMEE_NONINTERACTIVE=1 bash scripts/get-drumee.sh"
+chk "domain preserved on reuse" "grep -q 'domain: localhost' $W/reuse/drumee.yaml"
 
 if docker compose version >/dev/null 2>&1; then
   printf '\033[1;36m── installer: generated compose is valid\033[0m\n'
