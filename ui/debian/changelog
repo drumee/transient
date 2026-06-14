@@ -1,3 +1,19 @@
+drumee-ui-pod (3.3.1) stable; urgency=medium
+  * Bugfix/contacts (#181)
+  * Bugfix/contacts (#180)
+  * feat(meeting): unified People/Chat side panel + resizable window
+  * welcome: fix accept_invite service name
+  * fix(move): show home folders in destination list
+ -- Somanos Sar <somanos.sar@drumee.com>  Sat, 06 Jun 2026 22:32:09 +0700
+
+drumee-ui-pod (3.3.0) stable; urgency=medium
+  * fix(chat-p2p): match contact-list status lookup on stringified peerId
+  * feat(document-player): open Office files in edit mode by default and speed up first open
+  * fix(chat-p2p): show live online status in header and contact list
+  * Fixed main router Subrouters were not called upon changes
+  * turn on overlay of admin console
+ -- Somanos Sar <somanos.sar@drumee.com>  Fri, 29 May 2026 15:25:39 +0700
+
 drumee-ui-pod (3.2.49) stable; urgency=medium
   * V2 fix UI (#115)
   * Fix media row date display, debug artifact, and fullscreen error handling

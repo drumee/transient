@@ -1,9 +1,17 @@
+drumee-server-pod (2.9.45) stable; urgency=medium
+  * chore: gitignore BMad generated dirs (_bmad, _bmad-output)
+  * fix: notify inviter and clear their record when invitation is refused
+  * fix: contact invite_refuse crashing with ReferenceError
+  * fix(task): read priority from request body to avoid HTTP Priority header collision
+  * chore(task): log incoming priority on task.update to diagnose INVALID_PRIORITY
+ -- Somanos Sar <somanos.sar@drumee.com>  Sat, 06 Jun 2026 22:33:25 +0700
+
 drumee-server-pod (2.9.44) stable; urgency=medium
+  * fix typing indicator and read state
+  * Changed acl/activity to allow lesser privilege
+  * Disable browser caching for the HTML shell page
   * Updated NPM
-  * Fixec acitivity
-  * Fixec acitivity
-  * Enhance MfsActivity class to include author details: author_id, author_firstname, author_lastname, and author_email.
- -- Somanos Sar <somanos.sar@drumee.com>  Tue, 26 May 2026 22:42:10 +0700
+ -- Somanos Sar <somanos.sar@drumee.com>  Fri, 29 May 2026 15:31:10 +0700
 
 drumee-server-pod (2.9.43) stable; urgency=medium
   * Fixec acitivity

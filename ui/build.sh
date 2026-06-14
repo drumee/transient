@@ -73,4 +73,4 @@ for f in $(ls ${base}/debian); do
 done
 dpkg-buildpackage -k$email
 
-copyToTarget $base/build/${package}
+# copyToTarget $base/build/${package}
