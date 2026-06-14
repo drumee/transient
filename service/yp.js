@@ -31,6 +31,24 @@ const { credential_dir } = sysEnv();
 let keyFile = resolve(credential_dir, `crypto/public.pem`);
 const publicKey = readFileSync(keyFile);
 
+/**
+ * Configured envelope sender (email.json -> auth.user), resolved once. Used to
+ * build a "Drumee" <addr> display-name From so the inbox shows "Drumee"
+ * instead of the raw butler@ address — matching otp.js and the other butler
+ * emails. The address is read at runtime (it differs per deployment).
+ */
+let _butlerSender;
+function butlerSender() {
+  if (_butlerSender !== undefined) return _butlerSender;
+  try {
+    const f = resolve(credential_dir, "email.json");
+    _butlerSender = (JSON.parse(readFileSync(f, "utf8")).auth || {}).user || null;
+  } catch (e) {
+    _butlerSender = null;
+  }
+  return _butlerSender;
+}
+
 
 //########################################
 class __yp extends Entity {
@@ -191,6 +209,27 @@ class __yp extends Entity {
     };
 
     let r = await session.signin(vars);
+
+    // Block accounts whose email is still pending verification. The signup
+    // email-verification flow stages the address in drumate.unverified_email and
+    // clears it only when the verify link is clicked. registration_verified alone
+    // is unreliable (legacy accounts default to 0 with no pending email), so gate
+    // on unverified_email being set. Tear down the session that signin just
+    // established (mirrors the BLOCKED/ARCHIVED handling inside session.signin).
+    if (r && r.status === "ok" && r.user && r.user.id) {
+      let row = await this.yp.await_query(
+        "SELECT unverified_email FROM drumate WHERE id=?", r.user.id
+      );
+      if (isArray(row)) row = row[0];
+      row = row || {};
+      if (row.unverified_email) {
+        await this.yp.await_proc(
+          "session_reset", this.input.sid(), r.user.id, this.input.get(Attr.socket_id)
+        );
+        return this.output.data({ status: "EMAIL_NOT_VERIFIED", email: row.unverified_email });
+      }
+    }
+
     this.output.data(r);
   }
 
@@ -217,8 +256,13 @@ class __yp extends Entity {
     });
     const tplPath = resolve(__dirname, "./templates/otp.html");
     const html = msg.renderFrom(tplPath, data);
+    // Display-name From ("Drumee" <butler@...>) so the inbox shows "Drumee"
+    // instead of the raw sender address, matching otp.js. Falls back to the
+    // default sender if unset.
+    const sender = butlerSender();
+    const from = sender ? `"Drumee" <${sender}>` : undefined;
     try {
-      await msg.send({ html });
+      await msg.send(from ? { html, from } : { html });
     } catch (e) {
       this.warn("2FA OTP email send failed", e);
     }

@@ -130,6 +130,9 @@ async function addMigration(opts = {}) {
     conflict_policy = 'skip',
     mode = 'all',
     selections = null,
+    // 'user' = the user's drive.file OAuth token; 'sa' = the service account
+    // (whole-folder import of a tree the user SHARED with the SA email).
+    auth_kind = 'user',
   } = opts;
 
   if (!user_id) throw new Error('addMigration: user_id required');
@@ -146,6 +149,7 @@ async function addMigration(opts = {}) {
     conflict_policy,
     mode,
     selections,
+    auth_kind,
     queued_at: new Date().toISOString(),
   });
 

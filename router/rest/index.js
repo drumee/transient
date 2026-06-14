@@ -61,7 +61,7 @@ async function exec(worker, session, svc, logService) {
   try {
     if (logService) session.log_service();
   } catch (e) {
-    console.warn(`[ERR:58] ${instanceName} FAILED TO LOG **${service}**`, e);
+    console.info(`[ERR:58] ${instanceName} FAILED TO LOG **${service}**`, e);
   }
 
   if (isFunction(task)) {
@@ -247,7 +247,7 @@ class Acl {
       Acl.getModule(service, session.isAnonymous());
 
     if (error) {
-      console.warn(reason);
+      console.info(reason);
       session.exception.unauthorized(error);
       return;
     }
@@ -287,7 +287,7 @@ class Acl {
 
     } catch (error) {
       const e = error;
-      console.warn(
+      console.info(
         `Could not run method ${service} with ${access} privilege`,
         e
       );

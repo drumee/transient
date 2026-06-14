@@ -16,7 +16,7 @@
  */
 
 const {
-  Attr, Messenger, Cache, sysEnv, uniqueId
+  Attr, Messenger, Cache, sysEnv, uniqueId, RedisStore
 } = require("@drumee/server-essentials");
 const { resolve } = require('path');
 const { isEmpty } = require("lodash");
@@ -150,6 +150,22 @@ class __signup extends Mfs {
           `${db_name}.permission_grant`,
           '*', newUser.id, expiry_time, permission, 'system', 'Resolved from pending_invitation on signup'
         );
+
+        // Notify the (now online) user so the desk sidebar can pick up the
+        // new workspace, mirroring hub.invite()'s notification for drumates.
+        try {
+          const hub = await this.yp.await_proc(`${db_name}.mfs_access_node`, newUser.id, hub_id);
+          if (hub) {
+            hub.ownpath = '/';
+            hub.hub_id = hub.actual_hub_id;
+            hub.db_name = hub.actual_db;
+            const sockets = await this.yp.await_proc('user_sockets', newUser.id);
+            await RedisStore.sendData(this.payload(hub, { service: "hub.invite_received" }), sockets);
+            await RedisStore.sendData(this.payload(hub, { service: "hub.add_contributors" }), sockets);
+          }
+        } catch (err) {
+          this.warn(`[signup._resolve_pending_invitation] WS notify failed for hub ${hub_id}:`, err && err.message);
+        }
       } catch (err) {
         this.warn(`[signup._resolve_pending_invitation] Failed for hub ${hub_id}:`, err && err.message);
       }
