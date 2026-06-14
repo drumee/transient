@@ -371,7 +371,14 @@ class __secure_share extends Mfs {
       can_edit       : row.granted_level === 'can_edit' ? 1 : 0,
     };
     try {
-      const hub_id = this.hub.get(Attr.id);
+      // Target the SHARE's hub (row.hub_id from the request), NOT the approver's
+      // current workspace context (this.hub) — the sender often approves from the
+      // global activity panel while in a different/no workspace, so this.hub did
+      // not match the share's hub, and the broadcast reached neither the guest
+      // (whose DMZ socket is bound into the share's hub via the creator) nor the
+      // sender → the approval never arrived real-time. Fall back to this.hub only
+      // if the row somehow lacks it.
+      const hub_id = row.hub_id || this.hub.get(Attr.id);
       const targets = await this.yp.await_proc('entity_sockets', { hub_id });
       // Include the recipient's last-known socket too, in case it isn't in the hub set.
       if (row.guest_socket_id) targets.push({ socket_id: row.guest_socket_id });
