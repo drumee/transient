@@ -462,10 +462,15 @@ class __dmz extends Mfs {
         // download). The SP returns all approved grants for this recipient, latest
         // first; older deployments returned only the latest, and the union is
         // correct for both. can_view carries no extra capability, so it is skipped.
+        // granted_level is now a SET (comma-list) — a single approval may grant
+        // several levels at once (multi-select request). Split and union each.
         for (const g of grantRows) {
-          const lvl = g && g.granted_level;
-          if (!lvl || lvl === 'can_view') continue;
-          if (caps.indexOf(lvl) === -1) caps.push(lvl);
+          const raw = g && g.granted_level;
+          if (!raw) continue;
+          for (const lvl of String(raw).split(',').map(s => s.trim()).filter(Boolean)) {
+            if (lvl === 'can_view') continue;
+            if (caps.indexOf(lvl) === -1) caps.push(lvl);
+          }
         }
         // permission_level is a legacy single-value display field — reflect the
         // latest approved grant (first row); the capabilities array above is the
@@ -697,13 +702,20 @@ class __dmz extends Mfs {
     const VALID_LEVELS = ['can_download', 'can_chat', 'can_edit'];
     const token          = this.input.need(Attr.token);
     const rawEmail       = (this.input.get(Attr.email) || '').toLowerCase().trim();
-    const requestedLevel = (this.input.get('requested_level') || '').trim();
-    const message        = (this.input.get('message') || '').trim() || null;
+    // Multi-level: the recipient may request several permissions at once (e.g.
+    // chat + edit). Accept a comma-list, normalise (dedupe, drop blanks), and
+    // require every level to be valid. Stored into the requested_level SET column.
+    const requestedLevels = Array.from(new Set(
+      (this.input.get('requested_level') || '')
+        .split(',').map(s => s.trim()).filter(Boolean)
+    ));
+    const requestedLevel  = requestedLevels.join(',');
+    const message         = (this.input.get('message') || '').trim() || null;
 
     if (!rawEmail || !rawEmail.includes('@')) {
       return this.output.data({ status: 'INVALID_EMAIL' });
     }
-    if (!VALID_LEVELS.includes(requestedLevel)) {
+    if (!requestedLevels.length || requestedLevels.some(l => !VALID_LEVELS.includes(l))) {
       return this.output.data({ status: 'INVALID_LEVEL' });
     }
 

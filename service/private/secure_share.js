@@ -351,12 +351,17 @@ class __secure_share extends Mfs {
 
     const requestId    = this.input.need('request_id');
     const action       = (this.input.get('action') || '').trim();
-    const grantedLevel = (this.input.get('granted_level') || '').trim() || null;
+    // Multi-level: the sender may grant several levels at once (multi-select
+    // request). Normalise the comma-list, dedupe, and require every level valid.
+    const grantedLevels = Array.from(new Set(
+      (this.input.get('granted_level') || '').split(',').map(s => s.trim()).filter(Boolean)
+    ));
+    const grantedLevel = grantedLevels.join(',') || null;
 
     if (!VALID_ACTIONS.includes(action)) {
       return this.output.data({ status: 'INVALID_ACTION' });
     }
-    if (action === 'approve' && (!grantedLevel || !VALID_LEVELS.includes(grantedLevel))) {
+    if (action === 'approve' && (!grantedLevels.length || grantedLevels.some(l => !VALID_LEVELS.includes(l)))) {
       return this.output.data({ status: 'INVALID_LEVEL' });
     }
 
@@ -389,17 +394,22 @@ class __secure_share extends Mfs {
     // reaches every viewer of the share). Broadcast to entity_sockets(hub_id): the
     // guest's DMZ socket is included there (cookie_touch passes socket_id for exactly
     // this), which is reliable — unlike the single, often-stale active_socket_id.
+    // granted_level is a SET (comma-list) — split it and union the privilege so a
+    // multi-level grant (e.g. chat + edit) carries every cap to the recipient.
+    const grantedSet = String(row.granted_level || '').split(',').map(s => s.trim()).filter(Boolean);
+    let grantedPriv = 3;
+    for (const lvl of grantedSet) grantedPriv |= (LEVEL_TO_PRIVILEGE[lvl] || 0);
     const respondedPayload = {
       event          : 'secure_share_access_responded',
       request_id     : row.id,
       action,
       requester_email: (row.requester_email || '').toLowerCase().trim(),
       granted_level  : row.granted_level,
-      privilege      : LEVEL_TO_PRIVILEGE[row.granted_level] || 3,
-      capabilities   : (row.granted_level && row.granted_level !== 'can_view') ? [row.granted_level] : [],
-      can_download   : row.granted_level === 'can_download' ? 1 : 0,
-      can_chat       : row.granted_level === 'can_chat' ? 1 : 0,
-      can_edit       : row.granted_level === 'can_edit' ? 1 : 0,
+      privilege      : grantedPriv,
+      capabilities   : grantedSet.filter(l => l !== 'can_view'),
+      can_download   : grantedSet.includes('can_download') ? 1 : 0,
+      can_chat       : grantedSet.includes('can_chat') ? 1 : 0,
+      can_edit       : grantedSet.includes('can_edit') ? 1 : 0,
     };
     try {
       // Target the SHARE's hub (row.hub_id from the request), NOT the approver's
@@ -438,7 +448,10 @@ class __secure_share extends Mfs {
    */
   async _grantHubMembership(row) {
     const LEVEL_TO_PRIVILEGE = { can_view: 3, can_download: 7, can_chat: 3, can_edit: 15 };
-    const privilege = LEVEL_TO_PRIVILEGE[row.granted_level] || 3;
+    // granted_level is a SET (comma-list) — union the cumulative privilege masks
+    // over every granted level so a multi-level grant gets the combined privilege.
+    const privilege = String(row.granted_level || '').split(',').map(s => s.trim()).filter(Boolean)
+      .reduce((p, lvl) => p | (LEVEL_TO_PRIVILEGE[lvl] || 0), 3);
     const hub_id    = row.hub_id;
     const email     = (row.requester_email || '').toLowerCase().trim();
     if (!hub_id || !email) return;
