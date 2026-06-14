@@ -418,8 +418,10 @@ class __dmz extends Mfs {
       caps = [info.permission_level];
     }
 
-    // If the guest previously had an approved access request, that grant
-    // REPLACES the base set (the sender deliberately chose what to grant).
+    // If the guest previously had an approved access request, that grant ADDS to
+    // the share's base capabilities — it does NOT replace them. The Request Access
+    // popup grants one level at a time, so a chat-only share whose recipient is
+    // later approved for download must end up with chat AND download.
     // The grant is keyed by requester_email. The email gate provides submittedEmail,
     // but a PUBLIC share has no gate — so a logged-in recipient who requested access
     // (the Request Access popup prefills their account email as requester_email) had
@@ -452,12 +454,24 @@ class __dmz extends Mfs {
     }
     if (grantEmail) {
       try {
-        const grantRow = toArray(
+        const grantRows = toArray(
           await this.yp.await_proc('secure_share_get_access_grant', token, grantEmail)
-        )[0] || {};
-        if (grantRow.granted_level) {
-          info.permission_level = grantRow.granted_level;
-          caps = (grantRow.granted_level === 'can_view') ? [] : [grantRow.granted_level];
+        );
+        // UNION every approved grant onto the share's base caps (do not overwrite —
+        // that dropped the chat cap when a chat-share recipient was approved for
+        // download). The SP returns all approved grants for this recipient, latest
+        // first; older deployments returned only the latest, and the union is
+        // correct for both. can_view carries no extra capability, so it is skipped.
+        for (const g of grantRows) {
+          const lvl = g && g.granted_level;
+          if (!lvl || lvl === 'can_view') continue;
+          if (caps.indexOf(lvl) === -1) caps.push(lvl);
+        }
+        // permission_level is a legacy single-value display field — reflect the
+        // latest approved grant (first row); the capabilities array above is the
+        // authoritative set the recipient UI gates on.
+        if (grantRows[0] && grantRows[0].granted_level) {
+          info.permission_level = grantRows[0].granted_level;
         }
       } catch (e) {
         this.warn('[dmz.login] secure_share_get_access_grant failed:', e && e.message);
