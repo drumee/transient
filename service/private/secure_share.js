@@ -176,6 +176,26 @@ class __secure_share extends Mfs {
   }
 
   /**
+   * List recent share-open events across the current user's secure shares, for the
+   * activity notification panel ("{who} opened {folder}"). The SP filters by
+   * creator_id + notify_on_open and dedupes per recipient. Read-only; mirrors
+   * list_requests' node-name enrichment so the panel can show the shared folder.
+   */
+  async list_open_notifications() {
+    const rows = toArray(await this.yp.await_proc('secure_share_list_open_notifications', this.uid));
+    for (const r of rows) {
+      if (!r || !r.hub_id || !r.node_id) continue;
+      try {
+        const a = toArray(
+          await this.yp.await_proc('forward_proc', r.hub_id, 'mfs_node_attr', `'${r.node_id}'`)
+        )[0] || {};
+        if (a.filename) r.node_name = a.filename;
+      } catch (e) { /* keep fallback */ }
+    }
+    this.output.list(rows);
+  }
+
+  /**
    * Revoke a secure share token (soft delete).
    * Broadcasts a real-time event so the recipient loses access immediately.
    */
