@@ -65,6 +65,15 @@ class __secure_share extends Mfs {
     // which emails are accepted. Sent as integer 1/0 (SP reads it via JSON_VALUE).
     const requireEmail = this.input.get('require_email') ? 1 : 0;
 
+    // Defense-in-depth (the sender UI also blocks this): "require email to view"
+    // must restrict to at least one allowed email/domain. With an empty allow-list
+    // the gate would accept ANY email — a cosmetic, non-real gate. Reject the create
+    // rather than publish an any-email link (per Lexis 2026-06-14). Existing shares
+    // are unaffected (create-time only).
+    if (requireEmail && !allowedEmails) {
+      return this.output.data({ status: 'REQUIRE_EMAIL_NEEDS_ALLOWED' });
+    }
+
     // Notify the sender in real time when a recipient opens the share. Defaults
     // to ON (1) when the field is omitted, preserving the previous always-notify
     // behaviour. Coerced to integer 1/0 to avoid the JSON-bool→TINYINT trap.
