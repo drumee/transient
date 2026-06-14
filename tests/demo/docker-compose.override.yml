@@ -1,0 +1,25 @@
+# Demo override — layered on top of the REAL generated docker-compose.yml.
+#   docker compose -f docker-compose.yml -f docker-compose.override.yml up -d
+#
+# Swaps only the private Drumee images for tiny public stubs so the orchestration
+# (healthcheck gating, run-once init ordering, shared UI-assets volume, network,
+# proxy routing) can be exercised locally without the Drumee source.
+# mariadb + redis + caddy run for real, so their healthchecks/ordering are tested.
+services:
+  # Real schema restore -> run-once container that exits 0 (exercises the
+  # service_completed_successfully gate on server-pod).
+  schemas-init:
+    image: busybox:stable
+    command: ["sh", "-c", "echo '[demo] schemas-init: schema applied, exiting 0'"]
+
+  # Real webpack build -> run-once container that publishes a stub asset into the
+  # shared ui_assets volume (exercises the ui-build completed gate + the volume).
+  ui-build:
+    image: busybox:stable
+    command: ["sh", "-c", "mkdir -p /ui-assets && echo '<demo-ui/>' > /ui-assets/index.html && echo '[demo] ui assets published'"]
+
+  # Backend stub: traefik/whoami answers 200 on any path, port 80.
+  server-pod:
+    image: traefik/whoami
+    healthcheck:
+      disable: true

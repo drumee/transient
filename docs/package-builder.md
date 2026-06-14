@@ -1,12 +1,17 @@
-# Package: builder (drumee-infra interactive installer)
+# Package: builder (drumee-bootstrap interactive installer)
 
 **Directory:** `builder/`
-**Debian package:** `drumee-infra`
-**Current version:** 1.2.5
+**Debian package:** `drumee-bootstrap`
+**Current version:** 1.2.6
 
 ## Purpose
 
-The `builder/` package produces a `drumee-infra` `.deb` that is an **interactive first-time installer** for a bare-metal or fresh VM deployment. Unlike the standard `infra/` package (which is pre-configured), this variant prompts for domain name and partition via debconf during `dpkg -i` and then runs an interactive setup menu.
+The `builder/` package produces a `drumee-bootstrap` `.deb` that is an **interactive first-time installer** for a bare-metal or fresh VM deployment. Unlike the canonical `drumee-infra` package (built from `infra/`, pre-configured), this variant prompts via debconf during `dpkg -i` and then runs an interactive setup menu. It was renamed from `drumee-infra` to `drumee-bootstrap` to end the collision where both `builder/` and `infra/` built the same package name.
+
+> Note: the two still build from different sources (`infra/` clones and compiles
+> `setup-infra`; `builder/` packages prebuilt `target/` artifacts). A full
+> build-level merge into one package with an install mode flag is a tracked
+> follow-up; the rename resolves the immediate ambiguity.
 
 Post-install, it invokes `/var/lib/drumee/setup/menu/install.sh` — a guided setup wizard that configures the full Drumee stack from scratch.
 
@@ -53,24 +58,41 @@ No `--version`, `--force`, or `--email` flags — `builder/` has its own simplif
 
 ## Debconf Prompts
 
-During install, `dpkg` presents two prompts:
+During install, the wizard (`setup/menu/install.sh`) drives a series of debconf
+prompts, all under the `drumee-infra/*` namespace. The full set is defined in
+`builder/debian/templates` (mirrored from `setup/menu/templates`):
 
 | Template | Default | Description |
 |---|---|---|
-| `drumee-test/domain` | `example.com` | Domain name for the Drumee instance |
-| `drumee-test/partition` | `/dev/sda1` | Data partition to use for storage |
+| `drumee-infra/description` | `My Great Drumee Team` | Human-friendly label for the instance |
+| `drumee-infra/domain` | `example.com` | Domain name for the Drumee instance |
+| `drumee-infra/local_mode` | `true` | Confirm local-only (not Internet-reachable) when domain is `local` |
+| `drumee-infra/service` | — | Comma-separated list of optional services to enable |
+| `drumee-infra/ip4` / `public_ip4` | `other` | Server IPv4 address (select or enter) |
+| `drumee-infra/ip6` / `public_ip6` | `other` | Server IPv6 address (select or enter) |
+| `drumee-infra/admin_email` | `admin@example.com` | Administrator login + notification address |
+| `drumee-infra/acme_email` | — | ACME/ZeroSSL account email |
+| `drumee-infra/db_dir` | `/srv/db` | Database storage path |
+| `drumee-infra/data_dir` | `/data` | Filesystem (MFS) storage path |
+| `drumee-infra/backup_location` | — | Backup location (different partition) |
+| `drumee-infra/exchange_location` | `/exchangearea` | Host↔Drumee file exchange directory |
+| `drumee-infra/own_ssl` / `own_ssl_path` | `false` | Use own wildcard SSL certs instead of ACME |
 
-## Environment Differences
+> Note: at build time `builder/build.sh` copies `setup/menu/templates` over
+> `builder/debian/templates` (`cp -u`). Both must stay in sync until Phase 1
+> establishes a single source of truth for configuration.
 
-`builder/utils/env.sh` exports the same path values as the main `utils/env.sh`, with one difference: it hardcodes the paths literally instead of deriving them from `DRUMEE_ROOT_DIR`, which it does **not** export.
+## Shared Utilities
 
-| Variable | main `env.sh` | `builder/env.sh` |
+`builder/` no longer carries its own `utils/` fork — it sources the root
+`utils/env.sh` and `utils/functions.sh` (single source of truth). Builder-specific
+behaviour is selected by environment variables set in `builder/build.sh` before
+sourcing:
+
+| Variable | Set by `builder/build.sh` | Effect |
 |---|---|---|
-| `DRUMEE_ROOT_DIR` | `/srv/drumee` | *(not exported)* |
-| `DRUMEE_DATA_DIR` | `/data` | `/data` |
-| `DRUMEE_MFS_DIR` | `/data/mfs` | `/data/mfs` |
-| `DRUMEE_TMP_DIR` | `/srv/drumee/runtime/tmp` | `/srv/drumee/runtime/tmp` |
+| `REPO_BASE_DEFAULT` | `git@gitlab.drumee.in:drumee` | Fallback base used by `bundle()` when `REPO_BASE` is unset (GitLab instead of GitHub) |
+| `NPM_AUDIT_FIX` | `no` | Skip `npm audit fix` during `bundle()` (avoids lockfile rewrites) |
 
-## REPO_BASE Fallback
-
-`builder/utils/functions.sh` differs from the root `utils/functions.sh` in one key way: when `REPO_BASE` is empty, it falls back to `git@gitlab.drumee.in:drumee/` instead of GitHub. `builder/build.sh` explicitly sets `REPO_BASE=git@github.com:drumee` so it uses GitHub by default, but unsetting `REPO_BASE` will switch to GitLab.
+`builder/build.sh` still explicitly sets `REPO_BASE=git@github.com:drumee`, so it
+uses GitHub by default; unsetting `REPO_BASE` falls back to the GitLab default above.

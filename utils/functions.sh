@@ -156,11 +156,10 @@ bundle() {
   src_files=$4
   dest_base=$5
   run=$6
-  if [ "$REPO_BASE" = "" ]; then
-    repo=git@github.com:drumee/$name.git
-  else 
-    repo=${REPO_BASE}/${name}.git
-  fi
+  # REPO_BASE overrides the base; otherwise fall back to REPO_BASE_DEFAULT
+  # (lets builder/ default to GitLab while the main packages default to GitHub).
+  : "${REPO_BASE:=${REPO_BASE_DEFAULT:-git@github.com:drumee}}"
+  repo=${REPO_BASE}/${name}.git
   src_dir=${base}/src/$name
   if [ -d $src_dir/.git ]; then
     echo "Updating existing $name source in $src_dir"
@@ -179,7 +178,10 @@ bundle() {
   if [ -f package.json ]; then
     npm i
     set +e
-    npm audit fix
+    # npm audit fix can rewrite the lockfile; opt-out via NPM_AUDIT_FIX=no
+    if [ "${NPM_AUDIT_FIX:-yes}" != "no" ]; then
+      npm audit fix
+    fi
     if [ "$run" != "" ]; then
       npm run $run
     fi

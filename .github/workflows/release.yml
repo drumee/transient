@@ -1,0 +1,104 @@
+name: Release
+
+# Builds and publishes a coherent release set on a version tag.
+# Requires repository secrets (set in Settings → Secrets):
+#   DRUMEE_SSH_KEY    deploy key with read access to the component repos
+#   GPG_PRIVATE_KEY   project signing key (armored) + GPG_PASSPHRASE
+#   REGISTRY_TOKEN    container registry push token
+#   APT_DEPLOY_*      credentials/host for publishing the apt repo
+#
+# Several steps are gated on these secrets; without them the workflow no-ops the
+# affected job rather than failing, so forks can run the buildable parts.
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  guard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Versions coherent with manifest
+        run: scripts/check-versions.sh
+
+  images:
+    needs: guard
+    runs-on: ubuntu-latest
+    env:
+      REGISTRY: ghcr.io/${{ github.repository_owner }}
+      BRANCH: preview
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Skip notice
+        if: ${{ secrets.DRUMEE_SSH_KEY == '' }}
+        run: echo "DRUMEE_SSH_KEY not set — skipping image build/publish."
+      - name: Configure source access (SSH deploy key)
+        if: ${{ secrets.DRUMEE_SSH_KEY != '' }}
+        run: |
+          mkdir -p ~/.ssh && echo "${{ secrets.DRUMEE_SSH_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan github.com >> ~/.ssh/known_hosts
+      - name: Clone component sources
+        if: ${{ secrets.DRUMEE_SSH_KEY != '' }}
+        run: |
+          for r in server-team ui-team schemas setup-schemas static; do
+            git clone -b "$BRANCH" "git@github.com:drumee/$r.git" "$HOME/$r" \
+              || git clone "git@github.com:drumee/$r.git" "$HOME/$r" || true
+            ( cd "$HOME/$r" && [ -f package.json ] && (npm ci || npm install) ) || true
+          done
+      - name: Registry login
+        if: ${{ secrets.REGISTRY_TOKEN != '' }}
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.REGISTRY_TOKEN }}
+      - name: Build and push all images
+        if: ${{ secrets.DRUMEE_SSH_KEY != '' }}
+        env:
+          TAG: ${{ github.ref_name }}
+          PUSH: ${{ secrets.REGISTRY_TOKEN != '' && '1' || '0' }}
+        run: scripts/publish-images.sh
+
+  debs:
+    needs: guard
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build toolchain
+        run: sudo apt-get update && sudo apt-get install -y dh-make devscripts debhelper build-essential apt-utils
+      - name: Import signing key
+        if: ${{ secrets.GPG_PRIVATE_KEY != '' }}
+        run: echo "${{ secrets.GPG_PRIVATE_KEY }}" | gpg --batch --import
+      - name: Build packages
+        if: ${{ secrets.DRUMEE_SSH_KEY != '' }}
+        run: |
+          mkdir -p ~/.ssh && echo "${{ secrets.DRUMEE_SSH_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519 && ssh-keyscan github.com >> ~/.ssh/known_hosts
+          export DEB_BUILD_TARGET="$PWD/out-debs"; mkdir -p "$DEB_BUILD_TARGET"
+          ./build-all.sh
+          meta/build.sh
+      - name: Publish APT repo
+        if: ${{ secrets.GPG_PRIVATE_KEY != '' && secrets.DRUMEE_SSH_KEY != '' }}
+        run: scripts/publish-apt.sh --debs=out-debs --out=apt-repo --suite=stable
+      - name: Upload artifacts
+        if: ${{ secrets.DRUMEE_SSH_KEY != '' }}
+        uses: actions/upload-artifact@v4
+        with: { name: debs, path: out-debs/*.deb, if-no-files-found: ignore }
+      - name: Skip notice
+        if: ${{ secrets.DRUMEE_SSH_KEY == '' }}
+        run: echo "DRUMEE_SSH_KEY not set — skipping .deb build (needs private source)."
+
+  smoke:
+    needs: images
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Container install smoke test
+        run: tests/smoke-container.sh

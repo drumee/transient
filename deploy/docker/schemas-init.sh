@@ -1,0 +1,149 @@
+#!/bin/bash
+# Container schema initializer — the DB phase of what setup-schemas/bin/install
+# does natively, reconstructed from the schemas repo's factory templates.
+#
+# Idempotent + run-once: creates the base databases from templates/factory/,
+# configures the domain, and creates the privileged application user. Connects
+# to the mariadb service over TCP as root (Drumee's own tooling assumes a local
+# socket, which isn't available across containers).
+#
+# Env (from the rendered .env):
+#   DB_HOST DB_PORT DB_ROOT_PASSWORD DB_USER DB_PASSWORD DRUMEE_DOMAIN_NAME
+set -euo pipefail
+
+DB_HOST="${DB_HOST:-mariadb}"
+DB_PORT="${DB_PORT:-3306}"
+ROOT_PW="${DB_ROOT_PASSWORD:?DB_ROOT_PASSWORD is required}"
+APP_USER="${DB_USER:-drumee-app}"
+APP_PW="${DB_PASSWORD:?DB_PASSWORD is required}"
+DOMAIN="${DRUMEE_DOMAIN_NAME:-localhost}"
+FACTORY="${FACTORY_DIR:-/factory}"
+
+root()  { mariadb --host="$DB_HOST" --port="$DB_PORT" -uroot -p"$ROOT_PW" "$@"; }
+# --force keeps loading past statement errors. Needed because the schemas repo's
+# bin/make-templates corrupts the 3 trigger headers in seed/yp.sql (a greedy
+# DEFINER-stripping sed eats the `TRIGGER <name>`). Without --force the load
+# aborts there and yp is left half-built. See docs/schema-init.md.
+rootf() { mariadb --force --host="$DB_HOST" --port="$DB_PORT" -uroot -p"$ROOT_PW" "$@"; }
+
+echo "==> Waiting for MariaDB at $DB_HOST:$DB_PORT"
+for _ in $(seq 1 60); do
+  root -e 'SELECT 1' >/dev/null 2>&1 && break
+  sleep 2
+done
+root -e 'SELECT 1' >/dev/null 2>&1 || { echo "MariaDB not reachable" >&2; exit 1; }
+
+# --- base databases + factory seed (skip if already initialized) ---
+FRESH=0
+if root -e "SHOW TABLES IN yp" 2>/dev/null | grep -q .; then
+  echo "==> 'yp' already initialized — skipping schema load"
+else
+  FRESH=1
+  echo "==> Creating base databases"
+  for db in yp utils mailserver template trash; do
+    root -e "CREATE DATABASE IF NOT EXISTS \`$db\` CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci"
+  done
+  echo "==> Loading factory seed (data-free schema + system accounts)"
+  # --force on yp: tolerate the 3 corrupted trigger headers (upstream make-templates
+  # bug); everything else — tables, data, domain, routines, accounts — loads.
+  rootf yp        < "$FACTORY/seed/yp.sql"
+  root utils      < "$FACTORY/seed/utils.sql"
+  root mailserver < "$FACTORY/seed/mailserver.sql"
+  root template   < "$FACTORY/seed/template.sql"
+  root trash      < "$FACTORY/seed/trash.sql"
+  echo "   note: yp quota triggers corrupt in dump — healed by the patch step below"
+
+  echo "==> Configuring main domain (dom_id=1) -> $DOMAIN"
+  # The factory seed does NOT insert a domain row (it's environment-specific;
+  # setup-schemas inserts it natively). The server requires domain_exists(1), so
+  # upsert the id=1 row to the configured domain.
+  root yp -e "INSERT INTO domain (id, name) VALUES (1, '$DOMAIN')
+              ON DUPLICATE KEY UPDATE name = VALUES(name)"
+fi
+
+# --- application user (always reconcile; idempotent) ---
+# Privileges mirror upstream setup-schemas/lib/utils.js GRANTS (global, because
+# the app provisions per-hub/drumate databases at runtime via CREATE DATABASE),
+# plus CREATE/ALTER ROUTINE + VIEW: in containers the factory/populate load the
+# entity templates (procedures, views) as this user, whereas natively that runs
+# as the unix-socket system user. No GRANT OPTION — the app never grants SQL
+# privileges (its permission model is application-level tables).
+APP_GRANTS="SELECT, INSERT, UPDATE, DELETE, CREATE, DROP, PROCESS, REFERENCES, \
+INDEX, ALTER, CREATE TEMPORARY TABLES, LOCK TABLES, EXECUTE, EVENT, TRIGGER, \
+CREATE TABLESPACE, REPLICATION CLIENT, SLAVE MONITOR, \
+CREATE ROUTINE, ALTER ROUTINE, CREATE VIEW, SHOW VIEW"
+echo "==> Reconciling application user '$APP_USER'"
+root -e "CREATE USER IF NOT EXISTS '$APP_USER'@'%' IDENTIFIED BY '$APP_PW';
+         ALTER USER '$APP_USER'@'%' IDENTIFIED BY '$APP_PW';
+         REVOKE ALL PRIVILEGES, GRANT OPTION FROM '$APP_USER'@'%';
+         GRANT $APP_GRANTS ON *.* TO '$APP_USER'@'%';
+         FLUSH PRIVILEGES;"
+
+# --- schema patches (the container upgrade path) -----------------------------
+# Mirrors the schemas repo's bin/patch-from-manifest: each manifest line is a
+# path whose first segment is the DB class; class -> target databases:
+#   yellow_page -> yp        utils -> utils        mailserver -> mailserver
+#   hub/drumate -> all matching entity DBs         common -> both
+# Applied with --force (like upstream --ignore-error: routines are idempotent
+# DROP-IF-EXISTS+CREATE; already-applied ALTERs may error harmlessly).
+# Hash-tracked in yp.__container_meta (a dedicated bookkeeping table — NOT
+# sys_conf: the app's Cache.load iterates sys_conf and its DB wrapper returns a
+# bare object for single-row results, so seeding a lone row there crashes the
+# populate step). Unchanged manifests are a no-op. Fresh installs apply the
+# manifest too: routines/triggers are idempotent, hub/drumate/common entries
+# resolve to zero DBs at this point (pool comes later), and crucially the
+# yellow_page trigger entries HEAL the 3 quota triggers that make-templates
+# corrupts in the factory dump (see the rootf note above).
+SCHEMAS_DIR="${SCHEMAS_DIR:-/schemas}"
+targets_for() {
+  case "$1" in
+    yellow_page) echo yp ;;
+    utils)       echo utils ;;
+    mailserver)  echo mailserver ;;
+    hub)         root -N -e "SELECT db_name FROM yp.entity WHERE type='hub'" 2>/dev/null ;;
+    drumate)     root -N -e "SELECT db_name FROM yp.entity WHERE type='drumate'" 2>/dev/null ;;
+    common)      root -N -e "SELECT db_name FROM yp.entity WHERE type IN ('hub','drumate')" 2>/dev/null ;;
+    *)           echo "" ;;
+  esac
+}
+
+MANIFEST="$SCHEMAS_DIR/patches/manifest.txt"
+if [ -f "$MANIFEST" ]; then
+  root -e "CREATE TABLE IF NOT EXISTS yp.__container_meta (k VARCHAR(64) PRIMARY KEY, v TEXT)"
+  HASH=$(sha256sum "$MANIFEST" | cut -d' ' -f1)
+  APPLIED=$(root -N -e "SELECT v FROM yp.__container_meta WHERE k='patch_hash'" 2>/dev/null | tr -d '\r')
+  if [ "$APPLIED" = "$HASH" ]; then
+    echo "==> Schema patches up to date"
+  else
+    if [ "$FRESH" = 1 ]; then
+      echo "==> Applying schema patches (fresh install — heals dump-corrupted triggers)"
+    else
+      echo "==> Applying schema patches (manifest changed)"
+    fi
+    # upstream pins this before patching (make-templates/patch-from-manifest)
+    root -e "SET GLOBAL character_set_collations='utf8mb4=utf8mb4_general_ci'" 2>/dev/null || true
+    for entry in $(cat "$MANIFEST"); do
+      file="$SCHEMAS_DIR/$entry"
+      [ -f "$file" ] || { echo "   WARN missing patch file: $entry"; continue; }
+      class="${entry%%/*}"
+      case "$class" in
+        yellow_page|utils|mailserver|hub|drumate|common) : ;;
+        *) echo "   WARN unknown class '$class' for: $entry"; continue ;;
+      esac
+      tgts="$(targets_for "$class")"
+      # hub/drumate/common resolve to zero DBs on a fresh install (pool not yet
+      # stocked) — genesis templates carry those changes; nothing to patch here.
+      [ -n "$tgts" ] || { echo "   (no '$class' DBs yet — skipping $entry)"; continue; }
+      for db in $tgts; do
+        echo "   patch $entry -> $db"
+        rootf "$db" < "$file" 2>&1 | grep -iE '^ERROR' | head -3 || true
+      done
+    done
+    root -e "REPLACE INTO yp.__container_meta VALUES ('patch_hash', '$HASH')"
+    echo "   patch level recorded"
+  fi
+else
+  echo "==> No patch manifest shipped — skipping patch step"
+fi
+
+echo "==> schemas-init complete"
