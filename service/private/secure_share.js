@@ -189,8 +189,10 @@ class __secure_share extends Mfs {
       const svcOpt = { service: 'share.track_event' };
 
       try {
-        // Broadcast to hub members (sender's window refreshes its list)
-        const recipients = await this.yp.await_proc('entity_sockets', { hub_id });
+        // Broadcast to the SHARE's hub (row.hub_id), not the revoker's current
+        // workspace (this.hub) — same fix as respond_to_access_request, so the
+        // sender's list refreshes even when revoking from a different/global context.
+        const recipients = await this.yp.await_proc('entity_sockets', { hub_id: row.hub_id || hub_id });
         await RedisStore.sendData(this.payload(eventData, svcOpt), recipients);
       } catch (e) {
         this.warn('[secure_share.revoke] hub broadcast failed:', e && e.message);
