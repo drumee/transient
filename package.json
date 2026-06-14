@@ -1,6 +1,6 @@
 {
   "name": "drumee_server",
-  "version": "2.9.48",
+  "version": "2.9.49",
   "description": "Drumee Infrastructure",
   "main": "index.js",
   "scripts": {
