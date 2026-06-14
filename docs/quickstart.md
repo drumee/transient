@@ -28,6 +28,13 @@ The installer asks:
 It then generates all secrets, renders the stack, starts it, waits until it's
 healthy, and prints your **URL + login**. Nothing to hand-edit; re-running is safe.
 
+> **Where do the images come from?** The installer pulls prebuilt images from a
+> public registry (default `ghcr.io/drumee`) — you don't build anything. If
+> locally-built `drumee/*:local` images are present it uses those instead, and if
+> neither is available but the component sources are checked out, it offers to
+> build them. Override the source with `IMAGE_REGISTRY=` / `SERVER_TAG=`.
+> *(Maintainers publish images once per release — see [production.md](production.md).)*
+
 > No prompts (automation)? Preset the answers, e.g.:
 > `ACCESS_MODE=domain DRUMEE_DOMAIN=cloud.example.com ADMIN_EMAIL=you@example.com ASSUME_YES=1 curl -fsSL https://get.drumee.io | bash`
 

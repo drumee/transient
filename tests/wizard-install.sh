@@ -39,6 +39,18 @@ run_wizard ip ACCESS_MODE=ip PUBIP=203.0.113.10 ADMIN_EMAIL=me@acme.com ADMIN_PA
 chk "sslip.io domain from IP" "grep -q 'domain: 203-0-113-10.sslip.io' $W/ip/drumee.yaml"
 chk "tls mode acme"           "grep -q 'mode: acme'                    $W/ip/drumee.yaml"
 
+printf '\033[1;36m── installer: published-registry pull path\033[0m\n'
+# Forcing SERVER_TAG selects the pull path; DRUMEE_NO_START keeps it from actually
+# pulling/building, so we just assert the generated config is consistent.
+run_wizard pull ACCESS_MODE=local ADMIN_EMAIL=me@acme.com ADMIN_PASSWORD=x SERVER_TAG=2.9.45
+chk "registry = ghcr.io/drumee"   "grep -q 'registry: ghcr.io/drumee' $W/pull/drumee.yaml"
+chk "all 4 image tags = 2.9.45"   "[ \$(grep -c ': 2.9.45' $W/pull/drumee.yaml) -eq 4 ]"
+chk "env IMAGE_REGISTRY set"       "grep -q '^IMAGE_REGISTRY=ghcr.io/drumee' $W/pull/.env"
+chk "env SERVER_TAG set"           "grep -q '^SERVER_TAG=2.9.45' $W/pull/.env"
+# IMAGE_REGISTRY override is honored.
+run_wizard reg ACCESS_MODE=local ADMIN_EMAIL=me@acme.com ADMIN_PASSWORD=x SERVER_TAG=1.0 IMAGE_REGISTRY=registry.example.com/drumee
+chk "registry override honored"   "grep -q 'registry: registry.example.com/drumee' $W/reg/drumee.yaml"
+
 printf '\033[1;36m── installer: input validation + safety\033[0m\n'
 # --help works and doesn't start anything.
 chk "--help exits 0"          "bash scripts/get-drumee.sh --help"

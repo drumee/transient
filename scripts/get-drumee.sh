@@ -16,6 +16,8 @@
 #   ADMIN_EMAIL=           # administrator login + notifications
 #   ADMIN_PASSWORD=        # blank = auto-generate and print
 #   INSTANCE_NAME=         # human label for the instance
+#   IMAGE_REGISTRY=        # where to pull images (default ghcr.io/drumee)
+#   SERVER_TAG=            # image tag to pull (default latest); forces the pull path
 #   DRUMEE_DIR=./drumee    # where to install
 #   ASSUME_YES=1           # auto-confirm install prompts (Docker install, etc.)
 #   DRUMEE_NONINTERACTIVE=1# never prompt; every value from env or default
@@ -192,18 +194,18 @@ else
   done
   ask_secret ADMIN_PASSWORD "Administrator password"
 
-  # ---- pick images: local build if present, else the published registry ----
-  REGISTRY="${IMAGE_REGISTRY:-drumee}"; TAG="${SERVER_TAG:-}"
-  if [ -z "$TAG" ] && $DOCKER image inspect drumee/server-pod:local >/dev/null 2>&1; then
-    REGISTRY="drumee"; TAG="local"; ok "Using locally-built images (tag: local)"
+  # ---- pick images: locally-built (tag :local) if present, else pull from a
+  #      published registry (default ghcr.io/drumee). One tag for all four images.
+  if [ -z "${SERVER_TAG:-}" ] && $DOCKER image inspect drumee/server-pod:local >/dev/null 2>&1; then
+    REGISTRY="drumee"; TAG="local"; ok "Found locally-built images — using tag :local"
+  else
+    REGISTRY="${IMAGE_REGISTRY:-ghcr.io/drumee}"; TAG="${SERVER_TAG:-latest}"
+    say "No local images — will pull from ${REGISTRY} (tag: ${TAG})."
   fi
 
   # ---- write drumee.yaml (only what the user chose; rest defaults/auto-gen) ----
   acme_line=""; [ "$TLS_MODE" = "acme" ] && acme_line="  acme_email: ${ADMIN_EMAIL}"
-  ver_block="versions:"$'\n'"  server: ${TAG:-latest}"
-  if [ "$TAG" = "local" ]; then
-    ver_block="versions:"$'\n'"  server: local"$'\n'"  ui: local"$'\n'"  schemas: local"$'\n'"  static: local"
-  fi
+  ver_block="versions:"$'\n'"  server: ${TAG}"$'\n'"  ui: ${TAG}"$'\n'"  schemas: ${TAG}"$'\n'"  static: ${TAG}"
   {
     echo "instance:"
     echo "  description: ${INSTANCE_NAME}"
@@ -227,10 +229,46 @@ else
   ok "Wrote $DRUMEE_DIR/drumee.yaml"
 fi
 
-# Resolve the values the summary needs from the config on disk, so the
+# Resolve the values the summary/image step need from the config on disk, so the
 # "keep existing config" path (where the wizard block was skipped) works too.
 DRUMEE_DOMAIN="${DRUMEE_DOMAIN:-$(yaml_get domain)}"
 ADMIN_EMAIL="${ADMIN_EMAIL:-$(yaml_get admin_email)}"
+REGISTRY="${REGISTRY:-$(yaml_get registry)}"
+TAG="${TAG:-$(yaml_get server)}"   # versions.server doubles as the shared image tag
+
+# --- image acquisition: ensure the images exist (pull) or can be built ---------
+have_sources() { [ -d "$HOME/server-team" ] && [ -d "$HOME/ui-team" ] && [ -d "$HOME/schemas" ]; }
+use_local_images() {  # switch config to the just-built :local images and re-point vars
+  REGISTRY="drumee"; TAG="local"
+  sed -i '/^images:/,$d' drumee.yaml
+  { echo "images:"; echo "  registry: drumee"; echo "versions:";
+    for k in server ui schemas static; do echo "  $k: local"; done; } >> drumee.yaml
+  ok "Built images locally — using tag :local"
+}
+build_or_die() {
+  if [ -n "$REPO_ROOT" ] && [ -x "$REPO_ROOT/scripts/build-images-local.sh" ] && have_sources; then
+    if confirm "Component sources detected. Build the images locally now? (~several minutes)"; then
+      "$REPO_ROOT/scripts/build-images-local.sh" || die "Image build failed."
+      use_local_images; return
+    fi
+  fi
+  die "Images aren't available at ${REGISTRY}/…:${TAG}, and can't be built here.
+    Publish them once (maintainer):  REGISTRY=ghcr.io/drumee TAG=<version> scripts/publish-images.sh
+    or build from source (needs the component repos):  scripts/build-images-local.sh"
+}
+ensure_images() {
+  step "Fetching images"
+  if [ "$TAG" = "local" ]; then
+    $DOCKER image inspect drumee/server-pod:local >/dev/null 2>&1 && { ok "Using local images (tag :local)"; return; }
+    warn "Tag :local selected but the images aren't built."; build_or_die; return
+  fi
+  say "Pulling ${REGISTRY}/server-pod:${TAG} …"
+  if $DOCKER pull "${REGISTRY}/server-pod:${TAG}" >/dev/null 2>&1; then ok "Images available from ${REGISTRY}"
+  else warn "Could not pull ${REGISTRY}/server-pod:${TAG} (registry public? logged in?)."; build_or_die; fi
+}
+# Skip in render-only mode (don't touch Docker); otherwise run before render so a
+# build-fallback's :local switch is reflected in the rendered compose.
+[ "${DRUMEE_NO_START:-0}" = "1" ] || ensure_images
 
 # --------------------------------------------------------------- 3. render + run
 step "Rendering deployment files"
