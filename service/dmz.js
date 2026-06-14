@@ -312,7 +312,6 @@ class __dmz extends Mfs {
 
     // Valid access — log it and notify sender in real time
     const actor_id = (guest_id === user.id) ? null : (user.id || null);
-    this.warn('[SS-DBG] open-enter token=' + token + ' actor=' + actor_id + ' sock=' + (this.input.get(Attr.socket_id) || 'MISSING') + ' email=' + (submittedEmail || 'none') + ' auth=' + isAuthenticated + ' member=' + (this.input.get('is_member') || '?'));
     try {
       const track = await this.yp.await_proc('secure_share_access_log', token, actor_id, this.input.get(Attr.socket_id));
       // v2: also record a per-visit access event (entered_at / last_seen_at) backing
@@ -327,13 +326,11 @@ class __dmz extends Mfs {
         this.warn('[dmz.login] secure_share access_event failed:', e && e.message);
       }
       const row   = toArray(track)[0] || {};
-      this.warn('[SS-DBG] after-log hub=' + (row.hub_id || 'NONE') + ' notify=' + info.notify_on_open);
       // The access counter always updates above; the SENDER notification only
       // fires when the share has notify_on_open enabled (default 1; legacy rows
       // without the field keep notifying). info comes from secure_share_info.
       if (row.hub_id && info.notify_on_open != 0) {
         const recipients = await this.yp.await_proc('entity_sockets', { hub_id: row.hub_id });
-        this.warn('[SS-DBG] broadcast recipients=' + (Array.isArray(recipients) ? recipients.length : 'NONE'));
         await RedisStore.sendData(
           this.payload(
             {
