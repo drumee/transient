@@ -1,0 +1,35 @@
+# Drumee reverse proxy with automatic HTTPS.
+# Caddy reads env vars at startup ({$VAR}); they come from the rendered .env.
+#
+# Static UI bundles (/-/app/*) are served from disk (the ui_assets volume mounted
+# at /srv/ui), as nginx does in production — NOT proxied to node. Dynamic routes go
+# to server-pod: /-/svc/* -> service.js (REST, --restPort, default 24000); everything
+# else (pages, /-/websocket/, /bootstrap.js) -> index.js (--pushPort, default 23000).
+
+{
+	email {$ACME_EMAIL_ACCOUNT}
+}
+
+{$DRUMEE_DOMAIN_NAME} {
+	# Webpack bundles (core/main/runtime/vendor/sprite/locale + chunks)
+	handle_path /-/app/* {
+		root * /srv/ui/main/app
+		file_server
+	}
+	# Static assets (splash CSS, fonts, logo) — served from the static volume
+	# (populated by the optional 'static' service). 404s harmlessly if absent.
+	handle_path /-/static/* {
+		root * /srv/static
+		file_server
+	}
+	handle_path /-/images/* {
+		root * /srv/static/images
+		file_server
+	}
+	# REST + service calls: /-/svc/module.method
+	handle /-/svc/* {
+		reverse_proxy server-pod:{$API_PORT:24000}
+	}
+	# WebSocket + page serving (index.js)
+	reverse_proxy server-pod:{$UI_PORT:23000}
+}

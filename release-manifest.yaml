@@ -1,0 +1,15 @@
+# Coherent release manifest — the authoritative version of each package in a
+# release set. `scripts/check-versions.sh` verifies every debian/changelog matches
+# this file, so the components release as a coherent set instead of drifting.
+#
+# Format: <dir>: <version>   (the package name is read from each changelog)
+# Bump here, then run: scripts/check-versions.sh --sync   to update changelogs.
+
+infra: 1.2.11
+schemas: 2.6.99
+server: 2.9.44
+ui: 3.2.49
+static: 1.0.3
+schemas-patch: 1.1.6
+builder: 1.2.6
+meta: 1.0.0

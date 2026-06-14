@@ -36,7 +36,12 @@ else
     echo Creating seeds $SEEDS_FILE
     tar zcfp $SEEDS_FILE .
   else
-    echo Missing seeds $SEEDS_FILE 
+    echo "Missing seeds: $SEEDS_FILE"
+    echo "Provide a seed using one of:"
+    echo "  1. Place a prebuilt seed at $SEEDS_FILE"
+    echo "  2. Point SEEDS_DIR at a directory to archive (current: $SEEDS_DIR)"
+    echo "  3. Generate a minimal bootstrap seed: schemas/make-seed.sh --out=$SEEDS_FILE"
+    echo "See docs/reproducible-builds.md for details."
     exit 1
   fi
 fi

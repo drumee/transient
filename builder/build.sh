@@ -9,8 +9,12 @@ fi
 builder_dir="$(dirname "$(readlink -f "$0")")"
 target_dir="$(dirname $builder_dir)/target"
 deb_base=$builder_dir/debian
-source ${builder_dir}/utils/env.sh
-source ${builder_dir}/utils/functions.sh
+# Shared utils (single source of truth). Builder-specific behaviour is set via
+# env vars before sourcing: GitLab as the REPO_BASE fallback, and no npm audit fix.
+export REPO_BASE_DEFAULT=git@gitlab.drumee.in:drumee
+export NPM_AUDIT_FIX=no
+source ${builder_dir}/../utils/env.sh
+source ${builder_dir}/../utils/functions.sh
 
 version=$(get_version $builder_dir)
 email=$(get_email $builder_dir)
