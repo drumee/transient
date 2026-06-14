@@ -24,12 +24,28 @@
 set -uo pipefail
 
 # ----------------------------------------------------------------------------- ui
-c_blue='\033[1;36m'; c_grn='\033[1;32m'; c_yel='\033[1;33m'; c_red='\033[1;31m'; c_dim='\033[2m'; c_off='\033[0m'
-say()  { printf "${c_blue}==>${c_off} %s\n" "$*"; }
-ok()   { printf "  ${c_grn}OK${c_off}   %s\n" "$*"; }
-warn() { printf "  ${c_yel}!${c_off}    %s\n" "$*"; }
-die()  { printf "${c_red}error:${c_off} %s\n" "$*" >&2; exit 1; }
-hr()   { printf "${c_dim}%s${c_off}\n" "------------------------------------------------------------"; }
+# Colour on a real terminal (or FORCE_COLOR=1), unless NO_COLOR: keeps logs clean.
+if { [ -t 1 ] || [ "${FORCE_COLOR:-0}" = "1" ]; } && [ -z "${NO_COLOR:-}" ]; then
+  c_cyan=$'\033[38;5;44m'; c_grn=$'\033[1;32m'; c_yel=$'\033[1;33m'; c_red=$'\033[1;31m'
+  c_dim=$'\033[2m'; c_bold=$'\033[1m'; c_off=$'\033[0m'
+else c_cyan=; c_grn=; c_yel=; c_red=; c_dim=; c_bold=; c_off=; fi
+c_blue="$c_cyan"   # back-compat for prompt helpers below
+# Glyphs (UTF-8) with ASCII fallback for legacy terminals.
+case "${LC_ALL:-}${LC_CTYPE:-}${LANG:-}" in
+  *[Uu][Tt][Ff]*) G_OK=$'✓'; G_NO=$'✗'; G_WARN=$'⚠'; BAR=$'▌'; RULE=$'───────────────────────────────────────────────';;
+  *) G_OK="OK"; G_NO="x"; G_WARN="!"; BAR="|"; RULE="--------------------------------------------------";;
+esac
+say()  { printf "    ${c_dim}%s %s${c_off}\n" "·" "$*"; }   # secondary note under a step
+ok()   { printf "    ${c_grn}%s${c_off} %s\n" "$G_OK" "$*"; }
+warn() { printf "    ${c_yel}%s${c_off} %s\n" "$G_WARN" "$*"; }
+die()  { printf "\n  ${c_red}%s %s${c_off}\n\n" "$G_NO" "$*" >&2; exit 1; }
+hr()   { printf "  ${c_dim}%s${c_off}\n" "$RULE"; }
+step() { printf "\n  ${c_cyan}%s${c_off} ${c_bold}%s${c_off}\n" "$BAR" "$*"; }   # phase header
+kv()   { printf "    ${c_dim}%-9s${c_off} %s\n" "$1" "$2"; }                      # aligned key/value
+banner() {
+  printf "\n  ${c_cyan}%s${c_off} ${c_bold}Drumee${c_off}  ${c_dim}self-host installer${c_off}\n" "$BAR"
+  hr
+}
 
 # Prompts must read from the terminal even under `curl … | bash` (where stdin is
 # the script). /dev/tty is the real keyboard; fall back to defaults if absent.
@@ -89,9 +105,10 @@ fetch() { # fetch <relative-path> <dest>
   else curl -fsSL "$RELEASE_BASE/$rel" -o "$dest"; fi
 }
 
-printf "\n${c_blue}  Drumee installer${c_off}\n"; hr
+banner
 
 # ------------------------------------------------------------- 1. ensure Docker
+step "Checking Docker"
 ensure_docker() {
   if ! command -v docker >/dev/null 2>&1; then
     warn "Docker is not installed."
@@ -125,10 +142,11 @@ if [ -f drumee.yaml ]; then
   elif confirm_no "Found an existing config ($DRUMEE_DIR/drumee.yaml). Reconfigure?"; then reconfigure=1
   else reconfigure=0; fi
 fi
+step "Configuration"
 if [ "$reconfigure" = "0" ]; then
-  say "Keeping existing config — re-rendering and (re)starting"
+  say "Keeping existing config — re-rendering and (re)starting."
 else
-  say "Let's set up your Drumee. Press Enter to accept the [default]."
+  say "Answer a few questions. Press Enter to accept the [default]."
   echo
 
   ask INSTANCE_NAME "Name for this instance" "My Drumee"
@@ -143,10 +161,10 @@ else
   default_mode="local"; is_public_ip "${PUBIP:-}" && default_mode="ip"
 
   if [ -z "${ACCESS_MODE:-}" ]; then
-    echo "  How will people reach this server?"
-    echo "    1) I have a domain name              (real HTTPS — best for production)"
-    echo "    2) Use this server's IP, no domain   (auto HTTPS via sslip.io)${PUBIP:+   detected: $PUBIP}"
-    echo "    3) Local / testing only              (http://localhost, no HTTPS)"
+    printf "  ${c_bold}How will people reach this server?${c_off}\n"
+    printf "    ${c_cyan}1${c_off}  A domain you own             ${c_dim}real HTTPS — best for production${c_off}\n"
+    printf "    ${c_cyan}2${c_off}  This server's IP, no domain  ${c_dim}auto HTTPS via sslip.io${c_off}${PUBIP:+ ${c_dim}·${c_off} ${c_cyan}$PUBIP${c_off}}\n"
+    printf "    ${c_cyan}3${c_off}  Local / testing only         ${c_dim}http://localhost, no HTTPS${c_off}\n"
     case "$default_mode" in ip) def="2";; *) def="3";; esac
     ask MENU "Choose 1-3" "$def"
     case "$MENU" in 1) ACCESS_MODE=domain;; 2) ACCESS_MODE=ip;; *) ACCESS_MODE=local;; esac
@@ -215,10 +233,12 @@ DRUMEE_DOMAIN="${DRUMEE_DOMAIN:-$(yaml_get domain)}"
 ADMIN_EMAIL="${ADMIN_EMAIL:-$(yaml_get admin_email)}"
 
 # --------------------------------------------------------------- 3. render + run
-say "Rendering deployment files from drumee.yaml"
-if [ -n "$REPO_ROOT" ]; then node "$REPO_ROOT/config/render.mjs" all --config drumee.yaml --out-dir .
-else fetch config/render.mjs render.mjs && node render.mjs all --config drumee.yaml --out-dir .; fi
+step "Rendering deployment files"
+if [ -n "$REPO_ROOT" ]; then render_cmd=(node "$REPO_ROOT/config/render.mjs" all --config drumee.yaml --out-dir .)
+else fetch config/render.mjs render.mjs && render_cmd=(node render.mjs all --config drumee.yaml --out-dir .); fi
+if ! render_out="$("${render_cmd[@]}" 2>&1)"; then echo "$render_out" | sed 's/^/    /'; die "Rendering failed."; fi
 [ -f docker-compose.yml ] && [ -f .env ] || die "Render did not produce docker-compose.yml/.env"
+ok "Wrote .env, docker-compose.yml, Caddyfile"
 
 # Provision the admin on first boot (idempotent in the populate step).
 grep -q '^CREATE_ADMIN=' .env || echo "CREATE_ADMIN=1" >> .env
@@ -232,11 +252,11 @@ mkdir -p "${dd:-$DRUMEE_DIR/data}" "${bb:-$DRUMEE_DIR/db}" 2>/dev/null || sudo m
 
 # Render-only mode (CI / inspection): produce the files but don't start anything.
 if [ "${DRUMEE_NO_START:-0}" = "1" ]; then
-  say "Rendered into $DRUMEE_DIR (DRUMEE_NO_START=1 — not starting)."
-  ok "Files: drumee.yaml .env docker-compose.yml Caddyfile"; exit 0
+  ok "Rendered into $DRUMEE_DIR (DRUMEE_NO_START=1 — not starting)."; exit 0
 fi
 
-say "Starting Drumee — first run initializes the database (this can take a couple of minutes)"
+step "Starting Drumee"
+say "First run initializes the database — this can take a couple of minutes."
 if ! up_out="$($DOCKER compose --env-file .env up -d 2>&1)"; then
   echo "$up_out" | sed 's/^/    /'
   if echo "$up_out" | grep -qiE 'address already in use|port is already allocated|bind for'; then
@@ -246,19 +266,23 @@ if ! up_out="$($DOCKER compose --env-file .env up -d 2>&1)"; then
 fi
 
 # ------------------------------------------------------------------- 4. wait + show
-say "Waiting for first-run setup (schema + UI build + accounts)…"
+say "Waiting for first-run setup (schema · UI build · accounts)…"
 DC="$DOCKER compose --env-file .env"
+[ -t 1 ] && printf "    ${c_dim}"
 populate_done=""; for _ in $(seq 1 120); do
   st="$($DC ps -a --format '{{.Service}}:{{.State}}:{{.ExitCode}}' 2>/dev/null | grep '^schemas-populate:' || true)"
   echo "$st" | grep -q ':exited:0' && { populate_done=1; break; }
-  echo "$st" | grep -qE ':exited:[1-9]' && { warn "schemas-populate failed — logs: $DC logs schemas-populate"; break; }
+  echo "$st" | grep -qE ':exited:[1-9]' && { populate_done=fail; break; }
+  [ -t 1 ] && printf "·"
   sleep 5
 done
-[ -n "$populate_done" ] && ok "Database initialized + admin provisioned"
+[ -t 1 ] && printf "${c_off}\n"
+[ "$populate_done" = "fail" ] && warn "schemas-populate failed — logs: $DC logs schemas-populate"
+[ "$populate_done" = "1" ] && ok "Database initialized + admin provisioned"
 
 # Once the admin exists, scrub the password from .env so it doesn't sit in
 # plaintext, and stop re-provisioning on future re-runs (the account is created).
-if [ -n "$populate_done" ] && grep -q '^ADMIN_PASSWORD=' .env 2>/dev/null; then
+if [ "$populate_done" = "1" ] && grep -q '^ADMIN_PASSWORD=' .env 2>/dev/null; then
   sed -i '/^ADMIN_PASSWORD=/d' .env 2>/dev/null && sed -i 's/^CREATE_ADMIN=.*/CREATE_ADMIN=0/' .env 2>/dev/null \
     && ok "Removed the admin password from .env"
 fi
@@ -269,22 +293,24 @@ healthy=""; for _ in $(seq 1 30); do
 done
 
 if [ "$DRUMEE_DOMAIN" = "localhost" ]; then URL="http://localhost/"; else URL="https://${DRUMEE_DOMAIN}/"; fi
-echo; hr
-if [ -n "$healthy" ]; then printf "${c_grn}  Drumee is up.${c_off}\n"
-else warn "server-pod is not healthy yet — it may still be starting."
-     printf "${c_yel}  Drumee is starting — give it a minute, then open the URL below.${c_off}\n"; fi
-hr
-printf "  Open:     %s\n" "$URL"
-printf "  Login:    %s\n" "$ADMIN_EMAIL"
-if [ -n "${ADMIN_PASSWORD:-}" ]; then
-  printf "  Password: (the one you set)\n"
+echo
+if [ -n "$healthy" ]; then
+  printf "  ${c_grn}%s${c_off} ${c_bold}Drumee is up.${c_off}\n" "$G_OK"
 else
-  cred="$($DC logs schemas-populate 2>/dev/null | grep -aiE 'password:|init link|reset' | tail -3)"
-  [ -n "$cred" ] && printf "  Credentials (from setup log):\n%s\n" "$(echo "$cred" | sed 's/^/    /')" \
-                  || printf "  Password: see  %s logs schemas-populate\n" "$DC"
+  printf "  ${c_yel}%s${c_off} ${c_bold}Drumee is starting${c_off} ${c_dim}— give it a minute, then open the URL below.${c_off}\n" "$G_WARN"
 fi
 hr
-printf "  Status:   (cd %s && %s compose ps)\n" "$DRUMEE_DIR" "$DOCKER"
-printf "  Health:   DRUMEE_DIR=%s drumee-ctl doctor\n" "$DRUMEE_DIR"
-printf "  Stop:     (cd %s && %s compose down)\n" "$DRUMEE_DIR" "$DOCKER"
+kv "Open" "${c_cyan}${URL}${c_off}"
+kv "Login" "$ADMIN_EMAIL"
+if [ -n "${ADMIN_PASSWORD:-}" ]; then
+  kv "Password" "${c_dim}(the one you set)${c_off}"
+else
+  cred="$($DC logs schemas-populate 2>/dev/null | grep -aiE 'password:|init link|reset' | tail -3)"
+  if [ -n "$cred" ]; then kv "Password" "${c_dim}(see setup log below)${c_off}"; echo "$cred" | sed "s/^/      ${c_dim}/;s/$/${c_off}/"
+  else kv "Password" "${c_dim}run: $DC logs schemas-populate${c_off}"; fi
+fi
+hr
+kv "Status" "${c_dim}cd $DRUMEE_DIR && $DOCKER compose ps${c_off}"
+kv "Health" "${c_dim}DRUMEE_DIR=$DRUMEE_DIR drumee-ctl doctor${c_off}"
+kv "Stop" "${c_dim}cd $DRUMEE_DIR && $DOCKER compose down${c_off}"
 echo
