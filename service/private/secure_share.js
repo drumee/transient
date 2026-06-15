@@ -65,6 +65,15 @@ class __secure_share extends Mfs {
     // which emails are accepted. Sent as integer 1/0 (SP reads it via JSON_VALUE).
     const requireEmail = this.input.get('require_email') ? 1 : 0;
 
+    // Defense-in-depth (the sender UI also blocks this): "require email to view"
+    // must restrict to at least one allowed email/domain. With an empty allow-list
+    // the gate would accept ANY email — a cosmetic, non-real gate. Reject the create
+    // rather than publish an any-email link (per Lexis 2026-06-14). Existing shares
+    // are unaffected (create-time only).
+    if (requireEmail && !allowedEmails) {
+      return this.output.data({ status: 'REQUIRE_EMAIL_NEEDS_ALLOWED' });
+    }
+
     // Notify the sender in real time when a recipient opens the share. Defaults
     // to ON (1) when the field is omitted, preserving the previous always-notify
     // behaviour. Coerced to integer 1/0 to avoid the JSON-bool→TINYINT trap.
@@ -167,6 +176,26 @@ class __secure_share extends Mfs {
   }
 
   /**
+   * List recent share-open events across the current user's secure shares, for the
+   * activity notification panel ("{who} opened {folder}"). The SP filters by
+   * creator_id + notify_on_open and dedupes per recipient. Read-only; mirrors
+   * list_requests' node-name enrichment so the panel can show the shared folder.
+   */
+  async list_open_notifications() {
+    const rows = toArray(await this.yp.await_proc('secure_share_list_open_notifications', this.uid));
+    for (const r of rows) {
+      if (!r || !r.hub_id || !r.node_id) continue;
+      try {
+        const a = toArray(
+          await this.yp.await_proc('forward_proc', r.hub_id, 'mfs_node_attr', `'${r.node_id}'`)
+        )[0] || {};
+        if (a.filename) r.node_name = a.filename;
+      } catch (e) { /* keep fallback */ }
+    }
+    this.output.list(rows);
+  }
+
+  /**
    * Revoke a secure share token (soft delete).
    * Broadcasts a real-time event so the recipient loses access immediately.
    */
@@ -189,8 +218,10 @@ class __secure_share extends Mfs {
       const svcOpt = { service: 'share.track_event' };
 
       try {
-        // Broadcast to hub members (sender's window refreshes its list)
-        const recipients = await this.yp.await_proc('entity_sockets', { hub_id });
+        // Broadcast to the SHARE's hub (row.hub_id), not the revoker's current
+        // workspace (this.hub) — same fix as respond_to_access_request, so the
+        // sender's list refreshes even when revoking from a different/global context.
+        const recipients = await this.yp.await_proc('entity_sockets', { hub_id: row.hub_id || hub_id });
         await RedisStore.sendData(this.payload(eventData, svcOpt), recipients);
       } catch (e) {
         this.warn('[secure_share.revoke] hub broadcast failed:', e && e.message);
@@ -250,6 +281,15 @@ class __secure_share extends Mfs {
     const hub_id = this.hub.get(Attr.id);
     let   email  = (this.input.get(Attr.email) || '').toLowerCase().trim();
     let   uid    = (this.input.get(Attr.uid) || '').trim() || null;
+
+    // Only the secure-share CREATOR may revoke a recipient. secure_share_list is
+    // creator-scoped (filters by this.uid), so a non-empty result means the caller
+    // owns a share on this node. Otherwise deny — a workspace contributor with mere
+    // write access on the node must not be able to strip another user's grant.
+    const owned = toArray(await this.yp.await_proc('secure_share_list', hub_id, nid, this.uid));
+    if (!owned.length) {
+      return this.output.data({ status: 'FORBIDDEN' });
+    }
 
     // Resolve the uid from the email when the row didn't carry one (signed-in
     // recipients have actor_id; anonymous public viewers do not).
@@ -311,12 +351,17 @@ class __secure_share extends Mfs {
 
     const requestId    = this.input.need('request_id');
     const action       = (this.input.get('action') || '').trim();
-    const grantedLevel = (this.input.get('granted_level') || '').trim() || null;
+    // Multi-level: the sender may grant several levels at once (multi-select
+    // request). Normalise the comma-list, dedupe, and require every level valid.
+    const grantedLevels = Array.from(new Set(
+      (this.input.get('granted_level') || '').split(',').map(s => s.trim()).filter(Boolean)
+    ));
+    const grantedLevel = grantedLevels.join(',') || null;
 
     if (!VALID_ACTIONS.includes(action)) {
       return this.output.data({ status: 'INVALID_ACTION' });
     }
-    if (action === 'approve' && (!grantedLevel || !VALID_LEVELS.includes(grantedLevel))) {
+    if (action === 'approve' && (!grantedLevels.length || grantedLevels.some(l => !VALID_LEVELS.includes(l)))) {
       return this.output.data({ status: 'INVALID_LEVEL' });
     }
 
@@ -349,20 +394,32 @@ class __secure_share extends Mfs {
     // reaches every viewer of the share). Broadcast to entity_sockets(hub_id): the
     // guest's DMZ socket is included there (cookie_touch passes socket_id for exactly
     // this), which is reliable — unlike the single, often-stale active_socket_id.
+    // granted_level is a SET (comma-list) — split it and union the privilege so a
+    // multi-level grant (e.g. chat + edit) carries every cap to the recipient.
+    const grantedSet = String(row.granted_level || '').split(',').map(s => s.trim()).filter(Boolean);
+    let grantedPriv = 3;
+    for (const lvl of grantedSet) grantedPriv |= (LEVEL_TO_PRIVILEGE[lvl] || 0);
     const respondedPayload = {
       event          : 'secure_share_access_responded',
       request_id     : row.id,
       action,
       requester_email: (row.requester_email || '').toLowerCase().trim(),
       granted_level  : row.granted_level,
-      privilege      : LEVEL_TO_PRIVILEGE[row.granted_level] || 3,
-      capabilities   : (row.granted_level && row.granted_level !== 'can_view') ? [row.granted_level] : [],
-      can_download   : row.granted_level === 'can_download' ? 1 : 0,
-      can_chat       : row.granted_level === 'can_chat' ? 1 : 0,
-      can_edit       : row.granted_level === 'can_edit' ? 1 : 0,
+      privilege      : grantedPriv,
+      capabilities   : grantedSet.filter(l => l !== 'can_view'),
+      can_download   : grantedSet.includes('can_download') ? 1 : 0,
+      can_chat       : grantedSet.includes('can_chat') ? 1 : 0,
+      can_edit       : grantedSet.includes('can_edit') ? 1 : 0,
     };
     try {
-      const hub_id = this.hub.get(Attr.id);
+      // Target the SHARE's hub (row.hub_id from the request), NOT the approver's
+      // current workspace context (this.hub) — the sender often approves from the
+      // global activity panel while in a different/no workspace, so this.hub did
+      // not match the share's hub, and the broadcast reached neither the guest
+      // (whose DMZ socket is bound into the share's hub via the creator) nor the
+      // sender → the approval never arrived real-time. Fall back to this.hub only
+      // if the row somehow lacks it.
+      const hub_id = row.hub_id || this.hub.get(Attr.id);
       const targets = await this.yp.await_proc('entity_sockets', { hub_id });
       // Include the recipient's last-known socket too, in case it isn't in the hub set.
       if (row.guest_socket_id) targets.push({ socket_id: row.guest_socket_id });
@@ -391,7 +448,10 @@ class __secure_share extends Mfs {
    */
   async _grantHubMembership(row) {
     const LEVEL_TO_PRIVILEGE = { can_view: 3, can_download: 7, can_chat: 3, can_edit: 15 };
-    const privilege = LEVEL_TO_PRIVILEGE[row.granted_level] || 3;
+    // granted_level is a SET (comma-list) — union the cumulative privilege masks
+    // over every granted level so a multi-level grant gets the combined privilege.
+    const privilege = String(row.granted_level || '').split(',').map(s => s.trim()).filter(Boolean)
+      .reduce((p, lvl) => p | (LEVEL_TO_PRIVILEGE[lvl] || 0), 3);
     const hub_id    = row.hub_id;
     const email     = (row.requester_email || '').toLowerCase().trim();
     if (!hub_id || !email) return;

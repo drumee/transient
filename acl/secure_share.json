@@ -142,6 +142,13 @@
         "src": "read"
       }
     },
+    "list_open_notifications": {
+      "doc": "List recent share-open events across the current user's secure shares (creator), deduped per recipient, for the activity notification panel. Read-only; the SP filters by creator_id and notify_on_open.",
+      "scope": "hub",
+      "permission": {
+        "src": "read"
+      }
+    },
     "revoke": {
       "doc": "Revoke a secure share token (soft delete — sets revoked_at timestamp). Broadcasts a secure_share_revoked event via Redis to all hub socket connections so the recipient loses access instantly.",
       "scope": "hub",

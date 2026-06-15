@@ -173,7 +173,11 @@ class __dmz extends Mfs {
         const secureRes = await this.yp.await_proc('secure_share_info', token);
         if (!isEmpty(secureRes) && !secureRes.failed) {
           res = secureRes;
+          // Never expose secrets/recipient lists to an unauthenticated info probe
+          // (mirrors _loginSecureShare's safeInfo): allowed_emails would otherwise let
+          // a viewer enumerate the allow-list before passing the gate.
           delete res.password_hash;
+          delete res.allowed_emails;
         }
       } catch (e) {
         this.warn('[dmz.info] secure_share_info lookup failed:', e && e.message);
@@ -184,7 +188,20 @@ class __dmz extends Mfs {
       res = res || {};
       res.status = 'WRONG_TICKET';
     } else if (res.is_secure) {
-      res.status = res.validity === 'TICKET_OK' ? 'REQUIRED_EMAIL' : res.validity;
+      // Report the share's ACTUAL gate, not a blanket REQUIRED_EMAIL. A revoked/
+      // expired share keeps its validity; a valid one is email-gated only if it
+      // requires email (or a legacy single recipient), else password-gated, else
+      // public (TICKET_OK). The only caller (sharebox revoke poller) acts solely on
+      // TICKET_REVOKED/TICKET_EXPIRED, so this is safe for it.
+      if (res.validity !== 'TICKET_OK') {
+        res.status = res.validity;
+      } else if (res.require_email || res.recipient_email) {
+        res.status = 'REQUIRED_EMAIL';
+      } else if (res.require_password) {
+        res.status = 'REQUIRED_PASSWORD';
+      } else {
+        res.status = 'TICKET_OK';
+      }
     } else if (res.require_password) {
       res.status = 'REQUIRED_PASSWORD';
     }
@@ -401,38 +418,65 @@ class __dmz extends Mfs {
       caps = [info.permission_level];
     }
 
-    // If the guest previously had an approved access request, that grant
-    // REPLACES the base set (the sender deliberately chose what to grant).
+    // If the guest previously had an approved access request, that grant ADDS to
+    // the share's base capabilities — it does NOT replace them. The Request Access
+    // popup grants one level at a time, so a chat-only share whose recipient is
+    // later approved for download must end up with chat AND download.
     // The grant is keyed by requester_email. The email gate provides submittedEmail,
     // but a PUBLIC share has no gate — so a logged-in recipient who requested access
     // (the Request Access popup prefills their account email as requester_email) had
     // no email to match on refresh, and the approved grant was never applied → the
     // download/chat stayed gated even after approval. Fall back to the account email.
     let grantEmail = submittedEmail;
-    // Explicit grant-lookup email replayed by the recipient UI from localStorage
-    // (the email they sent the Request Access with). Used ONLY to match an approved
-    // grant — never the email gate (the gate uses submittedEmail) — so it cannot let
-    // anyone bypass a restricted share; it only resolves a grant already issued to
-    // that exact email. Lets anonymous (incognito) recipients keep access after a
-    // refresh, where there is no account email to key on.
-    if (!grantEmail) {
-      const ge = (this.input.get('grant_email') || '').toLowerCase().trim();
-      if (ge) grantEmail = ge;
-    }
+    // Authenticated viewers: key the grant lookup to their OWN account email, and
+    // NEVER a client-supplied grant_email. Otherwise one signed-in account could
+    // replay another requester's approved email (the response event even carries
+    // requester_email) to claim that grant. Account email takes precedence; the
+    // client value is ignored for an authenticated session.
     if (!grantEmail && isAuthenticated && user.profile) {
       try {
         const p = typeof user.profile === 'string' ? JSON.parse(user.profile) : user.profile;
         grantEmail = (p.email || '').toLowerCase().trim();
       } catch (e) { /* ignore */ }
     }
+    // ANONYMOUS (incognito) viewers only: fall back to the email they requested with,
+    // replayed by the UI from localStorage, so they keep access after a refresh (no
+    // account email to key on). It only resolves a grant already issued to that exact
+    // email and never affects the email gate (which uses submittedEmail).
+    // ⚠ KNOWN RESIDUAL: on a PUBLIC link this is replayable — a determined anonymous
+    // viewer who learns another requester's approved email could claim that grant.
+    // Fully closing it needs the anonymous guest-identity fix (see
+    // secure-share-enforcement-gap.md). Guarded to !isAuthenticated so it can never
+    // override an authenticated session's own account email.
+    if (!grantEmail && !isAuthenticated) {
+      const ge = (this.input.get('grant_email') || '').toLowerCase().trim();
+      if (ge) grantEmail = ge;
+    }
     if (grantEmail) {
       try {
-        const grantRow = toArray(
+        const grantRows = toArray(
           await this.yp.await_proc('secure_share_get_access_grant', token, grantEmail)
-        )[0] || {};
-        if (grantRow.granted_level) {
-          info.permission_level = grantRow.granted_level;
-          caps = (grantRow.granted_level === 'can_view') ? [] : [grantRow.granted_level];
+        );
+        // UNION every approved grant onto the share's base caps (do not overwrite —
+        // that dropped the chat cap when a chat-share recipient was approved for
+        // download). The SP returns all approved grants for this recipient, latest
+        // first; older deployments returned only the latest, and the union is
+        // correct for both. can_view carries no extra capability, so it is skipped.
+        // granted_level is now a SET (comma-list) — a single approval may grant
+        // several levels at once (multi-select request). Split and union each.
+        for (const g of grantRows) {
+          const raw = g && g.granted_level;
+          if (!raw) continue;
+          for (const lvl of String(raw).split(',').map(s => s.trim()).filter(Boolean)) {
+            if (lvl === 'can_view') continue;
+            if (caps.indexOf(lvl) === -1) caps.push(lvl);
+          }
+        }
+        // permission_level is a legacy single-value display field — reflect the
+        // latest approved grant (first row); the capabilities array above is the
+        // authoritative set the recipient UI gates on.
+        if (grantRows[0] && grantRows[0].granted_level) {
+          info.permission_level = grantRows[0].granted_level;
         }
       } catch (e) {
         this.warn('[dmz.login] secure_share_get_access_grant failed:', e && e.message);
@@ -658,13 +702,20 @@ class __dmz extends Mfs {
     const VALID_LEVELS = ['can_download', 'can_chat', 'can_edit'];
     const token          = this.input.need(Attr.token);
     const rawEmail       = (this.input.get(Attr.email) || '').toLowerCase().trim();
-    const requestedLevel = (this.input.get('requested_level') || '').trim();
-    const message        = (this.input.get('message') || '').trim() || null;
+    // Multi-level: the recipient may request several permissions at once (e.g.
+    // chat + edit). Accept a comma-list, normalise (dedupe, drop blanks), and
+    // require every level to be valid. Stored into the requested_level SET column.
+    const requestedLevels = Array.from(new Set(
+      (this.input.get('requested_level') || '')
+        .split(',').map(s => s.trim()).filter(Boolean)
+    ));
+    const requestedLevel  = requestedLevels.join(',');
+    const message         = (this.input.get('message') || '').trim() || null;
 
     if (!rawEmail || !rawEmail.includes('@')) {
       return this.output.data({ status: 'INVALID_EMAIL' });
     }
-    if (!VALID_LEVELS.includes(requestedLevel)) {
+    if (!requestedLevels.length || requestedLevels.some(l => !VALID_LEVELS.includes(l))) {
       return this.output.data({ status: 'INVALID_LEVEL' });
     }
 
@@ -679,9 +730,12 @@ class __dmz extends Mfs {
       return this.output.data({ status: 'INVALID_TOKEN' });
     }
 
-    if (row.hub_id) {
+    // Notify ONLY the share creator (their desk activity panel), not the whole hub.
+    // A hub-wide broadcast (entity_sockets) carries requester_email + the free-form
+    // message to every other recipient who has the share open — a privacy leak.
+    if (row.creator_id) {
       try {
-        const recipients = await this.yp.await_proc('entity_sockets', { hub_id: row.hub_id });
+        const recipients = await this.yp.await_proc('user_sockets', row.creator_id);
         await RedisStore.sendData(
           this.payload(
             {
