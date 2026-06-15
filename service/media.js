@@ -21,10 +21,12 @@ const {
 } = require("@drumee/server-essentials");
 const indexQueue = require("../offline/queues/indexQueue");
 const { writeAudit } = require("./private/_audit");
+const { secureShareWriteVerdict } = require("./lib/secure-share-write-guard");
 const { DENIED } = Events;
 const {
   BATCH_FILE,
   CARD,
+  ID_NOBODY,
   DIRNAME,
   DOWNLOAD_FOLDER,
   FAILED_CREATE_FILE,
@@ -116,10 +118,66 @@ class __media extends Mfs {
   }
 
   /**
+   * Server-side enforcement of a secure-share recipient's WRITE capability.
+   *
+   * A DMZ secure-share guest session is cookie-bound to the share CREATOR (so
+   * hub endpoints resolve), which means this.uid carries the creator's FULL
+   * privilege and the normal write ACL always passes — even for a view-only
+   * recipient. This re-derives the RECIPIENT's effective write capability from
+   * the share token (base caps UNION approved access grants, mirroring
+   * dmz.js::_loginSecureShare) and denies when can_edit is absent.
+   *
+   * Non-secure-share writes are never affected: with no token, or a legacy DMZ
+   * token, the verdict is null and the caller proceeds with the normal ACL.
+   *
+   * Side-effect free — the caller rejects with the primitive appropriate to its
+   * phase (pre_upload is an ACL checker → trigger(DENIED); make_dir is a service
+   * method → exception.forbiden()).
+   *
+   * @returns {Promise<boolean>} true → may proceed; false → caller must reject
+   */
+  async _secureShareWriteAllowed() {
+    const token = this.input.get(Attr.token);
+    if (!token) return true;
+
+    // Resolve the recipient email exactly as _loginSecureShare does: an
+    // AUTHENTICATED viewer is keyed to their OWN account email (never a
+    // client-supplied value); an ANONYMOUS viewer to the grant_email the UI
+    // replays. The account email always wins so a signed-in session can't claim
+    // another requester's approved grant.
+    let email = "";
+    try {
+      const cookie = this.input.get(Attr.cookie) || {};
+      const regsid = cookie.regsid;
+      if (regsid) {
+        const guest_id = Cache.getSysConf("guest_id");
+        const u = await this.yp.await_proc("cookie_retrieve_user", regsid);
+        if (u && u.id && ![ID_NOBODY, guest_id].includes(u.id) && u.profile) {
+          const p = typeof u.profile === "string" ? JSON.parse(u.profile) : u.profile;
+          email = ((p && p.email) || "").toLowerCase().trim();
+        }
+      }
+    } catch (e) {
+      // fall through to the anonymous path
+    }
+    if (!email) {
+      email = (this.input.get("grant_email") || "").toLowerCase().trim();
+    }
+
+    const verdict = await secureShareWriteVerdict(this.yp, token, email);
+    if (verdict === false) {
+      this.warn("[secure-share] write denied: recipient lacks can_edit");
+      return false;
+    }
+    return true;
+  }
+
+  /**
    *
    * @returns
    */
   async make_dir() {
+    if (!(await this._secureShareWriteAllowed())) return this.exception.forbiden();
     const parent = this.source_granted();
     const pid = parent.id || this.home_id;
     let ownpath = decodeURI(this.input.get(Attr.ownpath));
@@ -315,6 +373,11 @@ class __media extends Mfs {
   async pre_upload() {
     let json_str;
 
+    if (!(await this._secureShareWriteAllowed())) {
+      this.warn("Secure-share upload denied: recipient lacks can_edit");
+      this.trigger(DENIED);
+      return;
+    }
     if (this.session.isAnonymous()) {
       const token = this.input.use(Attr.token);
       if (isEmpty(token) && isEmpty(this.input.sid())) {
