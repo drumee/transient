@@ -247,6 +247,11 @@ class __secure_share extends Mfs {
       // log and drop each one's node-scoped grant. permission_revoke deletes only
       // the (node_id, uid) row, so a recipient who is ALSO a real workspace member
       // keeps their '*' membership untouched. Best-effort.
+      // RESIDUAL (Codex P1): a non-member COLLABORATOR holding a manual node-scoped
+      // grant (resource_id=node, not '*') who opened this share would have that grant
+      // removed by the blunt permission_revoke. Rare; the precise fix is an assign_via-
+      // scoped delete (only 'system'/'Secure share access' rows), bundled with the
+      // capped-guest-principal lifecycle redesign.
       // KNOWN RESIDUAL: secure_share_list_access_events excludes PUBLIC shares, so a
       // logged-in recipient of a PUBLIC share (also rebound + granted) is NOT
       // enumerated here — their node grant survives revoke. Low-severity (the content
@@ -264,6 +269,10 @@ class __secure_share extends Mfs {
             for (const ev of events) {
               const uid = ev && ev.actor_id;
               if (!uid || uid === 'ffffffffffffffff' || uid === this.uid || seen.has(uid)) continue;
+              // Only THIS token's recipients — a node can carry several secure shares;
+              // without this filter, revoking one token would also strip recipients of
+              // the other still-valid shares on the same node (Codex P2).
+              if (ev.token_id && String(ev.token_id) !== String(token)) continue;
               seen.add(uid);
               try {
                 await this.yp.await_proc(`${db_name}.permission_revoke`, row.node_id, uid);
