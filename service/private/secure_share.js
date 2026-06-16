@@ -244,10 +244,15 @@ class __secure_share extends Mfs {
       // capped-principal binding (dmz.js::_loginSecureShare) issued to authenticated
       // recipients of this share — otherwise a revoked recipient keeps standing ACL
       // on the shared node. Enumerate this share's recipients from the access-event
-      // log (creator-scoped, and restricted-shares only — exactly the population that
-      // received grants) and drop each one's node-scoped grant. permission_revoke
-      // deletes only the (node_id, uid) row, so a recipient who is ALSO a real
-      // workspace member keeps their '*' membership untouched. Best-effort.
+      // log and drop each one's node-scoped grant. permission_revoke deletes only
+      // the (node_id, uid) row, so a recipient who is ALSO a real workspace member
+      // keeps their '*' membership untouched. Best-effort.
+      // KNOWN RESIDUAL: secure_share_list_access_events excludes PUBLIC shares, so a
+      // logged-in recipient of a PUBLIC share (also rebound + granted) is NOT
+      // enumerated here — their node grant survives revoke. Low-severity (the content
+      // was public; the grant is invisible to their desk, only crafted-API reachable).
+      // To be closed by an all-shares cleanup bundled with the capped-guest-principal
+      // schema (a token-scoped recipient enumeration).
       if (row.node_id && row.hub_id) {
         try {
           const db_name = await this.yp.await_func('get_db_name', row.hub_id);

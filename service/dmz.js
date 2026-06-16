@@ -548,9 +548,11 @@ class __dmz extends Mfs {
     // read-level (3), separated from view by the media.js download guard.
     //
     // Scope is deliberately tight to avoid regressions:
-    //   - authenticated viewers of a RESTRICTED (email/password-gated) share only;
-    //     PUBLIC + ANONYMOUS recipients keep creator-binding (capped guest
-    //     principal for those is the sequenced follow-up).
+    //   - any AUTHENTICATED recipient (PUBLIC or restricted share). Per the standard
+    //     share-link model, a logged-in viewer gets the link's caps and must request
+    //     access to elevate (they are already signed in → the request-access flow).
+    //     ANONYMOUS viewers stay creator-bound until the capped guest principal lands
+    //     (then they too are capped to the link's level; elevating requires login).
     //   - FOLDER shares only (no info.file_nid): a single-file share has no
     //     descendants and a different byte path — left on creator-binding.
     //   - member/owner already hold standing ACL → bind to self, NO extra grant.
@@ -560,8 +562,7 @@ class __dmz extends Mfs {
     // at the top of this method).
     // ---------------------------------------------------------------------
     let bindUid = info.creator_id;
-    const isRestrictedShare = emailGateActive || !!info.require_password;
-    if (isAuthenticated && user.id && isRestrictedShare && !info.file_nid && info.node_id) {
+    if (isAuthenticated && user.id && !info.file_nid && info.node_id) {
       if (memberPriv > 0 || String(user.id) === String(info.creator_id)) {
         // Member or owner — already has standing access; operate as themselves.
         bindUid = user.id;
