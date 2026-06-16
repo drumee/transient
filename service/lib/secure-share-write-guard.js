@@ -27,47 +27,60 @@ function parseCaps(raw) {
 }
 
 /**
- * Decide whether a secure-share recipient may perform a write (upload / mkdir).
+ * Decide whether a secure-share recipient holds ANY of the required capabilities.
  *
- * @param {*} yp              yellow-page DB handle (await_proc)
- * @param {string} token      the share token sent with the write request
- * @param {string} recipientEmail  resolved by the caller — account email for an
- *                            authenticated viewer, replayed grant_email for an
- *                            anonymous one (mirrors _loginSecureShare keying)
+ * The recipient's effective capability set is the share's base caps UNION their
+ * approved access grants, keyed by the resolved recipient email — identical to
+ * the login derivation in dmz.js::_loginSecureShare. Keep the three in sync.
+ *
+ * Used by every per-operation guard that the coarse node-privilege bitmask cannot
+ * isolate on its own (e.g. download — which the ACL treats as read-level, so a
+ * view-only recipient would otherwise be able to fetch bytes; and upload/mkdir).
+ *
+ * @param {*} yp                 yellow-page DB handle (await_proc)
+ * @param {string} token         the share token sent with the request
+ * @param {string} recipientEmail account email for an authenticated viewer, or the
+ *                               replayed grant_email for an anonymous one
+ * @param {string[]} requiredCaps capabilities that authorize the op; the recipient
+ *                               passes if they hold ANY one (e.g. download is
+ *                               allowed by can_download OR can_edit)
  * @returns {Promise<null|boolean>}
- *   null  → NOT a secure-share write (no token, or token is not a secure share,
- *           e.g. a legacy DMZ folder link) → caller proceeds with normal ACL.
- *   true  → secure-share recipient HAS can_edit (base or approved grant) → allow.
- *   false → secure-share recipient lacks can_edit → caller must deny.
+ *   null  → NOT a secure-share request (no token, or a legacy/non-secure token) →
+ *           caller proceeds with the normal ACL, untouched.
+ *   true  → recipient holds one of requiredCaps → allow.
+ *   false → recipient holds none of requiredCaps (or the share is revoked/expired)
+ *           → caller must deny.
  */
-async function secureShareWriteVerdict(yp, token, recipientEmail) {
+async function secureShareCapVerdict(yp, token, recipientEmail, requiredCaps) {
   if (!token) return null;
+  const req = Array.isArray(requiredCaps) ? requiredCaps : [requiredCaps];
 
   let info;
   try {
     info = toArray(await yp.await_proc("secure_share_info", token))[0];
   } catch (e) {
     // DB error: we cannot classify the token. Fail OPEN so a transient hiccup
-    // never blocks normal/legacy writes — the client-side gate still applies.
+    // never blocks normal/legacy ops — the rebind + client gate still apply.
     return null;
   }
   // Not a secure share (failed=1 / no creator) → legacy or invalid token; this
   // guard does not apply, so existing behaviour is left untouched.
   if (!info || info.failed || !info.creator_id) return null;
-  // Revoked or expired share → no write. secure_share_info exposes this only as
-  // a computed `validity` string (there is no revoked_at output column).
+  // Revoked or expired share → deny. secure_share_info exposes this only as a
+  // computed `validity` string (there is no revoked_at output column).
   if (info.validity && info.validity !== "TICKET_OK") return false;
 
   let caps = parseCaps(info.capabilities);
   if (!caps.length && info.permission_level && info.permission_level !== "can_view") {
     caps = [info.permission_level];
   }
-  if (caps.indexOf("can_edit") !== -1) return true;
+  const satisfies = (list) => req.some((c) => list.indexOf(c) !== -1);
+  // Base caps already satisfy → allow without the extra grant lookup (preserves
+  // the original short-circuit for the common case).
+  if (satisfies(caps)) return true;
 
-  // No base edit grant — check this recipient's APPROVED access requests. The
-  // grant union is keyed by the recipient email the caller resolved, exactly as
-  // _loginSecureShare does (can_edit can be requested + approved, so a view-only
-  // base share may legitimately have an edit-upgraded recipient).
+  // Not satisfied by the base caps — check this recipient's APPROVED access
+  // grants (a view-only base share may have a recipient upgraded to download/edit).
   const email = (recipientEmail || "").toLowerCase().trim();
   if (email) {
     try {
@@ -77,8 +90,8 @@ async function secureShareWriteVerdict(yp, token, recipientEmail) {
       for (const g of grants) {
         const raw = g && g.granted_level;
         if (!raw) continue;
-        for (const lvl of String(raw).split(",").map((s) => s.trim())) {
-          if (lvl === "can_edit") return true;
+        for (const lvl of String(raw).split(",").map((s) => s.trim()).filter(Boolean)) {
+          if (req.indexOf(lvl) !== -1) return true;
         }
       }
     } catch (e) {
@@ -89,4 +102,13 @@ async function secureShareWriteVerdict(yp, token, recipientEmail) {
   return false;
 }
 
-module.exports = { secureShareWriteVerdict };
+/**
+ * Backward-compatible write verdict (upload / mkdir): write requires can_edit.
+ * Thin wrapper over secureShareCapVerdict so existing callers are unchanged.
+ * @returns {Promise<null|boolean>} see secureShareCapVerdict.
+ */
+async function secureShareWriteVerdict(yp, token, recipientEmail) {
+  return secureShareCapVerdict(yp, token, recipientEmail, ["can_edit"]);
+}
+
+module.exports = { secureShareWriteVerdict, secureShareCapVerdict };

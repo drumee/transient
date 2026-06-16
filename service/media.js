@@ -21,7 +21,7 @@ const {
 } = require("@drumee/server-essentials");
 const indexQueue = require("../offline/queues/indexQueue");
 const { writeAudit } = require("./private/_audit");
-const { secureShareWriteVerdict } = require("./lib/secure-share-write-guard");
+const { secureShareWriteVerdict, secureShareCapVerdict } = require("./lib/secure-share-write-guard");
 const { DENIED } = Events;
 const {
   BATCH_FILE,
@@ -136,7 +136,7 @@ class __media extends Mfs {
    *
    * @returns {Promise<boolean>} true → may proceed; false → caller must reject
    */
-  async _secureShareWriteAllowed() {
+  async _secureShareCapAllowed(requiredCaps) {
     const token = this.input.get(Attr.token);
     if (!token) return true;
 
@@ -164,12 +164,20 @@ class __media extends Mfs {
       email = (this.input.get("grant_email") || "").toLowerCase().trim();
     }
 
-    const verdict = await secureShareWriteVerdict(this.yp, token, email);
+    const verdict = await secureShareCapVerdict(this.yp, token, email, requiredCaps);
     if (verdict === false) {
-      this.warn("[secure-share] write denied: recipient lacks can_edit");
+      this.warn(`[secure-share] denied: recipient lacks ${[].concat(requiredCaps).join(" / ")}`);
       return false;
     }
     return true;
+  }
+
+  /**
+   * Write (upload / mkdir) requires can_edit. Backward-compatible wrapper kept so
+   * the existing pre_upload / make_dir callers stay byte-identical.
+   */
+  async _secureShareWriteAllowed() {
+    return this._secureShareCapAllowed(["can_edit"]);
   }
 
   /**
@@ -1752,6 +1760,14 @@ class __media extends Mfs {
    * @returns 
    */
   async download(id, vcf) {
+    // Secure-share recipient: an explicit download (folder/file zip) requires
+    // can_download (or can_edit). A view-only recipient is blocked here, while
+    // inline PREVIEW/stream paths (thumb/preview/slide/video/orig-render/...) are
+    // untouched so viewing still works. No token (normal/legacy request) → the
+    // guard returns null → normal ACL applies, behaviour unchanged.
+    if (!(await this._secureShareCapAllowed(["can_download", "can_edit"]))) {
+      return this.exception.forbiden();
+    }
     let node = this.source_granted();
     let nid = node.id;
     let socket_id = this.input.need(Attr.socket_id);
@@ -1839,6 +1855,12 @@ class __media extends Mfs {
    * @returns 
    */
   async zip() {
+    // Defense-in-depth for the download guard: download() above stages the archive,
+    // this serves its bytes. A view-only secure-share recipient must not retrieve a
+    // previously-staged zip (no token → null → normal ACL, unchanged).
+    if (!(await this._secureShareCapAllowed(["can_download", "can_edit"]))) {
+      return this.exception.forbiden();
+    }
     const id = this.input.need(Attr.id);
     const zipname = this.input.need("zipname") || `index`;
     // Use this.uid to match the path used by create_small_zip() and

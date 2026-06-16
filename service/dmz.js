@@ -268,25 +268,44 @@ class __dmz extends Mfs {
     let submittedEmail = (this.input.get(Attr.email) || '').toLowerCase().trim();
 
     if (emailGateActive) {
-      // Auto-grant logged-in Drumee members whose account email matches the share
-      if (!submittedEmail && user.id && ![ID_NOBODY, guest_id].includes(user.id)) {
+      const isOwnerViewer = isAuthenticated && String(user.id) === String(info.creator_id);
+      if (isOwnerViewer) {
+        // The creator previewing their OWN share is not a recipient — skip the
+        // recipient email gate (their own account need not be on the allow-list).
+        // Mirrors the pre-existing is_owner handling in the response below; without
+        // this the strict check below would lock an owner out of their own share.
+      } else if (isAuthenticated) {
+        // Restricted share opened by a LOGGED-IN (non-owner) viewer: gate STRICTLY
+        // on the VERIFIED account email. A signed-in user must NOT type a different
+        // invited address to get in — the only identity that counts is the one they
+        // authenticated as (product rule: "only the invited email; sign in / sign
+        // up as that address"). Using the account email (never the client-supplied
+        // value) also closes the soft-gate bypass where a def@ session could submit
+        // abc@ to pass (the typed email was never ownership-verified). A logged-in
+        // viewer whose own account is not on the allow-list is refused here; if they
+        // are a workspace member they still reach the content via their own desk.
+        let accountEmail = '';
         try {
           const p = typeof user.profile === 'string' ? JSON.parse(user.profile) : (user.profile || {});
-          const accountEmail = (p.email || '').toLowerCase().trim();
-          if (accountEmail && _emailMatchesAllowed(accountEmail, info)) {
-            submittedEmail = accountEmail;
-          }
+          accountEmail = (p.email || '').toLowerCase().trim();
         } catch (e) {
-          this.warn('[dmz.login] secure_share auto-grant parse failed:', e && e.message);
+          this.warn('[dmz.login] secure_share account email parse failed:', e && e.message);
         }
-      }
-
-      if (!submittedEmail) {
-        return this.output.data({ ...safeInfo, status: 'REQUIRED_EMAIL', is_secure: 1 });
-      }
-
-      if (!_emailMatchesAllowed(submittedEmail, info)) {
-        return this.output.data({ status: 'EMAIL_MISMATCH', is_secure: 1 });
+        if (!accountEmail || !_emailMatchesAllowed(accountEmail, info)) {
+          return this.output.data({ status: 'EMAIL_MISMATCH', is_secure: 1 });
+        }
+        submittedEmail = accountEmail;
+      } else {
+        // ANONYMOUS viewer: existing typed-email gate (soft — no ownership proof).
+        // Verified-identity enforcement for anonymous recipients arrives with the
+        // capped guest-principal follow-up; left unchanged here to avoid a flow
+        // regression.
+        if (!submittedEmail) {
+          return this.output.data({ ...safeInfo, status: 'REQUIRED_EMAIL', is_secure: 1 });
+        }
+        if (!_emailMatchesAllowed(submittedEmail, info)) {
+          return this.output.data({ status: 'EMAIL_MISMATCH', is_secure: 1 });
+        }
       }
     }
 
@@ -349,23 +368,11 @@ class __dmz extends Mfs {
       this.warn('[dmz.login] secure_share access_log failed:', e && e.message);
     }
 
-    // Associate session with share creator so hub endpoints (media.show_node_by) work —
-    // mirrors the cookie_touch done for normal DMZ tokens at login line 330.
-    // socket_id must be passed so entity_sockets() includes this guest socket in
-    // hub broadcasts (e.g. secure_share_revoked) — same pattern as session.dmz_login.
-    // Safe: page.js ensures the hub cookie always has its own independent session id,
-    // so this UPDATE never touches the authenticated user's regsid row.
-    if (info.creator_id) {
-      try {
-        await this.yp.await_proc('cookie_touch', {
-          sid       : this.input.sid(),
-          uid       : info.creator_id,
-          socket_id : this.input.get(Attr.socket_id)
-        });
-      } catch (e) {
-        this.warn('[dmz.login] secure_share cookie_touch failed:', e && e.message);
-      }
-    }
+    // NOTE: the session cookie_touch (principal binding) is DEFERRED to after the
+    // capability set + member privilege are resolved below, so a logged-in recipient
+    // can be bound to their OWN capped principal instead of the share creator. See
+    // the binding block near the end of this method. Nothing between here and there
+    // depends on the bound session (all DB calls pass explicit hub_id/uid args).
 
     // Hub-level expiry display fields (same as normal login)
     let rows = await this.yp.await_proc('forward_proc', info.hub_id, 'dmz_settings', ``);
@@ -493,12 +500,13 @@ class __dmz extends Mfs {
     // their own link); a member who wants full access uses their own desk. Uses the
     // real recipient uid (resolved above), not the creator-bound session.
     let is_member = 0;
+    let memberPriv = 0;
     if (isAuthenticated && user.id) {
       try {
         const accessRows = await this.yp.await_proc(
           'forward_proc', info.hub_id, 'mfs_access_node', `'${user.id}','${info.nid}'`
         );
-        const memberPriv = parseInt((toArray(accessRows)[0] || {}).privilege, 10) || 0;
+        memberPriv = parseInt((toArray(accessRows)[0] || {}).privilege, 10) || 0;
         if (memberPriv > 0) is_member = 1;
       } catch (e) {
         this.warn('[dmz.login] secure_share member access check failed:', e && e.message);
@@ -519,6 +527,78 @@ class __dmz extends Mfs {
     for (const c of caps) privilege |= (CAP_PRIVILEGE[c] || 0);
 
     const hasCap = (c) => (caps.indexOf(c) !== -1 ? 1 : 0);
+
+    // ---------------------------------------------------------------------
+    // Bind the share session to its operating principal.
+    //
+    // Historically this bound the session to the share CREATOR so the
+    // authenticated media stack could resolve the shared node — but that made the
+    // recipient operate with the creator's FULL privilege (the enforcement gap:
+    // nested folders exposed owner capabilities; write/invite/call/manage all ran
+    // as the owner). Instead, for a LOGGED-IN recipient of a RESTRICTED FOLDER
+    // share, bind to the recipient's OWN uid and give them a node-scoped grant at
+    // the share's CAPPED privilege. The central ACL then enforces exactly the
+    // share's level at every depth (grants inherit to descendants), and grantPriv
+    // <= 15 means admin(16)/owner(32) ops (invite, manage-access, call) are denied
+    // automatically.
+    //
+    // grantPriv uses the STORED cumulative scale (lib/privilege.js): read=3,
+    // write=7, delete/modify=15. can_chat needs write(7) — chat.post asks 'write';
+    // can_edit needs delete(15) — move/rename/trash ask 'delete'. Download is
+    // read-level (3), separated from view by the media.js download guard.
+    //
+    // Scope is deliberately tight to avoid regressions:
+    //   - authenticated viewers of a RESTRICTED (email/password-gated) share only;
+    //     PUBLIC + ANONYMOUS recipients keep creator-binding (capped guest
+    //     principal for those is the sequenced follow-up).
+    //   - FOLDER shares only (no info.file_nid): a single-file share has no
+    //     descendants and a different byte path — left on creator-binding.
+    //   - member/owner already hold standing ACL → bind to self, NO extra grant.
+    //   - a non-member gets the node-scoped grant; if the grant FAILS we keep the
+    //     creator binding so the share still WORKS (degrade, never break access).
+    // The share is guaranteed valid here (TICKET_REVOKED/EXPIRED/LOCKED returned
+    // at the top of this method).
+    // ---------------------------------------------------------------------
+    let bindUid = info.creator_id;
+    const isRestrictedShare = emailGateActive || !!info.require_password;
+    if (isAuthenticated && user.id && isRestrictedShare && !info.file_nid && info.node_id) {
+      if (memberPriv > 0 || String(user.id) === String(info.creator_id)) {
+        // Member or owner — already has standing access; operate as themselves.
+        bindUid = user.id;
+      } else {
+        // Non-member recipient — grant capped node access, then bind to their uid.
+        let grantPriv = 0b0000011;                                    // read / view / download
+        if (caps.indexOf('can_chat') !== -1) grantPriv = 0b0000111;   // write — chat.post
+        if (caps.indexOf('can_edit') !== -1) grantPriv = 0b0001111;   // delete/modify — edit
+        try {
+          const db_name = await this.yp.await_func('get_db_name', info.hub_id);
+          if (db_name) {
+            await this.yp.await_proc(
+              `${db_name}.permission_grant`,
+              info.node_id, user.id, 0, grantPriv, 'system', 'Secure share access'
+            );
+            bindUid = user.id;            // rebind ONLY after the grant succeeds
+          }
+        } catch (e) {
+          this.warn('[dmz.login] secure_share node grant failed; keeping creator binding:', e && e.message);
+        }
+      }
+    }
+    // socket_id must be passed so entity_sockets() includes this guest socket in
+    // hub broadcasts (e.g. secure_share_revoked). page.js ensures the hub cookie
+    // has its own independent session id, so this never touches the authenticated
+    // user's regsid row.
+    if (bindUid) {
+      try {
+        await this.yp.await_proc('cookie_touch', {
+          sid       : this.input.sid(),
+          uid       : bindUid,
+          socket_id : this.input.get(Attr.socket_id)
+        });
+      } catch (e) {
+        this.warn('[dmz.login] secure_share cookie_touch failed:', e && e.message);
+      }
+    }
 
     return this.output.data({
       ...user,
