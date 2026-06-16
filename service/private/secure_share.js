@@ -239,6 +239,52 @@ class __secure_share extends Mfs {
           this.warn('[secure_share.revoke] recipient broadcast failed:', e && e.message);
         }
       }
+
+      // Revoking the token must ALSO remove any node-scoped permission grants the
+      // capped-principal binding (dmz.js::_loginSecureShare) issued to authenticated
+      // recipients of this share — otherwise a revoked recipient keeps standing ACL
+      // on the shared node. Enumerate this share's recipients from the access-event
+      // log and drop each one's node-scoped grant. permission_revoke deletes only
+      // the (node_id, uid) row, so a recipient who is ALSO a real workspace member
+      // keeps their '*' membership untouched. Best-effort.
+      // RESIDUAL (Codex P1): a non-member COLLABORATOR holding a manual node-scoped
+      // grant (resource_id=node, not '*') who opened this share would have that grant
+      // removed by the blunt permission_revoke. Rare; the precise fix is an assign_via-
+      // scoped delete (only 'system'/'Secure share access' rows), bundled with the
+      // capped-guest-principal lifecycle redesign.
+      // KNOWN RESIDUAL: secure_share_list_access_events excludes PUBLIC shares, so a
+      // logged-in recipient of a PUBLIC share (also rebound + granted) is NOT
+      // enumerated here — their node grant survives revoke. Low-severity (the content
+      // was public; the grant is invisible to their desk, only crafted-API reachable).
+      // To be closed by an all-shares cleanup bundled with the capped-guest-principal
+      // schema (a token-scoped recipient enumeration).
+      if (row.node_id && row.hub_id) {
+        try {
+          const db_name = await this.yp.await_func('get_db_name', row.hub_id);
+          const events  = toArray(
+            await this.yp.await_proc('secure_share_list_access_events', row.hub_id, row.node_id, this.uid)
+          );
+          if (db_name) {
+            const seen = new Set();
+            for (const ev of events) {
+              const uid = ev && ev.actor_id;
+              if (!uid || uid === 'ffffffffffffffff' || uid === this.uid || seen.has(uid)) continue;
+              // Only THIS token's recipients — a node can carry several secure shares;
+              // without this filter, revoking one token would also strip recipients of
+              // the other still-valid shares on the same node (Codex P2).
+              if (ev.token_id && String(ev.token_id) !== String(token)) continue;
+              seen.add(uid);
+              try {
+                await this.yp.await_proc(`${db_name}.permission_revoke`, row.node_id, uid);
+              } catch (e) {
+                this.warn('[secure_share.revoke] node grant revoke failed:', e && e.message);
+              }
+            }
+          }
+        } catch (e) {
+          this.warn('[secure_share.revoke] grant cleanup failed:', e && e.message);
+        }
+      }
     }
 
     this.output.data(row);
@@ -447,7 +493,15 @@ class __secure_share extends Mfs {
    * @param {object} row  the row returned by secure_share_respond_to_access_request
    */
   async _grantHubMembership(row) {
-    const LEVEL_TO_PRIVILEGE = { can_view: 3, can_download: 7, can_chat: 3, can_edit: 15 };
+    // SERVER-ENFORCEMENT privilege (lib/privilege.js STORED cumulative scale) — this
+    // is the value written to the permission table that user_permission/ACL enforce,
+    // NOT the client-UI scale used for the broadcast payload in respond_to_access_request.
+    // download is read-level (3): downloading is a 'read' op, so it needs no write bit
+    // (keeping it at 3 stops a download-only recipient from chatting / passing the
+    // upload ACL). can_chat needs write (7) because chat.post asks 'write' — granting
+    // only 3 is why signed-in recipients previously could not post. can_edit needs
+    // delete/modify (15) for move/rename/trash. Matches dmz.js::_loginSecureShare grantPriv.
+    const LEVEL_TO_PRIVILEGE = { can_view: 3, can_download: 3, can_chat: 7, can_edit: 15 };
     // granted_level is a SET (comma-list) — union the cumulative privilege masks
     // over every granted level so a multi-level grant gets the combined privilege.
     const privilege = String(row.granted_level || '').split(',').map(s => s.trim()).filter(Boolean)

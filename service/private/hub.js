@@ -105,15 +105,104 @@ class __private_hub extends Hub {
   /**
    * 
    */
-  get_members_by_type() {
+  async get_members_by_type() {
     const type = this.input.need(Attr.type);
     const page = this.input.use(Attr.page, 1);
-    this.db.call_proc(
+    let members = await this.db.await_proc(
       "hub_get_members_by_type",
       this.uid,
       type,
-      page,
-      this.output.list
+      page
+    );
+    members = await this._hydrateMemberProfileNames(members, { type, page });
+    this.output.list(members);
+  }
+
+  _cleanMemberName(value) {
+    return `${value || ""}`.trim();
+  }
+
+  _memberDisplayName(member = {}) {
+    const email = this._cleanMemberName(member.email);
+    const fullname = this._cleanMemberName(member.fullname);
+    if (fullname && fullname !== email) return fullname;
+
+    const name = [member.firstname, member.lastname]
+      .map((name) => this._cleanMemberName(name))
+      .filter(Boolean)
+      .join(" ");
+    if (name) return name;
+
+    const surname = this._cleanMemberName(member.surname);
+    if (surname && surname !== email) return surname;
+
+    return "";
+  }
+
+  _mergeLiveProfileName(member = {}, profile = {}) {
+    const profileName = this._memberDisplayName(profile);
+    if (!profileName || this._memberDisplayName(member)) return member;
+
+    const firstname = this._cleanMemberName(profile.firstname);
+    const lastname = this._cleanMemberName(profile.lastname);
+
+    return {
+      ...member,
+      firstname: firstname || member.firstname,
+      lastname: lastname || member.lastname,
+      fullname: profileName,
+      surname: profileName,
+    };
+  }
+
+  async _hydrateMemberProfileNames(members, context = {}) {
+    const rows = toArray(members);
+    const ids = rows
+      .filter((member) => !this._memberDisplayName(member))
+      .map((member) => this._cleanMemberName(member.id))
+      .filter(Boolean);
+
+    if (!ids.length) return rows;
+
+    const profileEntries = await Promise.all(
+      [...new Set(ids)].map(async (id) => {
+        try {
+          const profile = await this.yp.await_proc("get_user", id);
+          return [id, toArray(profile)[0] || {}];
+        } catch (e) {
+          this.syslog(
+            "get_members_by_type live profile lookup failed",
+            stringify({
+              uid: this.uid,
+              member_id: id,
+              error: e && e.message,
+            })
+          );
+          return [id, {}];
+        }
+      })
+    );
+    const profiles = new Map(profileEntries);
+    const resolved = profileEntries.filter(([, profile]) =>
+      this._memberDisplayName(profile)
+    ).length;
+    this.syslog(
+      "get_members_by_type hydrated missing display names",
+      stringify({
+        uid: this.uid,
+        type: context.type,
+        page: context.page,
+        total: rows.length,
+        missing_display: ids.length,
+        resolved,
+      })
+    );
+
+    return rows.map((member) =>
+      this._mergeLiveProfileName(
+        member,
+        profiles.get(this._cleanMemberName(member.id))
+      )
     );
   }
 

@@ -4,6 +4,68 @@
 const { Entity } = require('@drumee/server-core');
 const { RedisStore, Attr, toArray } = require('@drumee/server-essentials');
 
+function firstValue(...values) {
+  for (const value of values) {
+    if (value === undefined || value === null) continue;
+    if (typeof value === 'string' && value.trim() === '') continue;
+    return value;
+  }
+  return undefined;
+}
+
+function mapNotificationRow(r) {
+  const item = {
+    category: r.category,
+    key_id: r.category === 'media' ? firstValue(r.hub_id, r.key_id) : r.key_id,
+    hub_id: r.hub_id,
+    nid: r.nid,
+    parent_id: r.parent_id,
+    filename: r.filename || r.hubname || r.surname,
+    last_id: r.last_id,
+    cnt: r.cnt,
+    ctime: r.ctime,
+    firstname: r.firstname,
+    lastname: r.lastname,
+    surname: r.surname,
+    email: r.email,
+    status: r.status,
+    contact_id: r.contact_id,
+    drumate_id: r.drumate_id,
+    guest_id: r.guest_id,
+    area: r.area,
+    tag_id: r.tag_id,
+    author_id: r.author_id,
+    author_firstname: r.author_firstname,
+    author_lastname: r.author_lastname,
+    author_email: r.author_email,
+  };
+
+  if (r.category === 'media') {
+    const targetName = firstValue(
+      r.folder_name,
+      r.target_name,
+      r.filename,
+      r.link_label,
+      r.hubname,
+      r.surname
+    );
+    item.event = firstValue(r.event, 'media.new');
+    item.nid = firstValue(r.target_nid, r.folder_nid, r.nid);
+    item.parent_id = firstValue(r.target_parent_id, r.parent_id, r.pid, '0');
+    item.filetype = firstValue(r.target_filetype, r.filetype, 'folder');
+    item.target_filetype = item.filetype;
+    item.item_filetype = firstValue(r.item_filetype, r.uploaded_filetype, r.src_filetype);
+    item.filename = targetName;
+    item.link_label = targetName;
+    item.author_id = firstValue(r.author_id, r.owner_id, r.drumate_id);
+    item.author_firstname = firstValue(r.author_firstname, r.firstname);
+    item.author_lastname = firstValue(r.author_lastname, r.lastname);
+    item.author_email = firstValue(r.author_email, r.email);
+  }
+
+  return item;
+}
+
 class MfsActivity extends Entity {
 
 
@@ -306,30 +368,7 @@ class MfsActivity extends Entity {
       refused = toArray(await this._callUserProc('notification_contact_refused'));
     } catch (_) { }
     const items = [
-      ...rows.map((r) => ({
-        category: r.category,
-        key_id: r.key_id,
-        hub_id: r.hub_id,
-        nid: r.nid,
-        filename: r.filename || r.hubname || r.surname,
-        last_id: r.last_id,
-        cnt: r.cnt,
-        ctime: r.ctime,
-        firstname: r.firstname,
-        lastname: r.lastname,
-        surname: r.surname,
-        email: r.email,
-        status: r.status,
-        contact_id: r.contact_id,
-        drumate_id: r.drumate_id,
-        guest_id: r.guest_id,
-        area: r.area,
-        tag_id: r.tag_id,
-        author_id: r.author_id,
-        author_firstname: r.author_firstname,
-        author_lastname: r.author_lastname,
-        author_email: r.author_email,
-      })),
+      ...rows.map(mapNotificationRow),
       ...hubs.map((r) => {
         let meta = {};
         if (r.data) {

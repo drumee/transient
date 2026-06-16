@@ -329,8 +329,8 @@ class __private_desk extends Media {
     try {
       const hubs = toArray(
         await this.yp.await_query(
-          `SELECT id, db_name FROM entity
-           WHERE owner_id = ? AND type = 'hub' AND status = 'active'`,
+          `SELECT e.id, e.db_name FROM entity e JOIN hub h ON h.id = e.id
+           WHERE h.owner_id = ? AND e.type = 'hub' AND e.status = 'active'`,
           this.uid
         )
       );
