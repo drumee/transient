@@ -411,6 +411,11 @@
             "category": { "type": "string" },
             "key_id": { "type": "string" },
             "hub_id": { "type": "string" },
+            "nid": { "type": "string" },
+            "parent_id": { "type": "string" },
+            "filename": { "type": "string" },
+            "filetype": { "type": "string" },
+            "item_filetype": { "type": "string" },
             "last_id": { "type": "integer" },
             "cnt": { "type": "integer" },
             "ctime": { "type": "integer" }
