@@ -21,7 +21,7 @@ const {
 } = require("@drumee/server-essentials");
 const indexQueue = require("../offline/queues/indexQueue");
 const { writeAudit } = require("./private/_audit");
-const { secureShareWriteVerdict, secureShareCapVerdict } = require("./lib/secure-share-write-guard");
+const { secureShareWriteVerdict, secureShareCapVerdict, secureShareCapPrivilege } = require("./lib/secure-share-write-guard");
 const { DENIED } = Events;
 const {
   BATCH_FILE,
@@ -178,6 +178,39 @@ class __media extends Mfs {
    */
   async _secureShareWriteAllowed() {
     return this._secureShareCapAllowed(["can_edit"]);
+  }
+
+  /**
+   * For a folder LISTING served while still creator-bound (an anonymous secure-share
+   * viewer), resolve the privilege bitmask the per-node `privilege` must be clamped
+   * to, so nested folders display at the share's level instead of the creator's full
+   * privilege. Returns null when NOT a secure-share request (no token / legacy) → the
+   * caller must leave the listing untouched. Logged-in recipients are rebound to their
+   * own capped uid, so their listing privilege is already capped → this is a no-op for
+   * them. DISPLAY cap only. Recipient email resolved exactly as the write guard does.
+   */
+  async _secureShareCapPrivilege() {
+    const token = this.input.get(Attr.token);
+    if (!token) return null;
+    let email = "";
+    try {
+      const cookie = this.input.get(Attr.cookie) || {};
+      const regsid = cookie.regsid;
+      if (regsid) {
+        const guest_id = Cache.getSysConf("guest_id");
+        const u = await this.yp.await_proc("cookie_retrieve_user", regsid);
+        if (u && u.id && ![ID_NOBODY, guest_id].includes(u.id) && u.profile) {
+          const p = typeof u.profile === "string" ? JSON.parse(u.profile) : u.profile;
+          email = ((p && p.email) || "").toLowerCase().trim();
+        }
+      }
+    } catch (e) {
+      // fall through to the anonymous path
+    }
+    if (!email) {
+      email = (this.input.get("grant_email") || "").toLowerCase().trim();
+    }
+    return secureShareCapPrivilege(this.yp, token, email);
   }
 
   /**
@@ -1312,6 +1345,18 @@ class __media extends Mfs {
     if (file_nid) {
       data = toArray(data).filter(item => item && item.nid === file_nid);
     }
+    // Secure-share listing: clamp each node's displayed privilege to the share's caps
+    // so an anonymous (still creator-bound) recipient does not see the creator's full
+    // privilege in nested folders. No token (normal desk listing) → capPriv null →
+    // data untouched. Logged-in recipients are already capped via their own grant, so
+    // the AND is a no-op for them. DISPLAY clamp only.
+    const capPriv = await this._secureShareCapPrivilege();
+    if (capPriv != null) {
+      data = toArray(data).map((n) => {
+        if (n && n.privilege != null) n.privilege = n.privilege & capPriv;
+        return n;
+      });
+    }
     this.output.list(data);
   }
 
@@ -1350,6 +1395,15 @@ class __media extends Mfs {
         file.filesize = nodes[0].total_size;
       }
       tree.push(file);
+    }
+    // Secure-share listing: clamp displayed per-node privilege to the share caps
+    // (same as show_node_by). Gated on the token → normal listings untouched.
+    const capPriv = await this._secureShareCapPrivilege();
+    if (capPriv != null) {
+      tree = tree.map((n) => {
+        if (n && n.privilege != null) n.privilege = n.privilege & capPriv;
+        return n;
+      });
     }
     this.output.data(tree);
   }

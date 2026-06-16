@@ -111,4 +111,64 @@ async function secureShareWriteVerdict(yp, token, recipientEmail) {
   return secureShareCapVerdict(yp, token, recipientEmail, ["can_edit"]);
 }
 
-module.exports = { secureShareWriteVerdict, secureShareCapVerdict };
+/**
+ * Resolve the privilege bitmask a secure-share recipient is capped to, for capping
+ * the per-node privilege returned by a folder LISTING (mfs_show_node_by). Used so a
+ * recipient who is still creator-bound (an anonymous viewer) does not see the
+ * creator's full per-node privilege in nested folders — the listing display is
+ * clamped to the share's level at every depth. (Logged-in recipients are rebound to
+ * their own capped uid, so their listing privilege is already capped and this is a
+ * no-op for them.) This is a DISPLAY cap only — server-side write enforcement is the
+ * separate token guards / capped-principal binding.
+ *
+ * Uses the CLIENT cumulative scale (matches dmz.js::_loginSecureShare CAP_PRIVILEGE
+ * and the node `privilege` field): view/read=3, +download=7, +edit=15. can_chat adds
+ * no bit (chat is gated by the can_chat flag, not the privilege bitmask).
+ *
+ * @returns {Promise<null|number>} null → NOT a secure share (no token / legacy /
+ *   invalid) → caller must NOT cap; otherwise the cumulative privilege bitmask.
+ */
+async function secureShareCapPrivilege(yp, token, recipientEmail) {
+  if (!token) return null;
+  let info;
+  try {
+    info = toArray(await yp.await_proc("secure_share_info", token))[0];
+  } catch (e) {
+    return null; // cannot classify → do not cap (transient); behaviour unchanged
+  }
+  if (!info || info.failed || !info.creator_id) return null;
+  // Revoked/expired/locked → the listing should not be serving content anyway; don't
+  // touch the privilege here (DMZ login already gates validity). null = no cap.
+  if (info.validity && info.validity !== "TICKET_OK") return null;
+
+  let caps = parseCaps(info.capabilities);
+  if (!caps.length && info.permission_level && info.permission_level !== "can_view") {
+    caps = [info.permission_level];
+  }
+  // Union this recipient's approved access grants (a view-only base share may have
+  // an upgraded recipient). Keyed by the resolved recipient email; anonymous → none.
+  const email = (recipientEmail || "").toLowerCase().trim();
+  if (email) {
+    try {
+      const grants = toArray(
+        await yp.await_proc("secure_share_get_access_grant", token, email)
+      );
+      for (const g of grants) {
+        const raw = g && g.granted_level;
+        if (!raw) continue;
+        for (const lvl of String(raw).split(",").map((s) => s.trim()).filter(Boolean)) {
+          if (caps.indexOf(lvl) === -1) caps.push(lvl);
+        }
+      }
+    } catch (e) {
+      /* base caps only */
+    }
+  }
+
+  let capPriv = 0b0000011; // view / read baseline
+  if (caps.indexOf("can_download") !== -1) capPriv |= 0b0000111; // + download
+  if (caps.indexOf("can_edit") !== -1) capPriv |= 0b0001111;     // + edit/modify
+  return capPriv;
+}
+
+module.exports = { secureShareWriteVerdict, secureShareCapVerdict, secureShareCapPrivilege };
