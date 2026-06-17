@@ -303,6 +303,14 @@ class __dmz extends Mfs {
         if (!submittedEmail) {
           return this.output.data({ ...safeInfo, status: 'REQUIRED_EMAIL', is_secure: 1 });
         }
+        // "Require email to view" with no allow-list (Mode 1) accepts ANY email, so the
+        // submitted value must at least be a real email format — _emailMatchesAllowed
+        // returns true for any string when there is no list. The recipient UI already
+        // validates the format; this is the server-side guard against a crafted call.
+        // (List/legacy shares implicitly enforce format via the exact/domain match below.)
+        if (!submittedEmail.isEmail()) {
+          return this.output.data({ status: 'EMAIL_MISMATCH', is_secure: 1 });
+        }
         if (!_emailMatchesAllowed(submittedEmail, info)) {
           return this.output.data({ status: 'EMAIL_MISMATCH', is_secure: 1 });
         }
