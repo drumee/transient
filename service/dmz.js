@@ -609,6 +609,23 @@ class __dmz extends Mfs {
       }
     }
 
+    // ANONYMOUS recipients stay creator-bound (so they can READ the shared node),
+    // but must be read-only. Stamp a privilege ceiling on this session bound to the
+    // bound uid (= creator). get_session_priv_ceiling() returns it ONLY while
+    // cookie.uid still equals ceiling_uid, so it self-clears if this visitor later
+    // signs up / logs in (their uid changes). router/rest enforces a read-only
+    // allowlist whenever a ceiling is present. Gated on !isAuthenticated so the owner
+    // (authenticated, also creator-bound) and logged-in recipients (rebound to their
+    // own capped uid + node grant) are NEVER clamped. If this fails we fall back to
+    // today's behaviour (creator-bound, no ceiling) — no regression.
+    if (!isAuthenticated && bindUid) {
+      try {
+        await this.yp.await_proc('set_session_priv_ceiling', this.input.sid(), 3, bindUid);
+      } catch (e) {
+        this.warn('[dmz.login] secure_share set_session_priv_ceiling failed:', e && e.message);
+      }
+    }
+
     return this.output.data({
       ...user,
       ...info,
