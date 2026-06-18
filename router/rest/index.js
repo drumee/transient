@@ -26,6 +26,10 @@ let LOCKED = false;
 // read/anonymous src yet still MUTATE (a threshold alone would miss them — e.g.
 // channel.post posts chat AS the creator). Audited across all acl/*.json 2026-06-18.
 const READ_LEVEL = permissionValue("read");
+// Stored cumulative privilege (lib/privilege.js) for the chat cap — a chat-ceiling
+// session may post to a folder conversation (channel.post); a lower (read-only)
+// ceiling may not. Recipients never get a ceiling above this (edit = no ceiling).
+const CHAT_CEILING = 7;
 const SECURE_SHARE_READONLY_DENYLIST = new Set([
   // chat / channel — read-src, mutate or impersonate the creator
   "channel.post", "channel.delete", "channel.post_ticket", "channel.send_ticket",
@@ -294,8 +298,15 @@ class Acl {
           try {
             const ceiling = await session.yp.await_func("get_session_priv_ceiling", session.sid());
             if (ceiling != null) {
-              worker.stop();
-              return session.exception.unauthorized(`SECURE_SHARE_READ_ONLY:${service}`);
+              // A chat ceiling (>=7) permits posting to a folder conversation
+              // (channel.post) while still denying file-writes/calls/invite; a
+              // read-only ceiling (3) denies channel.post too. Everything else stays
+              // denied for any ceiling.
+              const chatPostAllowed = (ceiling >= CHAT_CEILING && service === "channel.post");
+              if (!chatPostAllowed) {
+                worker.stop();
+                return session.exception.unauthorized(`SECURE_SHARE_READ_ONLY:${service}`);
+              }
             }
           } catch (e) {
             console.warn("[acl] secure-share ceiling check failed (fail-open):", e && e.message);

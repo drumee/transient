@@ -570,6 +570,11 @@ class __dmz extends Mfs {
     // at the top of this method).
     // ---------------------------------------------------------------------
     let bindUid = info.creator_id;
+    // Privilege ceiling to stamp on THIS share session (enforced by router/rest):
+    // anonymous = read-only (3); a signed-in NON-member recipient gets their cap level
+    // (view/download 3, chat 7) so the gate clamps the grant's over-reach; edit (15) and
+    // owner/member get NO ceiling (full / own access). null = no clamp.
+    let ceilingToStamp = !isAuthenticated ? 3 : null;
     if (isAuthenticated && user.id && !info.file_nid && info.node_id) {
       if (memberPriv > 0 || String(user.id) === String(info.creator_id)) {
         // Member or owner — already has standing access; operate as themselves.
@@ -587,6 +592,10 @@ class __dmz extends Mfs {
               info.node_id, user.id, 0, grantPriv, 'system', 'Secure share access'
             );
             bindUid = user.id;            // rebind ONLY after the grant succeeds
+            // Clamp view/download (3) and chat (7) recipients with a session ceiling so
+            // router/rest denies file-writes (the node grant alone can't — chat grant 7
+            // carries the write bit). Edit (15) = full edit intended → no ceiling.
+            if (grantPriv < 0b0001111) ceilingToStamp = grantPriv;
           }
         } catch (e) {
           this.warn('[dmz.login] secure_share node grant failed; keeping creator binding:', e && e.message);
@@ -609,18 +618,18 @@ class __dmz extends Mfs {
       }
     }
 
-    // ANONYMOUS recipients stay creator-bound (so they can READ the shared node),
-    // but must be read-only. Stamp a privilege ceiling on this session bound to the
-    // bound uid (= creator). get_session_priv_ceiling() returns it ONLY while
-    // cookie.uid still equals ceiling_uid, so it self-clears if this visitor later
-    // signs up / logs in (their uid changes). router/rest enforces a read-only
-    // allowlist whenever a ceiling is present. Gated on !isAuthenticated so the owner
-    // (authenticated, also creator-bound) and logged-in recipients (rebound to their
-    // own capped uid + node grant) are NEVER clamped. If this fails we fall back to
-    // today's behaviour (creator-bound, no ceiling) — no regression.
-    if (!isAuthenticated && bindUid) {
+    // Stamp the session privilege ceiling computed above (read-only 3 / chat 7), bound
+    // to bindUid. get_session_priv_ceiling() returns it ONLY while cookie.uid still
+    // equals ceiling_uid, so it self-clears if an anonymous visitor later signs up (uid
+    // changes). router/rest enforces it: read-only (3) denies ALL mutations incl
+    // channel.post; chat (7) additionally PERMITS channel.post (text chat) while still
+    // denying file-writes/calls/invite. The ceiling lands on THIS share session's sid
+    // (the hub cookie — page.js gives it an independent sid), so a signed-in recipient's
+    // main account (regsid) is never clamped. Owner/member/edit → ceilingToStamp null →
+    // no clamp. Best-effort; on failure we keep the prior (un-clamped) binding.
+    if (ceilingToStamp != null && bindUid) {
       try {
-        await this.yp.await_proc('set_session_priv_ceiling', this.input.sid(), 3, bindUid);
+        await this.yp.await_proc('set_session_priv_ceiling', this.input.sid(), ceilingToStamp, bindUid);
       } catch (e) {
         this.warn('[dmz.login] secure_share set_session_priv_ceiling failed:', e && e.message);
       }
