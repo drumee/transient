@@ -296,7 +296,12 @@ class Acl {
           || SECURE_SHARE_READONLY_DENYLIST.has(service);
         if (mightMutate) {
           try {
-            const ceiling = await session.yp.await_func("get_session_priv_ceiling", session.sid());
+            // get_session_priv_ceiling is a PROCEDURE (CREATE FUNCTION is restricted
+            // under binary logging on the replicated DB; procedures are not) → await_proc.
+            // It SELECTs a single row {priv_ceiling}; null when unset or uid != ceiling_uid.
+            let _row = await session.yp.await_proc("get_session_priv_ceiling", session.sid());
+            if (Array.isArray(_row)) _row = _row[0];
+            const ceiling = (_row && _row.priv_ceiling != null) ? _row.priv_ceiling : null;
             if (ceiling != null) {
               // A chat ceiling (>=7) permits posting to a folder conversation
               // (channel.post) while still denying file-writes/calls/invite; a
