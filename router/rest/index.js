@@ -19,6 +19,26 @@ let Workers = new Map();
 let Plugins = new Map();
 let LOCKED = false;
 
+// A3 secure-share: anonymous recipients carry a read-only session privilege ceiling
+// (set in dmz.js _loginSecureShare via set_session_priv_ceiling). When a ceiling is
+// present, mutating operations are denied. A `permission.src > read` threshold catches
+// every write/delete/admin/owner service; the denylist below catches services that are
+// read/anonymous src yet still MUTATE (a threshold alone would miss them — e.g.
+// channel.post posts chat AS the creator). Audited across all acl/*.json 2026-06-18.
+const READ_LEVEL = permissionValue("read");
+const SECURE_SHARE_READONLY_DENYLIST = new Set([
+  // chat / channel — read-src, mutate or impersonate the creator
+  "channel.post", "channel.delete", "channel.post_ticket", "channel.send_ticket",
+  "channel.bookmark_add", "channel.bookmark_remove", "chat.attachment",
+  // file copy / restore — read-src, mutate / exfil
+  "media.copy", "media.copy_all", "media.restore", "media.restore_into", "media.mark_as_seen",
+  // calls / conferences / rooms — read or anon src; recipients get no calls
+  "conference.join", "conference.leave", "conference.update", "conference.accept", "conference.decline",
+  "room.join", "room.leave", "room.requestAccess", "room.request_screen_access",
+  // transferbox — read/anon src, mutate
+  "transfer.delete", "transfer.remove", "transfer.send_otp",
+]);
+
 
 /**
  *
@@ -262,7 +282,25 @@ class Acl {
         Workers.set(path, WorkerClass);
       }
       worker = new WorkerClass({ session, permission });
-      worker.once(GRANTED, function () {
+      worker.once(GRANTED, async function () {
+        // A3: enforce the read-only ceiling for secure-share recipient sessions.
+        // Only look up the ceiling when this service COULD mutate (write+ src, or a
+        // read/anon-src mutator) → normal read traffic adds no DB cost. Fail-OPEN on
+        // lookup error so a missing SP / DB hiccup degrades to today's behaviour and
+        // never blocks all writes. Self-clears via uid==ceiling_uid in the SP.
+        const mightMutate = (permission && permission.src > READ_LEVEL)
+          || SECURE_SHARE_READONLY_DENYLIST.has(service);
+        if (mightMutate) {
+          try {
+            const ceiling = await session.yp.await_func("get_session_priv_ceiling", session.sid());
+            if (ceiling != null) {
+              worker.stop();
+              return session.exception.unauthorized(`SECURE_SHARE_READ_ONLY:${service}`);
+            }
+          } catch (e) {
+            console.warn("[acl] secure-share ceiling check failed (fail-open):", e && e.message);
+          }
+        }
         const need = worker.before_granting;
         if (isFunction(worker[need])) {
           try {
