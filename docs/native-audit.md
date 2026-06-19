@@ -30,7 +30,16 @@ expected need for a real host to validate.
 
 ## Real gaps / risks (native-specific, actionable)
 
-### 1. debconf → env bridge missing on the metapackage path (HIGH)
+### 1. debconf → env bridge missing on the metapackage path (HIGH) — ✅ FIXED
+
+> **Fixed:** `drumee-infra` now ships `debian/templates` (registers the
+> `drumee-infra/*` questions), `debian/config` (prompts; preseed answers used
+> as-is), and a `debian/postinst` that `db_get`s every answer and `export`s the
+> matching `DRUMEE_*` var (same mapping as the bootstrap wizard) before running
+> `setup-infra/bin/install` — and aborts with a clear message if the domain is
+> empty instead of silently failing. Guarded by `tests/native/control-deps.sh`.
+> Still needs a Debian VM to confirm the end-to-end install. Original analysis:
+
 `infra.js` reads the domain/admin/paths from **environment variables**
 (`process.env.DRUMEE_DOMAIN_NAME`, …; `infra.js:25-42`). With no domain it
 **silently `exit(0)`s** (`infra.js:349`) → `drumee.sh` is never written → `bin/install`

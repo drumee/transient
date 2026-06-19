@@ -63,6 +63,26 @@ for c in drumee-infra drumee-schemas drumee-static drumee-server-pod drumee-ui-p
   has "$M" "$c" && ok "meta Depends $c" || no "meta missing $c"
 done
 
+printf '\033[1;36m── native: drumee-infra registers debconf + bridges to env\033[0m\n'
+[ -f infra/debian/templates ] && grep -q '^Template: drumee-infra/domain' infra/debian/templates \
+  && ok "infra ships debconf templates" || no "infra/debian/templates missing drumee-infra/domain"
+[ -x infra/debian/config ]                 && ok "infra ships an executable config script" || no "infra/debian/config missing or not executable"
+grep -q 'db_get drumee-infra/domain' infra/debian/postinst \
+  && ok "postinst reads debconf drumee-infra/domain" || no "postinst does not read the debconf domain"
+grep -q 'export DRUMEE_DOMAIN_NAME=' infra/debian/postinst \
+  && ok "postinst exports DRUMEE_DOMAIN_NAME for infra.js" || no "postinst does not export DRUMEE_DOMAIN_NAME"
+grep -q 'setup-infra/bin/install' infra/debian/postinst \
+  && ok "postinst runs bin/install after bridging" || no "postinst does not run bin/install"
+# Every debconf-sourced var the bootstrap wizard exports is also exported by the
+# postinst bridge. IP vars are excluded: the wizard scans/prompts for them, but
+# the metapackage path lets infra.js auto-detect addresses (getAddresses).
+miss=0
+for v in $(grep -oE 'export [A-Z_0-9]+' builder/src/setup/menu/install.sh | awk '{print $2}' | sort -u); do
+  case "$v" in PUBLIC_IP*|PRIVATE_IP*) continue;; esac
+  grep -q "export $v" infra/debian/postinst || { no "postinst missing export $v (wizard sets it)"; miss=1; }
+done
+[ "$miss" = 0 ] && ok "postinst exports every debconf-sourced var the wizard does"
+
 printf '\033[1;36m── native: debconf preseed keys all have templates\033[0m\n'
 tmpl=$(grep -rhoE '^Template: [^[:space:]]+' */debian/templates 2>/dev/null | awk '{print $2}' | sort -u)
 cfg=$(mktemp); cat > "$cfg" <<YAML
