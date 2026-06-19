@@ -7,5 +7,5 @@ Homepage: https://drumee.org
 
 Package: drumee-ui-pod
 Architecture: all
-Depends: ${misc:Depends}, binutils, nodejs, git
+Depends: ${misc:Depends}, binutils, nodejs, git, drumee-server-pod
 Description: Drumee User Interface

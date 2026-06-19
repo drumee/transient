@@ -7,5 +7,5 @@ Homepage: https://drumee.com
 
 Package: drumee-static
 Architecture: all
-Depends: ${misc:Depends}, binutils, nodejs, git
+Depends: ${misc:Depends}, binutils, nodejs, git, drumee-infra
 Description: Drumee Static Files

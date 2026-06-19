@@ -8,5 +8,5 @@ Homepage: https://drumee.com
 Package: drumee-schemas
 Architecture: all
 Depends: ${misc:Depends}, binutils, nodejs, 
-    mariadb-server, mariadb-client
+    mariadb-server, mariadb-client, drumee-infra
 Description: Drumee Schemas
