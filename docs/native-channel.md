@@ -38,11 +38,32 @@ scripts/publish-apt.sh --debs=./out-debs --out=./apt-repo --suite=stable --key=s
 - **Signing key** — a project (not personal) GPG key in the publishing
   environment; CI publishes with it (Phase 5).
 
-## Known TODO — install ordering
+## Install ordering (resolved)
 
-`apt` resolves the metapackage's `Depends` but does not guarantee *configuration*
-order beyond dependency edges. The components have implicit ordering
-(`infra → schemas → static → server → ui`). To make ordering robust, add explicit
-inter-package `Depends`/`Pre-Depends` (e.g. `drumee-schemas` Depends `drumee-infra`)
-in each component's `debian/control`. Tracked as a follow-up; today the documented
-manual order (see [deployment.md](deployment.md)) and the metapackage cover most cases.
+`apt` configures a package only after the packages it `Depends` on, so the
+components now encode the required order (`infra → schemas → static → server → ui`)
+with explicit inter-package dependencies in each `debian/control`:
+
+| Package | Depends (ordering) |
+|---|---|
+| `drumee-infra` | — (base) |
+| `drumee-schemas` | `drumee-infra` |
+| `drumee-static` | `drumee-infra` |
+| `drumee-server-pod` | `drumee-schemas`, `drumee-static` |
+| `drumee-ui-pod` | `drumee-server-pod` |
+
+So `apt install drumee` (or installing the components in any order) configures
+them in dependency order without relying on the command-line order.
+
+## Still blocked for a real build/validation here
+
+Building the `.deb`s and validating the install end-to-end needs inputs not
+present in this checkout (they live in the Drumee build environment):
+
+| Input | Needed by | Status |
+|---|---|---|
+| Private `@drumee` npm auth (or pre-installed `node_modules`) | every component (`bundle()` runs `npm i`) | only `infra`/`server`/`ui`/`schemas` checkouts have `node_modules`; `setup-schemas` does not |
+| **Seeds archive** (`seeds.tgz`, a `mariabackup` physical backup) | `drumee-schemas` build | absent |
+| **`static` source repo** | `drumee-static` build | absent |
+| A **project GPG key** | signed `.deb`s + APT `Release` | absent (build unsigned with `-us -uc` for testing) |
+| A disposable **Debian VM/systemd container** | running the host-reconfiguring postinst | required for true validation |

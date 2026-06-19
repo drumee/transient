@@ -1,5 +1,5 @@
 #!/bin/sh
-# postinst script for drumee
+# postinst script for drumee-infra
 #
 # see: dh_installdeb(1)
 
@@ -16,15 +16,45 @@ set -e
 #          <conflicting-package> <version>
 # for details, see https://www.debian.org/doc/debian-policy/ or
 # the debian-policy package
-# Source debconf library.
+
+# Bridge the debconf answers (drumee-infra/*) into the DRUMEE_* environment
+# variables that setup-infra/infra.js reads. Without this, infra.js gets an
+# empty domain and silently exit(0)s, so `apt install drumee` (+ preseed) never
+# configures. This mirrors the drumee-bootstrap wizard (setup/menu/install.sh).
+bridge_debconf_env() {
+    . /usr/share/debconf/confmodule
+    db_get drumee-infra/description      || true; export DRUMEE_DESCRIPTION="$RET"
+    db_get drumee-infra/domain           || true; export DRUMEE_DOMAIN_NAME="$RET"
+    db_get drumee-infra/local_mode       || true; export LOCAL_MODE="$RET"
+    db_get drumee-infra/service          || true; export SERVICES="$RET"
+    db_get drumee-infra/admin_email      || true; export ADMIN_EMAIL="$RET"
+    db_get drumee-infra/acme_email       || true; export ACME_EMAIL_ACCOUNT="$RET"
+    db_get drumee-infra/db_dir           || true; export DRUMEE_DB_DIR="$RET"
+    db_get drumee-infra/data_dir         || true; export DRUMEE_DATA_DIR="$RET"
+    db_get drumee-infra/backup_location  || true; export BACKUP_LOCATION="$RET"
+    db_get drumee-infra/exchange_location|| true; export EXCHANGE_LOCATION="$RET"
+    OWN_SSL=""
+    db_get drumee-infra/own_ssl || true
+    if [ "$RET" = "true" ]; then db_get drumee-infra/own_ssl_path || true; OWN_SSL="$RET"; fi
+    export OWN_SSL
+    # Release the debconf channel before the long-running installer.
+    db_stop
+}
 
 case "$1" in
     configure)
     echo "Configuring Drumee Infrastructure"
+    bridge_debconf_env
+    if [ -z "$DRUMEE_DOMAIN_NAME" ]; then
+        echo "drumee-infra: no domain configured (debconf drumee-infra/domain is empty)." >&2
+        echo "  Preseed it first, e.g.: debconf-set-selections < install.conf  (from: render.mjs debconf)" >&2
+        exit 1
+    fi
     /var/lib/drumee/setup-infra/bin/install
     ;;
 
     reconfigure)
+    bridge_debconf_env
     node /var/lib/drumee/setup-infra/index.js --force-install=1
     ;;
 

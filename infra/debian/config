@@ -1,0 +1,42 @@
+#!/bin/sh
+# debconf config script for drumee-infra.
+# Asks the infrastructure questions (domain, admin, paths, TLS). Preseeded answers
+# (debconf-set-selections / install.conf from `render.mjs debconf`) are used as-is;
+# only unanswered questions are prompted. The postinst then bridges the answers
+# into the DRUMEE_* environment variables that setup-infra/infra.js reads.
+set -e
+. /usr/share/debconf/confmodule
+
+db_input high drumee-infra/description || true
+db_input high drumee-infra/domain || true
+db_go || true
+
+db_get drumee-infra/domain || true
+if [ "$RET" = "local" ]; then
+  db_input high drumee-infra/local_mode || true
+else
+  db_input medium drumee-infra/service || true
+fi
+db_go || true
+
+db_input high drumee-infra/admin_email || true
+db_go || true
+# default the ACME account to the admin email
+db_get drumee-infra/admin_email || true
+[ -n "$RET" ] && db_set drumee-infra/acme_email "$RET" || true
+db_input high drumee-infra/acme_email || true
+
+db_input medium drumee-infra/db_dir || true
+db_input medium drumee-infra/data_dir || true
+db_input medium drumee-infra/backup_location || true
+db_input medium drumee-infra/exchange_location || true
+db_input low drumee-infra/own_ssl || true
+db_go || true
+
+db_get drumee-infra/own_ssl || true
+if [ "$RET" = "true" ]; then
+  db_input high drumee-infra/own_ssl_path || true
+  db_go || true
+fi
+
+exit 0
