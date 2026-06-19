@@ -28,7 +28,9 @@ const fsp = require('fs').promises;
 const { join, extname } = require('path');
 const { createHash } = require('crypto');
 const { google } = require('googleapis');
-const { isCancelled } = require('../../queues/migrationQueue');
+const migrationQueue = require('../../queues/migrationQueue');
+const { isCancelled } = migrationQueue;
+const { withDriveRetry, classifyDriveError } = require('./retry');
 const { googleDriveCredentials, googleDriveServiceAccount } = require('../../../service/lib/google_credentials');
 
 const PROGRESS_BATCH = 5;
@@ -48,6 +50,34 @@ const DRIVE_HTTP_TIMEOUT_MS = 120000;
 // folder where every child fails NOT_GRANTED) can't bloat job.returnvalue,
 // which is JSON-serialized into Redis. The TRUE total is tracked in errorCount.
 const MAX_ERRORS = 200;
+// File-level download concurrency WITHIN one job. The Bull worker already runs
+// 2 jobs at once (gdriveWorker CONCURRENCY), so 2 × this bounds simultaneous
+// Drive downloads — kept conservative (Drive rate-limits aggressively, and the
+// retry layer absorbs the rest). FOLDER creation stays serial; only regular
+// files inside a folder run through the pool.
+const FILE_CONCURRENCY = Math.min(8, Math.max(1, parseInt(process.env.GDRIVE_FILE_CONCURRENCY || '4', 10)));
+// Resume set TTL — mirrors the cancellation sentinel; a job that outlives 1h
+// no longer needs cross-attempt resume state.
+const DONE_TTL_SEC = 3600;
+
+/**
+ * Minimal promise semaphore (no dependency). Returns a `limit(fn)` that runs at
+ * most `max` fns concurrently, queueing the rest. Used to bound file downloads.
+ */
+function makeSemaphore(max) {
+  let active = 0;
+  const queue = [];
+  const pump = () => {
+    if (active >= max || queue.length === 0) return;
+    active += 1;
+    const { fn, resolve, reject } = queue.shift();
+    Promise.resolve().then(fn).then(resolve, reject).finally(() => {
+      active -= 1;
+      pump();
+    });
+  };
+  return (fn) => new Promise((resolve, reject) => { queue.push({ fn, resolve, reject }); pump(); });
+}
 
 class GoogleDriveImporter {
   /**
@@ -66,6 +96,17 @@ class GoogleDriveImporter {
     this._cancelled = false;
     // Token cache populated lazily; refreshed when expires_at - safety < now.
     this._tokenCache = null;          // { access_token, expires_at }
+    // Single-flight guard: collapse N concurrent token refreshes (file pool)
+    // into one in-flight promise so they don't race the cache / oauth row.
+    this._tokenRefreshing = null;
+    // Bounded file-download pool (folder recursion stays serial).
+    this._limit = makeSemaphore(FILE_CONCURRENCY);
+    // Resume set: Drive item.ids already durably imported. Seeded from Redis in
+    // run() so a retry/crash skips finished files instead of re-doing them.
+    this._done = new Set();
+    this._doneKey = null;
+    // Progress is flushed every PROGRESS_BATCH completions across the pool.
+    this._completedSinceUpdate = 0;
     // Per-job scratch dir — wiped on completion to avoid /tmp growing
     // unboundedly across migrations. Set in run() once job.id is known.
     this._scratchDir = null;
@@ -93,6 +134,17 @@ class GoogleDriveImporter {
     // jobs and also walls off cross-job cache leaks.
     this._scratchDir = join('/tmp', `gdrive-job-${this.job.id}`);
     await fsp.mkdir(this._scratchDir, { recursive: true });
+
+    // Seed the resume set: Drive ids durably imported in a PRIOR attempt of this
+    // same job (Bull retry / worker crash-restart). Best-effort — a Redis miss
+    // just means re-importing (still idempotent via node_id_from_path). Keep
+    // processedFiles at 0: the re-walk re-counts as it skips done files, so the
+    // progress numbers stay self-consistent (no double-count of seeded totals).
+    this._doneKey = `gdrive:done:${this.job.id}`;
+    try {
+      const ids = await migrationQueue.client.smembers(this._doneKey);
+      this._done = new Set(ids || []);
+    } catch (_) { this._done = new Set(); }
 
     // Prime the token cache — throws NEEDS_RECONNECT if no refresh_token.
     // Subsequent Drive calls use `_getFreshToken()` which lazily refreshes.
@@ -182,6 +234,11 @@ class GoogleDriveImporter {
       }
     }
 
+    // Terminal completion (success OR user-cancel — both reach here; a thrown /
+    // timed-out attempt does NOT, so the resume set survives for the retry).
+    // Clear the resume set now that this job is done with it.
+    try { await migrationQueue.client.del(this._doneKey); } catch (_) {}
+
     // Bull will use this object as `job.returnvalue` on the 'completed'
     // event. The FE reads it via `get_status`.
     return {
@@ -208,6 +265,22 @@ class GoogleDriveImporter {
     if (this._tokenCache && this._tokenCache.expires_at - TOKEN_SAFETY_SEC > now) {
       return this._tokenCache.access_token;
     }
+    // Single-flight: under the file pool, N tasks can all miss the cache at
+    // once. Each refreshing would race the _tokenCache write AND (OAuth path)
+    // write-skew the shared oauth_accounts row — the exact token-clobber class a
+    // prior fix closed. Share ONE in-flight refresh across all callers; it spans
+    // BOTH the SA jwt.authorize and the OAuth SELECT+refresh+UPDATE branches.
+    if (this._tokenRefreshing) return this._tokenRefreshing;
+    this._tokenRefreshing = this._refreshToken(now)
+      .finally(() => { this._tokenRefreshing = null; });
+    return this._tokenRefreshing;
+  }
+
+  /**
+   * The actual SA/OAuth refresh. Never call directly — always go through
+   * _getFreshToken so concurrent refreshes collapse into one (single-flight).
+   */
+  async _refreshToken(now) {
     // Service-account jobs (whole-folder import via share-to-SA): the SA
     // reads with its OWN auth — no oauth_accounts row involved at all.
     if (this.data.auth_kind === 'sa') {
@@ -298,14 +371,17 @@ class GoogleDriveImporter {
         params.includeItemsFromAllDrives = true;
         params.corpora = 'allDrives';
       }
-      // Re-read token before EACH page so a long pagination doesn't 401
-      // halfway through a 10k-file folder.
-      const accessToken = await this._getFreshToken();
-      const res = await axios.get('https://www.googleapis.com/drive/v3/files', {
-        headers: { Authorization: `Bearer ${accessToken}` },
-        params,
-        timeout: DRIVE_HTTP_TIMEOUT_MS,
-      });
+      // Re-read token before EACH page (inside the retried fn) so a long
+      // pagination doesn't 401 halfway through a 10k-file folder; a 429/5xx on a
+      // page now backs off + retries instead of abandoning the whole folder.
+      const res = await withDriveRetry(async () => {
+        const accessToken = await this._getFreshToken();
+        return axios.get('https://www.googleapis.com/drive/v3/files', {
+          headers: { Authorization: `Bearer ${accessToken}` },
+          params,
+          timeout: DRIVE_HTTP_TIMEOUT_MS,
+        });
+      }, { onAuth: () => { this._tokenCache = null; }, isCancelled: () => this._checkCancelled() });
       items.push(...(res.data.files || []));
       pageToken = res.data.nextPageToken;
     } while (pageToken);
@@ -317,12 +393,14 @@ class GoogleDriveImporter {
    * name/mimeType itself — never trusts client-supplied names.
    */
   async _getMeta(id) {
-    const token = await this._getFreshToken();
-    const res = await axios.get(`https://www.googleapis.com/drive/v3/files/${id}`, {
-      headers: { Authorization: `Bearer ${token}` },
-      params: { fields: 'id, name, mimeType, size' },
-      timeout: DRIVE_HTTP_TIMEOUT_MS,
-    });
+    const res = await withDriveRetry(async () => {
+      const token = await this._getFreshToken();
+      return axios.get(`https://www.googleapis.com/drive/v3/files/${id}`, {
+        headers: { Authorization: `Bearer ${token}` },
+        params: { fields: 'id, name, mimeType, size' },
+        timeout: DRIVE_HTTP_TIMEOUT_MS,
+      });
+    }, { onAuth: () => { this._tokenCache = null; }, isCancelled: () => this._checkCancelled() });
     return res.data;
   }
 
@@ -394,8 +472,11 @@ class GoogleDriveImporter {
    * items, instead of a generic failure.
    */
   _grantCode(e, fallback) {
-    const status = e && e.response && e.response.status;
-    return (status === 403 || status === 404) ? 'NOT_GRANTED' : fallback;
+    // Only a genuine grant gap (403 non-rate / 404) is NOT_GRANTED. A
+    // rate-limited 403 whose retries were exhausted must NOT be mislabeled — it
+    // falls back to LIST_FAILED/IMPORT_FAILED so the FE doesn't tell the user to
+    // re-pick files that were merely throttled.
+    return classifyDriveError(e) === 'fatal_grant' ? 'NOT_GRANTED' : fallback;
   }
 
   async _traverse(opts) {
@@ -420,41 +501,90 @@ class GoogleDriveImporter {
       }
       return true;
     });
+    const FOLDER = 'application/vnd.google-apps.folder';
+    const subFolders = items.filter((i) => i.mimeType === FOLDER);
+    const files = items.filter((i) => i.mimeType !== FOLDER);
     this.totalFolders += 1;
-    this.totalFiles += items.filter((i) => i.mimeType !== 'application/vnd.google-apps.folder').length;
+    this.totalFiles += files.length;
     await this._pushProgress(opts);
 
-    let countSinceUpdate = 0;
-    for (const item of items) {
-      // Cancellation gate before EACH item — keeps the response time
-      // tight; was previously `>= PROGRESS_BATCH` which allowed up to 4
-      // more files to import after the user clicked Cancel.
+    // Folders FIRST, SERIALLY: a child node needs its parent to exist before
+    // creation, and _createFolder idempotency relies on ordered creation —
+    // never parallelize this.
+    for (const folder of subFolders) {
       if (await this._checkCancelled()) return;
-
-      if (item.mimeType === 'application/vnd.google-apps.folder') {
-        const subDestFolder = await this._createFolder(item.name, opts.destFolder, opts.hubDb, opts.userId);
-        await this._traverse({ ...opts, folderId: item.id, destFolder: subDestFolder });
-        // Propagate cancel upward from nested folder.
-        if (this._cancelled) return;
-        continue;
-      }
-
-      try {
-        await this._importItem(item, opts);
-        this.processedFiles += 1;
-        countSinceUpdate++;
-        // Only flush progress every PROGRESS_BATCH files to avoid hammering
-        // Redis for tiny per-file updates.
-        if (countSinceUpdate >= PROGRESS_BATCH) {
-          await this._pushProgress(opts, item.name);
-          countSinceUpdate = 0;
-        }
-      } catch (e) {
-        this._pushError({ file: item.name, code: 'IMPORT_FAILED', reason: e.message });
-        await this._pushProgress(opts);
-      }
+      const subDestFolder = await this._createFolder(folder.name, opts.destFolder, opts.hubDb, opts.userId);
+      await this._traverse({ ...opts, folderId: folder.id, destFolder: subDestFolder });
+      if (this._cancelled) return; // propagate cancel up from a nested folder
     }
-    if (countSinceUpdate > 0) await this._pushProgress(opts);
+
+    // Files: bounded-parallel through the instance semaphore. Downloads overlap;
+    // the per-folder DB create+resolve is race-safe because filenames are unique
+    // within a Drive folder (see _importItem id resolution). _importItemGuarded
+    // never rejects, so allSettled keeps siblings alive when one file fails.
+    const tasks = [];
+    for (const file of files) {
+      if (await this._checkCancelled()) break;       // stop DISPATCHING new work
+      tasks.push(this._limit(() => this._importItemGuarded(file, opts)));
+    }
+    await Promise.allSettled(tasks);                  // keep this frame alive until all settle
+    await this._pushProgress(opts);                   // flush the final partial batch
+    if (this._cancelled) return;
+  }
+
+  /**
+   * Pool task for one file: resume-skip, import, synchronous counter update,
+   * capped error capture, batched progress. NEVER rejects (paired with
+   * Promise.allSettled) so one bad file can't abort its folder's pool.
+   */
+  async _importItemGuarded(item, opts) {
+    if (this._cancelled) return;                      // drain fast once cancelled
+    // Already imported in a prior attempt of this job (keyed by Drive id) —
+    // skip the download + DB work, just account for it.
+    if (this._done.has(item.id)) {
+      this.processedFiles += 1;
+      this._onFileComplete(opts);
+      return;
+    }
+    try {
+      await this._importItem(item, opts);
+      this.processedFiles += 1;                       // synchronous, immediately post-await
+      await this._markDone(item.id);
+      this._onFileComplete(opts, item.name);
+    } catch (e) {
+      // A cancel-induced throw (download aborted mid-backoff) is not a real file
+      // error — don't pollute errors[] with it.
+      if (this._cancelled) return;
+      this._pushError({ file: item.name, code: this._grantCode(e, 'IMPORT_FAILED'), reason: e.message });
+      this._onFileComplete(opts);
+    }
+  }
+
+  /**
+   * Flush progress every PROGRESS_BATCH completions across the pool. The counter
+   * body is synchronous (no await) so concurrent callers can't interleave it;
+   * the progress write is fire-and-forget (it self-catches) to keep tasks short.
+   */
+  _onFileComplete(opts, currentFilename) {
+    this._completedSinceUpdate += 1;
+    if (this._completedSinceUpdate >= PROGRESS_BATCH) {
+      this._completedSinceUpdate = 0;
+      this._pushProgress(opts, currentFilename);
+    }
+  }
+
+  /**
+   * Record a file as durably imported: in-memory (this run's de-dup) + Redis
+   * (cross-attempt resume, TTL-bounded). One pipelined round-trip; best-effort.
+   */
+  async _markDone(itemId) {
+    this._done.add(itemId);
+    try {
+      await migrationQueue.client.multi()
+        .sadd(this._doneKey, itemId)
+        .expire(this._doneKey, DONE_TTL_SEC)
+        .exec();
+    } catch (_) { /* in-memory set still de-dups this run */ }
   }
 
   /**
@@ -562,35 +692,37 @@ class GoogleDriveImporter {
     const source = join(this._scratchDir, cacheKey);
 
     if (!existsSync(source)) {
-      // Always refresh token before the download — long downloads can
-      // outlive the token if we read it at start-of-job.
-      const accessToken = await this._getFreshToken();
-      // Atomic write: stream to `.part`, rename on full success. Without
-      // the rename gate, a mid-stream network drop leaves a truncated
-      // file at `source` that subsequent calls would happily re-use.
+      // Atomic write: stream to `.part`, rename on full success. The whole
+      // download (token fetch + GET + stream) is retried as a unit so a 429/5xx
+      // or a mid-stream ECONNRESET re-streams cleanly: createWriteStream
+      // truncates `.part` on each attempt, the rename runs only after a complete
+      // stream, and the token is re-read inside so a long download can't 401.
       const partFile = `${source}.part`;
-      const dl = await axios.get(downloadUrl, {
-        headers: { Authorization: `Bearer ${accessToken}` },
-        responseType: 'stream',
-        maxRedirects: 5,
-        timeout: DRIVE_HTTP_TIMEOUT_MS,
-      });
-      await new Promise((resolve, reject) => {
-        const out = createWriteStream(partFile);
-        let settled = false;
-        const done = (err) => {
-          if (settled) return;
-          settled = true;
-          if (err) {
-            try { unlinkSync(partFile); } catch (_) {}
-            reject(err);
-          } else resolve();
-        };
-        dl.data.on('error', done);
-        out.on('error', done);
-        out.on('finish', () => done(null));
-        dl.data.pipe(out);
-      });
+      await withDriveRetry(async () => {
+        const accessToken = await this._getFreshToken();
+        const dl = await axios.get(downloadUrl, {
+          headers: { Authorization: `Bearer ${accessToken}` },
+          responseType: 'stream',
+          maxRedirects: 5,
+          timeout: DRIVE_HTTP_TIMEOUT_MS,
+        });
+        await new Promise((resolve, reject) => {
+          const out = createWriteStream(partFile);
+          let settled = false;
+          const done = (err) => {
+            if (settled) return;
+            settled = true;
+            if (err) {
+              try { unlinkSync(partFile); } catch (_) {}
+              reject(err);
+            } else resolve();
+          };
+          dl.data.on('error', done);
+          out.on('error', done);
+          out.on('finish', () => done(null));
+          dl.data.pipe(out);
+        });
+      }, { onAuth: () => { this._tokenCache = null; }, isCancelled: () => this._checkCancelled() });
       // rename is atomic on the same filesystem — readers will only ever
       // see the complete file at `source`.
       await fsp.rename(partFile, source);
@@ -644,14 +776,17 @@ class GoogleDriveImporter {
     // return shape is unreliable in the worker). Match by (pid, name); fall
     // back to the most-recent non-folder child under pid — files are imported
     // sequentially within a job, so that's the one just created.
-    let nodeId = await this._findChildId(opts.hubDb, pid, filenameWithoutExt, false);
-    if (!nodeId) {
-      const rows = await opts.hubDb.await_query(
-        `SELECT id FROM media WHERE parent_id = ? AND category <> 'folder' ORDER BY id DESC LIMIT 1`,
-        pid
-      );
-      nodeId = (toArray(rows)[0] || {}).id || null;
-    }
+    // Resolve by (pid, name). The old "most-recent non-folder child under pid"
+    // fallback is REMOVED: under the file pool it could resolve a DIFFERENT
+    // file's id (wrong node). Name resolution is race-safe for DISTINCT names —
+    // the overwhelming common case in a folder. KNOWN LIMITATION: Google Drive
+    // permits two files with the SAME name in one folder; imported concurrently
+    // they both resolve to the first-created node (one ends up byte-less). The
+    // serial path skipped the 2nd via the path dedup above (when file_path is
+    // present); a future conflict-policy pass (rename/overwrite) is the proper
+    // fix. Accepted here over a per-folder write mutex, which would serialize
+    // every file's DB write and erode the concurrency win for a rare case.
+    const nodeId = await this._findChildId(opts.hubDb, pid, filenameWithoutExt, false);
     if (!nodeId) throw new Error(`could not resolve created file '${filenameWithoutExt}' under pid=${pid}`);
 
     const base = join(home_dir, '__storage__', nodeId);
