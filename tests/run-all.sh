@@ -49,5 +49,8 @@ run "drumee-ctl usage guard" "DRUMEE_DIR=/nonexistent bin/drumee-ctl bogus; test
 hdr "8. Installer wizard (render-only)"
 if tests/wizard-install.sh >/dev/null 2>&1; then good "wizard-install.sh"; else bad "wizard-install.sh"; fi
 
+hdr "9. Native channel packaging metadata"
+if tests/native/control-deps.sh >/dev/null 2>&1; then good "native/control-deps.sh"; else bad "native/control-deps.sh"; fi
+
 printf '\n\033[1m== %d passed, %d failed ==\033[0m\n' "$pass" "$fail"
 [ "$fail" = 0 ]
