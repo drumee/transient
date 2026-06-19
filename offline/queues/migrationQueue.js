@@ -73,7 +73,15 @@ const migrationQueue = new Queue('drumee:migration', {
       type: 'exponential',
       delay: 10000, // 10s → 20s → 40s
     },
-    timeout: 30 * 60 * 1000, // 30 min — long-running import
+    // No fixed per-job wall. A folder with up to 10,000 files legitimately
+    // runs well past any constant (even parallelized), and a 30-min guillotine
+    // killed such jobs mid-import → Bull re-ran from scratch on each of 3
+    // attempts → permanent failure (never reached 'completed'). Job liveness is
+    // instead guarded by lockDuration/lockRenewTime + stalledInterval/
+    // maxStalledCount above, by a PER-REQUEST axios timeout in the importer (so
+    // a hung Drive socket is reaped without a job-wide guillotine), and by the
+    // Redis cancellation sentinel for user-initiated stops.
+    timeout: 0,
     removeOnComplete: 100,   // keep last 100 for status polling after finish
     // Cap retained failures so Redis doesn't grow unbounded. Keep recent
     // ones (7 days / 200 max) for status polling + debugging; older ones

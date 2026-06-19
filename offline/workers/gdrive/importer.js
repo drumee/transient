@@ -37,6 +37,17 @@ const PAGE_SIZE = 1000;
 // long-running job (large files, slow network) doesn't fail mid-traverse
 // with a 401 on every Drive request.
 const TOKEN_SAFETY_SEC = 60;
+// Per-request ceiling for EVERY Drive HTTP call. With the job-level timeout
+// disabled (see migrationQueue.js), this is what reaps a hung socket: without
+// it a stalled list/download would hang until Bull's stall-detector fires
+// (minutes of dead time). For streamed downloads axios applies this to the
+// response/inactivity, which is the case we care about (a wedged connection),
+// not a slow-but-progressing transfer.
+const DRIVE_HTTP_TIMEOUT_MS = 120000;
+// Cap the RETAINED per-file error list so a pathological run (e.g. a 10k-file
+// folder where every child fails NOT_GRANTED) can't bloat job.returnvalue,
+// which is JSON-serialized into Redis. The TRUE total is tracked in errorCount.
+const MAX_ERRORS = 200;
 
 class GoogleDriveImporter {
   /**
@@ -47,7 +58,8 @@ class GoogleDriveImporter {
     this.job = job;
     this.data = job.data || {};
     this.yp = yp;
-    this.errors = [];
+    this.errors = [];          // retained sample, capped at MAX_ERRORS
+    this.errorCount = 0;       // true total (may exceed errors.length)
     this.processedFiles = 0;
     this.totalFolders = 0;
     this.totalFiles = 0;
@@ -178,7 +190,9 @@ class GoogleDriveImporter {
       processed_files: this.processedFiles,
       total_files: this.totalFiles,
       total_folders: this.totalFolders,
-      errors: this.errors,
+      errors: this.errors,                              // capped sample (≤ MAX_ERRORS)
+      errors_count: this.errorCount,                    // true total
+      errors_truncated: this.errorCount > this.errors.length,
       dest_nid: this._destNidOut || null,
     };
   }
@@ -290,6 +304,7 @@ class GoogleDriveImporter {
       const res = await axios.get('https://www.googleapis.com/drive/v3/files', {
         headers: { Authorization: `Bearer ${accessToken}` },
         params,
+        timeout: DRIVE_HTTP_TIMEOUT_MS,
       });
       items.push(...(res.data.files || []));
       pageToken = res.data.nextPageToken;
@@ -306,6 +321,7 @@ class GoogleDriveImporter {
     const res = await axios.get(`https://www.googleapis.com/drive/v3/files/${id}`, {
       headers: { Authorization: `Bearer ${token}` },
       params: { fields: 'id, name, mimeType, size' },
+      timeout: DRIVE_HTTP_TIMEOUT_MS,
     });
     return res.data;
   }
@@ -331,7 +347,7 @@ class GoogleDriveImporter {
       try {
         meta = await this._getMeta(folderId);
       } catch (e) {
-        this.errors.push({ folder: folderId, code: this._grantCode(e, 'META_FAILED'), reason: e.message });
+        this._pushError({ folder: folderId, code: this._grantCode(e, 'META_FAILED'), reason: e.message });
         await this._pushProgress(base);
         continue;
       }
@@ -345,7 +361,7 @@ class GoogleDriveImporter {
       // the feature is broken. NOT for SA jobs: the SA has real read access,
       // so an empty result there just means the folder IS empty.
       if (this.totalFiles === filesBefore && this.data.auth_kind !== 'sa') {
-        this.errors.push({ folder: meta.name, code: 'NOT_GRANTED', reason: 'folder children not granted' });
+        this._pushError({ folder: meta.name, code: 'NOT_GRANTED', reason: 'folder children not granted' });
       }
     }
 
@@ -355,7 +371,7 @@ class GoogleDriveImporter {
       try {
         meta = await this._getMeta(fileId);
       } catch (e) {
-        this.errors.push({ file: fileId, code: this._grantCode(e, 'META_FAILED'), reason: e.message });
+        this._pushError({ file: fileId, code: this._grantCode(e, 'META_FAILED'), reason: e.message });
         await this._pushProgress(base);
         continue;
       }
@@ -365,7 +381,7 @@ class GoogleDriveImporter {
         this.processedFiles += 1;
         await this._pushProgress(base, meta.name);
       } catch (e) {
-        this.errors.push({ file: meta.name, code: this._grantCode(e, 'IMPORT_FAILED'), reason: e.message });
+        this._pushError({ file: meta.name, code: this._grantCode(e, 'IMPORT_FAILED'), reason: e.message });
         await this._pushProgress(base);
       }
     }
@@ -390,7 +406,7 @@ class GoogleDriveImporter {
     try {
       items = await this._listFolder(opts.folderId, opts.includeSharedDrives);
     } catch (e) {
-      this.errors.push({ folder: opts.folderId, code: this._grantCode(e, 'LIST_FAILED'), reason: e.message });
+      this._pushError({ folder: opts.folderId, code: this._grantCode(e, 'LIST_FAILED'), reason: e.message });
       await this._pushProgress(opts);
       return;
     }
@@ -399,7 +415,7 @@ class GoogleDriveImporter {
     // uppy's picker importer: never follow them, record the skip.
     items = items.filter((i) => {
       if (i.mimeType === 'application/vnd.google-apps.shortcut') {
-        this.errors.push({ file: i.name, code: 'SHORTCUT_SKIPPED', reason: 'shortcuts are not followed' });
+        this._pushError({ file: i.name, code: 'SHORTCUT_SKIPPED', reason: 'shortcuts are not followed' });
         return false;
       }
       return true;
@@ -434,11 +450,21 @@ class GoogleDriveImporter {
           countSinceUpdate = 0;
         }
       } catch (e) {
-        this.errors.push({ file: item.name, code: 'IMPORT_FAILED', reason: e.message });
+        this._pushError({ file: item.name, code: 'IMPORT_FAILED', reason: e.message });
         await this._pushProgress(opts);
       }
     }
     if (countSinceUpdate > 0) await this._pushProgress(opts);
+  }
+
+  /**
+   * Append an error, but cap the RETAINED list at MAX_ERRORS so a run with
+   * thousands of failing files can't bloat job.returnvalue (Redis). errorCount
+   * keeps the true total; the FE shows it as "N errors (M shown)".
+   */
+  _pushError(entry) {
+    this.errorCount += 1;
+    if (this.errors.length < MAX_ERRORS) this.errors.push(entry);
   }
 
   /**
@@ -450,7 +476,7 @@ class GoogleDriveImporter {
       processed_files: this.processedFiles,
       total_files: this.totalFiles,
       total_folders: this.totalFolders,
-      errors_count: this.errors.length,
+      errors_count: this.errorCount,
     };
     if (currentFilename) payload.current_filename = currentFilename;
     try {
@@ -547,6 +573,7 @@ class GoogleDriveImporter {
         headers: { Authorization: `Bearer ${accessToken}` },
         responseType: 'stream',
         maxRedirects: 5,
+        timeout: DRIVE_HTTP_TIMEOUT_MS,
       });
       await new Promise((resolve, reject) => {
         const out = createWriteStream(partFile);
@@ -630,7 +657,18 @@ class GoogleDriveImporter {
     const base = join(home_dir, '__storage__', nodeId);
     const orig = join(base, `orig.${ext}`);
     await fsp.mkdir(base, { recursive: true });
-    await fsp.copyFile(source, orig);
+    try {
+      await fsp.copyFile(source, orig);
+    } finally {
+      // Free the scratch copy immediately after the durable write so peak /tmp
+      // stays at ~one file instead of the whole tree — a 10k-file import would
+      // otherwise accumulate every downloaded byte until the end-of-job rm in
+      // run() (→ ENOSPC). async fsp.unlink (never unlinkSync) per the Bull
+      // lock-stall invariant. Best-effort: the end-of-job rm is the backstop.
+      // Trade-off: defeats the in-job same-id dedup (existsSync on `source`) for
+      // a file.id|exportMime that appears twice in one tree — rare, acceptable.
+      try { await fsp.unlink(source); } catch (_) {}
+    }
   }
 
   /**
