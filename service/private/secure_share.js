@@ -317,6 +317,12 @@ class __secure_share extends Mfs {
     const _cache = {};
     for (const r of rows) {
       if (!r || !r.actor_id || (r.recipient_email && String(r.recipient_email).trim())) continue;
+      // Never resolve an event whose actor is the share CREATOR (= this.uid, since the
+      // SP is creator-scoped): such rows are either the owner's own preview or a legacy
+      // event mis-attributed to the creator-bound anonymous session (fixed at the
+      // source in dmz.js). Leave them unresolved so they render as an anonymous open
+      // instead of showing the sender as a recipient.
+      if (String(r.actor_id) === String(this.uid)) continue;
       if (!(r.actor_id in _cache)) {
         try {
           _cache[r.actor_id] = toArray(await this.yp.await_proc('get_user', r.actor_id))[0] || null;

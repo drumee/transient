@@ -349,8 +349,23 @@ class __dmz extends Mfs {
       }
     }
 
-    // Valid access — log it and notify sender in real time
-    const actor_id = (guest_id === user.id) ? null : (user.id || null);
+    // Valid access — log it and notify sender in real time.
+    // Attribute the open to the viewer's OWN account ONLY when they are genuinely
+    // authenticated. An anonymous recipient runs in the creator-bound guest session
+    // (user.id === creator_id), so the previous `guest_id === user.id` check logged
+    // the SENDER as the visitor — which then surfaced the sender's email in the
+    // access list. Anonymous viewers are logged as an anonymous open (no actor).
+    const actor_id = isAuthenticated ? (user.id || null) : null;
+    // Recipient email for the access list + the "opened" notification. A password-only
+    // share carries no submitted email, so fall back to the authenticated account's
+    // own email (resolved from its regsid above) — never the creator's.
+    let _recipientEmail = submittedEmail || null;
+    if (!_recipientEmail && isAuthenticated && user.profile) {
+      try {
+        const _p = (typeof user.profile === 'string') ? JSON.parse(user.profile) : user.profile;
+        _recipientEmail = (_p && _p.email) ? String(_p.email).toLowerCase().trim() : null;
+      } catch (e) { /* ignore malformed profile */ }
+    }
     try {
       const track = await this.yp.await_proc('secure_share_access_log', token, actor_id, this.input.get(Attr.socket_id));
       // v2: also record a per-visit access event (entered_at / last_seen_at) backing
@@ -359,7 +374,7 @@ class __dmz extends Mfs {
       try {
         await this.yp.await_proc(
           'secure_share_log_access_event',
-          token, submittedEmail || null, actor_id, this.input.get(Attr.socket_id)
+          token, _recipientEmail, actor_id, this.input.get(Attr.socket_id)
         );
       } catch (e) {
         this.warn('[dmz.login] secure_share access_event failed:', e && e.message);
@@ -376,7 +391,7 @@ class __dmz extends Mfs {
               event           : 'secure_share_opened',
               token,
               nid             : info.node_id,
-              recipient_email : submittedEmail,
+              recipient_email : _recipientEmail,
               access_count    : (info.access_count || 0) + 1,
             },
             { service: 'share.track_event' }
