@@ -138,6 +138,12 @@ dep (NodeSource's nodejs bundles npm and Debian's `npm` conflicts with it). This
 the container channel's `node:20` base. Without Node 20, `apt` now fails with a clear
 unmet-dependency message instead of the cryptic ESM crash mid-postinst.
 
+**Confirmed:** on `node:20-slim` (v20.20.2), `require('mariadb')` of the exact ESM
+`mariadb@3.5.2` that crashes on Node 18 returns OK — so Option A resolves the precise
+blocker. The only thing not yet run start-to-finish is a single clean full-stack
+install-to-serving pass; it's gated on container apt pulling the heavy deps
+(MariaDB + LibreOffice + ffmpeg + …) over a slow/flaky network, not on any code issue.
+
 ## Observation (not a gap)
 
 The native pm2 ecosystem runs **`index.js` in fork mode (1 instance)** but
