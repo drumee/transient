@@ -320,20 +320,32 @@ class __dmz extends Mfs {
     // Password gate — only evaluated after email gate passes (or was skipped for public shares)
     if (info.require_password) {
       const submittedPassword = (this.input.get(Attr.password) || '').trim();
-      if (!submittedPassword) {
-        return this.output.data({ ...safeInfo, status: 'REQUIRED_PASSWORD', is_secure: 1 });
-      }
-      if (!verifySecureSharePassword(submittedPassword, storedPasswordHash)) {
-        try { await this.yp.await_proc('secure_share_increment_attempts', token); } catch (e) {}
-        // SP locks when new count >= 3; info.failed_attempts is the pre-increment value
-        const attemptsUsed      = (info.failed_attempts || 0) + 1;
-        const attemptsRemaining = Math.max(0, 3 - attemptsUsed);
-        // Token is now locked — tell the client immediately instead of making them
-        // submit again only to receive TICKET_LOCKED on the next request.
-        if (attemptsRemaining === 0) {
-          return this.output.data({ status: 'TICKET_LOCKED', is_secure: 1 });
+      if (submittedPassword) {
+        if (!verifySecureSharePassword(submittedPassword, storedPasswordHash)) {
+          try { await this.yp.await_proc('secure_share_increment_attempts', token); } catch (e) {}
+          // SP locks when new count >= 3; info.failed_attempts is the pre-increment value
+          const attemptsUsed      = (info.failed_attempts || 0) + 1;
+          const attemptsRemaining = Math.max(0, 3 - attemptsUsed);
+          // Token is now locked — tell the client immediately instead of making them
+          // submit again only to receive TICKET_LOCKED on the next request.
+          if (attemptsRemaining === 0) {
+            return this.output.data({ status: 'TICKET_LOCKED', is_secure: 1 });
+          }
+          return this.output.data({ status: 'WRONG_PASSWORD', is_secure: 1, attempts_remaining: attemptsRemaining });
         }
-        return this.output.data({ status: 'WRONG_PASSWORD', is_secure: 1, attempts_remaining: attemptsRemaining });
+        // Correct password — remember it for THIS share session (the hub-cookie sid,
+        // which page.js persists and shares across the browser's tabs) so a later load
+        // doesn't re-prompt. Notably: after the recipient clicks Login, the share
+        // re-opens in a NEW tab that shares this same hub cookie, so the gate is skipped
+        // there instead of asking for the password a second time. Best-effort.
+        try { await this._markSharePasswordOk(token); } catch (e) { /* non-fatal */ }
+      } else {
+        // No password submitted — allow ONLY if this same session already proved it.
+        let alreadyOk = false;
+        try { alreadyOk = await this._isSharePasswordOk(token); } catch (e) { alreadyOk = false; }
+        if (!alreadyOk) {
+          return this.output.data({ ...safeInfo, status: 'REQUIRED_PASSWORD', is_secure: 1 });
+        }
       }
     }
 
@@ -660,6 +672,40 @@ class __dmz extends Mfs {
       // access" banner / viral chrome for members.
       is_member        : is_member,
     });
+  }
+
+  /**
+   * One-time-per-session password gate marker. Keyed by the share TOKEN + the
+   * share-session sid (the hub cookie, which page.js persists and shares across the
+   * browser's tabs), so once this session has entered the correct password it is not
+   * re-prompted — including in the new tab the Login button opens, which carries the
+   * same hub cookie. Stored in Redis with a bounded TTL; both helpers are best-effort
+   * and fail CLOSED (a Redis error → no marker → the password is required), so they
+   * can never grant access without a real password.
+   */
+  _sharePasswordKey(token) {
+    const sid = this.input.sid();
+    if (!token || !sid) return null;
+    return `ss:pwok:${token}:${sid}`;
+  }
+
+  async _markSharePasswordOk(token) {
+    const key = this._sharePasswordKey(token);
+    if (!key) return;
+    const client = RedisStore.getClient();
+    if (!client) return;
+    // 12h: long enough to cover the enter-password → login → return flow and a normal
+    // working session, short enough that a shared browser re-asks later.
+    await client.set(key, '1', { EX: 12 * 3600 });
+  }
+
+  async _isSharePasswordOk(token) {
+    const key = this._sharePasswordKey(token);
+    if (!key) return false;
+    const client = RedisStore.getClient();
+    if (!client) return false;
+    const v = await client.get(key);
+    return v === '1';
   }
 
   /**
