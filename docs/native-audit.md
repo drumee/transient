@@ -30,7 +30,7 @@ expected need for a real host to validate.
 
 ## Real gaps / risks (native-specific, actionable)
 
-### 1. debconf → env bridge missing on the metapackage path (HIGH) — ✅ FIXED
+### 1. debconf → env bridge missing on the metapackage path (HIGH) — ✅ FIXED & VERIFIED
 
 > **Fixed:** `drumee-infra` now ships `debian/templates` (registers the
 > `drumee-infra/*` questions), `debian/config` (prompts; preseed answers used
