@@ -57,13 +57,44 @@ export them as `DRUMEE_*` before calling `bin/install` (mirror `builder/install.
 unify the metapackage path onto the bootstrap wizard. *This is the #1 thing blocking a
 working `apt install drumee` + preseed.* *(verify on VM)*
 
-### 2. Factory pool depends on the seed (MEDIUM)
-`populate.js` creates accounts but does **not** pre-stock the hub/drumate entity pool
-from genesis templates (the container channel had to). On native the pool comes from the
-`mariabackup` **seed** (`seeds.tgz`). If that seed wasn't built from a system with a
-stocked pool, the first hub/drumate creation hits **`EMPTY_FACTORY`**. Wallpaper/tutorial
-import additionally needs network (`content.drumee.com`, `drumee.com`) and silently skips
-if unreachable. **Verify the seed ships a stocked pool, or add genesis stocking.** *(verify on VM)*
+### 2. Factory pool not stocked by populate.js (MEDIUM) — guard added; root fix is upstream
+
+**Root cause (confirmed in source).** `setup-schemas/populate.js start()` goes straight
+from `org.populate()` to `org.createNobody()/createGuest()/createSystemUser()/createAdmin()`.
+Those create accounts via `drumate_create` → `pickupEntity()`, which **consumes** entities
+from `yp.entity WHERE area='pool' AND pool_state='clean'`. `populate.js` never **stocks**
+that pool. So the first-run accounts only succeed if the pool is already filled — which on
+native happens **only if the `mariabackup` seed (`seeds.tgz`) was built from a system with a
+stocked pool**. A data-free seed → empty pool → the system accounts fail with
+`EMPTY_FACTORY`, and the install is silently half-broken. (The runtime `factory` pm2 daemon
+*does* maintain the pool, but it only starts with the `server` package, *after* schemas — too
+late for `populate.js`.)
+
+The container channel hit exactly this and fixed it: `deploy/docker/container-populate.js`
+calls **`stockFactory()` between `populate()` and `createNobody()`** — it tops the
+`hub`/`drumate` pools up to `POOL_COUNT` from the genesis templates
+(`schemas/templates/factory/{hub,drumate}.sql`) using `create_entity` (idempotent via
+`pool_free`).
+
+**What was done here (in-repo, no VM needed):** `schemas/debian/postinst` now runs a
+**detection guard** after `bin/install` — it checks `yp.entity(area='pool')` and the
+`system` account, and if either is empty it fails *loudly* with the remedy, instead of
+leaving a silently-broken install.
+
+**The root fix (upstream `setup-schemas`, needs a VM to validate):** add a `stockFactory`
+step to `populate.js`, mirroring the validated `container-populate.js`:
+
+```js
+// populate.js start(), after org.populate():
+await stockFactory(org.yp);      // <-- add this, before org.createNobody()
+```
+
+where `stockFactory` tops each pool to `POOL_COUNT` via `create_entity`, passing the genesis
+template path (`schemas/templates/factory/<type>.sql`) as `script`. **Open sub-item:** those
+genesis templates must be packaged onto the native host (the `drumee-schemas` build does not
+currently ship `templates/factory/`), or `stockFactory` must point at wherever they land.
+Wallpaper/tutorial import additionally needs network (`content.drumee.com`, `drumee.com`)
+and silently skips if unreachable — cosmetic, not blocking. *(verify on VM)*
 
 ### 3. Redis auth posture undefined (LOW)
 No password is generated for Redis; `redis.json`'s `redisAuth` is effectively empty →
