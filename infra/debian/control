@@ -7,6 +7,6 @@ Homepage: https://drumee.org
 
 Package: drumee-infra
 Architecture: all
-Depends: ${misc:Depends}, binutils, apt-utils, git, nodejs, npm, nginx, 
+Depends: ${misc:Depends}, binutils, apt-utils, git, nodejs (>= 20), nginx,
   cron, libncurses6, git, g++, gyp, openssh-client, libcurl4
 Description: Setup Drumee infrastructure and environment

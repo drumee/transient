@@ -107,6 +107,37 @@ network; confirm it isn't exposed. *(verify on VM)*
 (non-systemd) container can't validate the install end-to-end — a disposable **Debian 12
 VM** is required.
 
+### 5. Debian 12 ships Node 18 — too old for the runtime deps (HIGH) — found by end-to-end build+install
+
+Confirmed by actually building all four `.deb`s on WSL and installing them in a
+disposable `debian:12` container (`tests/native/make-seed.sh` +
+`tests/native/install-verify.sh`). The install gets a **long** way:
+
+- builds end-to-end (HTTPS clone + `@drumee` npm + webpack + signing) → 4 `.deb`s;
+- `infra.js` runs with the debconf-bridged env and writes **every** config + credential
+  (`db.json`, `email.json`, `redis.json`, `crypto/public.pem`, `drumee.json`, `conf.d/*`,
+  `ecosystem.json`) — so **gap #1 is validated live**;
+- the generated seed restores and MariaDB starts.
+
+Then `infra.js` (and `populate.js`) **crash at the DB-connect step**:
+
+```
+Error [ERR_REQUIRE_ESM]: require() of ES Module .../node_modules/mariadb/promise.js
+from .../@drumee/server-essentials/lib/mariadb.js not supported.   Node.js v18.20.4
+```
+
+`mariadb` npm is **3.5.2** (ESM-only, `"type":"module"`), pulled transitively via
+`@drumee/server-essentials`. `require('mariadb')` works on the **container's Node 20**
+(`node:20`, ≥20.19 supports `require(ESM)`) but **fails on Debian 12's Node 18**, which the
+packages get via `Depends: nodejs, npm`. infra failing cascades to schemas.
+
+**Fix (Option A, applied):** make the native install provide **Node 20.x (NodeSource)** —
+`scripts/install-native.sh` adds the NodeSource repo before `apt install`, and the
+component `debian/control` files now `Depends: nodejs (>= 20)` and drop the Debian `npm`
+dep (NodeSource's nodejs bundles npm and Debian's `npm` conflicts with it). This mirrors
+the container channel's `node:20` base. Without Node 20, `apt` now fails with a clear
+unmet-dependency message instead of the cryptic ESM crash mid-postinst.
+
 ## Observation (not a gap)
 
 The native pm2 ecosystem runs **`index.js` in fork mode (1 instance)** but
