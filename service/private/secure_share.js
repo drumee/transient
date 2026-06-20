@@ -307,6 +307,42 @@ class __secure_share extends Mfs {
     const rows   = toArray(
       await this.yp.await_proc('secure_share_list_access_events', hub_id, nid, this.uid)
     );
+    // Resolve the recipient identity for SIGNED-IN opens on shares WITHOUT an email
+    // gate (e.g. a password-only link): those events are logged with actor_id but no
+    // recipient_email, so the "View access list" had nothing to show. Look the
+    // account up via the directory SP and fill recipient_email (the field the table
+    // already renders) plus actor_name/actor_email. No schema change — the stored
+    // access-event rows are untouched. Deduped per actor_id; best-effort (a lookup
+    // failure just leaves the row as-is).
+    const _cache = {};
+    for (const r of rows) {
+      if (!r || !r.actor_id || (r.recipient_email && String(r.recipient_email).trim())) continue;
+      if (!(r.actor_id in _cache)) {
+        try {
+          _cache[r.actor_id] = toArray(await this.yp.await_proc('get_user', r.actor_id))[0] || null;
+        } catch (e) {
+          this.warn('[secure_share.list_access_events] actor lookup failed:', e && e.message);
+          _cache[r.actor_id] = null;
+        }
+      }
+      const u = _cache[r.actor_id];
+      // get_user falls back to the guest account when the id is unknown — only use a
+      // genuine match so a stale/foreign actor_id can't surface a wrong identity.
+      if (!u || String(u.id) !== String(r.actor_id)) continue;
+      let email = null;
+      if (u.profile) {
+        try {
+          const p = (typeof u.profile === 'string') ? JSON.parse(u.profile) : u.profile;
+          email = p && p.email ? String(p.email) : null;
+        } catch (e) { /* ignore malformed profile */ }
+      }
+      const name = (u.fullname && String(u.fullname).trim())
+        || [u.firstname, u.lastname].filter(Boolean).join(' ').trim()
+        || null;
+      if (email) r.recipient_email = email;
+      r.actor_email = email;
+      r.actor_name  = name;
+    }
     this.output.list(rows);
   }
 
