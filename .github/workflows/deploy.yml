@@ -12,10 +12,13 @@ on:
         default: UAT
 
 concurrency:
-  # Repo-wide group: all targets share one working tree in the container,
-  # so deploys must serialize regardless of target/branch.
+  # Repo-wide group: all targets share one working tree (container for UAT/PROD,
+  # stage host for TEST), so deploys must serialize regardless of target/branch.
   group: cd-server-team
   cancel-in-progress: false
+
+permissions:
+  contents: read
 
 jobs:
   deploy:
@@ -41,20 +44,71 @@ jobs:
           else
             TARGET="${{ github.event.inputs.target || 'UAT' }}"
           fi
+          # MODE=stage  -> deploy locally on the runner host (drumee.in), endpoint `main` (native pm2)
+          # MODE=container -> deploy into the prod box (sgp) docker container
           case "$TARGET" in
-            PROD) ENV_FILE=production; EP=main;    PORT=24000; BRANCH=preview ;;
-            TEST) ENV_FILE=test;       EP=test;    PORT=24002; BRANCH=test ;;
-            UAT)  ENV_FILE=deploy;     EP=preview; PORT=24001; BRANCH=preview ;;
+            PROD) ENV_FILE=production; EP=main;    PORT=24000; BRANCH=preview; MODE=container ;;
+            TEST) ENV_FILE=deploy;     EP=main;    PORT=24000; BRANCH=test;    MODE=stage ;;
+            UAT)  ENV_FILE=deploy;     EP=preview; PORT=24001; BRANCH=preview; MODE=container ;;
             *) echo "Unknown target: $TARGET"; exit 1 ;;
           esac
           echo "env_file=$ENV_FILE" >> "$GITHUB_OUTPUT"
           echo "endpoint=$EP"       >> "$GITHUB_OUTPUT"
           echo "port=$PORT"         >> "$GITHUB_OUTPUT"
           echo "branch=$BRANCH"     >> "$GITHUB_OUTPUT"
-          echo "::notice::Target $TARGET -> endpoint $EP (branch $BRANCH)"
+          echo "mode=$MODE"         >> "$GITHUB_OUTPUT"
+          echo "::notice::Target $TARGET -> endpoint $EP (branch $BRANCH, mode $MODE)"
 
+      # ---------------- TEST: deploy to drumee.in (stage) `main` endpoint, native ----------------
+      - name: Deploy to stage main (TEST)
+        id: stage
+        if: steps.target.outputs.mode == 'stage'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO_DIR: /usr/src/drumee/server-team
+        run: |
+          set -euo pipefail
+          AUTH="https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git"
+          [ -d "$REPO_DIR/.git" ] || sudo git init -q "$REPO_DIR"
+          PREV=$(sudo git -C "$REPO_DIR" rev-parse HEAD 2>/dev/null || echo "")
+          echo "prev=$PREV" >> "$GITHUB_OUTPUT"
+          sudo git -C "$REPO_DIR" fetch --depth 1 "$AUTH" test
+          sudo git -C "$REPO_DIR" checkout -f -B test FETCH_HEAD
+          sudo git -C "$REPO_DIR" reset --hard FETCH_HEAD
+          sudo git -C "$REPO_DIR" clean -fd -e .dev-tools.rc || true
+          echo "Deploying $(sudo git -C "$REPO_DIR" rev-parse --short HEAD) to stage main"
+          sudo bash -c "cd '$REPO_DIR' && npm install --no-audit --no-fund"
+          sudo bash -c "cd '$REPO_DIR' && npm run deploy -- deploy"
+          sudo /usr/sbin/drumee start main
+          sudo /usr/sbin/drumee start main/service
+
+      - name: Verify stage main (TEST)
+        if: steps.target.outputs.mode == 'stage'
+        run: |
+          set -euo pipefail
+          sleep 6
+          CODE=$(curl -sk -o /dev/null -w '%{http_code}' --max-time 10 -H 'Host: drumee.in' https://localhost/-/ || echo 000)
+          echo "stage main HTTP: $CODE"
+          [[ "$CODE" =~ ^[2-4][0-9][0-9]$ ]] || { echo "::error::stage main verify failed ($CODE)"; exit 1; }
+          echo "Verified stage main (server-team test)"
+
+      - name: Rollback stage (on failure)
+        if: failure() && steps.target.outputs.mode == 'stage' && steps.stage.outputs.prev != ''
+        env:
+          REPO_DIR: /usr/src/drumee/server-team
+          PREV: ${{ steps.stage.outputs.prev }}
+        run: |
+          set -uo pipefail
+          echo "::warning::Rolling back stage main to ${PREV:0:8}"
+          sudo git -C "$REPO_DIR" reset --hard "$PREV"
+          sudo bash -c "cd '$REPO_DIR' && npm run deploy -- deploy" || true
+          sudo /usr/sbin/drumee start main || true
+          sudo /usr/sbin/drumee start main/service || true
+
+      # ---------------- UAT / PROD: deploy into prod box (sgp) container ----------------
       - name: Fetch and reset working tree
         id: fetch
+        if: steps.target.outputs.mode == 'container'
         env:
           BRANCH: ${{ steps.target.outputs.branch }}
         run: |
@@ -79,6 +133,7 @@ jobs:
           echo "New     : ${NEW:0:8}"
 
       - name: Install dependencies
+        if: steps.target.outputs.mode == 'container'
         run: |
           ssh "$SGP_USER@$SGP_HOST" "sudo docker exec -i $CONTAINER bash -s" <<EOSSH
           set -euo pipefail
@@ -92,6 +147,7 @@ jobs:
           EOSSH
 
       - name: Deploy
+        if: steps.target.outputs.mode == 'container'
         env:
           ENV_FILE: ${{ steps.target.outputs.env_file }}
         run: |
@@ -107,6 +163,7 @@ jobs:
           EOSSH
 
       - name: Start services
+        if: steps.target.outputs.mode == 'container'
         env:
           EP: ${{ steps.target.outputs.endpoint }}
         run: |
@@ -118,6 +175,7 @@ jobs:
           EOSSH
 
       - name: Verify HTTP
+        if: steps.target.outputs.mode == 'container'
         env:
           PORT: ${{ steps.target.outputs.port }}
           EP: ${{ steps.target.outputs.endpoint }}
@@ -135,7 +193,7 @@ jobs:
           EOSSH
 
       - name: Rollback (on failure)
-        if: failure() && steps.fetch.outputs.prev != ''
+        if: failure() && steps.target.outputs.mode == 'container' && steps.fetch.outputs.prev != ''
         env:
           ENV_FILE: ${{ steps.target.outputs.env_file }}
           PREV: ${{ steps.fetch.outputs.prev }}
