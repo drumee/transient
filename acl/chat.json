@@ -704,6 +704,46 @@
       ]
     },
 
+    "react": {
+      "doc": "Toggle the caller's emoji reaction on a P2P message. Adds the reaction if absent, removes it if already present. P2P messages are single-write in the author's DB, so reactions to a peer-authored message are toggled cross-DB. Persists per-message in metadata under the _reactions_ key. Notifies the peer and the caller's other sessions via WebSocket.",
+      "scope": "hub",
+      "permission": {
+        "src": "write"
+      },
+      "params": {
+        "message_id": {
+          "type": "string",
+          "required": true,
+          "description": "ID of the message to react to"
+        },
+        "emoji": {
+          "type": "string",
+          "required": true,
+          "description": "Single emoji to toggle for the caller"
+        },
+        "entity_id": {
+          "type": "string",
+          "required": true,
+          "description": "Peer user ID (peer_id). Identifies the conversation and the DB that may own the message. Accepts peer_id as alias."
+        },
+        "peer_id": {
+          "type": "string",
+          "required": false,
+          "description": "Alias for entity_id"
+        },
+        "socket_id": {
+          "type": "string",
+          "required": false,
+          "description": "Caller's WebSocket socket ID, excluded from the caller's sibling-session broadcast"
+        }
+      },
+      "returns": {
+        "type": "object",
+        "description": "Updated reaction state with message_id and the reactions map (emoji to array of user IDs)"
+      },
+      "errors": []
+    },
+
     "share_rooms": {
       "doc": "List group/shared chat rooms. Returns chat rooms for group conversations (not direct contact chats), with optional keyword filtering and pagination.",
       "scope": "hub",

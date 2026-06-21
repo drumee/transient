@@ -34,6 +34,7 @@ class __private_channel extends Entity {
     this.read = this.read.bind(this);
     this.notify_chat = this.notify_chat.bind(this);
     this.acknowledge = this.acknowledge.bind(this);
+    this.react = this.react.bind(this);
     this.typing = this.typing.bind(this);
     this.bookmark_add = this.bookmark_add.bind(this);
     this.bookmark_remove = this.bookmark_remove.bind(this);
@@ -1423,6 +1424,39 @@ class __private_channel extends Entity {
     });
     await RedisStore.sendData(this.payload(message), recipients);
     this.output.data(res);
+  }
+
+  /**
+   * Toggle the caller's emoji reaction on a channel message (add if absent,
+   * remove if present). Stored per-message in metadata._reactions_ alongside
+   * read receipts (_seen_ untouched). Broadcasts the updated reactions map to
+   * every other socket in the hub (caller's socket excluded).
+   */
+  async react() {
+    const message_id = this.input.need(Attr.message_id);
+    const emoji = this.input.need("emoji");
+    let exclude = this.input.need(Attr.socket_id);
+    if (exclude) exclude = [exclude];
+    const glyphs = Array.from(emoji || "");
+    if (!glyphs.length || glyphs.length > 8 || /['"\\\s]/.test(emoji)) {
+      return this.output.data({ status: "INVALID_EMOJI" });
+    }
+    const res = await this.db.await_proc(
+      "message_reaction_toggle",
+      message_id,
+      this.uid,
+      emoji
+    );
+    const row = Array.isArray(res) ? res[0] : res;
+    const reactions = row && row.reactions ? this.parseJSON(row.reactions) : {};
+    const hub_id = this.hub.get(Attr.id);
+    const data = { message_id, reactions, key_id: hub_id };
+    const recipients = await this.yp.await_proc("entity_sockets", { hub_id, exclude });
+    await RedisStore.sendData(
+      this.payload(data, { service: "channel.react" }),
+      recipients
+    );
+    this.output.data({ message_id, reactions, capped: row && row.capped ? 1 : 0 });
   }
 
   /**
