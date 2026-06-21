@@ -39,16 +39,21 @@ if [ "${node_major:-0}" -lt 20 ]; then
   apt-get install -y nodejs
 fi
 
+# drumee-infra renders MariaDB's conffiles (50-server.cnf/50-client.cnf), so when
+# mariadb-server installs afterward dpkg would prompt about the conffile conflict
+# and abort on a closed stdin. Keep the Drumee-rendered versions automatically.
+CONFOPTS=(-o Dpkg::Options::=--force-confold -o Dpkg::Options::=--force-confdef)
+
 if [ -n "$PRESEED" ]; then
   [ -f "$PRESEED" ] || { echo "error: PRESEED file not found: $PRESEED" >&2; exit 1; }
   echo "==> Applying preseed for unattended install"
   command -v debconf-set-selections >/dev/null || apt-get install -y debconf-utils
   debconf-set-selections < "$PRESEED"
   echo "==> Installing drumee (noninteractive)"
-  DEBIAN_FRONTEND=noninteractive apt-get install -y drumee
+  DEBIAN_FRONTEND=noninteractive apt-get install -y "${CONFOPTS[@]}" drumee
 else
   echo "==> Installing drumee (interactive)"
-  apt-get install -y drumee
+  apt-get install -y "${CONFOPTS[@]}" drumee
 fi
 
 echo "Done. Manage with the 'drumee' CLI (drumee status, drumee log, ...)."

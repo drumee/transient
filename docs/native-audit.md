@@ -27,12 +27,21 @@ stands between "works after a few manual nudges" and a fully turnkey `apt instal
 | factory pool not stocked by `populate.js` → `EMPTY_FACTORY` | `stockFactory()` before account creation | ✅ fixed + pushed to `setup-schemas`; genesis templates packaged |
 | debconf→env bridge missing (metapackage path) | templates + config + postinst export | ✅ fixed + verified |
 | nginx `stream{}` (turn-relay) without the stream module → config invalid | `drumee-infra` `Depends: libnginx-mod-stream` | ✅ fixed (committed) |
-| **pm2 not installed** → `/etc/init.d/drumee` can't launch the app | `drumee-server-pod` must install pm2 (npm global) | ⏳ needs packaging |
-| **`ecosystem.config.js` not generated** to `$DRUMEE_SERVER_HOME` (init.d looks for it) | `infra.js` template render / init.d path | ⏳ needs packaging (upstream `setup-infra`) |
-| **`--conf-path` doubled** (`/etc/drumee/conf.d/etc/drumee/conf.d`) | pass the parent (`/`), not the full path | ⏳ needs packaging (upstream ecosystem args) |
-| dpkg **conffile prompt** on infra-rendered MariaDB configs | install with `--force-confold` | ⏳ document in `install-native.sh` |
-| `server/var/lib/drumee/postinstall/patch.sh` missing from the repo | `dh_install` expects `files/var/*` | ⏳ ship a placeholder |
-| domain `local` is awkward for local browser testing | prefer `domain: localhost` for local installs | ⏳ docs / default |
+| pm2 not installed → `/etc/init.d/drumee` can't launch the app | `drumee-server-pod` postinst `npm i -g pm2` | ✅ fixed (committed) |
+| `ecosystem.config.js` not generated → init.d has nothing to start | `main()` never called `writeEcoSystem()` | ✅ fixed + pushed to `setup-infra` (verified via chroot render) |
+| dpkg **conffile prompt** on infra-rendered MariaDB configs | `install-native.sh` uses `--force-confold` | ✅ fixed (committed) |
+| `server/var/lib/drumee/postinstall/patch.sh` missing | ship a no-op placeholder (`dh_install` wants `files/var/*`) | ✅ fixed (committed) |
+| ~~`--conf-path` doubled~~ | **non-issue** — the generated ecosystem passes only `--pushPort/--restPort`; the doubling was a manual-invocation artifact, not a packaging bug | n/a |
+| domain `local` awkward for local browser testing | prefer `domain: localhost` for local installs | ⏳ docs / installer default |
+| `drumee-static` has no source to build → `/-/static/*` 404 (cosmetic) | obtain/build the `static` repo | ⏳ needs source |
+
+**Net after these fixes:** every blocking gap is closed — a fresh `apt install drumee`
+(via `install-native.sh`, which adds Node 20 + `--force-confold`; packages pull
+`mariadb-backup`/`libnginx-mod-stream`/`nodejs>=20` and install pm2; infra generates
+the ecosystem; populate stocks the pool) should reach a serving instance **without
+manual steps**. Only `domain: localhost` default and `drumee-static` remain (cosmetic /
+needs source). The last thing to do is re-run a clean single-pass `apt install drumee`
+on a fresh Debian VM to confirm zero-touch.
 
 ## Headline (original source audit)
 
