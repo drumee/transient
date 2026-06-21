@@ -34,6 +34,11 @@ const SECURE_SHARE_READONLY_DENYLIST = new Set([
   // chat / channel — read-src, mutate or impersonate the creator
   "channel.post", "channel.delete", "channel.post_ticket", "channel.send_ticket",
   "channel.bookmark_add", "channel.bookmark_remove", "chat.attachment",
+  // channel.react: read-src but mutates message metadata (toggle emoji reaction).
+  // chat.react is write-src → already caught by the threshold below.
+  "channel.react",
+  // tags — anonymous-src but mutate the bound hub's tags
+  "tag.store", "tag.delete",
   // file copy / restore — read-src, mutate / exfil
   "media.copy", "media.copy_all", "media.restore", "media.restore_into", "media.mark_as_seen",
   // calls / conferences / rooms — read or anon src; recipients get no calls
@@ -292,7 +297,11 @@ class Acl {
         // read/anon-src mutator) → normal read traffic adds no DB cost. Fail-OPEN on
         // lookup error so a missing SP / DB hiccup degrades to today's behaviour and
         // never blocks all writes. Self-clears via uid==ceiling_uid in the SP.
+        // A service can also mutate via its DESTINATION (e.g. media.relocate is
+        // src:read, dest:write → move_all): the src threshold alone would miss it and
+        // let a clamped session move files. Treat dest write+ as mutating too.
         const mightMutate = (permission && permission.src > READ_LEVEL)
+          || (permission && permission.dest != null && permission.dest > READ_LEVEL)
           || SECURE_SHARE_READONLY_DENYLIST.has(service);
         if (mightMutate) {
           try {

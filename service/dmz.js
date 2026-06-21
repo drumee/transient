@@ -654,7 +654,14 @@ class __dmz extends Mfs {
     // (the hub cookie — page.js gives it an independent sid), so a signed-in recipient's
     // main account (regsid) is never clamped. Owner/member/edit → ceilingToStamp null →
     // no clamp. Best-effort; on failure we keep the prior (un-clamped) binding.
-    if (ceilingToStamp != null && bindUid) {
+    //
+    // ALWAYS write (including ceilingToStamp=null, which CLEARS the ceiling) so the
+    // session's clamp tracks its CURRENT access. The share-session sid is reused across
+    // loads, and get_session_priv_ceiling only self-clears when the bound uid CHANGES —
+    // so if a recipient is elevated on the SAME uid (view/chat → edit, or becomes a
+    // member/owner), a stale read/chat ceiling would otherwise linger and keep denying
+    // writes they are now entitled to. Passing null sets priv_ceiling=NULL → no clamp.
+    if (bindUid) {
       try {
         await this.yp.await_proc('set_session_priv_ceiling', this.input.sid(), ceilingToStamp, bindUid);
       } catch (e) {
