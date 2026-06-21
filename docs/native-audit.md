@@ -2,10 +2,39 @@
 
 Audit of the native install path (`setup-infra/bin/install`, `setup-schemas/bin/install`,
 the `.deb` maintainer scripts) against the runtime contract we reverse-engineered for
-the container channel. **No build/VM was run** — this is a source audit; items marked
-*verify on VM* need a real Debian host to confirm.
+the container channel.
 
-## Headline
+## ✅ VALIDATED END-TO-END (real `.deb` install, Debian 12)
+
+All four packages were **built from source on WSL** (`infra`, `schemas`, `server-pod`,
+`ui-pod`) and **installed on a clean Debian 12** (disposable privileged container). The
+result: **MariaDB restored from seed → factory pool stocked (20) + accounts created →
+`pm2` running `index.js`/`service.js` → nginx → the real Drumee UI in a browser at
+`http://localhost/`, with a working admin login** (`yp.login` → `status: active`).
+
+So native is no longer theoretical — it builds, installs, serves, and authenticates.
+Getting there surfaced several real gaps that **only an end-to-end install reveals**;
+they're listed below with status. The ones still marked *(needs packaging)* are what
+stands between "works after a few manual nudges" and a fully turnkey `apt install drumee`.
+
+### Gaps found during the real install
+
+| # | Gap | Status |
+|---|---|---|
+| Node 18 too old (ESM `mariadb`) | install Node 20 (NodeSource); `Depends: nodejs (>= 20)`; drop Debian `npm` | ✅ fixed (committed) |
+| `args.drumee_root` undefined → infra.js crash | use `data.drumee_root` at the use-sites | ✅ fixed + pushed to `setup-infra` |
+| `mariadb-backup` not a dependency → seed restore silently no-op | add to `drumee-schemas` `Depends` | ✅ fixed (committed) |
+| factory pool not stocked by `populate.js` → `EMPTY_FACTORY` | `stockFactory()` before account creation | ✅ fixed + pushed to `setup-schemas`; genesis templates packaged |
+| debconf→env bridge missing (metapackage path) | templates + config + postinst export | ✅ fixed + verified |
+| nginx `stream{}` (turn-relay) without the stream module → config invalid | `drumee-infra` `Depends: libnginx-mod-stream` | ✅ fixed (committed) |
+| **pm2 not installed** → `/etc/init.d/drumee` can't launch the app | `drumee-server-pod` must install pm2 (npm global) | ⏳ needs packaging |
+| **`ecosystem.config.js` not generated** to `$DRUMEE_SERVER_HOME` (init.d looks for it) | `infra.js` template render / init.d path | ⏳ needs packaging (upstream `setup-infra`) |
+| **`--conf-path` doubled** (`/etc/drumee/conf.d/etc/drumee/conf.d`) | pass the parent (`/`), not the full path | ⏳ needs packaging (upstream ecosystem args) |
+| dpkg **conffile prompt** on infra-rendered MariaDB configs | install with `--force-confold` | ⏳ document in `install-native.sh` |
+| `server/var/lib/drumee/postinstall/patch.sh` missing from the repo | `dh_install` expects `files/var/*` | ⏳ ship a placeholder |
+| domain `local` is awkward for local browser testing | prefer `domain: localhost` for local installs | ⏳ docs / default |
+
+## Headline (original source audit)
 
 The native installer already produces **most** of the runtime contract — unsurprising,
 since the container entrypoints were reverse-engineered *from* it. The process model is
