@@ -83,6 +83,12 @@ for v in $(grep -oE 'export [A-Z_0-9]+' builder/src/setup/menu/install.sh | awk 
 done
 [ "$miss" = 0 ] && ok "postinst exports every debconf-sourced var the wizard does"
 
+printf '\033[1;36m── native: schemas postinst guards the factory pool\033[0m\n'
+grep -q "area='pool'" schemas/debian/postinst \
+  && ok "schemas postinst checks the factory pool" || no "schemas postinst missing pool check"
+grep -q 'EMPTY_FACTORY' schemas/debian/postinst \
+  && ok "schemas postinst reports the EMPTY_FACTORY remedy" || no "schemas postinst missing EMPTY_FACTORY guidance"
+
 printf '\033[1;36m── native: debconf preseed keys all have templates\033[0m\n'
 tmpl=$(grep -rhoE '^Template: [^[:space:]]+' */debian/templates 2>/dev/null | awk '{print $2}' | sort -u)
 cfg=$(mktemp); cat > "$cfg" <<YAML

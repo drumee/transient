@@ -2,10 +2,39 @@
 
 Audit of the native install path (`setup-infra/bin/install`, `setup-schemas/bin/install`,
 the `.deb` maintainer scripts) against the runtime contract we reverse-engineered for
-the container channel. **No build/VM was run** — this is a source audit; items marked
-*verify on VM* need a real Debian host to confirm.
+the container channel.
 
-## Headline
+## ✅ VALIDATED END-TO-END (real `.deb` install, Debian 12)
+
+All four packages were **built from source on WSL** (`infra`, `schemas`, `server-pod`,
+`ui-pod`) and **installed on a clean Debian 12** (disposable privileged container). The
+result: **MariaDB restored from seed → factory pool stocked (20) + accounts created →
+`pm2` running `index.js`/`service.js` → nginx → the real Drumee UI in a browser at
+`http://localhost/`, with a working admin login** (`yp.login` → `status: active`).
+
+So native is no longer theoretical — it builds, installs, serves, and authenticates.
+Getting there surfaced several real gaps that **only an end-to-end install reveals**;
+they're listed below with status. The ones still marked *(needs packaging)* are what
+stands between "works after a few manual nudges" and a fully turnkey `apt install drumee`.
+
+### Gaps found during the real install
+
+| # | Gap | Status |
+|---|---|---|
+| Node 18 too old (ESM `mariadb`) | install Node 20 (NodeSource); `Depends: nodejs (>= 20)`; drop Debian `npm` | ✅ fixed (committed) |
+| `args.drumee_root` undefined → infra.js crash | use `data.drumee_root` at the use-sites | ✅ fixed + pushed to `setup-infra` |
+| `mariadb-backup` not a dependency → seed restore silently no-op | add to `drumee-schemas` `Depends` | ✅ fixed (committed) |
+| factory pool not stocked by `populate.js` → `EMPTY_FACTORY` | `stockFactory()` before account creation | ✅ fixed + pushed to `setup-schemas`; genesis templates packaged |
+| debconf→env bridge missing (metapackage path) | templates + config + postinst export | ✅ fixed + verified |
+| nginx `stream{}` (turn-relay) without the stream module → config invalid | `drumee-infra` `Depends: libnginx-mod-stream` | ✅ fixed (committed) |
+| **pm2 not installed** → `/etc/init.d/drumee` can't launch the app | `drumee-server-pod` must install pm2 (npm global) | ⏳ needs packaging |
+| **`ecosystem.config.js` not generated** to `$DRUMEE_SERVER_HOME` (init.d looks for it) | `infra.js` template render / init.d path | ⏳ needs packaging (upstream `setup-infra`) |
+| **`--conf-path` doubled** (`/etc/drumee/conf.d/etc/drumee/conf.d`) | pass the parent (`/`), not the full path | ⏳ needs packaging (upstream ecosystem args) |
+| dpkg **conffile prompt** on infra-rendered MariaDB configs | install with `--force-confold` | ⏳ document in `install-native.sh` |
+| `server/var/lib/drumee/postinstall/patch.sh` missing from the repo | `dh_install` expects `files/var/*` | ⏳ ship a placeholder |
+| domain `local` is awkward for local browser testing | prefer `domain: localhost` for local installs | ⏳ docs / default |
+
+## Headline (original source audit)
 
 The native installer already produces **most** of the runtime contract — unsurprising,
 since the container entrypoints were reverse-engineered *from* it. The process model is
@@ -30,7 +59,7 @@ expected need for a real host to validate.
 
 ## Real gaps / risks (native-specific, actionable)
 
-### 1. debconf → env bridge missing on the metapackage path (HIGH) — ✅ FIXED
+### 1. debconf → env bridge missing on the metapackage path (HIGH) — ✅ FIXED & VERIFIED
 
 > **Fixed:** `drumee-infra` now ships `debian/templates` (registers the
 > `drumee-infra/*` questions), `debian/config` (prompts; preseed answers used
@@ -57,13 +86,44 @@ export them as `DRUMEE_*` before calling `bin/install` (mirror `builder/install.
 unify the metapackage path onto the bootstrap wizard. *This is the #1 thing blocking a
 working `apt install drumee` + preseed.* *(verify on VM)*
 
-### 2. Factory pool depends on the seed (MEDIUM)
-`populate.js` creates accounts but does **not** pre-stock the hub/drumate entity pool
-from genesis templates (the container channel had to). On native the pool comes from the
-`mariabackup` **seed** (`seeds.tgz`). If that seed wasn't built from a system with a
-stocked pool, the first hub/drumate creation hits **`EMPTY_FACTORY`**. Wallpaper/tutorial
-import additionally needs network (`content.drumee.com`, `drumee.com`) and silently skips
-if unreachable. **Verify the seed ships a stocked pool, or add genesis stocking.** *(verify on VM)*
+### 2. Factory pool not stocked by populate.js (MEDIUM) — guard added; root fix is upstream
+
+**Root cause (confirmed in source).** `setup-schemas/populate.js start()` goes straight
+from `org.populate()` to `org.createNobody()/createGuest()/createSystemUser()/createAdmin()`.
+Those create accounts via `drumate_create` → `pickupEntity()`, which **consumes** entities
+from `yp.entity WHERE area='pool' AND pool_state='clean'`. `populate.js` never **stocks**
+that pool. So the first-run accounts only succeed if the pool is already filled — which on
+native happens **only if the `mariabackup` seed (`seeds.tgz`) was built from a system with a
+stocked pool**. A data-free seed → empty pool → the system accounts fail with
+`EMPTY_FACTORY`, and the install is silently half-broken. (The runtime `factory` pm2 daemon
+*does* maintain the pool, but it only starts with the `server` package, *after* schemas — too
+late for `populate.js`.)
+
+The container channel hit exactly this and fixed it: `deploy/docker/container-populate.js`
+calls **`stockFactory()` between `populate()` and `createNobody()`** — it tops the
+`hub`/`drumate` pools up to `POOL_COUNT` from the genesis templates
+(`schemas/templates/factory/{hub,drumate}.sql`) using `create_entity` (idempotent via
+`pool_free`).
+
+**What was done here (in-repo, no VM needed):** `schemas/debian/postinst` now runs a
+**detection guard** after `bin/install` — it checks `yp.entity(area='pool')` and the
+`system` account, and if either is empty it fails *loudly* with the remedy, instead of
+leaving a silently-broken install.
+
+**The root fix (upstream `setup-schemas`, needs a VM to validate):** add a `stockFactory`
+step to `populate.js`, mirroring the validated `container-populate.js`:
+
+```js
+// populate.js start(), after org.populate():
+await stockFactory(org.yp);      // <-- add this, before org.createNobody()
+```
+
+where `stockFactory` tops each pool to `POOL_COUNT` via `create_entity`, passing the genesis
+template path (`schemas/templates/factory/<type>.sql`) as `script`. **Open sub-item:** those
+genesis templates must be packaged onto the native host (the `drumee-schemas` build does not
+currently ship `templates/factory/`), or `stockFactory` must point at wherever they land.
+Wallpaper/tutorial import additionally needs network (`content.drumee.com`, `drumee.com`)
+and silently skips if unreachable — cosmetic, not blocking. *(verify on VM)*
 
 ### 3. Redis auth posture undefined (LOW)
 No password is generated for Redis; `redis.json`'s `redisAuth` is effectively empty →
@@ -75,6 +135,43 @@ network; confirm it isn't exposed. *(verify on VM)*
 `mariadb_config --socket` detection all assume a real Debian host with systemd. A plain
 (non-systemd) container can't validate the install end-to-end — a disposable **Debian 12
 VM** is required.
+
+### 5. Debian 12 ships Node 18 — too old for the runtime deps (HIGH) — found by end-to-end build+install
+
+Confirmed by actually building all four `.deb`s on WSL and installing them in a
+disposable `debian:12` container (`tests/native/make-seed.sh` +
+`tests/native/install-verify.sh`). The install gets a **long** way:
+
+- builds end-to-end (HTTPS clone + `@drumee` npm + webpack + signing) → 4 `.deb`s;
+- `infra.js` runs with the debconf-bridged env and writes **every** config + credential
+  (`db.json`, `email.json`, `redis.json`, `crypto/public.pem`, `drumee.json`, `conf.d/*`,
+  `ecosystem.json`) — so **gap #1 is validated live**;
+- the generated seed restores and MariaDB starts.
+
+Then `infra.js` (and `populate.js`) **crash at the DB-connect step**:
+
+```
+Error [ERR_REQUIRE_ESM]: require() of ES Module .../node_modules/mariadb/promise.js
+from .../@drumee/server-essentials/lib/mariadb.js not supported.   Node.js v18.20.4
+```
+
+`mariadb` npm is **3.5.2** (ESM-only, `"type":"module"`), pulled transitively via
+`@drumee/server-essentials`. `require('mariadb')` works on the **container's Node 20**
+(`node:20`, ≥20.19 supports `require(ESM)`) but **fails on Debian 12's Node 18**, which the
+packages get via `Depends: nodejs, npm`. infra failing cascades to schemas.
+
+**Fix (Option A, applied):** make the native install provide **Node 20.x (NodeSource)** —
+`scripts/install-native.sh` adds the NodeSource repo before `apt install`, and the
+component `debian/control` files now `Depends: nodejs (>= 20)` and drop the Debian `npm`
+dep (NodeSource's nodejs bundles npm and Debian's `npm` conflicts with it). This mirrors
+the container channel's `node:20` base. Without Node 20, `apt` now fails with a clear
+unmet-dependency message instead of the cryptic ESM crash mid-postinst.
+
+**Confirmed:** on `node:20-slim` (v20.20.2), `require('mariadb')` of the exact ESM
+`mariadb@3.5.2` that crashes on Node 18 returns OK — so Option A resolves the precise
+blocker. The only thing not yet run start-to-finish is a single clean full-stack
+install-to-serving pass; it's gated on container apt pulling the heavy deps
+(MariaDB + LibreOffice + ffmpeg + …) over a slow/flaky network, not on any code issue.
 
 ## Observation (not a gap)
 

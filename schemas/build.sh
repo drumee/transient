@@ -55,6 +55,11 @@ rsync -arv --exclude ".git:.npmrc" ${base}/var $build_dir/files/
 schemas_dir=$build_dir/files/var/lib/drumee/schemas
 mkdir -p $schemas_dir
 rsync -arvp $schemas_src/bin $schemas_dir/
+# Package the genesis entity templates so populate.js stockFactory can stock the
+# factory pool at install time (gap #2). populate.js reads GENESIS_DIR, which
+# defaults to /var/lib/drumee/schemas/templates/factory.
+mkdir -p $schemas_dir/templates
+rsync -arvp $schemas_src/templates/factory $schemas_dir/templates/
 cp $schemas_src/package.json $schemas_dir/
 cd $schemas_dir
 npm i

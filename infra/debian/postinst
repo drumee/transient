@@ -5,6 +5,11 @@
 
 set -e
 
+# Source debconf FIRST, before any argument handling: confmodule may re-exec this
+# script to connect to the debconf frontend, and doing that after `case "$1"`
+# would lose the action argument ("postinst called with unknown argument ''").
+. /usr/share/debconf/confmodule
+
 # summary of how this script can be called:
 #        * <postinst> `configure' <most-recently-configured-version>
 #        * <old-postinst> `abort-upgrade' <new version>
@@ -22,7 +27,7 @@ set -e
 # empty domain and silently exit(0)s, so `apt install drumee` (+ preseed) never
 # configures. This mirrors the drumee-bootstrap wizard (setup/menu/install.sh).
 bridge_debconf_env() {
-    . /usr/share/debconf/confmodule
+    # confmodule is already sourced at the top of the script.
     db_get drumee-infra/description      || true; export DRUMEE_DESCRIPTION="$RET"
     db_get drumee-infra/domain           || true; export DRUMEE_DOMAIN_NAME="$RET"
     db_get drumee-infra/local_mode       || true; export LOCAL_MODE="$RET"

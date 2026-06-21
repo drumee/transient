@@ -27,6 +27,18 @@ echo "deb [signed-by=/etc/apt/keyrings/drumee.asc] $APT_URL $SUITE main" \
 echo "==> apt update"
 apt-get update
 
+# Drumee's runtime deps require Node.js >= 20 (e.g. the ESM-only mariadb npm), but
+# Debian/Ubuntu ship Node 18 or older. Ensure Node 20 from NodeSource so the
+# packages' `nodejs (>= 20)` dependency resolves (matches the container channel's
+# node:20). NodeSource's nodejs bundles npm.
+node_major="$(command -v node >/dev/null 2>&1 && node -p 'process.versions.node.split(".")[0]' 2>/dev/null || echo 0)"
+if [ "${node_major:-0}" -lt 20 ]; then
+  echo "==> Installing Node.js 20 (NodeSource); current: ${node_major:-none}"
+  command -v curl >/dev/null || apt-get install -y curl ca-certificates
+  curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
+  apt-get install -y nodejs
+fi
+
 if [ -n "$PRESEED" ]; then
   [ -f "$PRESEED" ] || { echo "error: PRESEED file not found: $PRESEED" >&2; exit 1; }
   echo "==> Applying preseed for unattended install"
