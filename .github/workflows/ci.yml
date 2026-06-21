@@ -3,7 +3,7 @@ name: CI
 on:
   pull_request:
   push:
-    branches: [main]
+    branches: [main, 'feat/**']
 
 jobs:
   lint:
@@ -23,28 +23,14 @@ jobs:
           severity: warning
           ignore_paths: builder/src target
 
-  config:
+  # One comprehensive suite: render + compose validity + config smoke + the
+  # installer wizard (render-only) + native packaging metadata + version drift.
+  # No private source / images / VM needed — runs on every push and PR.
+  suite:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with: { node-version: '20' }
-      - name: render.mjs parses
-        run: node --check config/render.mjs
-      - name: Render example config
-        run: |
-          cp config/drumee.example.yaml config/drumee.yaml
-          node config/render.mjs validate --config config/drumee.yaml >/dev/null
-          node config/render.mjs all --config config/drumee.yaml --out-dir out
-      - name: docker compose config is valid
-        run: |
-          cp deploy/docker/Caddyfile out/Caddyfile
-          docker compose -f out/docker-compose.yml --env-file out/.env config -q
-          echo "compose OK"
-
-  versions:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Release manifest matches changelogs
-        run: scripts/check-versions.sh
+      - name: Full test suite (tests/run-all.sh)
+        run: tests/run-all.sh

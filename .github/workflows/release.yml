@@ -76,6 +76,9 @@ jobs:
       - name: Import signing key
         if: ${{ secrets.GPG_PRIVATE_KEY != '' }}
         run: echo "${{ secrets.GPG_PRIVATE_KEY }}" | gpg --batch --import
+      - name: Generate base seed (drumee-schemas needs a mariabackup seed)
+        if: ${{ secrets.DRUMEE_SSH_KEY != '' }}
+        run: tests/native/make-seed.sh        # -> schemas/var/tmp/drumee/seeds.tgz
       - name: Build packages
         if: ${{ secrets.DRUMEE_SSH_KEY != '' }}
         run: |
@@ -84,6 +87,9 @@ jobs:
           export DEB_BUILD_TARGET="$PWD/out-debs"; mkdir -p "$DEB_BUILD_TARGET"
           ./build-all.sh
           meta/build.sh
+      - name: Native install verify (end-to-end, disposable Debian container)
+        if: ${{ secrets.DRUMEE_SSH_KEY != '' }}
+        run: tests/native/install-verify.sh   # installs the built .debs + checks it serves
       - name: Publish APT repo
         if: ${{ secrets.GPG_PRIVATE_KEY != '' && secrets.DRUMEE_SSH_KEY != '' }}
         run: scripts/publish-apt.sh --debs=out-debs --out=apt-repo --suite=stable
