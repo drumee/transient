@@ -39,6 +39,7 @@
 - [x] TLS on by default with automatic renewal.
 - [ ] Bind MariaDB/Redis to the internal network only in **all** native templates.
 - [ ] Add rate-limiting / `fail2ban` defaults for auth endpoints.
-- [ ] Sign artifacts: GPG for `.deb`s + APT `Release` (Phase 5), `cosign` for images.
-- [ ] Publish an SBOM per release.
+- [x] Sign artifacts: APT `Release` via GPG (`publish-apt.sh`, `GPG_PRIVATE_KEY` secret) and
+      images via **keyless `cosign`** (GitHub OIDC) — both wired in `.github/workflows/release.yml`.
+- [x] Publish an SBOM per release (`syft`/`anchore/sbom-action` in `release.yml`).
 - [ ] Document a CVE/patch response process (ties into `drumee-patch`).

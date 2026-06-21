@@ -17,6 +17,7 @@ on:
 permissions:
   contents: write
   packages: write
+  id-token: write   # keyless cosign signing via GitHub OIDC
 
 jobs:
   guard:
@@ -65,6 +66,26 @@ jobs:
           TAG: ${{ github.ref_name }}
           PUSH: ${{ secrets.REGISTRY_TOKEN != '' && '1' || '0' }}
         run: scripts/publish-images.sh
+      - name: Install cosign + syft (supply-chain)
+        if: ${{ secrets.REGISTRY_TOKEN != '' }}
+        uses: sigstore/cosign-installer@v3
+      - name: Sign images (keyless, GitHub OIDC) + emit SBOM
+        if: ${{ secrets.REGISTRY_TOKEN != '' }}
+        env:
+          REGISTRY: ghcr.io/${{ github.repository_owner }}
+          TAG: ${{ github.ref_name }}
+          COSIGN_YES: "true"
+        run: |
+          for n in server-pod ui-build schemas schemas-populate infra-init; do
+            cosign sign --yes "$REGISTRY/$n:$TAG" || echo "warn: cosign sign $n failed"
+          done
+      - name: SBOM for server-pod (syft)
+        if: ${{ secrets.REGISTRY_TOKEN != '' }}
+        uses: anchore/sbom-action@v0
+        with:
+          image: ghcr.io/${{ github.repository_owner }}/server-pod:${{ github.ref_name }}
+          format: spdx-json
+          artifact-name: sbom-server-pod.spdx.json
 
   debs:
     needs: guard
