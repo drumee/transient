@@ -37,22 +37,26 @@ const SECURE_SHARE_READONLY_DENYLIST = new Set([
   // channel.react: read-src but mutates message metadata (toggle emoji reaction).
   // chat.react is write-src → already caught by the threshold below.
   "channel.react",
+  // read-src but persist read receipts for this.uid (creator-bound on anon shares)
+  "channel.acknowledge", "channel.read",
   // tags — anonymous-src but mutate the bound hub's tags
   "tag.store", "tag.delete",
   // file copy / restore — read-src, mutate / exfil
   "media.copy", "media.copy_all", "media.restore", "media.restore_into", "media.mark_as_seen",
   // calls / conferences / rooms / signaling — read or anon src; recipients get no calls
   "conference.join", "conference.leave", "conference.update", "conference.accept", "conference.decline",
-  "room.join", "room.leave", "room.requestAccess", "room.request_screen_access",
+  "room.join", "room.leave", "room.requestAccess", "room.request_screen_access", "room.get_screen",
   "signaling.dial", "signaling.message",
   // transferbox — read/anon src, mutate
   "transfer.delete", "transfer.remove", "transfer.send_otp",
   // membership / inbound-share / notification mutations — anon|read src, would run as
   // the creator-bound session: leave_hub could remove the CREATOR from the shared hub;
   // sharebox.* accept/refuse the creator's pending shares; activity.dismiss_rollup
-  // mutates the creator's notification state.
+  // mutates the creator's notification state; hub.poke sends notifications as the
+  // creator; hub.accept_invite redeems an invite AS the creator; yp.device_registration
+  // (anon) would bind the viewer's push token to the creator's account.
   "desk.leave_hub", "sharebox.accept_notification", "sharebox.refuse_notification",
-  "activity.dismiss_rollup",
+  "activity.dismiss_rollup", "hub.poke", "hub.accept_invite", "yp.device_registration",
 ]);
 
 
