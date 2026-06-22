@@ -43,6 +43,7 @@ class privateChat extends Entity {
     this.attachment = this.attachment.bind(this);
     this.change_status = this.change_status.bind(this);
     this.typing = this.typing.bind(this);
+    this.react = this.react.bind(this);
   }
 
   /**
@@ -654,6 +655,61 @@ class privateChat extends Entity {
       entity_id,
     ]);
     this.output.data(res);
+  }
+
+  /**
+   * Toggle the caller's emoji reaction on a P2P message. The message is
+   * single-write in its author's DB: react locally when the caller authored it,
+   * otherwise toggle cross-DB in the peer's DB (mirrors the get/delete paths).
+   * Notifies the peer and the caller's other sessions via WebSocket.
+   */
+  async react() {
+    const message_id = this.input.need(Attr.message_id);
+    const emoji = this.input.need("emoji");
+    const peer_id = this.input.get(Attr.peer_id) || this.input.need(Attr.entity_id);
+    const socket_id = this.input.get(Attr.socket_id);
+    const glyphs = Array.from(emoji || "");
+    if (!glyphs.length || glyphs.length > 8 || /['"\\\s]/.test(emoji)) {
+      return this.output.data({ status: "INVALID_EMOJI" });
+    }
+    // Message row lives in its author's DB. Try mine; if absent, it is the
+    // peer's message -> toggle cross-DB in the peer's DB.
+    let res = await this.db.await_proc(
+      "p2p_message_reaction_toggle",
+      message_id,
+      this.uid,
+      emoji
+    );
+    let row = Array.isArray(res) ? res[0] : res;
+    if (isEmpty(row) || !row.found) {
+      res = await this.yp.await_proc(
+        "forward_proc",
+        peer_id,
+        "p2p_message_reaction_toggle",
+        `'${message_id}','${this.uid}','${emoji}'`
+      );
+      row = Array.isArray(res) ? res[0] : res;
+    }
+    const reactions = row && row.reactions ? this.parseJSON(row.reactions) : {};
+    // Notify the peer (peer_id in the payload is the caller's uid, mirroring
+    // chat.acknowledge/chat.typing so the peer widget patches the right row).
+    const hisDest = await this.yp.await_proc("user_sockets", peer_id);
+    if (!isEmpty(hisDest)) {
+      await RedisStore.sendData(
+        this.payload({ message_id, peer_id: this.uid, reactions }, { service: "chat.react" }),
+        hisDest
+      );
+    }
+    // Update the caller's sibling sessions (exclude the originating socket).
+    let myDest = await this.yp.await_proc("user_sockets", this.uid);
+    myDest = toArray(myDest).filter((e) => e && (!socket_id || e.socket_id != socket_id));
+    if (!isEmpty(myDest)) {
+      await RedisStore.sendData(
+        this.payload({ message_id, peer_id, reactions }, { service: "chat.react" }),
+        myDest
+      );
+    }
+    this.output.data({ message_id, reactions, capped: row && row.capped ? 1 : 0 });
   }
 
   /**

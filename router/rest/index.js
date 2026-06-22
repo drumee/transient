@@ -19,6 +19,53 @@ let Workers = new Map();
 let Plugins = new Map();
 let LOCKED = false;
 
+// A3 secure-share: anonymous recipients carry a read-only session privilege ceiling
+// (set in dmz.js _loginSecureShare via set_session_priv_ceiling). When a ceiling is
+// present, mutating operations are denied. A `permission.src > read` threshold catches
+// every write/delete/admin/owner service; the denylist below catches services that are
+// read/anonymous src yet still MUTATE (a threshold alone would miss them — e.g.
+// channel.post posts chat AS the creator). Audited across all acl/*.json 2026-06-18.
+const READ_LEVEL = permissionValue("read");
+// Stored cumulative privilege (lib/privilege.js) for the chat cap — a chat-ceiling
+// session may post to a folder conversation (channel.post); a lower (read-only)
+// ceiling may not. Recipients never get a ceiling above this (edit = no ceiling).
+const CHAT_CEILING = 7;
+const SECURE_SHARE_READONLY_DENYLIST = new Set([
+  // chat / channel — read-src, mutate or impersonate the creator
+  "channel.post", "channel.delete", "channel.post_ticket", "channel.send_ticket",
+  "channel.bookmark_add", "channel.bookmark_remove", "chat.attachment",
+  // channel.react: read-src but mutates message metadata (toggle emoji reaction).
+  // chat.react is write-src → already caught by the threshold below.
+  "channel.react",
+  // read-src but persist read receipts for this.uid (creator-bound on anon shares)
+  "channel.acknowledge", "channel.read", "channel.acknowledge_ticket",
+  // read-src but broadcasts an arbitrary event to the whole hub as the creator
+  "conference.broadcast",
+  // tags — anonymous-src but mutate the bound hub's tags
+  "tag.store", "tag.delete",
+  // file copy / restore — read-src, mutate / exfil
+  "media.copy", "media.copy_all", "media.restore", "media.restore_into", "media.mark_as_seen",
+  // calls / conferences / rooms / signaling — read or anon src; recipients get no calls
+  "conference.join", "conference.leave", "conference.update", "conference.accept", "conference.decline",
+  "room.join", "room.leave", "room.requestAccess", "room.request_screen_access", "room.get_screen",
+  "room.get", "room.unified_room",
+  "signaling.dial", "signaling.message",
+  // transferbox — read/anon src, mutate
+  "transfer.delete", "transfer.remove", "transfer.send_otp",
+  // membership / inbound-share / notification mutations — anon|read src, would run as
+  // the creator-bound session: leave_hub could remove the CREATOR from the shared hub;
+  // sharebox.* accept/refuse the creator's pending shares; activity.dismiss_rollup
+  // mutates the creator's notification state; hub.poke sends notifications as the
+  // creator; hub.accept_invite redeems an invite AS the creator; yp.device_registration
+  // (anon) would bind the viewer's push token to the creator's account.
+  "desk.leave_hub", "sharebox.accept_notification", "sharebox.refuse_notification",
+  "activity.dismiss_rollup", "hub.poke", "hub.accept_invite", "yp.device_registration",
+  // admin mimic (anon-src) + process-wide debug toggles (read-src) — would change
+  // impersonation / logging state while bound as the creator.
+  "adminpanel.mimic_active", "adminpanel.mimic_reject", "adminpanel.mimic_end_byuser",
+  "devel.verbosity", "devel.log_over_socket",
+]);
+
 
 /**
  *
@@ -262,7 +309,41 @@ class Acl {
         Workers.set(path, WorkerClass);
       }
       worker = new WorkerClass({ session, permission });
-      worker.once(GRANTED, function () {
+      worker.once(GRANTED, async function () {
+        // A3: enforce the read-only ceiling for secure-share recipient sessions.
+        // Only look up the ceiling when this service COULD mutate (write+ src, or a
+        // read/anon-src mutator) → normal read traffic adds no DB cost. Fail-OPEN on
+        // lookup error so a missing SP / DB hiccup degrades to today's behaviour and
+        // never blocks all writes. Self-clears via uid==ceiling_uid in the SP.
+        // A service can also mutate via its DESTINATION (e.g. media.relocate is
+        // src:read, dest:write → move_all): the src threshold alone would miss it and
+        // let a clamped session move files. Treat dest write+ as mutating too.
+        const mightMutate = (permission && permission.src > READ_LEVEL)
+          || (permission && permission.dest != null && permission.dest > READ_LEVEL)
+          || SECURE_SHARE_READONLY_DENYLIST.has(service);
+        if (mightMutate) {
+          try {
+            // get_session_priv_ceiling is a PROCEDURE (CREATE FUNCTION is restricted
+            // under binary logging on the replicated DB; procedures are not) → await_proc.
+            // It SELECTs a single row {priv_ceiling}; null when unset or uid != ceiling_uid.
+            let _row = await session.yp.await_proc("get_session_priv_ceiling", session.sid());
+            if (Array.isArray(_row)) _row = _row[0];
+            const ceiling = (_row && _row.priv_ceiling != null) ? _row.priv_ceiling : null;
+            if (ceiling != null) {
+              // A chat ceiling (>=7) permits posting to a folder conversation
+              // (channel.post) while still denying file-writes/calls/invite; a
+              // read-only ceiling (3) denies channel.post too. Everything else stays
+              // denied for any ceiling.
+              const chatPostAllowed = (ceiling >= CHAT_CEILING && service === "channel.post");
+              if (!chatPostAllowed) {
+                worker.stop();
+                return session.exception.unauthorized(`SECURE_SHARE_READ_ONLY:${service}`);
+              }
+            }
+          } catch (e) {
+            console.warn("[acl] secure-share ceiling check failed (fail-open):", e && e.message);
+          }
+        }
         const need = worker.before_granting;
         if (isFunction(worker[need])) {
           try {

@@ -320,25 +320,55 @@ class __dmz extends Mfs {
     // Password gate — only evaluated after email gate passes (or was skipped for public shares)
     if (info.require_password) {
       const submittedPassword = (this.input.get(Attr.password) || '').trim();
-      if (!submittedPassword) {
-        return this.output.data({ ...safeInfo, status: 'REQUIRED_PASSWORD', is_secure: 1 });
-      }
-      if (!verifySecureSharePassword(submittedPassword, storedPasswordHash)) {
-        try { await this.yp.await_proc('secure_share_increment_attempts', token); } catch (e) {}
-        // SP locks when new count >= 3; info.failed_attempts is the pre-increment value
-        const attemptsUsed      = (info.failed_attempts || 0) + 1;
-        const attemptsRemaining = Math.max(0, 3 - attemptsUsed);
-        // Token is now locked — tell the client immediately instead of making them
-        // submit again only to receive TICKET_LOCKED on the next request.
-        if (attemptsRemaining === 0) {
-          return this.output.data({ status: 'TICKET_LOCKED', is_secure: 1 });
+      if (submittedPassword) {
+        if (!verifySecureSharePassword(submittedPassword, storedPasswordHash)) {
+          try { await this.yp.await_proc('secure_share_increment_attempts', token); } catch (e) {}
+          // SP locks when new count >= 3; info.failed_attempts is the pre-increment value
+          const attemptsUsed      = (info.failed_attempts || 0) + 1;
+          const attemptsRemaining = Math.max(0, 3 - attemptsUsed);
+          // Token is now locked — tell the client immediately instead of making them
+          // submit again only to receive TICKET_LOCKED on the next request.
+          if (attemptsRemaining === 0) {
+            return this.output.data({ status: 'TICKET_LOCKED', is_secure: 1 });
+          }
+          return this.output.data({ status: 'WRONG_PASSWORD', is_secure: 1, attempts_remaining: attemptsRemaining });
         }
-        return this.output.data({ status: 'WRONG_PASSWORD', is_secure: 1, attempts_remaining: attemptsRemaining });
+        // Correct password — remember it for THIS share session (the hub-cookie sid,
+        // which page.js persists and shares across the browser's tabs) so a later load
+        // doesn't re-prompt. Notably: after the recipient clicks Login, the share
+        // re-opens in a NEW tab that shares this same hub cookie, so the gate is skipped
+        // there instead of asking for the password a second time. Best-effort.
+        try { await this._markSharePasswordOk(token); } catch (e) { /* non-fatal */ }
+      } else {
+        // No password submitted — allow ONLY if this same session already proved it.
+        let alreadyOk = false;
+        try { alreadyOk = await this._isSharePasswordOk(token); } catch (e) { alreadyOk = false; }
+        if (!alreadyOk) {
+          return this.output.data({ ...safeInfo, status: 'REQUIRED_PASSWORD', is_secure: 1 });
+        }
       }
     }
 
-    // Valid access — log it and notify sender in real time
-    const actor_id = (guest_id === user.id) ? null : (user.id || null);
+    // Valid access — log it and notify sender in real time.
+    // Attribute the open to the viewer's OWN account ONLY when they are genuinely
+    // authenticated. An anonymous recipient runs in the creator-bound guest session
+    // (user.id === creator_id), so the previous `guest_id === user.id` check logged
+    // the SENDER as the visitor — which then surfaced the sender's email in the
+    // access list. Anonymous viewers are logged as an anonymous open (no actor).
+    const actor_id = isAuthenticated ? (user.id || null) : null;
+    // Recipient email for the access list + the "opened" notification. A password-only
+    // share carries no submitted email, so fall back to the authenticated account's
+    // own email (resolved from its regsid above) — never the creator's.
+    let _recipientEmail = submittedEmail || null;
+    // The creator previewing their OWN share is not a recipient — don't fall back to
+    // their account email (it would persist on the access event and show the sender as
+    // a recipient, which the list_access_events creator skip can't undo once stored).
+    if (!_recipientEmail && isAuthenticated && user.profile && String(user.id) !== String(info.creator_id)) {
+      try {
+        const _p = (typeof user.profile === 'string') ? JSON.parse(user.profile) : user.profile;
+        _recipientEmail = (_p && _p.email) ? String(_p.email).toLowerCase().trim() : null;
+      } catch (e) { /* ignore malformed profile */ }
+    }
     try {
       const track = await this.yp.await_proc('secure_share_access_log', token, actor_id, this.input.get(Attr.socket_id));
       // v2: also record a per-visit access event (entered_at / last_seen_at) backing
@@ -347,7 +377,7 @@ class __dmz extends Mfs {
       try {
         await this.yp.await_proc(
           'secure_share_log_access_event',
-          token, submittedEmail || null, actor_id, this.input.get(Attr.socket_id)
+          token, _recipientEmail, actor_id, this.input.get(Attr.socket_id)
         );
       } catch (e) {
         this.warn('[dmz.login] secure_share access_event failed:', e && e.message);
@@ -364,7 +394,7 @@ class __dmz extends Mfs {
               event           : 'secure_share_opened',
               token,
               nid             : info.node_id,
-              recipient_email : submittedEmail,
+              recipient_email : _recipientEmail,
               access_count    : (info.access_count || 0) + 1,
             },
             { service: 'share.track_event' }
@@ -570,6 +600,11 @@ class __dmz extends Mfs {
     // at the top of this method).
     // ---------------------------------------------------------------------
     let bindUid = info.creator_id;
+    // Privilege ceiling to stamp on THIS share session (enforced by router/rest):
+    // anonymous = read-only (3); a signed-in NON-member recipient gets their cap level
+    // (view/download 3, chat 7) so the gate clamps the grant's over-reach; edit (15) and
+    // owner/member get NO ceiling (full / own access). null = no clamp.
+    let ceilingToStamp = !isAuthenticated ? 3 : null;
     if (isAuthenticated && user.id && !info.file_nid && info.node_id) {
       if (memberPriv > 0 || String(user.id) === String(info.creator_id)) {
         // Member or owner — already has standing access; operate as themselves.
@@ -587,10 +622,28 @@ class __dmz extends Mfs {
               info.node_id, user.id, 0, grantPriv, 'system', 'Secure share access'
             );
             bindUid = user.id;            // rebind ONLY after the grant succeeds
+            // Clamp view/download (3) and chat (7) recipients with a session ceiling so
+            // router/rest denies file-writes (the node grant alone can't — chat grant 7
+            // carries the write bit). Edit (15) = full edit intended → no ceiling.
+            if (grantPriv < 0b0001111) ceilingToStamp = grantPriv;
           }
         } catch (e) {
           this.warn('[dmz.login] secure_share node grant failed; keeping creator binding:', e && e.message);
         }
+      }
+    } else if (
+      isAuthenticated && info.file_nid && user.id &&
+      !(memberPriv > 0 || String(user.id) === String(info.creator_id))
+    ) {
+      // Authenticated NON-member recipient of a single-FILE share. The folder rebind
+      // above is skipped (a single file has no subtree to node-scope), so the session
+      // stays creator-bound — without a ceiling it would otherwise inherit FULL creator
+      // privilege and let a view/download/chat recipient run creator-authorized
+      // writes/deletes after signing in. Clamp the creator-bound session to the share
+      // caps. can_edit → no clamp (they may edit the shared file; the office-editor path
+      // is node-scoped via mfs_node_in_subtree).
+      if (caps.indexOf('can_edit') === -1) {
+        ceilingToStamp = (caps.indexOf('can_chat') !== -1) ? 7 : 3;
       }
     }
     // socket_id must be passed so entity_sockets() includes this guest socket in
@@ -606,6 +659,30 @@ class __dmz extends Mfs {
         });
       } catch (e) {
         this.warn('[dmz.login] secure_share cookie_touch failed:', e && e.message);
+      }
+    }
+
+    // Stamp the session privilege ceiling computed above (read-only 3 / chat 7), bound
+    // to bindUid. get_session_priv_ceiling() returns it ONLY while cookie.uid still
+    // equals ceiling_uid, so it self-clears if an anonymous visitor later signs up (uid
+    // changes). router/rest enforces it: read-only (3) denies ALL mutations incl
+    // channel.post; chat (7) additionally PERMITS channel.post (text chat) while still
+    // denying file-writes/calls/invite. The ceiling lands on THIS share session's sid
+    // (the hub cookie — page.js gives it an independent sid), so a signed-in recipient's
+    // main account (regsid) is never clamped. Owner/member/edit → ceilingToStamp null →
+    // no clamp. Best-effort; on failure we keep the prior (un-clamped) binding.
+    //
+    // ALWAYS write (including ceilingToStamp=null, which CLEARS the ceiling) so the
+    // session's clamp tracks its CURRENT access. The share-session sid is reused across
+    // loads, and get_session_priv_ceiling only self-clears when the bound uid CHANGES —
+    // so if a recipient is elevated on the SAME uid (view/chat → edit, or becomes a
+    // member/owner), a stale read/chat ceiling would otherwise linger and keep denying
+    // writes they are now entitled to. Passing null sets priv_ceiling=NULL → no clamp.
+    if (bindUid) {
+      try {
+        await this.yp.await_proc('set_session_priv_ceiling', this.input.sid(), ceilingToStamp, bindUid);
+      } catch (e) {
+        this.warn('[dmz.login] secure_share set_session_priv_ceiling failed:', e && e.message);
       }
     }
 
@@ -634,6 +711,40 @@ class __dmz extends Mfs {
       // access" banner / viral chrome for members.
       is_member        : is_member,
     });
+  }
+
+  /**
+   * One-time-per-session password gate marker. Keyed by the share TOKEN + the
+   * share-session sid (the hub cookie, which page.js persists and shares across the
+   * browser's tabs), so once this session has entered the correct password it is not
+   * re-prompted — including in the new tab the Login button opens, which carries the
+   * same hub cookie. Stored in Redis with a bounded TTL; both helpers are best-effort
+   * and fail CLOSED (a Redis error → no marker → the password is required), so they
+   * can never grant access without a real password.
+   */
+  _sharePasswordKey(token) {
+    const sid = this.input.sid();
+    if (!token || !sid) return null;
+    return `ss:pwok:${token}:${sid}`;
+  }
+
+  async _markSharePasswordOk(token) {
+    const key = this._sharePasswordKey(token);
+    if (!key) return;
+    const client = RedisStore.getClient();
+    if (!client) return;
+    // 12h: long enough to cover the enter-password → login → return flow and a normal
+    // working session, short enough that a shared browser re-asks later.
+    await client.set(key, '1', { EX: 12 * 3600 });
+  }
+
+  async _isSharePasswordOk(token) {
+    const key = this._sharePasswordKey(token);
+    if (!key) return false;
+    const client = RedisStore.getClient();
+    if (!client) return false;
+    const v = await client.get(key);
+    return v === '1';
   }
 
   /**

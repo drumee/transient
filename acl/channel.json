@@ -293,6 +293,45 @@
       },
       "errors": []
     },
+    "react": {
+      "doc": "Toggle the caller's emoji reaction on a channel message. Adds the reaction if absent, removes it if already present. Persists per-message in metadata under the _reactions_ key alongside read receipts, so reactions load with the message. Broadcasts the updated reactions map to all other hub participants via WebSocket, excluding the caller's socket.",
+      "scope": "hub",
+      "permission": {
+        "src": "read"
+      },
+      "params": {
+        "message_id": {
+          "type": "string",
+          "required": true,
+          "doc": "ID of the message to react to"
+        },
+        "emoji": {
+          "type": "string",
+          "required": true,
+          "doc": "Single emoji to toggle for the caller"
+        },
+        "socket_id": {
+          "type": "string",
+          "required": true,
+          "doc": "Caller's WebSocket socket ID. Used to exclude the caller from the broadcast recipients."
+        }
+      },
+      "returns": {
+        "type": "object",
+        "doc": "Updated reaction state",
+        "properties": {
+          "message_id": {
+            "type": "string",
+            "doc": "The message that was reacted to"
+          },
+          "reactions": {
+            "type": "object",
+            "doc": "Map of emoji to array of user IDs who reacted with it"
+          }
+        }
+      },
+      "errors": []
+    },
     "post_ticket": {
       "doc": "Post a reply message to an existing support ticket. Supports threaded replies and file attachments. Broadcasts the new message to the ticket owner and all support domain members.",
       "scope": "hub",
