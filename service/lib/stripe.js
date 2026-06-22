@@ -3,8 +3,8 @@
 const { Cache } = require('@drumee/server-essentials');
 const Stripe = require('stripe');
 
-// Pin to the apiVersion the installed SDK bundles (set precisely after the SDK upgrade task).
-const API_VERSION = '2025-04-30.basil';
+// Pin to the apiVersion the installed SDK bundles (stripe 22.x default).
+const API_VERSION = '2026-05-27.dahlia';
 
 let _client = null;
 
