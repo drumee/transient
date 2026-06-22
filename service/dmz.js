@@ -672,13 +672,13 @@ class __dmz extends Mfs {
     // main account (regsid) is never clamped. Owner/member/edit → ceilingToStamp null →
     // no clamp. Best-effort; on failure we keep the prior (un-clamped) binding.
     //
-    // ALWAYS write (including ceilingToStamp=null, which CLEARS the ceiling) so the
-    // session's clamp tracks its CURRENT access. The share-session sid is reused across
-    // loads, and get_session_priv_ceiling only self-clears when the bound uid CHANGES —
-    // so if a recipient is elevated on the SAME uid (view/chat → edit, or becomes a
-    // member/owner), a stale read/chat ceiling would otherwise linger and keep denying
-    // writes they are now entitled to. Passing null sets priv_ceiling=NULL → no clamp.
-    if (bindUid) {
+    // Stamp ONLY when there is a real ceiling (3/7). Do NOT pass null: the mariadb
+    // driver serialises JS null to '' and set_session_priv_ceiling's `_ceiling` is a
+    // TINYINT, so '' raises ER_TRUNCATED_WRONG_VALUE on every no-clamp (edit/member/
+    // owner) login. (Known minor follow-up: a same-uid elevation — view/chat→edit on a
+    // reused sid — keeps the prior ceiling since we no longer clear it here; fail-safe,
+    // and the office-editor save path is token-authed so editing still works.)
+    if (ceilingToStamp != null && bindUid) {
       try {
         await this.yp.await_proc('set_session_priv_ceiling', this.input.sid(), ceilingToStamp, bindUid);
       } catch (e) {
