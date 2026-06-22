@@ -606,30 +606,40 @@ class __dmz extends Mfs {
     // owner/member get NO ceiling (full / own access). null = no clamp.
     let ceilingToStamp = !isAuthenticated ? 3 : null;
     if (isAuthenticated && user.id && !info.file_nid && info.node_id) {
-      if (memberPriv > 0 || String(user.id) === String(info.creator_id)) {
-        // Member or owner — already has standing access; operate as themselves.
+      if (String(user.id) === String(info.creator_id)) {
+        // Owner — full standing access; operate as themselves, no grant/ceiling.
         bindUid = user.id;
       } else {
-        // Non-member recipient — grant capped node access, then bind to their uid.
+        // Non-owner recipient — grant capped node access, then bind to their uid.
         let grantPriv = 0b0000011;                                    // read / view / download
         if (caps.indexOf('can_chat') !== -1) grantPriv = 0b0000111;   // write — chat.post
         if (caps.indexOf('can_edit') !== -1) grantPriv = 0b0001111;   // delete/modify — edit
-        try {
-          const db_name = await this.yp.await_func('get_db_name', info.hub_id);
-          if (db_name) {
-            await this.yp.await_proc(
-              `${db_name}.permission_grant`,
-              info.node_id, user.id, 0, grantPriv, 'system', 'Secure share access'
-            );
-            bindUid = user.id;            // rebind ONLY after the grant succeeds
-            // Clamp view/download (3) and chat (7) recipients with a session ceiling so
-            // router/rest denies file-writes (the node grant alone can't — chat grant 7
-            // carries the write bit). Edit (15) = full edit intended → no ceiling.
-            if (grantPriv < 0b0001111) ceilingToStamp = grantPriv;
+        // memberPriv (mfs_access_node) INCLUDES this recipient's OWN prior secure-share
+        // 'system' grant, so it can't gate "already a member, skip" — that left a
+        // recipient who opened a LOWER link first (e.g. view) stuck and un-upgradable
+        // when they later opened a can_edit link. Grant whenever the share gives MORE
+        // than they currently hold (upgrade-only: never downgrade a true member or an
+        // earlier higher grant).
+        if (grantPriv > memberPriv) {
+          try {
+            const db_name = await this.yp.await_func('get_db_name', info.hub_id);
+            if (db_name) {
+              await this.yp.await_proc(
+                `${db_name}.permission_grant`,
+                info.node_id, user.id, 0, grantPriv, 'system', 'Secure share access'
+              );
+            }
+          } catch (e) {
+            this.warn('[dmz.login] secure_share node grant failed; keeping creator binding:', e && e.message);
           }
-        } catch (e) {
-          this.warn('[dmz.login] secure_share node grant failed; keeping creator binding:', e && e.message);
         }
+        bindUid = user.id;            // rebind to self (holds >= grantPriv on the node)
+        // Clamp view/download (3) and chat (7) with a session ceiling so router/rest
+        // denies file-writes (chat grant 7 carries the write bit). Use the EFFECTIVE
+        // level (max of the share grant and any standing access) so a true member with
+        // higher standing is never clamped below their real privilege; edit (15)+ → none.
+        const effectivePriv = Math.max(grantPriv, memberPriv);
+        if (effectivePriv < 0b0001111) ceilingToStamp = effectivePriv;
       }
     } else if (
       isAuthenticated && info.file_nid && user.id &&
@@ -672,17 +682,21 @@ class __dmz extends Mfs {
     // main account (regsid) is never clamped. Owner/member/edit → ceilingToStamp null →
     // no clamp. Best-effort; on failure we keep the prior (un-clamped) binding.
     //
-    // Stamp ONLY when there is a real ceiling (3/7). Do NOT pass null: the mariadb
-    // driver serialises JS null to '' and set_session_priv_ceiling's `_ceiling` is a
-    // TINYINT, so '' raises ER_TRUNCATED_WRONG_VALUE on every no-clamp (edit/member/
-    // owner) login. (Known minor follow-up: a same-uid elevation — view/chat→edit on a
-    // reused sid — keeps the prior ceiling since we no longer clear it here; fail-safe,
-    // and the office-editor save path is token-authed so editing still works.)
-    if (ceilingToStamp != null && bindUid) {
+    // Real clamp (view 3 / chat 7) → stamp it. UNCLAMPED (edit/member/owner →
+    // ceilingToStamp null) → CLEAR any ceiling a prior view/chat open left on this
+    // reused sid: get_session_priv_ceiling only self-clears on a uid change, so without
+    // this an upgraded recipient's writes stay denied (SECURE_SHARE_READ_ONLY).
+    // clear_session_priv_ceiling sets NULL in SQL — no null param, so it avoids the
+    // ER_TRUNCATED the old stamp-only guard was working around. Best-effort.
+    if (bindUid) {
       try {
-        await this.yp.await_proc('set_session_priv_ceiling', this.input.sid(), ceilingToStamp, bindUid);
+        if (ceilingToStamp != null) {
+          await this.yp.await_proc('set_session_priv_ceiling', this.input.sid(), ceilingToStamp, bindUid);
+        } else {
+          await this.yp.await_proc('clear_session_priv_ceiling', this.input.sid());
+        }
       } catch (e) {
-        this.warn('[dmz.login] secure_share set_session_priv_ceiling failed:', e && e.message);
+        this.warn('[dmz.login] secure_share session ceiling update failed:', e && e.message);
       }
     }
 
