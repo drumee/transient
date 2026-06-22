@@ -631,6 +631,20 @@ class __dmz extends Mfs {
           this.warn('[dmz.login] secure_share node grant failed; keeping creator binding:', e && e.message);
         }
       }
+    } else if (
+      isAuthenticated && info.file_nid && user.id &&
+      !(memberPriv > 0 || String(user.id) === String(info.creator_id))
+    ) {
+      // Authenticated NON-member recipient of a single-FILE share. The folder rebind
+      // above is skipped (a single file has no subtree to node-scope), so the session
+      // stays creator-bound — without a ceiling it would otherwise inherit FULL creator
+      // privilege and let a view/download/chat recipient run creator-authorized
+      // writes/deletes after signing in. Clamp the creator-bound session to the share
+      // caps. can_edit → no clamp (they may edit the shared file; the office-editor path
+      // is node-scoped via mfs_node_in_subtree).
+      if (caps.indexOf('can_edit') === -1) {
+        ceilingToStamp = (caps.indexOf('can_chat') !== -1) ? 7 : 3;
+      }
     }
     // socket_id must be passed so entity_sockets() includes this guest socket in
     // hub broadcasts (e.g. secure_share_revoked). page.js ensures the hub cookie

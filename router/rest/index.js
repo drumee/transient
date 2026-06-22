@@ -38,7 +38,9 @@ const SECURE_SHARE_READONLY_DENYLIST = new Set([
   // chat.react is write-src → already caught by the threshold below.
   "channel.react",
   // read-src but persist read receipts for this.uid (creator-bound on anon shares)
-  "channel.acknowledge", "channel.read",
+  "channel.acknowledge", "channel.read", "channel.acknowledge_ticket",
+  // read-src but broadcasts an arbitrary event to the whole hub as the creator
+  "conference.broadcast",
   // tags — anonymous-src but mutate the bound hub's tags
   "tag.store", "tag.delete",
   // file copy / restore — read-src, mutate / exfil
@@ -46,6 +48,7 @@ const SECURE_SHARE_READONLY_DENYLIST = new Set([
   // calls / conferences / rooms / signaling — read or anon src; recipients get no calls
   "conference.join", "conference.leave", "conference.update", "conference.accept", "conference.decline",
   "room.join", "room.leave", "room.requestAccess", "room.request_screen_access", "room.get_screen",
+  "room.get", "room.unified_room",
   "signaling.dial", "signaling.message",
   // transferbox — read/anon src, mutate
   "transfer.delete", "transfer.remove", "transfer.send_otp",
@@ -57,6 +60,10 @@ const SECURE_SHARE_READONLY_DENYLIST = new Set([
   // (anon) would bind the viewer's push token to the creator's account.
   "desk.leave_hub", "sharebox.accept_notification", "sharebox.refuse_notification",
   "activity.dismiss_rollup", "hub.poke", "hub.accept_invite", "yp.device_registration",
+  // admin mimic (anon-src) + process-wide debug toggles (read-src) — would change
+  // impersonation / logging state while bound as the creator.
+  "adminpanel.mimic_active", "adminpanel.mimic_reject", "adminpanel.mimic_end_byuser",
+  "devel.verbosity", "devel.log_over_socket",
 ]);
 
 
