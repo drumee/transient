@@ -41,11 +41,18 @@ const SECURE_SHARE_READONLY_DENYLIST = new Set([
   "tag.store", "tag.delete",
   // file copy / restore — read-src, mutate / exfil
   "media.copy", "media.copy_all", "media.restore", "media.restore_into", "media.mark_as_seen",
-  // calls / conferences / rooms — read or anon src; recipients get no calls
+  // calls / conferences / rooms / signaling — read or anon src; recipients get no calls
   "conference.join", "conference.leave", "conference.update", "conference.accept", "conference.decline",
   "room.join", "room.leave", "room.requestAccess", "room.request_screen_access",
+  "signaling.dial", "signaling.message",
   // transferbox — read/anon src, mutate
   "transfer.delete", "transfer.remove", "transfer.send_otp",
+  // membership / inbound-share / notification mutations — anon|read src, would run as
+  // the creator-bound session: leave_hub could remove the CREATOR from the shared hub;
+  // sharebox.* accept/refuse the creator's pending shares; activity.dismiss_rollup
+  // mutates the creator's notification state.
+  "desk.leave_hub", "sharebox.accept_notification", "sharebox.refuse_notification",
+  "activity.dismiss_rollup",
 ]);
 
 

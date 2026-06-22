@@ -360,7 +360,10 @@ class __dmz extends Mfs {
     // share carries no submitted email, so fall back to the authenticated account's
     // own email (resolved from its regsid above) — never the creator's.
     let _recipientEmail = submittedEmail || null;
-    if (!_recipientEmail && isAuthenticated && user.profile) {
+    // The creator previewing their OWN share is not a recipient — don't fall back to
+    // their account email (it would persist on the access event and show the sender as
+    // a recipient, which the list_access_events creator skip can't undo once stored).
+    if (!_recipientEmail && isAuthenticated && user.profile && String(user.id) !== String(info.creator_id)) {
       try {
         const _p = (typeof user.profile === 'string') ? JSON.parse(user.profile) : user.profile;
         _recipientEmail = (_p && _p.email) ? String(_p.email).toLowerCase().trim() : null;
