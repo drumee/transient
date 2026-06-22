@@ -3,19 +3,39 @@ const { Entity } = require('@drumee/server-core');
 const { stripeClient } = require('../lib/stripe');
 
 class __private_payment extends Entity {
-  initialize(opt) {
-    super.initialize(opt);
-    this.stripe = stripeClient(); // pinned client; never logs the key
+  // Lazy Stripe client. catalog()/subscription_status() are DB-only and MUST
+  // work even when Stripe isn't configured yet (no stripe_skey in sys_conf).
+  _stripe() {
+    if (this.__stripe) return this.__stripe;
+    this.__stripe = stripeClient(); // throws STRIPE_KEY_MISSING if unconfigured
+    return this.__stripe;
   }
 
-  // Priced catalog straight from yp.plan (stripe_price_id is truth; no per-request stripe.search).
+  // Priced catalog from yp.plan. Enriched with the live Stripe unit amount when
+  // a price id + key exist, so the FE can display the authoritative price.
   async catalog() {
-    const rows = await this.yp.await_proc('payment_get_catalog', 'eur', 'user');
-    this.output.data({ plans: rows });
+    const rows = (await this.yp.await_proc('payment_get_catalog', 'eur', 'user')) || [];
+    const plans = Array.isArray(rows) ? rows : [rows];
+    let stripe = null;
+    try { stripe = this._stripe(); } catch (e) { stripe = null; }
+    if (stripe) {
+      for (const p of plans) {
+        if (!p || !p.stripe_price_id) continue;
+        try {
+          const price = await stripe.prices.retrieve(p.stripe_price_id);
+          p.amount = price.unit_amount;            // minor units (cents)
+          p.currency = price.currency || p.currency;
+        } catch (e) { /* leave amount unset on lookup failure */ }
+      }
+    }
+    this.output.data({ plans });
   }
 
   // Individual Free->Pro hosted Checkout (P1). entity = this.uid.
   async checkout() {
+    let stripe;
+    try { stripe = this._stripe(); }
+    catch (e) { return this.output.data({ status: 'STRIPE_NOT_CONFIGURED' }); }
     const plan = this.input.use('plan', 'pro');
     const period = this.input.need('period');           // 'month' | 'year'
     const seats = this.input.use('seats', 1);
@@ -27,11 +47,11 @@ class __private_payment extends Entity {
     // ensure a Stripe customer keyed by metadata.id = uid (idempotent across checkouts)
     let customer_id = payer && payer.customer_id;
     if (!customer_id) {
-      const found = await this.stripe.customers.search({ query: `metadata['id']:'${this.uid}'` });
+      const found = await stripe.customers.search({ query: `metadata['id']:'${this.uid}'` });
       customer_id = (found.data[0] && found.data[0].id) || null;
     }
     if (!customer_id) {
-      const created = await this.stripe.customers.create({
+      const created = await stripe.customers.create({
         email: payer && payer.email, name: payer && payer.fullname, metadata: { id: this.uid },
       });
       customer_id = created.id;
@@ -39,7 +59,7 @@ class __private_payment extends Entity {
     const success_url = this.input.servicepath({ service: 'callback.check_out_success' }) + '&session_id={CHECKOUT_SESSION_ID}';
     const cancel_url = this.input.servicepath({ service: 'callback.check_out_cancel' });
     const metadata = { entity_type: 'user', entity_id: this.uid, plan, period };
-    const session = await this.stripe.checkout.sessions.create({
+    const session = await stripe.checkout.sessions.create({
       mode: 'subscription',
       customer: customer_id,
       line_items: [{ price: plan_row.stripe_price_id, quantity: seats }],

@@ -4,8 +4,10 @@ const { stripeClient, endpointSecret } = require('../lib/stripe');
 
 class __public_stripe_webhook extends Entity {
   async receive() {
-    const stripe = stripeClient();
-    const secret = endpointSecret();                 // NEVER console.log this
+    let stripe, secret;
+    try { stripe = stripeClient(); secret = endpointSecret(); }
+    catch (e) { return this.exception.bad_request('_webhook_signature_invalid'); }
+    if (!secret) return this.exception.bad_request('_webhook_signature_invalid');
     const raw = this.input.rawString();              // STRING form — not this.input.raw() (an array)
     const sig = (this.input.headers() || {})['stripe-signature'];
     let event;
