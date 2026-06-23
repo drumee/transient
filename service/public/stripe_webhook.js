@@ -41,8 +41,10 @@ class __public_stripe_webhook extends Entity {
             const subscription_id = obj.subscription || obj.id || null;
             const status = obj.status || 'active';
             const price = (item.price && item.price.unit_amount) || 0;
+            const entity_type = md.entity_type || 'user';
+            const seats = (item.quantity != null ? item.quantity : (obj.quantity != null ? obj.quantity : 1));
             await this.yp.await_proc('subscription_update', entity_id, customer_id, subscription_id, plan, period, 1, price, 0, status);
-            await this.yp.await_proc('payment_apply_entitlement', entity_id, plan, period_end);
+            await this.yp.await_proc('payment_apply_entitlement', entity_id, plan, period_end, entity_type, seats);
             await this.notify_user(entity_id, { service: 'payment.plan_updated', plan, status: 'active' });
           }
           break;
@@ -51,7 +53,7 @@ class __public_stripe_webhook extends Entity {
           const entity_id = md.entity_id;
           if (entity_id) {
             await this.yp.await_proc('subscription_remove', entity_id, obj.id || '');
-            await this.yp.await_proc('payment_apply_entitlement', entity_id, 'free', null);
+            await this.yp.await_proc('payment_apply_entitlement', entity_id, 'free', null, md.entity_type || 'user', 0);
             await this.notify_user(entity_id, { service: 'payment.plan_updated', plan: 'free', status: 'canceled' });
           }
           break;
