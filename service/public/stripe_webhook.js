@@ -32,7 +32,8 @@ class __public_stripe_webhook extends Entity {
           const plan = md.plan || 'pro';
           const period = md.period || 'month';
           const item = (obj.items && obj.items.data && obj.items.data[0]) || {};
-          const period_end = obj.current_period_end || item.current_period_end || null;
+          // 0, not null: await_proc maps null -> '' which a strict-mode INT param rejects.
+          const period_end = obj.current_period_end || item.current_period_end || 0;
           if (entity_id) {
             // Mirror the live subscription (customer/sub id/status) for the status
             // panel + Billing Portal lookup. checkout.session carries obj.subscription
@@ -53,8 +54,33 @@ class __public_stripe_webhook extends Entity {
           const entity_id = md.entity_id;
           if (entity_id) {
             await this.yp.await_proc('subscription_remove', entity_id, obj.id || '');
-            await this.yp.await_proc('payment_apply_entitlement', entity_id, 'free', null, md.entity_type || 'user', 0);
+            await this.yp.await_proc('payment_apply_entitlement', entity_id, 'free', 0, md.entity_type || 'user', 0);
             await this.notify_user(entity_id, { service: 'payment.plan_updated', plan: 'free', status: 'canceled' });
+          }
+          break;
+        }
+        case 'invoice.paid':
+        case 'invoice.payment_failed': {
+          // Invoices don't carry the subscription metadata directly — resolve it.
+          const subId = obj.subscription
+            || (obj.parent && obj.parent.subscription_details && obj.parent.subscription_details.subscription)
+            || null;
+          let sub = null;
+          if (subId) { try { sub = await stripe.subscriptions.retrieve(subId); } catch (e2) {} }
+          const smd = (sub && sub.metadata) || {};
+          const eid = smd.entity_id;
+          if (eid) {
+            if (event.type === 'invoice.paid') {
+              // Recurring renewal succeeded -> re-apply entitlement (bumps period_end).
+              const sitem = sub && sub.items && sub.items.data && sub.items.data[0];
+              const pend = (sub && sub.current_period_end) || (sitem && sitem.current_period_end) || 0;
+              await this.yp.await_proc('payment_apply_entitlement', eid, smd.plan || 'pro', pend, smd.entity_type || 'user', (sitem && sitem.quantity) || 1);
+              await this.notify_user(eid, { service: 'payment.plan_updated', plan: smd.plan, status: 'active' });
+            } else {
+              // Payment failed -> keep entitlement during Stripe's smart retries
+              // (grace); final failure downgrades via customer.subscription.deleted.
+              await this.notify_user(eid, { service: 'payment.payment_failed', plan: smd.plan, status: 'past_due' });
+            }
           }
           break;
         }
