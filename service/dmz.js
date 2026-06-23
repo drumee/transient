@@ -551,6 +551,42 @@ class __dmz extends Mfs {
       }
     }
 
+    // Distinguish a TRUE standing principal (real workspace member/owner, or a
+    // manual collaborator grant) from a recipient who only holds their OWN prior
+    // secure-share grant on this node. memberPriv above is the EFFECTIVE privilege
+    // (user_permission), which resolves to the recipient's own node grant when they
+    // are NOT a member — so memberPriv alone cannot tell the two apart. That is what
+    // caused grant-clobber: a recipient who opened a lower link first looked like a
+    // member (memberPriv>0) and was never re-granted the higher link's level.
+    // user_permission() returns a '*' membership BEFORE any node grant, so for a
+    // non-member memberPriv EQUALS their own node-grant priv, while a real member's
+    // memberPriv EXCEEDS it. Read the directly-stored grant row to compare.
+    // FOLDER shares only (here info.nid === info.node_id); a file share remaps
+    // info.nid to the parent, so this comparison would be cross-node — left to the
+    // existing file-share clamp below. Fail-safe: on any error treat as no direct
+    // grant, which collapses hasStanding to the prior memberPriv>0 behaviour.
+    let ownShareGrant = 0;
+    let hasStanding = memberPriv > 0;
+    if (isAuthenticated && user.id && !info.file_nid && info.node_id) {
+      let direct = null;
+      try {
+        direct = toArray(await this.yp.await_proc(
+          'forward_proc', info.hub_id, 'permission_get_direct', `'${user.id}','${info.node_id}'`
+        ))[0] || null;
+      } catch (e) {
+        this.warn('[dmz.login] secure_share permission_get_direct failed:', e && e.message);
+      }
+      const directPriv = direct ? (parseInt(direct.permission, 10) || 0) : 0;
+      const isOwnShareGrant = !!direct &&
+        String(direct.message || '').indexOf('Secure share access') === 0;
+      ownShareGrant = isOwnShareGrant ? directPriv : 0;
+      // standing = access from anything OTHER than their own secure-share grant:
+      //  - memberPriv exceeds their own grant (a '*' membership wins in user_permission), OR
+      //  - a non-secure-share direct row exists (a manual collaborator grant — never touch it).
+      hasStanding = (memberPriv > ownShareGrant) ||
+        (!!direct && !isOwnShareGrant && directPriv > 0);
+    }
+
     // Translate the capability set to the privilege bitmask the UI uses for
     // show/hide decisions (_K.privilege in lex/constants.js: read=3, download=7,
     // write=15 — CUMULATIVE masks). We OR each capability's cumulative mask onto
@@ -606,26 +642,35 @@ class __dmz extends Mfs {
     // owner/member get NO ceiling (full / own access). null = no clamp.
     let ceilingToStamp = !isAuthenticated ? 3 : null;
     if (isAuthenticated && user.id && !info.file_nid && info.node_id) {
-      if (memberPriv > 0 || String(user.id) === String(info.creator_id)) {
-        // Member or owner — already has standing access; operate as themselves.
+      if (hasStanding || String(user.id) === String(info.creator_id)) {
+        // Real member, manual collaborator, or owner — standing access independent
+        // of any secure-share grant; operate as themselves. No extra grant. Any
+        // stale ceiling from an earlier lower-level open on this reused sid is
+        // cleared at the stamp site below (ceilingToStamp stays null here).
         bindUid = user.id;
       } else {
-        // Non-member recipient — grant capped node access, then bind to their uid.
-        let grantPriv = 0b0000011;                                    // read / view / download
-        if (caps.indexOf('can_chat') !== -1) grantPriv = 0b0000111;   // write — chat.post
-        if (caps.indexOf('can_edit') !== -1) grantPriv = 0b0001111;   // delete/modify — edit
+        // Pure recipient — holds only their own (or no) secure-share grant on this
+        // node. Grant capped node access, then bind to their uid. UPGRADE-ONLY:
+        // max with any already-earned secure-share priv so opening a lower link
+        // after a higher one never downgrades, and re-opening the same link is a
+        // no-op REPLACE.
+        let newCapPriv = 0b0000011;                                    // read / view / download
+        if (caps.indexOf('can_chat') !== -1) newCapPriv = 0b0000111;   // write — chat.post
+        if (caps.indexOf('can_edit') !== -1) newCapPriv = 0b0001111;   // delete/modify — edit
+        const grantTarget = Math.max(newCapPriv, ownShareGrant);
         try {
           const db_name = await this.yp.await_func('get_db_name', info.hub_id);
           if (db_name) {
             await this.yp.await_proc(
               `${db_name}.permission_grant`,
-              info.node_id, user.id, 0, grantPriv, 'system', 'Secure share access'
+              info.node_id, user.id, 0, grantTarget, 'system', 'Secure share access'
             );
             bindUid = user.id;            // rebind ONLY after the grant succeeds
             // Clamp view/download (3) and chat (7) recipients with a session ceiling so
             // router/rest denies file-writes (the node grant alone can't — chat grant 7
-            // carries the write bit). Edit (15) = full edit intended → no ceiling.
-            if (grantPriv < 0b0001111) ceilingToStamp = grantPriv;
+            // carries the write bit). Edit (15) = full edit intended → no ceiling (the
+            // stamp site clears any stale one).
+            ceilingToStamp = grantTarget < 0b0001111 ? grantTarget : null;
           }
         } catch (e) {
           this.warn('[dmz.login] secure_share node grant failed; keeping creator binding:', e && e.message);
@@ -672,17 +717,24 @@ class __dmz extends Mfs {
     // main account (regsid) is never clamped. Owner/member/edit → ceilingToStamp null →
     // no clamp. Best-effort; on failure we keep the prior (un-clamped) binding.
     //
-    // Stamp ONLY when there is a real ceiling (3/7). Do NOT pass null: the mariadb
-    // driver serialises JS null to '' and set_session_priv_ceiling's `_ceiling` is a
-    // TINYINT, so '' raises ER_TRUNCATED_WRONG_VALUE on every no-clamp (edit/member/
-    // owner) login. (Known minor follow-up: a same-uid elevation — view/chat→edit on a
-    // reused sid — keeps the prior ceiling since we no longer clear it here; fail-safe,
-    // and the office-editor save path is token-authed so editing still works.)
-    if (ceilingToStamp != null && bindUid) {
+    // Set the ceiling when there is a real one (3/7); otherwise CLEAR any ceiling
+    // left on this sid by an earlier lower-level open. get_session_priv_ceiling()
+    // self-clears only on a uid CHANGE, so a same-uid elevation (view/chat → edit, or
+    // a recipient who became a member) would otherwise keep a stale clamp and the
+    // router would wrongly deny their writes. clear_session_priv_ceiling avoids
+    // passing NULL to set_session_priv_ceiling's TINYINT `_ceiling` (the driver
+    // serialises JS null to '' → ER_TRUNCATED_WRONG_VALUE). Best-effort: on failure
+    // (e.g. the SP not yet applied to this DB) we keep the prior binding — fail-open
+    // to today's behaviour, never blocking access.
+    if (bindUid) {
       try {
-        await this.yp.await_proc('set_session_priv_ceiling', this.input.sid(), ceilingToStamp, bindUid);
+        if (ceilingToStamp != null) {
+          await this.yp.await_proc('set_session_priv_ceiling', this.input.sid(), ceilingToStamp, bindUid);
+        } else {
+          await this.yp.await_proc('clear_session_priv_ceiling', this.input.sid());
+        }
       } catch (e) {
-        this.warn('[dmz.login] secure_share set_session_priv_ceiling failed:', e && e.message);
+        this.warn('[dmz.login] secure_share priv ceiling update failed:', e && e.message);
       }
     }
 
