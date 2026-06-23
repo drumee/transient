@@ -69,13 +69,20 @@ class __private_payment extends Entity {
       customer_id = created.id;
     }
     const quantity = entity_type === 'org' ? seats : 1;
+    const line_items = [{ price: plan_row.stripe_price_id, quantity }];
+    // Optional storage add-on (P4): a 2nd recurring line item for this period.
+    const bundle = this.input.use('bundle', '');
+    if (bundle) {
+      const addon = await this.yp.await_proc('payment_get_plan', bundle, period, 'eur');
+      if (addon && addon.stripe_price_id) line_items.push({ price: addon.stripe_price_id, quantity: 1 });
+    }
     const success_url = this.input.servicepath({ service: 'callback.check_out_success' }) + '&session_id={CHECKOUT_SESSION_ID}';
     const cancel_url = this.input.servicepath({ service: 'callback.check_out_cancel' });
     const metadata = { entity_type, entity_id, plan, period };
     const session = await stripe.checkout.sessions.create({
       mode: 'subscription',
       customer: customer_id,
-      line_items: [{ price: plan_row.stripe_price_id, quantity }],
+      line_items,
       subscription_data: { metadata },
       metadata,
       success_url,
