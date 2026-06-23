@@ -76,9 +76,20 @@ class __private_payment extends Entity {
     this.output.data(row || {});
   }
 
-  // P2 stub so the route/ACL exist now (Stripe Billing Portal lands in Phase 2).
+  // Stripe Billing Portal: one hosted surface for invoice history, cancel/resume,
+  // card update + proration. Requires a Stripe customer (set by the webhook mirror).
   async portal() {
-    this.output.data({ status: 'NOT_IMPLEMENTED' });
+    let stripe;
+    try { stripe = this._stripe(); }
+    catch (e) { return this.output.data({ status: 'STRIPE_NOT_CONFIGURED' }); }
+    const sub = await this.yp.await_proc('payment_get_subscription', this.uid);
+    const customer_id = sub && sub.customer_id;
+    if (!customer_id) return this.output.data({ status: 'NO_CUSTOMER' });
+    const session = await stripe.billingPortal.sessions.create({
+      customer: customer_id,
+      return_url: this.input.homepath() + '#/desk/',
+    });
+    this.output.data({ url: session.url });
   }
 }
 
