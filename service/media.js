@@ -1269,12 +1269,11 @@ class __media extends Mfs {
     const ext = data.extension.toLowerCase();
     let orig = `${base}/orig.${ext}`;
     this.granted_node(data);
-    if (data.filetype == Attr.document && data.extension != Attr.pdf) {
-      if (!this.handlePdf(incoming_file, data)) {
-        data.error = 1;
-      }
-      return data;
-    }
+    // Office documents (doc/docx/xls/.../odt) are NO LONGER auto-converted to a
+    // user-facing PDF on upload. They are stored as-is (orig.<ext>) like any
+    // other file; the SEO index queue (store() -> indexQueue, category=document)
+    // renders a transient PDF only to produce thumb.png and then deletes it
+    // (seo_lib.cleanup). The original is what the client serves/downloads.
     if (data.filetype == Attr.form) {
       let content = await this.handleForm(pid, incoming_file, data);
       return content;
@@ -1620,11 +1619,21 @@ class __media extends Mfs {
       this.exception.user("WRONG_FORMAT");
       return;
     }
+    // Office documents are downloaded as their ORIGINAL file (orig.<ext>), not
+    // served as PDF, and must never be auto-converted on demand. Only a true
+    // PDF (or an already-built transient preview) is served here.
+    const docExt = (node.extension || node.ext || "").toString().toLowerCase();
+    const isPdf = docExt === Attr.pdf;
     let info = Document.getInfo(node);
     const fileio = new FileIo(this);
     let path = info.pdf;
     if (path != null) {
       if (!existsSync(path)) {
+        if (!isPdf) {
+          // Never re-run LibreOffice for a non-pdf doc; the original is the file.
+          fileio.not_found();
+          return;
+        }
         let s = Document.rebuildInfo(
           node,
           this.uid,
