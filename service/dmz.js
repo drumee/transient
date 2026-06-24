@@ -14,13 +14,24 @@
  * limitations under the License.
  * =============================================================================
  */
-const { Attr, Constants, Messenger, Cache, RedisStore, toArray } = require("@drumee/server-essentials");
+const { Attr, Constants, Messenger, Cache, RedisStore, toArray, sysEnv } = require("@drumee/server-essentials");
 const { Mfs } = require('@drumee/server-core');
 const { isEmpty } = require('lodash');
 const {
   ID_NOBODY
 } = Constants;
 const { verifyPassword: verifySecureSharePassword } = require('./lib/secure-share-password');
+const Jwt = require('jsonwebtoken');
+const { resolve: _resolvePath } = require('path');
+// Shared `drumee` secret, loaded ONCE at module load, used to sign a short-lived
+// owner-edit assertion (see _loginSecureShare). The euroffice editor verifies it with
+// the same secret. Best-effort: if the secret file is unavailable the feature is simply
+// disabled — the secure-share login path is never affected.
+let _ssOwnerSecret = null;
+try {
+  const _secPath = _resolvePath(sysEnv().credential_dir, 'crypto/secret.json');
+  _ssOwnerSecret = JSON.parse(require('fs').readFileSync(_secPath, 'utf8')).drumee || null;
+} catch (e) { /* owner_edit_token disabled when the secret is unavailable */ }
 
 function _emailMatchesAllowed(email, info) {
   let allowedList = null;
@@ -738,6 +749,25 @@ class __dmz extends Mfs {
       }
     }
 
+    // Genuine owner opening their own share link: mint a short-lived signed assertion
+    // (verified by the euroffice editor with the same `drumee` secret) so the creator
+    // can follow the link's edit permission. Minted ONLY for a genuinely authenticated
+    // owner (isAuthenticated && uid===creator) — an anonymous creator-bound session
+    // never receives it and cannot forge it, so the editor's anonymous-edit block is
+    // not weakened. Best-effort; never blocks login.
+    let owner_edit_token = null;
+    if (isAuthenticated && String(user.id) === String(info.creator_id) && _ssOwnerSecret) {
+      try {
+        owner_edit_token = Jwt.sign(
+          { kind: 'ss_owner', token, owner_uid: info.creator_id },
+          _ssOwnerSecret,
+          { expiresIn: '12h' }
+        );
+      } catch (e) {
+        this.warn('[dmz.login] owner_edit_token sign failed:', e && e.message);
+      }
+    }
+
     return this.output.data({
       ...user,
       ...info,
@@ -762,6 +792,7 @@ class __dmz extends Mfs {
       // workspace member). The recipient UI uses it to suppress the guest "limited
       // access" banner / viral chrome for members.
       is_member        : is_member,
+      owner_edit_token,
     });
   }
 
