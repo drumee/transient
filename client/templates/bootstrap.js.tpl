@@ -15,7 +15,7 @@ function load_bundle(id, src){
     count++;
     let el = document.getElementById("warmup-progess")
     console.log("Loading app bundles", e.target?.id)
-    let w = 100 * (count / 4) + '%';
+    let w = Math.min(100, 100 * count / <%= _.size(bundles) %>) + '%';
     if (el) {
       el.style.width = w;
     }
