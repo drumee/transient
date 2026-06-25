@@ -1,6 +1,6 @@
 {
   "name": "drumee_server",
-  "version": "2.9.73",
+  "version": "2.9.75",
   "description": "Drumee Infrastructure",
   "main": "index.js",
   "scripts": {
@@ -72,7 +72,7 @@
     "shelljs": "^0.8.4",
     "stopword": "^1.0.7",
     "stopwords": "^0.0.9",
-    "stripe": "^9.4.0",
+    "stripe": "^22.2.2",
     "striptags": "^3.1.1",
     "strtok3": "^6.0.4",
     "syslog": "^0.1.1-1",

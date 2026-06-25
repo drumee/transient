@@ -1,0 +1,10 @@
+{
+  "services": {
+    "catalog":             { "scope": "hub", "permission": { "src": "owner" }, "params": {} },
+    "checkout":            { "scope": "hub", "permission": { "src": "owner" }, "params": { "period": { "type": "string", "required": true }, "plan": { "type": "string", "required": false }, "seats": { "type": "integer", "required": false, "default": 1 }, "entity_type": { "type": "string", "required": false }, "bundle": { "type": "string", "required": false } } },
+    "subscription_status": { "scope": "hub", "permission": { "src": "owner" }, "params": {} },
+    "portal":              { "scope": "hub", "permission": { "src": "owner" }, "params": {} },
+    "webhook":             { "scope": "hub", "permission": { "src": "read", "fast_check": "public-api" }, "method": "receive", "params": { "stripe-signature": { "type": "string", "required": true }, "raw_body": { "type": "string", "required": true } }, "errors": [{ "code": "WEBHOOK_ERROR", "http_status": 400 }] }
+  },
+  "modules": { "private": "service/private/payment", "public": "service/public/stripe_webhook" }
+}

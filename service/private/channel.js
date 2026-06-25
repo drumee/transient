@@ -933,6 +933,7 @@ class __private_channel extends Entity {
     const thread_id = this.input.use(Attr.thread_id);
     let attachment = this.input.use(Attr.attachment, []);
     let folder_attachment = this.input.use("folder_attachment", []);
+    const mention_ids = this.input.use("mention_ids", null);
     let exclude = this.input.need(Attr.socket_id);
     if (exclude) exclude = [exclude];
     let input = {};
@@ -1045,6 +1046,13 @@ class __private_channel extends Entity {
     if (!isEmpty(nid)) {
       input.metadata = { _scope_nid: `${nid}` };
     }
+    // Persist @-mentions so the message shows in the recipient's Mentions tab —
+    // channel_list_notifications filters on mention_ids, and channel_post_message
+    // reads `$.mention_ids` from the input JSON and stores it on the row. Without
+    // this, an @-mention sent via channel.post is never recorded as a mention.
+    if (!isEmpty(mention_ids)) {
+      input.mention_ids = mention_ids;
+    }
     input.message_id = message_id;
     let data = await this.yp.await_proc(
       "forward_proc",
@@ -1086,6 +1094,32 @@ class __private_channel extends Entity {
       hub_id,
     });
     await RedisStore.sendData(this.payload(data), recipients);
+
+    // Push a real-time mention notification to mentioned users who are not
+    // already among the live hub recipients (mirrors channel.write). Without
+    // this an @-mention in a hub/folder chat never reaches the mentioned user.
+    if (!isEmpty(mention_ids)) {
+      try {
+        const hubRecipientUids = toArray(recipients).map((r) => r.uid);
+        const extraMentionIds = mention_ids.filter(
+          (id) => id !== this.uid && !hubRecipientUids.includes(id),
+        );
+        if (extraMentionIds.length) {
+          const mentionRecipients = await this.yp.await_proc(
+            "user_sockets",
+            extraMentionIds,
+          );
+          if (!isEmpty(mentionRecipients)) {
+            await RedisStore.sendData(this.payload(data), mentionRecipients);
+          }
+        }
+      } catch (e) {
+        this.warn(
+          "[channel.post] mention notification failed:",
+          e && e.message,
+        );
+      }
+    }
 
     this.output.data(data);
   }
