@@ -164,8 +164,27 @@ class MfsActivity extends Entity {
     const page = this.input.use(Attr.page) || 1;
     const filter = this.input.use('filter') || 'all';
     const unreadOnly = parseInt(this.input.use('unread_only') || 0);
-    const proc = unreadOnly ? 'mfs_get_activity_feed' : 'activity_get_log';
-    let result = await this._callUserProc(proc, this.uid, page);
+    // unread_only=1 → unread-only feed (mfs_get_activity_feed, unchanged).
+    // unread_only=0 → full feed (read + unread together) via
+    // activity_get_feed_all, which returns the unified log with a correct
+    // is_read flag. This intentionally does NOT use activity_get_log: that proc
+    // filters out read/dismissed rows (so "off" could never surface a
+    // notification the user already opened) and is still served as-is by the
+    // separate activity.log endpoint.
+    let result;
+    if (unreadOnly) {
+      result = await this._callUserProc('mfs_get_activity_feed', this.uid, page);
+    } else {
+      // Fail-safe: if activity_get_feed_all isn't present on this DB instance
+      // yet (schema not applied), degrade to the legacy unified log instead of
+      // erroring out the whole panel. Worst case = prior "off" behaviour.
+      try {
+        result = await this._callUserProc('activity_get_feed_all', this.uid, page);
+      } catch (e) {
+        this.warn('[ACTIVITY] activity_get_feed_all unavailable, falling back to activity_get_log', e);
+        result = await this._callUserProc('activity_get_log', this.uid, page);
+      }
+    }
     result = toArray(result);
     if (filter === 'mentions') {
       result = result.filter((row) => row.event !== 'media.share');
