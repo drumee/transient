@@ -897,6 +897,119 @@
         }
       }
     },
+    "search": {
+      "doc": "Full-text (LIKE) search over the current hub's channel messages, scoped to ONE conversation. With no file_thread_id it searches the workspace/folder team chat (file_thread_id IS NULL); with file_thread_id it searches that file thread's child messages. Returns up to 45 matching previews newest-first via channel_search_scoped. Powers the chat-header search field.",
+      "scope": "hub",
+      "permission": {
+        "src": "read"
+      },
+      "params": {
+        "pattern": {
+          "type": "string",
+          "required": true,
+          "doc": "Free-text query matched as a substring against message body. Searches return empty for queries shorter than 2 characters."
+        },
+        "file_thread_id": {
+          "type": "string",
+          "required": false,
+          "doc": "Root message ID of a file thread to scope the search to. Omit or empty to search the team chat (file_thread_id IS NULL)."
+        },
+        "file_nid": {
+          "type": "string",
+          "required": false,
+          "doc": "Media node ID of a file whose thread to scope the search to. Used when file_thread_id is not yet known client-side; the server resolves the thread (and returns empty when the file has no thread)."
+        }
+      },
+      "returns": {
+        "type": "array",
+        "doc": "Matching messages newest-first, capped at 45",
+        "items": {
+          "type": "object",
+          "properties": {
+            "result_type": { "type": "string", "doc": "Always 'message'" },
+            "id": { "type": "string", "doc": "Matching message_id" },
+            "message_id": { "type": "string", "doc": "Matching message_id" },
+            "author_id": { "type": "string", "doc": "UID of the message author" },
+            "ctime": { "type": "number", "doc": "Unix timestamp when the message was posted" },
+            "preview": { "type": "string", "doc": "First 150 chars of the message body" },
+            "firstname": { "type": "string", "doc": "Author first name" },
+            "lastname": { "type": "string", "doc": "Author last name" },
+            "fullname": { "type": "string", "doc": "Author full name" },
+            "hub_id": { "type": "string", "doc": "Hub the message belongs to, tagged by the service" }
+          }
+        }
+      }
+    },
+    "file_thread_info": {
+      "doc": "Lookup the per-file chat thread for a file. Accepts file_nid or file_thread_id. Returns current file metadata plus, when a thread exists, its summary (reply_count, last_message_id, mtime). Does NOT create a thread — opening a file chat is side-effect free. File read permission is validated in service code via mfs_access_node.",
+      "scope": "hub",
+      "permission": { "src": "read" },
+      "params": {
+        "file_nid": { "type": "string", "required": false, "doc": "Media node ID of the file" },
+        "file_thread_id": { "type": "string", "required": false, "doc": "Root message ID of an existing file thread. Used when file_nid is absent." }
+      },
+      "returns": { "type": "object", "doc": "File metadata and, if present, thread summary with exists_thread flag" },
+      "errors": [
+        { "code": "NOT_FOUND", "message": "File not found or not accessible", "http_status": 404 }
+      ]
+    },
+    "file_thread_messages": {
+      "doc": "List child messages of one file thread with author/entity enrichment matching channel.messages. Marks the thread seen up to the page boundary for the caller, scoped to that thread only — never touches sibling folder/workspace read state.",
+      "scope": "hub",
+      "permission": { "src": "read" },
+      "params": {
+        "file_thread_id": { "type": "string", "required": false, "doc": "Root message ID of the file thread" },
+        "file_nid": { "type": "string", "required": false, "doc": "File node ID; resolved to its thread when file_thread_id is absent" },
+        "order": { "type": "string", "required": false, "doc": "Sort order: asc or desc. Defaults to asc." },
+        "page": { "type": "number", "required": false, "doc": "Page number for pagination (default 1)" }
+      },
+      "returns": { "type": "array", "doc": "Enriched file-thread child messages" },
+      "errors": []
+    },
+    "file_thread_post": {
+      "doc": "Post a message into a file chat thread. Creates the thread and the folder-visible file.thread root card atomically on the first message; later sends reuse the same thread. Validates the file exists, is not a folder/hub, is active, and the caller has chat permission. Derives the folder from the file current parent, not from the client. Supports attachments, folder_attachment promotion, mentions, and reply-to thread_id. Broadcasts the child message and, when new, the root card.",
+      "scope": "hub",
+      "permission": { "src": "read" },
+      "params": {
+        "file_nid": { "type": "string", "required": true, "doc": "Media node ID of the target file" },
+        "message": { "type": "string", "required": false, "doc": "Text content. Defaults to empty string." },
+        "attachment": { "type": "array", "required": false, "doc": "File node IDs to attach to this message" },
+        "folder_attachment": { "type": "array", "required": false, "doc": "Staged device uploads to promote into the file parent folder on send" },
+        "mention_ids": { "type": "array", "required": false, "doc": "User IDs to mention; mentioned users outside live hub sockets get a realtime notification" },
+        "thread_id": { "type": "string", "required": false, "doc": "Message ID of a child message to reply to (reply-to-message, preserved separately from file thread membership)" },
+        "socket_id": { "type": "string", "required": true, "doc": "Caller WebSocket socket ID, used to exclude the caller from broadcast recipients" },
+        "echoId": { "type": "string", "required": false, "doc": "Client-side echo identifier for optimistic UI" }
+      },
+      "returns": { "type": "object", "doc": "Posted child message plus file_thread summary (file_thread_id, root_message_id, is_new)" },
+      "errors": [
+        { "code": "INVALID_FILE", "message": "file_nid is missing, not a file, is a folder/hub, or deleted", "http_status": 400 },
+        { "code": "NO_PERMISSION", "message": "Caller lacks read/chat permission on the file or its folder", "http_status": 403 }
+      ]
+    },
+    "file_thread_list_by_folder": {
+      "doc": "List existing file-thread chats for files that are current direct children of a folder. Follows media.parent_id, so a moved file surfaces only under its current parent. Files without a thread never appear.",
+      "scope": "hub",
+      "permission": { "src": "read" },
+      "params": {
+        "folder_nid": { "type": "string", "required": true, "doc": "Media node ID of the folder" },
+        "order": { "type": "string", "required": false, "doc": "Sort order: asc or desc. Defaults to desc." },
+        "page": { "type": "number", "required": false, "doc": "Page number for pagination (default 1)" }
+      },
+      "returns": { "type": "array", "doc": "File-thread summaries with current file metadata" },
+      "errors": []
+    },
+    "file_thread_acknowledge": {
+      "doc": "Mark a single file thread seen up to a message for the caller, scoped to that thread. Does not affect sibling folder/workspace read state. Broadcasts the acknowledgement to other participants.",
+      "scope": "hub",
+      "permission": { "src": "read" },
+      "params": {
+        "file_thread_id": { "type": "string", "required": true, "doc": "Root message ID of the file thread" },
+        "message_id": { "type": "string", "required": false, "doc": "Message ID up to which the thread is marked seen" },
+        "socket_id": { "type": "string", "required": true, "doc": "Caller WebSocket socket ID, used to exclude the caller from broadcast recipients" }
+      },
+      "returns": { "type": "object", "doc": "Acknowledgement result from channel_file_thread_read_messages" },
+      "errors": []
+    },
     "typing": {
       "doc": "Broadcast an ephemeral typing indicator to all other hub participants over WebSocket. Nothing is persisted; the indicator is rendered transiently in the recipient's chat widget.",
       "scope": "hub",

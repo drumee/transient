@@ -46,6 +46,11 @@ class __private_channel extends Entity {
     this.update_ticket = this.update_ticket.bind(this);
     this.dm_init = this.dm_init.bind(this);
     this.list_conversations = this.list_conversations.bind(this);
+    this.file_thread_info = this.file_thread_info.bind(this);
+    this.file_thread_messages = this.file_thread_messages.bind(this);
+    this.file_thread_post = this.file_thread_post.bind(this);
+    this.file_thread_list_by_folder = this.file_thread_list_by_folder.bind(this);
+    this.file_thread_acknowledge = this.file_thread_acknowledge.bind(this);
   }
 
   /**
@@ -1125,6 +1130,487 @@ class __private_channel extends Entity {
   }
 
   /**
+   * Lookup a file chat thread WITHOUT creating one. Returns current file
+   * metadata plus the thread summary when a thread already exists. Opening a
+   * file chat is side-effect free; the thread is created only by file_thread_post.
+   */
+  async file_thread_info() {
+    const file_nid = this.input.use("file_nid");
+    const file_thread_id = this.input.use("file_thread_id");
+    if (isEmpty(file_nid) && isEmpty(file_thread_id)) {
+      return this.output.data({ status: "INVALID_FILE" });
+    }
+    let info = toArray(
+      await this.db.await_proc(
+        "channel_file_thread_info",
+        this.uid,
+        `${file_nid || ""}`,
+        `${file_thread_id || ""}`,
+      ),
+    )[0];
+    if (isEmpty(info) || isEmpty(info.file_nid)) {
+      return this.output.data({ exists_thread: 0, status: "NOT_FOUND" });
+    }
+    // Validate the caller can read the file itself (hydrates rename/delete state).
+    const node = await this.db.await_proc(
+      "mfs_access_node",
+      this.uid,
+      `${info.file_nid}`,
+    );
+    if (isEmpty(node)) {
+      return this.output.data({ exists_thread: 0, status: "NO_PERMISSION" });
+    }
+    this.output.data(info);
+  }
+
+  /**
+   * List child messages of one file thread, enriched to match channel.messages.
+   * The procedure marks this thread seen (scoped) up to the page boundary.
+   */
+  async file_thread_messages() {
+    const order = this.input.use(Attr.order, "asc");
+    const page = this.input.use(Attr.page) || 1;
+    let file_thread_id = this.input.use("file_thread_id");
+    const file_nid = this.input.use("file_nid");
+    const hub_id = this.hub.get(Attr.id);
+
+    if (isEmpty(file_thread_id)) {
+      if (isEmpty(file_nid)) return this.output.list([]);
+      const byFile = toArray(
+        await this.db.await_proc(
+          "channel_file_thread_info",
+          this.uid,
+          `${file_nid}`,
+          "",
+        ),
+      )[0];
+      if (isEmpty(byFile) || !Number(byFile.exists_thread)) {
+        return this.output.list([]);
+      }
+      file_thread_id = byFile.file_thread_id;
+    }
+
+    // Access check via the thread's file.
+    const info = toArray(
+      await this.db.await_proc(
+        "channel_file_thread_info",
+        this.uid,
+        "",
+        `${file_thread_id}`,
+      ),
+    )[0];
+    // Fail closed: if the thread's file cannot be resolved or the caller
+    // cannot read it, return no messages rather than leaking thread content.
+    if (isEmpty(info) || isEmpty(info.file_nid)) {
+      return this.output.list([]);
+    }
+    const node = await this.db.await_proc(
+      "mfs_access_node",
+      this.uid,
+      `${info.file_nid}`,
+    );
+    if (isEmpty(node)) return this.output.list([]);
+
+    let data = toArray(
+      await this.db.await_proc(
+        "channel_file_thread_list_messages",
+        this.uid,
+        `${file_thread_id}`,
+        order,
+        page,
+      ),
+    );
+    const cache = {};
+    for (let message of data) {
+      message.entity = { id: this.uid };
+      if (message.author_id != this.uid) {
+        const key = message.author_id;
+        if (cache[key]) {
+          message.entity = cache[key];
+        } else {
+          message.entity = await this.yp.await_proc(
+            "forward_proc",
+            this.uid,
+            "shareroom_contact_get",
+            `'${message.author_id}'`,
+          );
+          cache[key] = message.entity;
+        }
+      }
+      if (!isEmpty(message.thread_id)) {
+        message.thread = await this.threadInfo(message.thread_id, hub_id);
+      }
+    }
+    this.output.list(data);
+  }
+
+  /**
+   * List existing file threads for files that are CURRENT direct children of a
+   * folder (follows media.parent_id). Never creates threads.
+   */
+  async file_thread_list_by_folder() {
+    const folder_nid = this.input.use("folder_nid");
+    if (isEmpty(folder_nid)) return this.output.list([]);
+    const folder = await this.db.await_proc(
+      "mfs_access_node",
+      this.uid,
+      `${folder_nid}`,
+    );
+    if (isEmpty(folder)) return this.output.list([]);
+    const order = this.input.use(Attr.order, "desc");
+    const page = this.input.use(Attr.page) || 1;
+    let data = await this.db.await_proc(
+      "channel_file_thread_list_by_folder",
+      this.uid,
+      `${folder_nid}`,
+      order,
+      page,
+    );
+    this.output.list(toArray(data));
+  }
+
+  /**
+   * Mark a single file thread seen up to message_id (scoped to that thread).
+   * Broadcasts the acknowledgement to other participants.
+   */
+  async file_thread_acknowledge() {
+    const file_thread_id = this.input.need("file_thread_id");
+    const message_id = this.input.use(Attr.message_id);
+    let exclude = this.input.need(Attr.socket_id);
+    if (exclude) exclude = [exclude];
+    let res = {};
+    // Nothing to acknowledge without a message_id; skip the channel_get('')
+    // lookup and the broadcast entirely.
+    if (message_id) {
+      res = await this.db.await_proc(
+        "channel_file_thread_read_messages",
+        `${message_id}`,
+        this.uid,
+        `${file_thread_id}`,
+      );
+      const message = await this.db.await_proc("channel_get", `${message_id}`);
+      if (!isEmpty(message)) {
+        message.key_id = this.hub.get(Attr.id);
+        message.file_thread_id = file_thread_id;
+        const recipients = await this.yp.await_proc("entity_sockets", {
+          hub_id: message.key_id,
+          exclude,
+        });
+        await RedisStore.sendData(
+          this.payload(message, { service: "channel.file_thread_acknowledge" }),
+          recipients,
+        );
+      }
+    }
+    this.output.data(res);
+  }
+
+  /**
+   * Post a message into a file chat thread. Creates the thread + the
+   * folder-visible "file.thread" root card atomically on the first message;
+   * later sends reuse the same thread. Mirrors channel.post for attachments,
+   * folder_attachment promotion, mentions, reply thread_id, and broadcast —
+   * but the file's folder is derived from the file's current parent (never
+   * trusted from the client) and the original file is never auto-attached.
+   */
+  async file_thread_post() {
+    const file_nid = this.input.use("file_nid");
+    if (isEmpty(file_nid)) {
+      return this.output.data({ status: "INVALID_FILE" });
+    }
+    let message = this.input.use(Attr.message, "");
+    const thread_id = this.input.use(Attr.thread_id);
+    let attachment = this.input.use(Attr.attachment, []);
+    let folder_attachment = this.input.use("folder_attachment", []);
+    const mention_ids = this.input.use("mention_ids", null);
+    let exclude = this.input.need(Attr.socket_id);
+    if (exclude) exclude = [exclude];
+
+    // Validate the target file: exists, is a file (not folder/hub), readable.
+    const file_node = await this.db.await_proc(
+      "mfs_access_node",
+      this.uid,
+      `${file_nid}`,
+    );
+    if (isEmpty(file_node)) {
+      return this.output.data({ status: "NO_PERMISSION" });
+    }
+    // mfs_access_node returns the node's media category as `filetype` and
+    // UNIONs trash_media. Reject containers (folder/hub/root) — a file chat
+    // only attaches to a real file; active files carry specific categories
+    // from yp.filecap (image/document/other/...), never the literal 'file'.
+    const cat = `${file_node.filetype || ""}`;
+    if (["folder", "hub", "root"].includes(cat)) {
+      return this.output.data({ status: "INVALID_FILE" });
+    }
+    // Reject trashed/deleted nodes (trash_media rows surface as status
+    // 'deleted'; 'orphaned' is a transient pre-purge state).
+    if (["deleted", "orphaned"].includes(`${file_node.status || ""}`)) {
+      return this.output.data({ status: "INVALID_FILE" });
+    }
+    const folder_nid = `${file_node.parent_id}`;
+    if (isEmpty(folder_nid)) {
+      return this.output.data({ status: "INVALID_FILE" });
+    }
+
+    attachment = toArray(attachment).map(String);
+    folder_attachment = toArray(folder_attachment).map(String);
+    // No-op on empty message with nothing to attach (same as sendMessage) — and
+    // crucially BEFORE ensure_root, so merely opening/sending nothing creates no thread.
+    if (
+      isEmpty(message) &&
+      isEmpty(attachment) &&
+      isEmpty(folder_attachment)
+    ) {
+      return this.output.data({ status: "EMPTY" });
+    }
+    const ID_RE = /^[0-9a-zA-Z_-]{1,32}$/;
+    for (let id of [...attachment, ...folder_attachment]) {
+      if (!ID_RE.test(id)) {
+        this.warn("channel.file_thread_post: malformed attachment id", id);
+        return this.output.data({ status: "INVALID_ATTACHMENT" });
+      }
+    }
+
+    const hub_id = this.hub.get(Attr.id);
+    let sbox;
+    if (hub_id == this.uid) {
+      sbox = await this._get_wicket(this.uid);
+    } else {
+      sbox = await this.db.call_proc("mfs_home");
+    }
+
+    let message_id = await this.db.await_proc("message_id");
+    message_id = message_id.id;
+    let candidate_root = await this.db.await_proc("message_id");
+    candidate_root = candidate_root.id;
+
+    // Atomically reserve the thread + folder-visible root card (race-safe).
+    let root = toArray(
+      await this.db.await_proc(
+        "channel_file_thread_ensure_root",
+        `${file_nid}`,
+        folder_nid,
+        candidate_root,
+        this.uid,
+      ),
+    )[0] || {};
+    const file_thread_id = `${root.file_thread_id}`;
+    const is_new = Number(root.is_new) === 1;
+    if (isEmpty(file_thread_id)) {
+      return this.output.data({ status: "POST_FAILED" });
+    }
+
+    // Attachments: copy into sbox + promote staged device uploads into the
+    // file's parent folder when write is allowed (same as folder-scoped post).
+    let input = {};
+    let staged = { device: [], workspace: [] };
+    let promoted = [];
+    const copy_only = true;
+    if (!isEmpty(attachment)) {
+      staged = await this._classify_staged_attachment(
+        attachment,
+        folder_attachment,
+      );
+      if (!isEmpty(staged.device)) {
+        const MFS_PERM_WRITE = 0b0001000;
+        let folder = await this.db.await_proc(
+          "mfs_access_node",
+          this.uid,
+          folder_nid,
+        );
+        if (!isEmpty(folder) && Number(folder.privilege) & MFS_PERM_WRITE) {
+          const remap = await this._promote_staged_to_folder(
+            staged.device,
+            folder_nid,
+          );
+          attachment = attachment.map((n) => remap[n] || n);
+          promoted = staged.device.map((n) => remap[n] || n);
+          const confirmed = new Set(
+            await this._confirm_promoted(promoted, folder_nid),
+          );
+          const failed = [];
+          promoted = promoted.filter((n) => {
+            if (confirmed.has(`${n}`)) return true;
+            failed.push(`${n}`);
+            return false;
+          });
+          if (!isEmpty(failed)) {
+            this.warn(
+              "channel.file_thread_post: promotion unconfirmed, purging",
+              failed,
+            );
+            staged.workspace.push(...failed);
+          }
+        } else {
+          this.warn(
+            "channel.file_thread_post: caller lacks write on folder, staged uploads stay sbox-only",
+            folder_nid,
+          );
+          staged.workspace.push(...staged.device);
+          staged.device = [];
+        }
+      }
+      let desdir = await this.yp.await_proc(
+        "forward_proc",
+        sbox.hub_id,
+        "mfs_make_dir",
+        `'${sbox.chat_id}','${stringify([message_id])}',1`,
+      );
+      attachment = await this.move_attachemnt(
+        sbox,
+        desdir,
+        attachment,
+        message_id,
+        copy_only,
+      );
+    }
+
+    input.author_id = this.uid;
+    input.uid = this.uid;
+    input.file_thread_id = file_thread_id;
+    if (!isEmpty(attachment)) input.attachment = attachment;
+    if (!isEmpty(message)) message = message.replace(/'/gi, "''");
+    if (!isEmpty(thread_id)) input.thread_id = thread_id;
+    if (!isEmpty(mention_ids)) input.mention_ids = mention_ids;
+    input.metadata = {
+      _scope_nid: folder_nid,
+      _file_thread_id: file_thread_id,
+      _file_nid: `${file_nid}`,
+    };
+    input.message_id = message_id;
+
+    let data;
+    try {
+      data = await this.yp.await_proc(
+        "forward_proc",
+        hub_id,
+        "channel_post_message",
+        `'${stringify(input)}','${message}'`,
+      );
+    } catch (e) {
+      // First-child rollback: drop the just-reserved thread + card before any
+      // broadcast so a failed send leaves no orphan folder card.
+      if (is_new) {
+        try {
+          await this.db.await_proc(
+            "channel_file_thread_remove_root",
+            file_thread_id,
+            this.uid,
+          );
+        } catch (_) {}
+      }
+      this.warn(
+        "[channel.file_thread_post] child post failed:",
+        e && e.message,
+      );
+      return this.output.data({ status: "POST_FAILED" });
+    }
+
+    data.is_attachment = 0;
+    if (!isEmpty(input.attachment)) {
+      await this.yp.await_proc(
+        "forward_proc",
+        hub_id,
+        "channel_post_attachment",
+        `'${message_id}','${hub_id}','${stringify(input.attachment)}'`,
+      );
+      data.is_attachment = 1;
+    }
+    await this._purge_staged_copies(staged.workspace);
+    await this._notify_folder_new_nodes(promoted, folder_nid);
+
+    // Refresh thread summary + root card metadata (reply_count, last_message, mtime).
+    await this.db.await_proc(
+      "channel_file_thread_post_touch",
+      file_thread_id,
+      `${message_id}`,
+      1,
+    );
+
+    if (!isEmpty(thread_id)) {
+      data.thread = await this.threadInfo(thread_id, hub_id);
+    }
+    const profile = this.user.get("profile") || {};
+    data.firstname = this.user.attributes.firstname;
+    data.lastname = profile.lastname;
+    data.hub_id = hub_id;
+    data.echoId = this.input.get("echoId");
+    data.file_thread_id = file_thread_id;
+    data.file_thread = {
+      file_thread_id,
+      root_message_id: file_thread_id,
+      file_nid: `${file_nid}`,
+      folder_nid,
+      is_new,
+    };
+
+    const recipients = await this.yp.await_proc("entity_sockets", {
+      exclude,
+      hub_id,
+    });
+
+    // On new thread, broadcast the folder-visible root card as a normal
+    // channel.post so folder chat renders the "file thread started" card.
+    if (is_new) {
+      try {
+        let card = toArray(
+          await this.db.await_proc("channel_get", file_thread_id),
+        )[0] || {};
+        card.nid = folder_nid;
+        card.hub_id = hub_id;
+        card.message_type = "file.thread";
+        card.file_thread_id = file_thread_id;
+        card.file_nid = `${file_nid}`;
+        await RedisStore.sendData(
+          this.payload(card, { service: "channel.post" }),
+          recipients,
+        );
+      } catch (e) {
+        this.warn(
+          "[channel.file_thread_post] root card broadcast failed:",
+          e && e.message,
+        );
+      }
+    }
+
+    // Broadcast the child message to file-thread participants.
+    await RedisStore.sendData(
+      this.payload(data, { service: "channel.file_thread_post" }),
+      recipients,
+    );
+
+    // Mention notification to mentioned users not among the live hub recipients.
+    if (!isEmpty(mention_ids)) {
+      try {
+        const hubRecipientUids = toArray(recipients).map((r) => r.uid);
+        const extraMentionIds = mention_ids.filter(
+          (id) => id !== this.uid && !hubRecipientUids.includes(id),
+        );
+        if (extraMentionIds.length) {
+          const mentionRecipients = await this.yp.await_proc(
+            "user_sockets",
+            extraMentionIds,
+          );
+          if (!isEmpty(mentionRecipients)) {
+            await RedisStore.sendData(
+              this.payload(data, { service: "channel.file_thread_post" }),
+              mentionRecipients,
+            );
+          }
+        }
+      } catch (e) {
+        this.warn(
+          "[channel.file_thread_post] mention notification failed:",
+          e && e.message,
+        );
+      }
+    }
+
+    this.output.data(data);
+  }
+
+  /**
    * Ephemeral typing indicator. Broadcasts the caller's typing state to all
    * other hub participants over WebSocket. Nothing is persisted.
    */
@@ -2143,6 +2629,65 @@ class __private_channel extends Entity {
     }
 
     this.output.list(merged);
+  }
+
+  /**
+   * Free-text (LIKE) search over the current hub's channel messages, scoped to
+   * ONE conversation: the workspace/folder team chat when file_thread_id is
+   * absent, or a specific file thread when present. Powers the chat-header
+   * search field. Returns up to 45 matching previews newest-first via
+   * channel_search_scoped; queries shorter than 2 chars return [] (avoids
+   * scanning the whole channel on the first keystrokes).
+   * Params: pattern (required, the query), file_thread_id (optional scope).
+   */
+  async search() {
+    const pattern = `${this.input.use("pattern") || ""}`.trim();
+    let file_thread_id = this.input.use("file_thread_id");
+    const file_nid = this.input.use("file_nid");
+    if (pattern.length < 2) {
+      return this.output.list([]);
+    }
+
+    // Resolve the file thread from file_nid when the client knows only the file
+    // (in-place file-thread scope before its thread id resolved client-side). A
+    // file with no thread yet has no messages, so return [] rather than falling
+    // back to the team chat (which would show the wrong conversation).
+    if (isEmpty(file_thread_id) && !isEmpty(file_nid)) {
+      const byFile = toArray(
+        await this.db.await_proc(
+          "channel_file_thread_info",
+          this.uid,
+          `${file_nid}`,
+          "",
+        ),
+      )[0];
+      if (isEmpty(byFile) || !Number(byFile.exists_thread)) {
+        return this.output.list([]);
+      }
+      file_thread_id = byFile.file_thread_id;
+    }
+
+    const hub_id = this.hub.get(Attr.id);
+    let rows = [];
+    try {
+      rows = await this.db.await_proc(
+        "channel_search_scoped",
+        this.uid,
+        pattern,
+        isEmpty(file_thread_id) ? null : `${file_thread_id}`,
+      );
+    } catch (e) {
+      console.warn(
+        "[channel.search] channel_search_scoped failed:",
+        e && e.message,
+      );
+      return this.output.list([]);
+    }
+    // Tag hub_id so the client can build viewer/jump links (the proc runs in a
+    // single hub DB context and does not return it — same convention as the
+    // channel_search projection consumed by list_thread_by_file).
+    const out = toArray(rows).map((r) => ({ ...r, hub_id }));
+    this.output.list(out);
   }
 }
 
