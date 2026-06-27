@@ -1010,6 +1010,99 @@
       "returns": { "type": "object", "doc": "Acknowledgement result from channel_file_thread_read_messages" },
       "errors": []
     },
+    "export_scope": {
+      "doc": "Get the export scope for the current hub: hub message count + list of active file threads with filename and reply count.",
+      "scope": "hub",
+      "permission": {
+        "src": "read"
+      },
+      "params": {
+        "hub_id": {
+          "type": "string",
+          "required": true,
+          "doc": "ID of the hub to export from"
+        }
+      },
+      "returns": {
+        "type": "object",
+        "doc": "{ hub:{name, message_count, mtime}, file_threads:[{file_thread_id, file_nid, filename, reply_count}] }"
+      },
+      "errors": []
+    },
+    "export": {
+      "doc": "Export hub chat history to JSON (synchronous) or PDF (async offline job). Enforces a 10k message cap; returns EXPORT_TOO_LARGE with a hint when exceeded.",
+      "scope": "hub",
+      "permission": {
+        "src": "read"
+      },
+      "params": {
+        "hub_id": {
+          "type": "string",
+          "required": true,
+          "doc": "ID of the hub to export from"
+        },
+        "format": {
+          "type": "string",
+          "required": true,
+          "doc": "Export format: json or pdf"
+        },
+        "scope_sel": {
+          "type": "string",
+          "required": false,
+          "doc": "Scope selector: 'all' (hub chat + all file threads), 'hub_chat_only', or JSON array of file_thread_id values"
+        },
+        "start_date": {
+          "type": "number",
+          "required": false,
+          "doc": "Start epoch timestamp (inclusive). Null = no lower bound."
+        },
+        "end_date": {
+          "type": "number",
+          "required": false,
+          "doc": "End epoch timestamp (inclusive). Null = no upper bound."
+        },
+        "socket_id": {
+          "type": "string",
+          "required": "required when format=pdf",
+          "doc": "Caller WebSocket socket ID for PDF progress notifications. Required for format=pdf; omit for json."
+        }
+      },
+      "returns": {
+        "type": "object",
+        "doc": "{ wait:0|1, zipid, zipname, format } — wait:0 means file is ready; wait:1 means PDF job is running"
+      },
+      "errors": [
+        { "code": "EXPORT_TOO_LARGE", "message": "Total selected messages exceed 10000. Narrow the date range.", "http_status": 400 },
+        { "code": "INVALID_FORMAT", "message": "format must be json or pdf", "http_status": 400 },
+        { "code": "MISSING_SOCKET_ID", "message": "socket_id is required when format=pdf", "http_status": 400 }
+      ]
+    },
+    "export_fetch": {
+      "doc": "Serve a previously staged export file (JSON or PDF) via X-Accel-Redirect.",
+      "scope": "hub",
+      "permission": {
+        "src": "read"
+      },
+      "params": {
+        "zipid": {
+          "type": "string",
+          "required": true,
+          "doc": "Export job ID returned by channel.export"
+        },
+        "zipname": {
+          "type": "string",
+          "required": true,
+          "doc": "Filename returned by channel.export (e.g. Drumee_Chat_Folder_2026-06-27.json)"
+        }
+      },
+      "returns": {
+        "type": "file",
+        "doc": "File served via X-Accel-Redirect with Content-Disposition: attachment"
+      },
+      "errors": [
+        { "code": "NOT_FOUND", "message": "Export file not found for the given zipid/zipname", "http_status": 404 }
+      ]
+    },
     "typing": {
       "doc": "Broadcast an ephemeral typing indicator to all other hub participants over WebSocket. Nothing is persisted; the indicator is rendered transiently in the recipient's chat widget.",
       "scope": "hub",

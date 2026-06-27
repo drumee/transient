@@ -15,13 +15,28 @@
  * =============================================================================
  */
 
-const { Attr, RedisStore, toArray } = require("@drumee/server-essentials");
+const {
+  Attr, RedisStore, toArray, Constants, sysEnv, Script
+} = require("@drumee/server-essentials");
 const { Entity, MfsTools } = require("@drumee/server-core");
 const { remove_node, move_node, copy_node } = MfsTools;
 
-const { stringify } = JSON;
+const { stringify, parse: jsonParse } = JSON;
 const { isEmpty } = require("lodash");
 const Crypto = require("crypto");
+const { resolve: pathResolve, join: pathJoin } = require("path");
+const {
+  mkdirSync, writeFileSync, existsSync, symlinkSync, rmSync
+} = require("fs");
+const Spawn = require("child_process").spawn;
+
+const { DOWNLOAD_FOLDER } = Constants;
+const { FileIo } = require("@drumee/server-core");
+const { tmp_dir, mfs_dir } = sysEnv();
+const SPAWN_OPT = { detached: true, stdio: ["ignore", "ignore", "ignore"] };
+const OFFLINE_DIR = pathResolve(__dirname, "..", "..", "offline", "media");
+const EXPORT_CAP = 10000;
+const EXPORT_MIME = { json: "application/json", pdf: "application/pdf" };
 
 /** ========================================== */
 class __private_channel extends Entity {
@@ -51,6 +66,9 @@ class __private_channel extends Entity {
     this.file_thread_post = this.file_thread_post.bind(this);
     this.file_thread_list_by_folder = this.file_thread_list_by_folder.bind(this);
     this.file_thread_acknowledge = this.file_thread_acknowledge.bind(this);
+    this.export_scope = this.export_scope.bind(this);
+    this.export = this.export.bind(this);
+    this.export_fetch = this.export_fetch.bind(this);
   }
 
   /**
@@ -2688,6 +2706,409 @@ class __private_channel extends Entity {
     // channel_search projection consumed by list_thread_by_file).
     const out = toArray(rows).map((r) => ({ ...r, hub_id }));
     this.output.list(out);
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // EXPORT — Phase 1 (JSON) + Phase 2 (PDF)
+  // ─────────────────────────────────────────────────────────────────────────
+
+  /**
+   * Sanitize a string for use in a filename: keep alphanumeric, dash, dot.
+   * @param {string} s
+   * @returns {string}
+   */
+  _sanitizeName(s) {
+    return String(s || "Drumee")
+      .replace(/[^\w.-]+/g, "-")
+      .replace(/-+/g, "-")
+      .replace(/^-+|-+$/g, "") || "Drumee";
+  }
+
+  /**
+   * Build the canonical export filename (without extension).
+   * e.g. "Drumee_Chat_My-Folder_2026-06-27"
+   * @param {string} hubName
+   * @returns {string}
+   */
+  _exportBasename(hubName) {
+    const Moment = require("moment");
+    const date = Moment(Moment.now() / 1000, "X").format("YYYY-MM-DD");
+    const safeName = this._sanitizeName(hubName);
+    return `Drumee_Chat_${safeName}_${date}`;
+  }
+
+  /**
+   * Gather all messages from the hub's team chat and selected file threads,
+   * page-by-page via the read-only export procs. Returns sections[].
+   *
+   * This SAME helper is called by export() (JSON) AND chat-export.js (PDF)
+   * so there is no diverging gather logic.
+   *
+   * @param {object} opts
+   * @param {string|string[]} opts.scope_sel  'all' | 'hub_chat_only' | [file_thread_ids]
+   * @param {number|null}     opts.date_start  epoch seconds or null
+   * @param {number|null}     opts.date_end    epoch seconds or null
+   * @param {string[]}        opts.file_threads  full list from channel_export_file_thread_list
+   * @returns {Promise<Array>} sections[]
+   */
+  async _gatherSections({ scope_sel, date_start, date_end, file_threads }) {
+    const sections = [];
+
+    // Determine whether to include hub team chat
+    const includeHub =
+      scope_sel === "all" ||
+      scope_sel === "hub_chat_only" ||
+      !Array.isArray(scope_sel);
+
+    // Determine which file threads to include
+    let selectedFts = [];
+    if (scope_sel === "all") {
+      selectedFts = file_threads;
+    } else if (Array.isArray(scope_sel)) {
+      const sel = new Set(scope_sel.map(String));
+      selectedFts = file_threads.filter((ft) => sel.has(String(ft.file_thread_id)));
+    }
+    // scope_sel === 'hub_chat_only' → selectedFts stays []
+
+    // ── Hub team-chat section ───────────────────────────────────────────────
+    if (includeHub) {
+      const messages = [];
+      let page = 1;
+      while (true) {
+        const rows = toArray(
+          await this.db.await_proc(
+            "channel_export_messages",
+            this.uid,
+            date_start || null,
+            date_end || null,
+            page,
+          ),
+        );
+        if (!rows.length) break;
+        for (const row of rows) {
+          messages.push(this._normalizeMessage(row));
+        }
+        if (rows.length < 45) break;
+        page++;
+      }
+      sections.push({ type: "hub_chat", name: "This Folder Chat", messages });
+    }
+
+    // ── File-thread sections (one per selected thread) ─────────────────────
+    for (const ft of selectedFts) {
+      const messages = [];
+      let page = 1;
+      while (true) {
+        const rows = toArray(
+          await this.db.await_proc(
+            "channel_export_file_thread_messages",
+            this.uid,
+            `${ft.file_thread_id}`,
+            date_start || null,
+            date_end || null,
+            page,
+          ),
+        );
+        if (!rows.length) break;
+        for (const row of rows) {
+          messages.push(this._normalizeMessage(row));
+        }
+        if (rows.length < 45) break;
+        page++;
+      }
+      sections.push({
+        type: "file_thread",
+        name: ft.filename || ft.file_thread_id,
+        file_thread_id: ft.file_thread_id,
+        file_nid: ft.file_nid,
+        messages,
+      });
+    }
+
+    return sections;
+  }
+
+  /**
+   * Normalize a raw channel row into the canonical export message shape.
+   * Author is already resolved in-proc (firstname/lastname/fullname columns).
+   * Attachments are parsed from JSON into [{name, link}].
+   * Reactions are kept raw from metadata (JSON output only; PDF builder strips them).
+   * @param {object} row
+   * @returns {object}
+   */
+  _normalizeMessage(row) {
+    // Parse attachment JSON → [{name, link}]
+    let attachments = [];
+    if (row.attachment) {
+      try {
+        const raw = typeof row.attachment === "string"
+          ? jsonParse(row.attachment)
+          : row.attachment;
+        for (const a of toArray(raw)) {
+          // attachment entries are {nid, hub_id} or plain nid strings
+          if (a && (a.nid || typeof a === "string")) {
+            const nid = a.nid || a;
+            const hub_id = a.hub_id || this.hub.get(Attr.id);
+            attachments.push({
+              name: a.filename || nid,
+              // Build a service link the client (or PDF) can follow
+              link: `/-/svc/media.orig?nid=${nid}&hub_id=${hub_id}`,
+            });
+          }
+        }
+      } catch (_) {
+        // malformed attachment JSON — skip silently
+      }
+    }
+
+    // Parse metadata for reactions (kept raw)
+    let reactions = null;
+    if (row.metadata) {
+      try {
+        const meta = typeof row.metadata === "string"
+          ? jsonParse(row.metadata)
+          : row.metadata;
+        if (meta && meta._reactions_) reactions = meta._reactions_;
+      } catch (_) {}
+    }
+
+    return {
+      id: row.message_id,
+      sys_id: row.sys_id,
+      author: {
+        id: row.author_id,
+        name: row.fullname || `${row.firstname || ""} ${row.lastname || ""}`.trim() || row.author_id,
+      },
+      time: row.ctime,
+      text: row.message || "",
+      attachments,
+      reply_to: row.thread_id || null,
+      reactions,
+    };
+  }
+
+  /**
+   * GET channel.export_scope {hub_id}
+   * Returns: { hub:{name, message_count, mtime}, file_threads:[{file_thread_id, file_nid, filename, reply_count}] }
+   */
+  async export_scope() {
+    const hub_id = this.hub.get(Attr.id);
+    const hub_name = this.hub.get(Attr.name) || this.hub.get("hubname") || hub_id;
+    const hub_mtime = this.hub.get("mtime") || this.hub.get(Attr.ctime) || 0;
+
+    // Count hub team-chat messages (date-unfiltered)
+    const countRow = toArray(
+      await this.db.await_proc("channel_export_count", this.uid, null, null),
+    )[0];
+    const message_count = countRow ? Number(countRow.message_count) : 0;
+
+    // List all active file threads
+    const file_threads = toArray(
+      await this.db.await_proc("channel_export_file_thread_list", this.uid),
+    );
+
+    this.output.data({
+      hub: { name: hub_name, message_count, mtime: hub_mtime },
+      file_threads,
+    });
+  }
+
+  /**
+   * POST channel.export {hub_id, format, scope_sel, start_date, end_date, socket_id}
+   * Returns: { wait:0|1, zipid, zipname, format }
+   */
+  async export() {
+    const format = this.input.use("format") || "json";
+    if (!["json", "pdf"].includes(format)) {
+      return this.output.data({ status: "INVALID_FORMAT" });
+    }
+
+    const scope_sel_raw = this.input.use("scope_sel") || "all";
+    // scope_sel is 'all', 'hub_chat_only', or a JSON array / real array of file_thread_ids
+    let scope_sel;
+    if (scope_sel_raw === "all" || scope_sel_raw === "hub_chat_only") {
+      scope_sel = scope_sel_raw;
+    } else {
+      try {
+        scope_sel = Array.isArray(scope_sel_raw)
+          ? scope_sel_raw
+          : jsonParse(scope_sel_raw);
+        if (!Array.isArray(scope_sel)) scope_sel = "all";
+      } catch (_) {
+        scope_sel = "all";
+      }
+    }
+
+    const date_start = this.input.use("start_date") || null;
+    const date_end = this.input.use("end_date") || null;
+    // PDF progress requires socket_id; reject early so the client spinner
+    // is not left hanging with no progress events.
+    const socket_id = this.input.use(Attr.socket_id) || null;
+    if (format === "pdf" && !socket_id) {
+      return this.output.data({ status: "MISSING_SOCKET_ID" });
+    }
+
+    // Resolve all active file threads once (needed for scope + count)
+    const file_threads = toArray(
+      await this.db.await_proc("channel_export_file_thread_list", this.uid),
+    );
+
+    // ── 10k guard ────────────────────────────────────────────────────────────
+    // Hub team-chat: counted via channel_export_count (date-aware).
+    // File threads: when no date filter is active, reply_count is an exact
+    // total and avoids N extra DB calls. When a date filter is active,
+    // reply_count is an overcount (messages outside the window still increment
+    // it), so we do an exact date-filtered count per selected thread via
+    // channel_export_file_thread_count — this keeps the guard honest and
+    // consistent with the "narrow date range" hint shown on rejection.
+    const hasDateFilter = date_start !== null || date_end !== null;
+
+    let totalCount = 0;
+    const includeHub =
+      scope_sel === "all" ||
+      scope_sel === "hub_chat_only" ||
+      !Array.isArray(scope_sel);
+
+    if (includeHub) {
+      const cr = toArray(
+        await this.db.await_proc("channel_export_count", this.uid, date_start, date_end),
+      )[0];
+      totalCount += cr ? Number(cr.message_count) : 0;
+    }
+
+    let selectedFts = [];
+    if (scope_sel === "all") {
+      selectedFts = file_threads;
+    } else if (Array.isArray(scope_sel)) {
+      const sel = new Set(scope_sel.map(String));
+      selectedFts = file_threads.filter((ft) => sel.has(String(ft.file_thread_id)));
+    }
+
+    if (hasDateFilter) {
+      // Exact date-filtered count per selected thread (N proc calls, but N is
+      // bounded by the number of file threads the user selected — typically small).
+      for (const ft of selectedFts) {
+        const cr = toArray(
+          await this.db.await_proc(
+            "channel_export_file_thread_count",
+            this.uid,
+            `${ft.file_thread_id}`,
+            date_start,
+            date_end,
+          ),
+        )[0];
+        totalCount += cr ? Number(cr.message_count) : 0;
+      }
+    } else {
+      // No date filter: reply_count is the exact total (no rows excluded),
+      // so use it directly — avoids N extra COUNT queries.
+      for (const ft of selectedFts) {
+        totalCount += Number(ft.reply_count) || 0;
+      }
+    }
+
+    if (totalCount > EXPORT_CAP) {
+      return this.output.data({
+        status: "EXPORT_TOO_LARGE",
+        message_count: totalCount,
+        hint: "Narrow the date range to reduce the export size.",
+      });
+    }
+
+    // ── Prepare staging ───────────────────────────────────────────────────────
+    const zipid = this.randomString();
+    const hub_name = this.hub.get(Attr.name) || this.hub.get("hubname") || this.hub.get(Attr.id);
+    const basename = this._exportBasename(hub_name);
+    const zipname = `${basename}.${format}`;
+    const stageDir = pathResolve(tmp_dir, DOWNLOAD_FOLDER, this.uid, zipid);
+    mkdirSync(stageDir, { recursive: true });
+
+    // ── JSON (synchronous) ────────────────────────────────────────────────────
+    if (format === "json") {
+      const sections = await this._gatherSections({
+        scope_sel,
+        date_start,
+        date_end,
+        file_threads,
+      });
+
+      const Moment = require("moment");
+      const exportedAt = Moment(Moment.now() / 1000, "X").format("YYYY-MM-DD HH:mm");
+      const payload = {
+        meta: {
+          hub_id: this.hub.get(Attr.id),
+          hub_name,
+          exported_by: this.uid,
+          exported_at: exportedAt,
+          date_start: date_start || null,
+          date_end: date_end || null,
+          format: "json",
+        },
+        sections,
+      };
+
+      const filePath = pathJoin(stageDir, zipname);
+      writeFileSync(filePath, stringify(payload, null, 2), "utf8");
+
+      return this.output.data({ wait: 0, zipid, zipname, format });
+    }
+
+    // ── PDF (async offline job) ────────────────────────────────────────────────
+    const lang = this.client_language ? this.client_language() : "en";
+    const args = {
+      uid: this.uid,
+      hub_id: this.hub.get(Attr.id),
+      hub_name,
+      scope_sel,
+      start_date: date_start,
+      end_date: date_end,
+      format: "pdf",
+      zipid,
+      zipname,
+      socket_id,
+      lang,
+    };
+
+    const cmd = pathResolve(OFFLINE_DIR, "chat-export.js");
+    const child = Spawn(cmd, [stringify(args)], SPAWN_OPT);
+    // An un-handled spawn 'error' (e.g. EACCES when the worker file lost its
+    // execute bit) surfaces as an uncaughtException that crashes the whole
+    // REST service. Keep a worker launch failure contained to this export.
+    child.on("error", (e) => {
+      this.warn(`chat-export spawn failed: ${e && e.message}`);
+    });
+    child.unref();
+
+    return this.output.data({ wait: 1, zipid, zipname, format });
+  }
+
+  /**
+   * GET channel.export_fetch {zipid, zipname}
+   * Serves a previously staged export file (JSON or PDF) via X-Accel-Redirect.
+   * Creates a symlink under mfs_dir so nginx can serve the file.
+   */
+  async export_fetch() {
+    const zipid = this.input.need("zipid");
+    const zipname = this.input.need("zipname") || "export";
+
+    const src = pathJoin(tmp_dir, DOWNLOAD_FOLDER, this.uid, zipid, zipname);
+    const fileio = new FileIo(this);
+    if (!existsSync(src)) {
+      return fileio.not_found();
+    }
+
+    // Stable, space-free symlink under mfs_dir; FileIo.static() builds the
+    // correct X-Accel-Redirect path (mirrors media.zip() — manual header
+    // stripping produced an nginx path that 404'd: "File wasn't available").
+    const ext = zipname.split(".").pop().toLowerCase();
+    const mimetype = EXPORT_MIME[ext] || "application/octet-stream";
+    const target = pathJoin(mfs_dir, DOWNLOAD_FOLDER, this.uid, zipid);
+    mkdirSync(target, { recursive: true });
+    const file = pathJoin(target, `${zipid}.${ext}`);
+    if (existsSync(file)) rmSync(file);
+    symlinkSync(src, file);
+
+    fileio.static({ path: file, name: zipname, mimetype, code: 200 });
   }
 }
 
