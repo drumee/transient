@@ -1,7 +1,7 @@
 #!/bin/bash
 # Drumee one-command installer — the "easy path".
 #
-#   curl -fsSL https://get.drumee.io/install | bash      # interactive: asks 3-4 questions, then installs
+#   curl -fsSL https://get.drumee.com/install | bash      # interactive: asks 3-4 questions, then installs
 #   scripts/get-drumee.sh                         # same, from a checkout
 #
 # One run does everything: checks (and can install) Docker, asks how people will
@@ -92,14 +92,14 @@ case "${1:-}" in
   -h|--help)
     # Print the leading comment block (skip the shebang, stop at the first code line).
     awk 'NR==1{next} /^#/{sub(/^# ?/,""); print; next} {exit}' "${BASH_SOURCE[0]:-$0}" 2>/dev/null \
-      || echo "Drumee installer — see https://get.drumee.io"
+      || echo "Drumee installer — see https://get.drumee.com"
     exit 0 ;;
 esac
 
 # --------------------------------------------------------------------- locate src
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd || echo)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." 2>/dev/null && pwd || echo)"
-RELEASE_BASE="${RELEASE_BASE:-https://get.drumee.io}"
+RELEASE_BASE="${RELEASE_BASE:-https://get.drumee.com}"
 [ -n "$REPO_ROOT" ] && [ -f "$REPO_ROOT/config/render.mjs" ] || REPO_ROOT=""
 fetch() { # fetch <relative-path> <dest>
   local rel="$1" dest="$2"
