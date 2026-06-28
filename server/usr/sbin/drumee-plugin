@@ -1,0 +1,126 @@
+#!/bin/bash
+# drumee-plugin — install and manage server plugins for a Drumee deployment.
+#
+# Plugins live under  <PLUGIN_DIR>/<endpoint>/<name>  and expose services at
+#   /-/<endpoint>/svc/<module>.<method>
+# This script is channel-agnostic: the native `drumee plugin …` CLI and the
+# container `drumee-ctl plugin …` verb both delegate here, passing the right
+# PLUGIN_DIR and RESTART_CMD for their environment.
+#
+# Usage:
+#   drumee-plugin add <source> [--endpoint=NAME] [--name=NAME]
+#   drumee-plugin list
+#   drumee-plugin remove <endpoint>/<name>
+#   drumee-plugin enable|disable <endpoint>/<name>
+#   drumee-plugin apply <manifest.json>     # install every plugin declared in a manifest
+#
+# <source> may be: a git URL (git@… or https://…[#ref]), a local directory, or a
+# .tgz/.tar.gz/.zip archive.
+#
+# Env:
+#   PLUGIN_DIR   (default /srv/drumee/runtime/plugins/server)
+#   RESTART_CMD  (default "drumee restart")  how to restart the backend after a change
+#   PLUGIN_OWNER (default www-data)          owner for installed files
+set -euo pipefail
+
+PLUGIN_DIR="${PLUGIN_DIR:-/srv/drumee/runtime/plugins/server}"
+RESTART_CMD="${RESTART_CMD:-drumee restart}"
+PLUGIN_OWNER="${PLUGIN_OWNER:-www-data}"
+
+die() { echo "drumee-plugin: $*" >&2; exit 1; }
+restart() { echo "==> restarting backend ($RESTART_CMD)"; $RESTART_CMD || echo "warn: restart failed — run it manually"; }
+
+slug() { echo "$1" | sed -E 's#.*/##; s#\.git$##; s#[^A-Za-z0-9_.-]#-#g'; }
+
+cmd_add() {
+  local src="" endpoint="" name=""
+  for a in "$@"; do case "$a" in
+    --endpoint=*) endpoint="${a#*=}" ;;
+    --name=*)     name="${a#*=}" ;;
+    -*)           die "unknown flag $a" ;;
+    *)            src="$a" ;;
+  esac; done
+  [ -n "$src" ] || die "usage: add <source> [--endpoint=NAME] [--name=NAME]"
+  endpoint="${endpoint:-local}"
+  [ -n "$name" ] || name="$(slug "${src%%#*}")"
+  local dest="$PLUGIN_DIR/$endpoint/$name"
+  echo "==> installing '$name' (endpoint '$endpoint') -> $dest"
+  install -d -m 0755 "$(dirname "$dest")"
+  local tmp; tmp="$(mktemp -d)"
+
+  case "$src" in
+    git@*|*.git|https://*.git|https://github.com/*|https://gitlab.*)
+      local ref=""; case "$src" in *#*) ref="${src##*#}"; src="${src%%#*}";; esac
+      git clone --depth 1 ${ref:+--branch "$ref"} "$src" "$tmp/p" || die "git clone failed"
+      rm -rf "$tmp/p/.git" ;;
+    *.tgz|*.tar.gz) mkdir -p "$tmp/p" && tar xzf "$src" -C "$tmp/p" --strip-components=0 ;;
+    *.zip)          mkdir -p "$tmp/p" && unzip -q "$src" -d "$tmp/p" ;;
+    *) [ -d "$src" ] || die "source not found: $src"; cp -a "$src" "$tmp/p" ;;
+  esac
+
+  if [ -f "$tmp/p/package.json" ]; then
+    echo "==> npm install"
+    ( cd "$tmp/p" && (npm ci --omit=dev 2>/dev/null || npm install --omit=dev) ) || die "npm install failed"
+  fi
+  rm -rf "$dest"; mkdir -p "$(dirname "$dest")"; mv "$tmp/p" "$dest"
+  chown -R "$PLUGIN_OWNER:$PLUGIN_OWNER" "$dest" 2>/dev/null || true
+  rm -rf "$tmp"
+  echo "==> installed. Service base: /-/$endpoint/svc/<module>.<method>"
+  restart
+}
+
+cmd_list() {
+  [ -d "$PLUGIN_DIR" ] || { echo "(no plugins installed)"; return; }
+  local found=0
+  for ep in "$PLUGIN_DIR"/*/; do
+    [ -d "$ep" ] || continue
+    for p in "$ep"*/; do
+      [ -d "$p" ] || continue
+      found=1
+      local state="enabled"; [ -e "$p/.disabled" ] && state="disabled"
+      printf "  %-28s %s\n" "$(basename "$(dirname "$p")")/$(basename "$p")" "$state"
+    done
+  done
+  [ "$found" = 1 ] || echo "(no plugins installed)"
+}
+
+cmd_remove() {
+  local id="${1:-}"; [ -n "$id" ] || die "usage: remove <endpoint>/<name>"
+  local dest="$PLUGIN_DIR/$id"
+  [ -d "$dest" ] || die "not installed: $id"
+  rm -rf "$dest"; echo "==> removed $id"; restart
+}
+
+cmd_toggle() {
+  local action="$1" id="${2:-}"; [ -n "$id" ] || die "usage: $action <endpoint>/<name>"
+  local dest="$PLUGIN_DIR/$id"; [ -d "$dest" ] || die "not installed: $id"
+  if [ "$action" = disable ]; then touch "$dest/.disabled"; else rm -f "$dest/.disabled"; fi
+  echo "==> $id ${action}d"; restart
+}
+
+cmd_apply() {
+  local manifest="${1:-}"; [ -f "$manifest" ] || die "usage: apply <manifest.json>"
+  command -v node >/dev/null || die "node required to read the manifest"
+  # manifest: [{ "name":"…", "source":"…", "endpoint":"…", "enabled":true }, …]
+  node -e '
+    const fs=require("fs");const a=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));
+    for(const p of (Array.isArray(a)?a:a.plugins||[])){
+      if(p.enabled===false)continue;
+      const args=["add",p.source];
+      if(p.endpoint)args.push("--endpoint="+p.endpoint);
+      if(p.name)args.push("--name="+p.name);
+      console.log(args.join("\t"));
+    }' "$manifest" | while IFS=$'\t' read -r -a args; do
+      cmd_add "${args[@]:1}"
+    done
+}
+
+case "${1:-}" in
+  add)     shift; cmd_add "$@" ;;
+  list|ls) cmd_list ;;
+  remove|rm) shift; cmd_remove "$@" ;;
+  enable)  shift; cmd_toggle enable "$@" ;;
+  disable) shift; cmd_toggle disable "$@" ;;
+  apply)   shift; cmd_apply "$@" ;;
+  *) die "usage: drumee-plugin add|list|remove|enable|disable|apply" ;;
+esac

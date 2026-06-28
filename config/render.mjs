@@ -449,6 +449,9 @@ services:
       - \${DRUMEE_DATA_DIR}:/data
       - ui_assets:/srv/drumee/runtime/ui:ro
       - drumee_cred:/etc/drumee/credential
+      # Server plugins — host-mounted so they persist across image upgrades and
+      # are managed with: drumee-ctl plugin add|list|remove
+      - ./plugins:/srv/drumee/runtime/plugins/server
 
   proxy:
     image: caddy:2
