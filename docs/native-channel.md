@@ -24,7 +24,7 @@ sudo PRESEED=install.conf bash scripts/install-native.sh
 ./build-all.sh                       # build the component .debs
 meta/build.sh                        # build the drumee metapackage
 scripts/publish-apt.sh --debs=./out-debs --out=./apt-repo --suite=stable --key=somanos.sar@drumee.com
-# serve ./apt-repo at https://apt.drumee.io
+# serve ./apt-repo at https://get.drumee.io/apt
 ```
 
 `publish-apt.sh` builds a signed flat repo (`apt-ftparchive` + `gpg`), emits
@@ -34,7 +34,7 @@ scripts/publish-apt.sh --debs=./out-debs --out=./apt-repo --suite=stable --key=s
 ## Needs your infrastructure
 
 - **Repo hosting** — somewhere to serve `apt-repo/` (object storage + CDN, or a
-  static host) at a stable URL (`apt.drumee.io`).
+  static host) at a stable URL (`get.drumee.io/apt`).
 - **Signing key** — a project (not personal) GPG key in the publishing
   environment; CI publishes with it (Phase 5).
 

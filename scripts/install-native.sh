@@ -6,12 +6,12 @@
 #   sudo PRESEED=/path/to/install.conf bash install-native.sh
 #
 # Env:
-#   APT_URL   (default https://apt.drumee.io)   repo base URL
-#   SUITE     (default stable)                  apt suite/channel
-#   PRESEED   (optional)                        install.conf from config/render.mjs
+#   APT_URL   (default https://get.drumee.io/apt)  repo base URL
+#   SUITE     (default stable)                      apt suite/channel
+#   PRESEED   (optional)                            install.conf from config/render.mjs
 set -euo pipefail
 
-APT_URL="${APT_URL:-https://apt.drumee.io}"
+APT_URL="${APT_URL:-https://get.drumee.io/apt}"
 SUITE="${SUITE:-stable}"
 PRESEED="${PRESEED:-}"
 

@@ -1,6 +1,6 @@
 #!/bin/bash
 # Build a signed flat APT repository from the built .deb files.
-# Produces a repo tree you can serve at e.g. https://apt.drumee.io.
+# Produces a repo tree you can serve at e.g. https://get.drumee.io/apt.
 #
 #   scripts/publish-apt.sh --debs=DIR --out=REPO_DIR [--suite=stable] [--key=EMAIL]
 #
@@ -56,11 +56,11 @@ gpg "${KEYARG[@]}" --armor --export ${KEY:-} > "$OUT/drumee-archive-keyring.asc"
 
 cat <<MSG
 
-Done. Serve $OUT at your repo URL (e.g. https://apt.drumee.io), then clients add:
+Done. Serve $OUT at your repo URL (e.g. https://get.drumee.io/apt), then clients add:
 
-  curl -fsSL https://apt.drumee.io/drumee-archive-keyring.asc \\
+  curl -fsSL https://get.drumee.io/apt/drumee-archive-keyring.asc \\
     | sudo tee /etc/apt/keyrings/drumee.asc >/dev/null
-  echo "deb [signed-by=/etc/apt/keyrings/drumee.asc] https://apt.drumee.io $SUITE main" \\
+  echo "deb [signed-by=/etc/apt/keyrings/drumee.asc] https://get.drumee.io/apt $SUITE main" \\
     | sudo tee /etc/apt/sources.list.d/drumee.list
   sudo apt update && sudo apt install drumee
 MSG
