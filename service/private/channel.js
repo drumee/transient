@@ -219,9 +219,16 @@ class __private_channel extends Entity {
     attachment,
     message_id,
     copy_only = false,
+    folderNids = null,
   ) {
     let src = [];
     message_id = [message_id];
+    // Sources promoted into the folder: tag their sbox copy with the folder file
+    // nid so reply-in-thread and the folder's "View Chat Threads" resolve to ONE
+    // thread (keyed by the folder file F, not the per-message sbox copy C).
+    const folderSet = folderNids
+      ? new Set(toArray(folderNids).map(String))
+      : null;
     for (let media of attachment) {
       src.push({ nid: media, hub_id: this.hub.get(Attr.id) });
     }
@@ -247,7 +254,13 @@ class __private_channel extends Entity {
             hub_id: sbox.hub_id,
             mfs_root: node.des_mfs_root,
           };
-          tempattachment.push({ hub_id: sbox.hub_id, nid: node.des_id });
+          {
+            const entry = { hub_id: sbox.hub_id, nid: node.des_id };
+            if (folderSet && folderSet.has(`${node.nid}`)) {
+              entry.folder_nid = `${node.nid}`;
+            }
+            tempattachment.push(entry);
+          }
           if (copy_only) {
             await copy_node(src, dest, 1);
           } else {
@@ -261,7 +274,13 @@ class __private_channel extends Entity {
             hub_id: sbox.hub_id,
             mfs_root: node.des_mfs_root,
           };
-          tempattachment.push({ hub_id: sbox.hub_id, nid: node.des_id });
+          {
+            const entry = { hub_id: sbox.hub_id, nid: node.des_id };
+            if (folderSet && folderSet.has(`${node.nid}`)) {
+              entry.folder_nid = `${node.nid}`;
+            }
+            tempattachment.push(entry);
+          }
           await copy_node(src, dest, 1);
       }
     }
@@ -1052,6 +1071,7 @@ class __private_channel extends Entity {
         attachment,
         message_id,
         copy_only,
+        promoted,
       );
     }
     input.author_id = this.uid;
