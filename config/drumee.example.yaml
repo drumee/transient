@@ -74,16 +74,19 @@ versions:
   # schemas: 1.0.0
   # static: 1.0.0
 
-# --- Server plugins ---------------------------------------------------------
-# Plugins are managed with the CLI (not this file). Each installs under
-#   /srv/drumee/runtime/plugins/server/<endpoint>/<name>
-# and serves at  /-/<endpoint>/svc/<module>.<method>.
+# --- Server plugins (optional) ----------------------------------------------
+# Each plugin installs under /srv/drumee/runtime/plugins/server/<endpoint>/<name>
+# and serves at /-/<endpoint>/svc/<module>.<method>. Listed here, they are written
+# to plugins.json on render and installed automatically (drumee plugin apply).
+# `source` may be a git URL (optionally #ref), a local dir, or a .tgz/.zip.
+# plugins:
+#   - name: hello
+#     endpoint: acme
+#     source: https://github.com/acme/drumee-hello.git#v1.0.0
+#   - name: local-tool
+#     endpoint: acme
+#     source: ./my-plugins/local-tool
 #
+# Or manage them imperatively any time (native: `drumee plugin …`):
 #   drumee-ctl plugin add https://github.com/acme/drumee-hello.git#v1.0.0 --endpoint=acme
-#   drumee-ctl plugin list
-#   drumee-ctl plugin remove acme/hello
-#   (native hosts: use `drumee plugin …` instead of `drumee-ctl plugin …`)
-#
-# To install a set reproducibly, write a JSON manifest and apply it:
-#   echo '[{"name":"hello","endpoint":"acme","source":"https://github.com/acme/drumee-hello.git"}]' > plugins.json
-#   drumee-ctl plugin apply plugins.json
+#   drumee-ctl plugin list | remove acme/hello | disable acme/hello

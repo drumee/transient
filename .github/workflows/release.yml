@@ -2,10 +2,12 @@ name: Release
 
 # Builds and publishes a coherent release set on a version tag.
 # Requires repository secrets (set in Settings → Secrets):
-#   DRUMEE_SSH_KEY    deploy key with read access to the component repos
-#   GPG_PRIVATE_KEY   project signing key (armored) + GPG_PASSPHRASE
-#   REGISTRY_TOKEN    container registry push token
-#   APT_DEPLOY_*      credentials/host for publishing the apt repo
+#   DRUMEE_SSH_KEY     deploy key with read access to the component repos
+#   GPG_PRIVATE_KEY    project signing key (armored) + GPG_PASSPHRASE
+#   REGISTRY_TOKEN     container registry push token
+#   PAGES_DEPLOY_TOKEN token with contents:write on drumee/get-drumee-pages —
+#                      publishes the apt-stable Release assets + the
+#                      get.drumee.com Pages content (installers, keyring, CLIs)
 #
 # Several steps are gated on these secrets; without them the workflow no-ops the
 # affected job rather than failing, so forks can run the buildable parts.
@@ -113,9 +115,15 @@ jobs:
       - name: Native install verify (end-to-end, disposable Debian container)
         if: ${{ secrets.DRUMEE_SSH_KEY != '' }}
         run: tests/native/install-verify.sh   # installs the built .debs + checks it serves
-      - name: Publish APT repo
-        if: ${{ secrets.GPG_PRIVATE_KEY != '' && secrets.DRUMEE_SSH_KEY != '' }}
-        run: scripts/publish-apt.sh --debs=out-debs --out=apt-repo --suite=stable
+      - name: Publish install host (apt-stable assets + get.drumee.com Pages)
+        if: ${{ secrets.GPG_PRIVATE_KEY != '' && secrets.DRUMEE_SSH_KEY != '' && secrets.PAGES_DEPLOY_TOKEN != '' }}
+        env:
+          GH_TOKEN: ${{ secrets.PAGES_DEPLOY_TOKEN }}
+          REF_NAME: ${{ github.ref_name }}
+        run: scripts/publish-site.sh --debs=out-debs        # uses the imported default GPG key
+      - name: Skip site publish notice
+        if: ${{ secrets.PAGES_DEPLOY_TOKEN == '' }}
+        run: echo "PAGES_DEPLOY_TOKEN not set — built .debs but did not publish to get.drumee.com/apt-stable."
       - name: Upload artifacts
         if: ${{ secrets.DRUMEE_SSH_KEY != '' }}
         uses: actions/upload-artifact@v4

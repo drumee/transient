@@ -330,6 +330,32 @@ healthy=""; for _ in $(seq 1 30); do
   $DC ps --format '{{.Service}}:{{.Status}}' 2>/dev/null | grep -q '^server-pod:.*healthy' && { healthy=1; break; }; sleep 4
 done
 
+# --------------------------------------------------------------- 5. management CLI
+# Put drumee-ctl (+ its drumee-plugin helper) on PATH so management commands work
+# without a checkout. Prefer /usr/local/bin; fall back to the install dir.
+step "Installing the drumee-ctl CLI"
+bindir=/usr/local/bin
+if [ -w "$bindir" ] || sudo -n true 2>/dev/null; then SUDO=""; [ -w "$bindir" ] || SUDO=sudo
+else bindir="$DRUMEE_DIR/bin"; SUDO=""; mkdir -p "$bindir"; fi
+cli_ok=1
+for tool in drumee-ctl drumee-plugin; do
+  if fetch "bin/$tool" "/tmp/$tool.$$" 2>/dev/null; then
+    $SUDO install -m 0755 "/tmp/$tool.$$" "$bindir/$tool" 2>/dev/null || cli_ok=""
+    rm -f "/tmp/$tool.$$"
+  else cli_ok=""; fi
+done
+if [ -n "$cli_ok" ]; then
+  case ":$PATH:" in *":$bindir:"*) ok "Installed drumee-ctl to $bindir";;
+    *) ok "Installed drumee-ctl to $bindir"; say "add it to PATH:  export PATH=\"$bindir:\$PATH\"";; esac
+else warn "Could not install drumee-ctl automatically (get it from $RELEASE_BASE/bin/drumee-ctl)."; fi
+
+# Apply any declared plugins (render emits plugins.json from drumee.yaml's plugins:).
+if [ -f plugins.json ] && [ -n "$healthy" ]; then
+  step "Installing declared plugins"
+  DRUMEE_DIR="$DRUMEE_DIR" "$bindir/drumee-ctl" plugin apply plugins.json 2>&1 | sed 's/^/    /' \
+    || warn "plugin apply failed — run: drumee-ctl plugin apply plugins.json"
+fi
+
 if [ "$DRUMEE_DOMAIN" = "localhost" ]; then URL="http://localhost/"; else URL="https://${DRUMEE_DOMAIN}/"; fi
 echo
 if [ -n "$healthy" ]; then
