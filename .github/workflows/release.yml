@@ -26,6 +26,8 @@ jobs:
       - uses: actions/checkout@v4
       - name: Versions coherent with manifest
         run: scripts/check-versions.sh
+      - name: Metapackage deps pinned to manifest
+        run: meta/make-control.sh --check
 
   images:
     needs: guard

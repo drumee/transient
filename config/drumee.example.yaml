@@ -63,10 +63,13 @@ ports:
   ui: 23000              # index.js page + WebSocket listener (--pushPort)
 
 images:
-  registry: drumee       # where publish-images.sh pushed, e.g. ghcr.io/drumee
+  registry: ghcr.io/drumee   # where publish-images.sh pushed (use 'drumee' for local :local images)
 
 versions:
-  server: 2.9.44
-  ui: 3.2.49
-  schemas: 2.6.99
-  static: 1.0.3
+  product: 1.0.0         # release-train version: the tag ALL images share. Pin for
+                         # reproducible deploys + rollback. Use 'latest' to track newest.
+  # Optional per-component overrides (default to product); normally unset:
+  # server: 1.0.0
+  # ui: 1.0.0
+  # schemas: 1.0.0
+  # static: 1.0.0

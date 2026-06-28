@@ -9,6 +9,7 @@
 #   TAG       (required)                 version tag, e.g. a git tag or manifest version
 #   PUSH      (default 1)                1 = buildx --push; 0 = --load (local only)
 #   ALSO_LATEST (default 1)              also tag/push :latest
+#   ALSO_STABLE (default 1)              also tag/push :stable (the moving release channel)
 #   *_SRC     source checkouts (default ~/<repo>)
 #   MEDIA_DEPS (default 1)               include media tools in server-pod (prod)
 #
@@ -19,6 +20,7 @@ REGISTRY="${REGISTRY:-ghcr.io/drumee}"
 TAG="${TAG:?set TAG to the release version}"
 PUSH="${PUSH:-1}"
 ALSO_LATEST="${ALSO_LATEST:-1}"
+ALSO_STABLE="${ALSO_STABLE:-1}"
 MEDIA_DEPS="${MEDIA_DEPS:-1}"
 # 0 reuses the checkout's node_modules (installed with registry auth on the
 # host/runner); 1 runs `npm ci` inside the build (needs in-build @drumee auth).
@@ -34,7 +36,9 @@ say() { printf '\033[1;36m==>\033[0m %s\n' "$*"; }
 docker buildx version >/dev/null 2>&1 || { echo "docker buildx required" >&2; exit 1; }
 
 out_flag=(--load); [ "$PUSH" = 1 ] && out_flag=(--push)
-tags() { local n="$1"; printf -- '-t %s/%s:%s ' "$REGISTRY" "$n" "$TAG"; [ "$ALSO_LATEST" = 1 ] && printf -- '-t %s/%s:latest ' "$REGISTRY" "$n"; }
+tags() { local n="$1"; printf -- '-t %s/%s:%s ' "$REGISTRY" "$n" "$TAG"
+  [ "$ALSO_STABLE" = 1 ] && printf -- '-t %s/%s:stable ' "$REGISTRY" "$n"
+  [ "$ALSO_LATEST" = 1 ] && printf -- '-t %s/%s:latest ' "$REGISTRY" "$n"; }
 
 say "Registry=$REGISTRY Tag=$TAG Push=$PUSH"
 

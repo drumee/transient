@@ -9,15 +9,15 @@ Homepage: https://drumee.org
 Package: drumee
 Architecture: all
 Depends: ${misc:Depends},
-  drumee-infra,
-  drumee-schemas,
-  drumee-static,
-  drumee-server-pod,
-  drumee-ui-pod
+  drumee-infra (= 1.2.11),
+  drumee-schemas (= 2.6.99),
+  drumee-static (= 1.0.4),
+  drumee-server-pod (= 2.9.61),
+  drumee-ui-pod (= 3.3.26)
 Description: Drumee sovereign data platform (metapackage)
  Installs the full Drumee runtime: infrastructure, database schemas, static
- assets, backend server and frontend UI. This metapackage pulls in all four
- runtime components plus the infra foundation.
+ assets, backend server and frontend UI. This metapackage pins every component
+ to the release-train version (1.0.0) so the set installs coherently.
  .
  For unattended installs, preseed answers first:
  debconf-set-selections < install.conf  (see config/render.mjs).
