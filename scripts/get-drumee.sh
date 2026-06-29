@@ -273,7 +273,12 @@ ensure_images() {
 # --------------------------------------------------------------- 3. render + run
 step "Rendering deployment files"
 if [ -n "$REPO_ROOT" ]; then render_cmd=(node "$REPO_ROOT/config/render.mjs" all --config drumee.yaml --out-dir .)
-else fetch config/render.mjs render.mjs && render_cmd=(node render.mjs all --config drumee.yaml --out-dir .); fi
+else
+  # render.mjs reads drumee.schema.json from next to itself — fetch both.
+  fetch config/render.mjs render.mjs
+  fetch config/drumee.schema.json drumee.schema.json
+  render_cmd=(node render.mjs all --config drumee.yaml --out-dir .)
+fi
 if ! render_out="$("${render_cmd[@]}" 2>&1)"; then echo "$render_out" | sed 's/^/    /'; die "Rendering failed."; fi
 [ -f docker-compose.yml ] && [ -f .env ] || die "Render did not produce docker-compose.yml/.env"
 ok "Wrote .env, docker-compose.yml, Caddyfile"
