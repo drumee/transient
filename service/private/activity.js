@@ -191,6 +191,48 @@ class MfsActivity extends Entity {
     } else if (filter === 'shares') {
       result = result.filter((row) => row.event === 'media.share');
     }
+
+    // Merge secure-share "open" notifications ("{email} opened {folder}") into the
+    // All-activity feed so they behave like ordinary feed events — chronological,
+    // toggle-aware (unread_only) and persistently dismissable — instead of a pinned
+    // rolling alert. Bounded (<=50), enriched with the shared node's name, merged
+    // on page 1 only so they aren't repeated per page (trade-off: an old open can
+    // sit on page 1). Best-effort — a failure here never breaks the rest of the feed.
+    if (filter !== 'mentions' && filter !== 'shares' && page <= 1) {
+      try {
+        const opens = toArray(await this.yp.await_proc('secure_share_open_feed', this.uid, unreadOnly));
+        for (const r of opens) {
+          if (!r) continue;
+          let nodeName = '';
+          if (r.hub_id && r.node_id) {
+            try {
+              const a = toArray(
+                await this.yp.await_proc('forward_proc', r.hub_id, 'mfs_node_attr', `'${r.node_id}'`)
+              )[0] || {};
+              if (a.filename) nodeName = a.filename;
+            } catch (e) { /* keep fallback */ }
+          }
+          result.push({
+            category       : 'share_open',
+            event          : 'secure_share.opened',
+            id             : r.id,
+            token_id       : r.token_id,
+            hub_id         : r.hub_id,
+            node_id        : r.node_id,
+            node_name      : nodeName,
+            recipient_email: r.recipient_email,
+            fullname       : r.recipient_email || 'Someone',
+            is_read        : r.is_read ? 1 : 0,
+            timestamp      : r.last_seen_at,
+            ctime          : r.last_seen_at,
+          });
+        }
+        result.sort((a, b) => (Number(b.timestamp || b.ctime || 0) - Number(a.timestamp || a.ctime || 0)));
+      } catch (e) {
+        this.warn('[ACTIVITY] secure_share_open_feed merge failed', e && e.message);
+      }
+    }
+
     this.output.list(result);
   }
 

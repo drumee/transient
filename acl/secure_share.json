@@ -149,6 +149,26 @@
         "src": "read"
       }
     },
+    "mark_open_seen": {
+      "doc": "Mark a share-open notification (token + recipient) as seen by the creator so it leaves the Unread feed but still shows under Unread off and survives a reload. Scoped server-side to the caller's own shares.",
+      "scope": "hub",
+      "permission": {
+        "src": "write"
+      },
+      "log": true,
+      "params": {
+        "token_id": {
+          "type": "string",
+          "required": true,
+          "doc": "Share token id identifying the open-notification group"
+        },
+        "recipient_email": {
+          "type": "string",
+          "required": false,
+          "doc": "Recipient email of the group; omit for anonymous opens"
+        }
+      }
+    },
     "revoke": {
       "doc": "Revoke a secure share token (soft delete — sets revoked_at timestamp). Broadcasts a secure_share_revoked event via Redis to all hub socket connections so the recipient loses access instantly.",
       "scope": "hub",
