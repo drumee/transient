@@ -131,6 +131,15 @@ class MfsActivity extends Entity {
     const result = await this._callUserProc('mfs_mark_all_read', this.uid, lastId);
     const data = toArray(result)[0];
 
+    // "Mark all as read" must also clear share-open notifications, which ride the
+    // feed via secure_share_open_feed / creator_seen_at (not mfs_mark_all_read).
+    // Best-effort — never fail the whole mark-all if this errors.
+    try {
+      await this.yp.await_proc('secure_share_mark_all_open_seen', this.uid);
+    } catch (e) {
+      this.warn('[MFS_ACTIVITY] mark_all_read: secure_share_mark_all_open_seen failed', e && e.message);
+    }
+
     if (data && data.status === 'ok') {
       return this.output.data({
         status: 'ok',
