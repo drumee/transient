@@ -32,7 +32,7 @@ const READ_LEVEL = permissionValue("read");
 const CHAT_CEILING = 7;
 const SECURE_SHARE_READONLY_DENYLIST = new Set([
   // chat / channel — read-src, mutate or impersonate the creator
-  "channel.post", "channel.delete", "channel.post_ticket", "channel.send_ticket",
+  "channel.post", "channel.file_thread_post", "channel.delete", "channel.post_ticket", "channel.send_ticket",
   "channel.bookmark_add", "channel.bookmark_remove", "chat.attachment",
   // channel.react: read-src but mutates message metadata (toggle emoji reaction).
   // chat.react is write-src → already caught by the threshold below.
@@ -331,10 +331,11 @@ class Acl {
             const ceiling = (_row && _row.priv_ceiling != null) ? _row.priv_ceiling : null;
             if (ceiling != null) {
               // A chat ceiling (>=7) permits posting to a folder conversation
-              // (channel.post) while still denying file-writes/calls/invite; a
-              // read-only ceiling (3) denies channel.post too. Everything else stays
-              // denied for any ceiling.
-              const chatPostAllowed = (ceiling >= CHAT_CEILING && service === "channel.post");
+              // (channel.post) and to a file-thread chat (channel.file_thread_post)
+              // while still denying file-writes/calls/invite; a read-only ceiling (3)
+              // denies both. Everything else stays denied for any ceiling.
+              const chatPostAllowed = (ceiling >= CHAT_CEILING &&
+                (service === "channel.post" || service === "channel.file_thread_post"));
               if (!chatPostAllowed) {
                 worker.stop();
                 return session.exception.unauthorized(`SECURE_SHARE_READ_ONLY:${service}`);

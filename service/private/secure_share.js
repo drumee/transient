@@ -191,6 +191,21 @@ class __secure_share extends Mfs {
   }
 
   /**
+   * Mark a share-open notification group (token + recipient) as seen by the
+   * creator, so it leaves the Unread feed but still shows under Unread OFF and
+   * survives a reload. Persistence replaces the old session-only dismiss. The SP
+   * is scoped to the caller's own shares (creator_id), so a user can never mark
+   * another creator's events. recipient_email is omitted/null for anonymous opens.
+   * Endpoint: POST /secure_share.mark_open_seen
+   */
+  async mark_open_seen() {
+    const token_id = this.input.need('token_id');
+    const recipient_email = this.input.use('recipient_email', null) || null;
+    await this.yp.await_proc('secure_share_mark_open_seen', this.uid, token_id, recipient_email);
+    this.output.data({ status: 'OK' });
+  }
+
+  /**
    * Revoke a secure share token (soft delete).
    * Broadcasts a real-time event so the recipient loses access immediately.
    */

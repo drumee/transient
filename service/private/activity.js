@@ -131,6 +131,15 @@ class MfsActivity extends Entity {
     const result = await this._callUserProc('mfs_mark_all_read', this.uid, lastId);
     const data = toArray(result)[0];
 
+    // "Mark all as read" must also clear share-open notifications, which ride the
+    // feed via secure_share_open_feed / creator_seen_at (not mfs_mark_all_read).
+    // Best-effort — never fail the whole mark-all if this errors.
+    try {
+      await this.yp.await_proc('secure_share_mark_all_open_seen', this.uid);
+    } catch (e) {
+      this.warn('[MFS_ACTIVITY] mark_all_read: secure_share_mark_all_open_seen failed', e && e.message);
+    }
+
     if (data && data.status === 'ok') {
       return this.output.data({
         status: 'ok',
@@ -164,14 +173,75 @@ class MfsActivity extends Entity {
     const page = this.input.use(Attr.page) || 1;
     const filter = this.input.use('filter') || 'all';
     const unreadOnly = parseInt(this.input.use('unread_only') || 0);
-    const proc = unreadOnly ? 'mfs_get_activity_feed' : 'activity_get_log';
-    let result = await this._callUserProc(proc, this.uid, page);
+    // unread_only=1 → unread-only feed (mfs_get_activity_feed, unchanged).
+    // unread_only=0 → full feed (read + unread together) via
+    // activity_get_feed_all, which returns the unified log with a correct
+    // is_read flag. This intentionally does NOT use activity_get_log: that proc
+    // filters out read/dismissed rows (so "off" could never surface a
+    // notification the user already opened) and is still served as-is by the
+    // separate activity.log endpoint.
+    let result;
+    if (unreadOnly) {
+      result = await this._callUserProc('mfs_get_activity_feed', this.uid, page);
+    } else {
+      // Fail-safe: if activity_get_feed_all isn't present on this DB instance
+      // yet (schema not applied), degrade to the legacy unified log instead of
+      // erroring out the whole panel. Worst case = prior "off" behaviour.
+      try {
+        result = await this._callUserProc('activity_get_feed_all', this.uid, page);
+      } catch (e) {
+        this.warn('[ACTIVITY] activity_get_feed_all unavailable, falling back to activity_get_log', e);
+        result = await this._callUserProc('activity_get_log', this.uid, page);
+      }
+    }
     result = toArray(result);
     if (filter === 'mentions') {
       result = result.filter((row) => row.event !== 'media.share');
     } else if (filter === 'shares') {
       result = result.filter((row) => row.event === 'media.share');
     }
+
+    // Merge secure-share "open" notifications ("{email} opened {folder}") into the
+    // All-activity feed so they behave like ordinary feed events — chronological,
+    // toggle-aware (unread_only) and persistently dismissable — instead of a pinned
+    // rolling alert. Bounded (<=50), enriched with the shared node's name, merged
+    // on page 1 only so they aren't repeated per page (trade-off: an old open can
+    // sit on page 1). Best-effort — a failure here never breaks the rest of the feed.
+    if (filter !== 'mentions' && filter !== 'shares' && page <= 1) {
+      try {
+        const opens = toArray(await this.yp.await_proc('secure_share_open_feed', this.uid, unreadOnly));
+        for (const r of opens) {
+          if (!r) continue;
+          let nodeName = '';
+          if (r.hub_id && r.node_id) {
+            try {
+              const a = toArray(
+                await this.yp.await_proc('forward_proc', r.hub_id, 'mfs_node_attr', `'${r.node_id}'`)
+              )[0] || {};
+              if (a.filename) nodeName = a.filename;
+            } catch (e) { /* keep fallback */ }
+          }
+          result.push({
+            category       : 'share_open',
+            event          : 'secure_share.opened',
+            id             : r.id,
+            token_id       : r.token_id,
+            hub_id         : r.hub_id,
+            node_id        : r.node_id,
+            node_name      : nodeName,
+            recipient_email: r.recipient_email,
+            fullname       : r.recipient_email || 'Someone',
+            is_read        : r.is_read ? 1 : 0,
+            timestamp      : r.last_seen_at,
+            ctime          : r.last_seen_at,
+          });
+        }
+        result.sort((a, b) => (Number(b.timestamp || b.ctime || 0) - Number(a.timestamp || a.ctime || 0)));
+      } catch (e) {
+        this.warn('[ACTIVITY] secure_share_open_feed merge failed', e && e.message);
+      }
+    }
+
     this.output.list(result);
   }
 

@@ -955,6 +955,13 @@ class privateChat extends Entity {
     if (!attr || isEmpty(attr)) return {};
     attr.privilege = attr.permission;
     delete attr["permission"];
+    // Carry the folder file nid (set by channel.post for folder-promoted uploads):
+    // the message attachment is a per-message sbox copy (its own nid), but its
+    // chat thread is keyed by the FOLDER file. Exposing folder_nid lets the UI
+    // point reply-in-thread at the same thread as the folder's "View Chat Threads".
+    if (media && typeof media === "object" && media.folder_nid) {
+      attr.folder_nid = `${media.folder_nid}`;
+    }
     return this.output.sanitize(attr);
   }
 
