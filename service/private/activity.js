@@ -140,6 +140,42 @@ class MfsActivity extends Entity {
       this.warn('[MFS_ACTIVITY] mark_all_read: secure_share_mark_all_open_seen failed', e && e.message);
     }
 
+    // "Mark all as read" must also persist-clear the pinned rollups
+    // (media/chat/teamchat/contact/ticket) — otherwise they reappear on reload.
+    // Reuse the already-tested procs: enumerate with notification_center_next,
+    // then notification_dismiss each with the same per-category key resolution the
+    // individual (trash-button) dismiss uses. Server-side loop so the client makes
+    // one call. Best-effort per rollup — never fail the whole mark-all.
+    try {
+      const rollups = toArray(await this._callUserProc('notification_center_next'));
+      for (const r of rollups) {
+        if (!r || !r.category) continue;
+        let keyId;
+        switch (r.category) {
+          case 'chat':     keyId = r.drumate_id || r.key_id; break;
+          case 'media':    keyId = r.nid || r.hub_id || r.key_id; break;
+          case 'teamchat': keyId = r.key_id || r.nid || r.hub_id; break;
+          case 'contact':  keyId = r.contact_id || r.key_id; break;
+          case 'ticket':   keyId = r.key_id || r.hub_id; break;
+          default:         continue; // only rollup categories
+        }
+        if (!keyId) continue;
+        try {
+          await this._callUserProc(
+            'notification_dismiss',
+            String(r.category),
+            String(keyId),
+            String(r.hub_id || ''),
+            parseInt(r.last_id || 0)
+          );
+        } catch (e) {
+          this.warn('[MFS_ACTIVITY] mark_all_read: rollup dismiss failed', r.category, e && e.message);
+        }
+      }
+    } catch (e) {
+      this.warn('[MFS_ACTIVITY] mark_all_read: rollup enumerate failed', e && e.message);
+    }
+
     if (data && data.status === 'ok') {
       return this.output.data({
         status: 'ok',
