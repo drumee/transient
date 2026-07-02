@@ -42,6 +42,12 @@ class __signup extends Mfs {
     let username = email.split('@')[0].replace(/[^a-zA-Z0-9]/g, '');
     username = await this.yp.await_func("ensure_username", { username: username.toLowerCase(), domain });
 
+    // Referral attribution: the signup UI forwards the referrer handle from a
+    // ?ref=<member> link. Persisted as profile.ref so the analytics plugin's
+    // `referrals` / `signup_sources` procs can count referred signups. Kept
+    // short/sanitized; omitted entirely when absent.
+    const ref = (this.input.get("ref") || "").toString().trim().slice(0, 64);
+
     const profile = {
       username,
       sharebox: uniqueId(),
@@ -54,6 +60,7 @@ class __signup extends Mfs {
       email,
       auth_method: "local",
       password_set: 1,
+      ...(ref ? { ref } : {}),
     };
 
     const user = await this.yp.await_proc("drumate_create", password, profile);
