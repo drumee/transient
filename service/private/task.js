@@ -102,6 +102,61 @@ class __private_task extends Entity {
   }
 
   /**
+   * Notify members who were just assigned to a task. Logs a `task_assigned`
+   * activity via contact_log_activity (deduped per assigner/assignee/task) — it
+   * surfaces in the assignee's All-activity feed through activity_get_feed_all's
+   * generic contact branch, and is dismissable / toggle-aware like any contact
+   * event. Also live-pushes to the assignees' sockets so their panel updates
+   * immediately. Mirrors _notifyMentions. `assigneeUids` is the set to notify —
+   * create() passes all assignees, update_assignee() passes only the newly-added
+   * ones. Self is always excluded.
+   */
+  async _notifyAssignees(data, assigneeUids) {
+    const uids = toArray(assigneeUids).filter((u) => u && u !== this.uid);
+    if (isEmpty(uids)) return;
+    // create()/update_assignee() hand us the SP result; normalise to the single
+    // task row (the driver may return it wrapped in an array — cf. comment_create).
+    const row = Array.isArray(data) ? data[0] : data;
+    const hub_id = this.hub && this.hub.get(Attr.id);
+    const task_id = row && row.id;
+    // `nid` lets the notification click open the task's folder on its Task tab;
+    // it is null for legacy/workspace-level tasks (opens the workspace root).
+    const meta = {
+      task_id,
+      hub_id,
+      title: (row && row.title) || '',
+      nid: (row && row.nid) || null,
+    };
+    for (const target_uid of uids) {
+      try {
+        await this.yp.await_proc(
+          'contact_log_activity',
+          this.uid,
+          target_uid,
+          'task_assigned',
+          meta,
+        );
+      } catch (e) {
+        this.warn('[task._notifyAssignees] log failed:', e && e.message);
+      }
+    }
+    try {
+      const recipients = await this.yp.await_proc('user_sockets', uids);
+      if (!isEmpty(recipients)) {
+        await RedisStore.sendData(
+          this.payload(
+            { ...(row || {}), event: 'task_assigned', hub_id, task_id },
+            { service: 'task.assigned' },
+          ),
+          recipients,
+        );
+      }
+    } catch (e) {
+      this.warn('[task._notifyAssignees] push failed:', e && e.message);
+    }
+  }
+
+  /**
    * List tasks scoped to a folder node.
    * Params: nid (folder node id; null/absent = legacy unscoped), include_unscoped
    * (1 on the workspace-root view to also surface legacy nid-less tasks).
@@ -202,6 +257,8 @@ class __private_task extends Entity {
     await this._broadcast('task.create', data);
     // Every tagged member is newly mentioned on create.
     await this._notifyMentions(data, this.input.use('mention_uids', null));
+    // Every assignee is newly assigned on create → notify them (self excluded).
+    await this._notifyAssignees(data, assignees);
     this.output.data(data);
   }
 
@@ -265,6 +322,21 @@ class __private_task extends Entity {
     const assignees = await this._validateAssignees(this._readAssignees() || []);
     if (assignees == null) return; // invalid assignee — exception already raised
 
+    // Capture the prior assignee set BEFORE the replace so we notify only the
+    // NEWLY-added members. task_set_assignees does a full DELETE+INSERT and does
+    // not report the delta, so we diff against this snapshot. On lookup failure
+    // we fall back to an empty set (worst case: dedupe in contact_log_activity
+    // refreshes existing assignees' rows rather than stacking — no duplicates).
+    let prior = new Set();
+    try {
+      const before = toArray(await this.db.await_run(
+        'SELECT uid FROM task_assignee WHERE task_id = ?', [id]
+      ));
+      prior = new Set(before.map((r) => String(r.uid)));
+    } catch (e) {
+      this.warn('[task.update_assignee] prior assignee lookup failed:', e && e.message);
+    }
+
     const data = await this.db.await_run(
       'CALL task_set_assignees(?, ?)',
       [id, assignees.join(',')]
@@ -273,6 +345,9 @@ class __private_task extends Entity {
       return this.exception.user('TASK_NOT_FOUND');
     }
     await this._broadcast('task.update_assignee', data);
+    // Notify only members added by this change (self excluded in _notifyAssignees).
+    const added = assignees.filter((u) => !prior.has(String(u)));
+    await this._notifyAssignees(data, added);
     this.output.data(data);
   }
 
