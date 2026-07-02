@@ -58,9 +58,14 @@ class __survey extends Entity {
     // Numeric proc params must never receive null ('' is rejected by strict
     // INT params) — score is always an int here; answers is TEXT so '' is fine.
     const answers = this.input.use('answers', '') || '';
-    const row = await this.yp.await_proc('survey_upsert', this.uid, score, answers);
+    await this.yp.await_proc('survey_upsert', this.uid, score, answers);
+    // Read the row back with await_query — a CALL's own SELECT comes back as
+    // a raw multi-resultset through await_proc and doesn't parse into a row.
+    const row = toArray(await this.yp.await_query(
+      `SELECT * FROM survey_response WHERE uid=?`, this.uid
+    ))[0];
     await this._mergeSurveyFlag({ done: 1 });
-    this.output.data({ ok: true, response: toArray(row)[0] || null });
+    this.output.data({ ok: true, response: row || null });
   }
 
   async dismiss() {
