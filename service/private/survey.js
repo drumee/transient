@@ -7,6 +7,7 @@
  */
 const { toArray } = require('@drumee/server-essentials');
 const { Entity } = require('@drumee/server-core');
+const { pushSurveyRow } = require('../lib/survey_sheet');
 
 const SNOOZE_DAYS = 7;
 
@@ -66,6 +67,29 @@ class __survey extends Entity {
     ))[0];
     await this._mergeSurveyFlag({ done: 1 });
     this.output.data({ ok: true, response: row || null });
+    // Broadcast to the team's Google Sheet — fire-and-forget AFTER the
+    // response: a sheet/webhook outage must never fail or slow the submit.
+    // The sheet mirrors the DB row (one row per user, upserted by UID), so
+    // pushing the freshly read row keeps both in sync on resubmits too.
+    this._broadcastToSheet(row).catch(() => {});
+  }
+
+  /** Resolve email + parse answers, then push to the sheet webhook. */
+  async _broadcastToSheet(row) {
+    if (!row) return;
+    let email = '';
+    try {
+      const u = toArray(await this.yp.await_query(
+        `SELECT email FROM drumate WHERE id=?`, this.uid
+      ))[0];
+      email = (u && u.email) || '';
+    } catch (_) { /* best-effort */ }
+    let answers = null;
+    if (row.answers) {
+      try { answers = typeof row.answers === 'string' ? JSON.parse(row.answers) : row.answers; }
+      catch (_) { answers = null; }
+    }
+    await pushSurveyRow({ uid: this.uid, email, score: row.score, answers });
   }
 
   async dismiss() {
