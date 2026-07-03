@@ -1,0 +1,29 @@
+{
+  "modules": {
+    "private": "service/private/survey"
+  },
+  "services": {
+    "get_state": {
+      "doc": "PMF survey gate for the FE popup/timer. Returns { done, snooze_until } — done=1 when the user already responded (profile flag OR survey_response row), snooze_until=unix ts of an active 'remind later'.",
+      "scope": "hub",
+      "permission": { "src": "owner" },
+      "returns": { "type": "object", "properties": { "done": { "type": "integer" }, "snooze_until": { "type": "integer" } } }
+    },
+    "submit": {
+      "doc": "Upsert the caller's survey response (one row per user). score=1-5 stars; answers=JSON string of the PMF wizard (optional — the score-only submit fires when 'Take the survey' is clicked, before the wizard completes). Sets profile.survey.done=1.",
+      "scope": "hub",
+      "permission": { "src": "owner" },
+      "params": {
+        "score": { "type": "integer", "required": true, "description": "1-5" },
+        "answers": { "type": "string", "required": false, "description": "JSON: { q1..q8, qb1..qb5 }" }
+      },
+      "returns": { "type": "object", "properties": { "ok": { "type": "boolean" } } }
+    },
+    "dismiss": {
+      "doc": "'Remind me later' — sets profile.survey.snooze_until = now + 7 days. The popup/timer stays silent until then.",
+      "scope": "hub",
+      "permission": { "src": "owner" },
+      "returns": { "type": "object", "properties": { "ok": { "type": "boolean" }, "snooze_until": { "type": "integer" } } }
+    }
+  }
+}

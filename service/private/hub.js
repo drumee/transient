@@ -258,6 +258,21 @@ class __private_hub extends Hub {
   }
 
   /**
+   * Recipient-facing share link for the Manage-access panel ONLY — the clean
+   * secure_share.js format (no keysel). The `?keysel=<hub_id>` prefix that
+   * `_getShareLink` adds is consumed by the socket/session layer as a session-key
+   * selector, so a recipient (who has no session for that keysel) lands in an
+   * offline guest loop. The share resolves by token and the FE reads hub_id from
+   * the dmz.login response, so keysel isn't needed. Kept separate so invite-email /
+   * notify / copy_link links (still on `_getShareLink`) are unchanged.
+   */
+  _getPanelShareLink(token) {
+    const link = `${this.input.homepath(this.hub.get(Attr.hostname))}#/dmz/share/`;
+    if (token) return link + token;
+    return link;
+  }
+
+  /**
    * Anonymous/guest permission for this hub's public share, derived from the
    * workspace area (same rule as workspace_restricted):
    *   - restricted workspace -> Privilege.VIEW     (browse/read only)
@@ -1350,7 +1365,9 @@ class __private_hub extends Hub {
     members = toArray(members);
     res.members = members;
     this.debug(res)
-    res.link = this._getShareLink(res.link);
+    // Manage-access panel link → clean format (no keysel). Invite-email / notify /
+    // copy_link paths keep _getShareLink unchanged.
+    res.link = this._getPanelShareLink(res.link);
     this.output.data(res);
   }
 
