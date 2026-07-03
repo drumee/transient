@@ -12,7 +12,7 @@ you, and you don't need a domain (it offers automatic HTTPS by IP, or local-only
 **One command. Answer 3–4 questions. Done:**
 
 ```bash
-curl -fsSL https://get.drumee.io | bash
+curl -fsSL https://get.drumee.com/install | bash
 ```
 
 The installer asks:
@@ -36,7 +36,7 @@ healthy, and prints your **URL + login**. Nothing to hand-edit; re-running is sa
 > *(Maintainers publish images once per release — see [production.md](production.md).)*
 
 > No prompts (automation)? Preset the answers, e.g.:
-> `ACCESS_MODE=domain DRUMEE_DOMAIN=cloud.example.com ADMIN_EMAIL=you@example.com ASSUME_YES=1 curl -fsSL https://get.drumee.io | bash`
+> `ACCESS_MODE=domain DRUMEE_DOMAIN=cloud.example.com ADMIN_EMAIL=you@example.com ASSUME_YES=1 curl -fsSL https://get.drumee.com/install | bash`
 
 Manage it afterwards:
 
@@ -97,7 +97,7 @@ the container channel above.
 
 ```bash
 # Interactive
-curl -fsSL https://get.drumee.io/native | sudo bash
+curl -fsSL https://get.drumee.com/native | sudo bash
 
 # Unattended — render answers from drumee.yaml first
 node config/render.mjs debconf --config config/drumee.yaml --out install.conf

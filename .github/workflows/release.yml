@@ -2,10 +2,12 @@ name: Release
 
 # Builds and publishes a coherent release set on a version tag.
 # Requires repository secrets (set in Settings → Secrets):
-#   DRUMEE_SSH_KEY    deploy key with read access to the component repos
-#   GPG_PRIVATE_KEY   project signing key (armored) + GPG_PASSPHRASE
-#   REGISTRY_TOKEN    container registry push token
-#   APT_DEPLOY_*      credentials/host for publishing the apt repo
+#   DRUMEE_SSH_KEY     deploy key with read access to the component repos
+#   GPG_PRIVATE_KEY    project signing key (armored) + GPG_PASSPHRASE
+#   REGISTRY_TOKEN     container registry push token
+#   PAGES_DEPLOY_TOKEN token with contents:write on drumee/get-drumee-pages —
+#                      publishes the apt-stable Release assets + the
+#                      get.drumee.com Pages content (installers, keyring, CLIs)
 #
 # Several steps are gated on these secrets; without them the workflow no-ops the
 # affected job rather than failing, so forks can run the buildable parts.
@@ -17,6 +19,7 @@ on:
 permissions:
   contents: write
   packages: write
+  id-token: write   # keyless cosign signing via GitHub OIDC
 
 jobs:
   guard:
@@ -25,6 +28,8 @@ jobs:
       - uses: actions/checkout@v4
       - name: Versions coherent with manifest
         run: scripts/check-versions.sh
+      - name: Metapackage deps pinned to manifest
+        run: meta/make-control.sh --check
 
   images:
     needs: guard
@@ -65,6 +70,26 @@ jobs:
           TAG: ${{ github.ref_name }}
           PUSH: ${{ secrets.REGISTRY_TOKEN != '' && '1' || '0' }}
         run: scripts/publish-images.sh
+      - name: Install cosign + syft (supply-chain)
+        if: ${{ secrets.REGISTRY_TOKEN != '' }}
+        uses: sigstore/cosign-installer@v3
+      - name: Sign images (keyless, GitHub OIDC) + emit SBOM
+        if: ${{ secrets.REGISTRY_TOKEN != '' }}
+        env:
+          REGISTRY: ghcr.io/${{ github.repository_owner }}
+          TAG: ${{ github.ref_name }}
+          COSIGN_YES: "true"
+        run: |
+          for n in server-pod ui-build schemas schemas-populate infra-init; do
+            cosign sign --yes "$REGISTRY/$n:$TAG" || echo "warn: cosign sign $n failed"
+          done
+      - name: SBOM for server-pod (syft)
+        if: ${{ secrets.REGISTRY_TOKEN != '' }}
+        uses: anchore/sbom-action@v0
+        with:
+          image: ghcr.io/${{ github.repository_owner }}/server-pod:${{ github.ref_name }}
+          format: spdx-json
+          artifact-name: sbom-server-pod.spdx.json
 
   debs:
     needs: guard
@@ -76,6 +101,9 @@ jobs:
       - name: Import signing key
         if: ${{ secrets.GPG_PRIVATE_KEY != '' }}
         run: echo "${{ secrets.GPG_PRIVATE_KEY }}" | gpg --batch --import
+      - name: Generate base seed (drumee-schemas needs a mariabackup seed)
+        if: ${{ secrets.DRUMEE_SSH_KEY != '' }}
+        run: tests/native/make-seed.sh        # -> schemas/var/tmp/drumee/seeds.tgz
       - name: Build packages
         if: ${{ secrets.DRUMEE_SSH_KEY != '' }}
         run: |
@@ -84,9 +112,18 @@ jobs:
           export DEB_BUILD_TARGET="$PWD/out-debs"; mkdir -p "$DEB_BUILD_TARGET"
           ./build-all.sh
           meta/build.sh
-      - name: Publish APT repo
-        if: ${{ secrets.GPG_PRIVATE_KEY != '' && secrets.DRUMEE_SSH_KEY != '' }}
-        run: scripts/publish-apt.sh --debs=out-debs --out=apt-repo --suite=stable
+      - name: Native install verify (end-to-end, disposable Debian container)
+        if: ${{ secrets.DRUMEE_SSH_KEY != '' }}
+        run: tests/native/install-verify.sh   # installs the built .debs + checks it serves
+      - name: Publish install host (apt-stable assets + get.drumee.com Pages)
+        if: ${{ secrets.GPG_PRIVATE_KEY != '' && secrets.DRUMEE_SSH_KEY != '' && secrets.PAGES_DEPLOY_TOKEN != '' }}
+        env:
+          GH_TOKEN: ${{ secrets.PAGES_DEPLOY_TOKEN }}
+          REF_NAME: ${{ github.ref_name }}
+        run: scripts/publish-site.sh --debs=out-debs        # uses the imported default GPG key
+      - name: Skip site publish notice
+        if: ${{ secrets.PAGES_DEPLOY_TOKEN == '' }}
+        run: echo "PAGES_DEPLOY_TOKEN not set — built .debs but did not publish to get.drumee.com/apt-stable."
       - name: Upload artifacts
         if: ${{ secrets.DRUMEE_SSH_KEY != '' }}
         uses: actions/upload-artifact@v4

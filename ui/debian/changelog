@@ -13,6 +13,11 @@ drumee-ui-pod (3.3.0) stable; urgency=medium
   * Fixed main router Subrouters were not called upon changes
   * turn on overlay of admin console
  -- Somanos Sar <somanos.sar@drumee.com>  Fri, 29 May 2026 15:25:39 +0700
+drumee-ui-pod (3.3.26) stable; urgency=medium
+
+  * Release 3.3.26 (synced from release-manifest.yaml)
+
+ -- Somanos Sar <somanos.sar@drumee.com>  Sun, 28 Jun 2026 23:39:27 +0700
 
 drumee-ui-pod (3.2.49) stable; urgency=medium
   * V2 fix UI (#115)

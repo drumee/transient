@@ -7,7 +7,7 @@ the host via `apt`, configured from a debconf preseed for unattended runs.
 
 ```bash
 # Interactive
-curl -fsSL https://get.drumee.io/native | sudo bash
+curl -fsSL https://get.drumee.com/native | sudo bash
 
 # Unattended — preseed answers rendered from drumee.yaml first
 node config/render.mjs debconf --out install.conf
@@ -22,21 +22,32 @@ sudo PRESEED=install.conf bash scripts/install-native.sh
 
 ```bash
 ./build-all.sh                       # build the component .debs
+static/build.sh                      # build drumee-static (REPO_BASE=https://github.com/drumee)
 meta/build.sh                        # build the drumee metapackage
-scripts/publish-apt.sh --debs=./out-debs --out=./apt-repo --suite=stable --key=somanos.sar@drumee.com
-# serve ./apt-repo at https://apt.drumee.io
+scripts/publish-apt.sh --debs=./out-debs --out=/tmp/apt-flat --key=release@drumee.org
+# upload every file in /tmp/apt-flat as assets of the 'apt-stable' GitHub Release
 ```
 
-`publish-apt.sh` builds a signed flat repo (`apt-ftparchive` + `gpg`), emits
+`publish-apt.sh` builds a signed **flat** repo (`apt-ftparchive` + `gpg`), emits
 `InRelease`/`Release.gpg`, and exports the public key as
 `drumee-archive-keyring.asc`.
 
+The packages are hosted as **GitHub Release assets** (the `drumee-static` deb alone
+is ~175 MB, over GitHub's 100 MB git-file limit). Clients use a flat repo:
+
+```
+deb [signed-by=/etc/apt/keyrings/drumee.asc] \
+  https://github.com/drumee/get-drumee-pages/releases/download/apt-stable/ ./
+```
+
+The signing key is served from the Pages site at
+`https://get.drumee.com/drumee-archive-keyring.asc`.
+
 ## Needs your infrastructure
 
-- **Repo hosting** — somewhere to serve `apt-repo/` (object storage + CDN, or a
-  static host) at a stable URL (`apt.drumee.io`).
 - **Signing key** — a project (not personal) GPG key in the publishing
-  environment; CI publishes with it (Phase 5).
+  environment; CI publishes with it (Phase 5). The current `apt-stable` release is
+  signed with a local build key and must be re-signed before launch.
 
 ## Install ordering (resolved)
 

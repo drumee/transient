@@ -4,12 +4,19 @@
 #
 # Format: <dir>: <version>   (the package name is read from each changelog)
 # Bump here, then run: scripts/check-versions.sh --sync   to update changelogs.
+#
+# `product` is the single user-facing release-train version. It is the version of
+# the `drumee` metapackage, the tag all container images are published under
+# (:<product> + :stable + :latest), and what `drumee.yaml`'s `version:` pins to.
+# Component versions below are internal; users only ever see `product`.
+
+product: 1.0.0
 
 infra: 1.2.11
 schemas: 2.6.99
-server: 2.9.44
-ui: 3.2.49
-static: 1.0.3
+server: 2.9.61
+ui: 3.3.26
+static: 1.0.4
 schemas-patch: 1.1.6
 builder: 1.2.6
 meta: 1.0.0

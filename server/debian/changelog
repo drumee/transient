@@ -1,10 +1,8 @@
-drumee-server-pod (2.9.45) stable; urgency=medium
-  * chore: gitignore BMad generated dirs (_bmad, _bmad-output)
-  * fix: notify inviter and clear their record when invitation is refused
-  * fix: contact invite_refuse crashing with ReferenceError
-  * fix(task): read priority from request body to avoid HTTP Priority header collision
-  * chore(task): log incoming priority on task.update to diagnose INVALID_PRIORITY
- -- Somanos Sar <somanos.sar@drumee.com>  Sat, 06 Jun 2026 22:33:25 +0700
+drumee-server-pod (2.9.61) stable; urgency=medium
+
+  * Release 2.9.61 (synced from release-manifest.yaml)
+
+ -- Somanos Sar <somanos.sar@drumee.com>  Sun, 28 Jun 2026 23:39:27 +0700
 
 drumee-server-pod (2.9.44) stable; urgency=medium
   * fix typing indicator and read state

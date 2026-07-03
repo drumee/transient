@@ -1,27 +1,32 @@
 #!/bin/bash
 # Drumee native-channel bootstrap — adds the signed APT repo and installs Drumee.
 #
-#   curl -fsSL https://get.drumee.io/native | sudo bash
+#   curl -fsSL https://get.drumee.com/native | sudo bash
 #   # unattended (preseed answers first):
 #   sudo PRESEED=/path/to/install.conf bash install-native.sh
 #
+# The APT repo is a *flat* repository hosted on GitHub Releases (the .debs are too
+# large for the Pages git repo). APT_URL is the release-asset base; KEYRING_URL is
+# served from the get.drumee.com Pages site (stable, release-tag-independent).
+#
 # Env:
-#   APT_URL   (default https://apt.drumee.io)   repo base URL
-#   SUITE     (default stable)                  apt suite/channel
-#   PRESEED   (optional)                        install.conf from config/render.mjs
+#   APT_URL      (default the apt-stable release of get-drumee-pages)  flat repo base
+#   KEYRING_URL  (default https://get.drumee.com/drumee-archive-keyring.asc)
+#   PRESEED      (optional)  install.conf from config/render.mjs
 set -euo pipefail
 
-APT_URL="${APT_URL:-https://apt.drumee.io}"
-SUITE="${SUITE:-stable}"
+APT_URL="${APT_URL:-https://github.com/drumee/get-drumee-pages/releases/download/apt-stable}"
+KEYRING_URL="${KEYRING_URL:-https://get.drumee.com/drumee-archive-keyring.asc}"
 PRESEED="${PRESEED:-}"
 
 [ "$(id -u)" = "0" ] || { echo "error: run as root (sudo)" >&2; exit 1; }
 command -v apt-get >/dev/null || { echo "error: this installer targets Debian/Ubuntu" >&2; exit 1; }
 
-echo "==> Adding Drumee APT repository ($APT_URL $SUITE)"
+echo "==> Adding Drumee APT repository (flat: $APT_URL)"
 install -d -m 0755 /etc/apt/keyrings
-curl -fsSL "$APT_URL/drumee-archive-keyring.asc" -o /etc/apt/keyrings/drumee.asc
-echo "deb [signed-by=/etc/apt/keyrings/drumee.asc] $APT_URL $SUITE main" \
+curl -fsSL "$KEYRING_URL" -o /etc/apt/keyrings/drumee.asc
+# Flat repo: trailing slash on the base + "./" component (no suite/section).
+echo "deb [signed-by=/etc/apt/keyrings/drumee.asc] $APT_URL/ ./" \
   > /etc/apt/sources.list.d/drumee.list
 
 echo "==> apt update"
@@ -39,16 +44,21 @@ if [ "${node_major:-0}" -lt 20 ]; then
   apt-get install -y nodejs
 fi
 
+# drumee-infra renders MariaDB's conffiles (50-server.cnf/50-client.cnf), so when
+# mariadb-server installs afterward dpkg would prompt about the conffile conflict
+# and abort on a closed stdin. Keep the Drumee-rendered versions automatically.
+CONFOPTS=(-o Dpkg::Options::=--force-confold -o Dpkg::Options::=--force-confdef)
+
 if [ -n "$PRESEED" ]; then
   [ -f "$PRESEED" ] || { echo "error: PRESEED file not found: $PRESEED" >&2; exit 1; }
   echo "==> Applying preseed for unattended install"
   command -v debconf-set-selections >/dev/null || apt-get install -y debconf-utils
   debconf-set-selections < "$PRESEED"
   echo "==> Installing drumee (noninteractive)"
-  DEBIAN_FRONTEND=noninteractive apt-get install -y drumee
+  DEBIAN_FRONTEND=noninteractive apt-get install -y "${CONFOPTS[@]}" drumee
 else
   echo "==> Installing drumee (interactive)"
-  apt-get install -y drumee
+  apt-get install -y "${CONFOPTS[@]}" drumee
 fi
 
 echo "Done. Manage with the 'drumee' CLI (drumee status, drumee log, ...)."

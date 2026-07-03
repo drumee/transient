@@ -101,12 +101,13 @@
     "versions": {
       "type": "object",
       "additionalProperties": false,
-      "description": "Component versions / image tags. Drives both the compose image tags and the native package set.",
+      "description": "Image tags for the container channel. Set `product` to the release-train version (the tag all images share); the per-component keys are optional overrides that default to `product`.",
       "properties": {
-        "server": { "type": "string", "default": "latest" },
-        "ui": { "type": "string", "default": "latest" },
-        "schemas": { "type": "string", "default": "latest" },
-        "static": { "type": "string", "default": "latest" }
+        "product": { "type": "string", "default": "latest", "description": "Release-train version — the tag all drumee/* images share (e.g. 1.0.0). Pin this for reproducible deploys + rollback." },
+        "server": { "type": "string", "description": "Override server-pod image tag (defaults to product)." },
+        "ui": { "type": "string", "description": "Override ui-build image tag (defaults to product)." },
+        "schemas": { "type": "string", "description": "Override schemas image tag (defaults to product)." },
+        "static": { "type": "string", "description": "Override static image tag (defaults to product)." }
       }
     },
     "images": {

@@ -6,9 +6,9 @@ containers, automatic HTTPS.
 ## Quick start
 
 ```bash
-curl -fsSL https://get.drumee.io | bash       # creates ./drumee/drumee.yaml
+curl -fsSL https://get.drumee.com/install | bash       # creates ./drumee/drumee.yaml
 # edit ./drumee/drumee.yaml (domain, admin_email, ...)
-curl -fsSL https://get.drumee.io | bash       # renders + starts
+curl -fsSL https://get.drumee.com/install | bash       # renders + starts
 ```
 
 From a checkout:

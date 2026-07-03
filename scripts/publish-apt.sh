@@ -1,19 +1,27 @@
 #!/bin/bash
-# Build a signed flat APT repository from the built .deb files.
-# Produces a repo tree you can serve at e.g. https://apt.drumee.io.
+# Build a signed *flat* APT repository from the built .deb files.
 #
-#   scripts/publish-apt.sh --debs=DIR --out=REPO_DIR [--suite=stable] [--key=EMAIL]
+# The output is a flat directory (no dists/pool tree) suitable for hosting as
+# GitHub Release assets: the .debs are too large for a Pages git repo, so the
+# repo lives in the `apt-stable` release of drumee/get-drumee-pages and clients
+# point apt at the release-asset base URL:
+#
+#   deb [signed-by=/etc/apt/keyrings/drumee.asc] \
+#     https://github.com/drumee/get-drumee-pages/releases/download/apt-stable/ ./
+#
+# Usage:
+#   scripts/publish-apt.sh --debs=DIR --out=REPO_DIR [--key=EMAIL_OR_KEYID]
 #
 # Requires: apt-utils (apt-ftparchive), gpg with the signing secret key.
 set -euo pipefail
 
-DEBS="" OUT="" SUITE="stable" KEY=""
+DEBS="" OUT="" KEY=""
 for arg in "$@"; do
   case $arg in
     --debs=*)  DEBS="${arg#*=}" ;;
     --out=*)   OUT="${arg#*=}" ;;
-    --suite=*) SUITE="${arg#*=}" ;;
     --key=*)   KEY="${arg#*=}" ;;
+    --suite=*) ;;  # accepted for back-compat, ignored (flat repo has no suite)
     *) echo "unknown argument: $arg" >&2; exit 2 ;;
   esac
 done
@@ -22,31 +30,26 @@ done
 command -v apt-ftparchive >/dev/null || { echo "error: install apt-utils" >&2; exit 1; }
 command -v gpg >/dev/null || { echo "error: gpg required for signing" >&2; exit 1; }
 
-ARCH_DIR="$OUT/dists/$SUITE/main/binary-all"
-POOL="$OUT/pool/main"
-mkdir -p "$ARCH_DIR" "$POOL"
-
+mkdir -p "$OUT"
 echo "==> Collecting packages"
-cp -v "$DEBS"/*.deb "$POOL"/
+cp -v "$DEBS"/*.deb "$OUT"/
 
-echo "==> Generating Packages index"
-( cd "$OUT" && apt-ftparchive packages pool/main > "dists/$SUITE/main/binary-all/Packages" )
-gzip -kf "$ARCH_DIR/Packages"
+echo "==> Generating flat Packages index"
+( cd "$OUT" && apt-ftparchive packages . > Packages )   # -> Filename: ./drumee-*.deb
+gzip -kf "$OUT/Packages"
 
 echo "==> Generating Release"
 cat > /tmp/apt-release.conf <<EOF
 APT::FTPArchive::Release::Origin "Drumee";
 APT::FTPArchive::Release::Label "Drumee";
-APT::FTPArchive::Release::Suite "$SUITE";
-APT::FTPArchive::Release::Codename "$SUITE";
 APT::FTPArchive::Release::Architectures "all";
 APT::FTPArchive::Release::Components "main";
 EOF
-( cd "$OUT" && apt-ftparchive -c /tmp/apt-release.conf release "dists/$SUITE" > "dists/$SUITE/Release" )
+( cd "$OUT" && apt-ftparchive -c /tmp/apt-release.conf release . > Release )
 
 echo "==> Signing Release"
 KEYARG=(); [ -n "$KEY" ] && KEYARG=(--local-user "$KEY")
-( cd "$OUT/dists/$SUITE"
+( cd "$OUT"
   gpg "${KEYARG[@]}" --batch --yes --clearsign -o InRelease Release
   gpg "${KEYARG[@]}" --batch --yes -abs -o Release.gpg Release
 )
@@ -56,11 +59,13 @@ gpg "${KEYARG[@]}" --armor --export ${KEY:-} > "$OUT/drumee-archive-keyring.asc"
 
 cat <<MSG
 
-Done. Serve $OUT at your repo URL (e.g. https://apt.drumee.io), then clients add:
+Done. Upload every file in $OUT as assets of the 'apt-stable' release, and serve
+drumee-archive-keyring.asc from get.drumee.com. Clients then run:
 
-  curl -fsSL https://apt.drumee.io/drumee-archive-keyring.asc \\
+  curl -fsSL https://get.drumee.com/drumee-archive-keyring.asc \\
     | sudo tee /etc/apt/keyrings/drumee.asc >/dev/null
-  echo "deb [signed-by=/etc/apt/keyrings/drumee.asc] https://apt.drumee.io $SUITE main" \\
+  echo "deb [signed-by=/etc/apt/keyrings/drumee.asc] \\
+    https://github.com/drumee/get-drumee-pages/releases/download/apt-stable/ ./" \\
     | sudo tee /etc/apt/sources.list.d/drumee.list
   sudo apt update && sudo apt install drumee
 MSG

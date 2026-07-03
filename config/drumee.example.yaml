@@ -63,10 +63,30 @@ ports:
   ui: 23000              # index.js page + WebSocket listener (--pushPort)
 
 images:
-  registry: drumee       # where publish-images.sh pushed, e.g. ghcr.io/drumee
+  registry: ghcr.io/drumee   # where publish-images.sh pushed (use 'drumee' for local :local images)
 
 versions:
-  server: 2.9.44
-  ui: 3.2.49
-  schemas: 2.6.99
-  static: 1.0.3
+  product: 1.0.0         # release-train version: the tag ALL images share. Pin for
+                         # reproducible deploys + rollback. Use 'latest' to track newest.
+  # Optional per-component overrides (default to product); normally unset:
+  # server: 1.0.0
+  # ui: 1.0.0
+  # schemas: 1.0.0
+  # static: 1.0.0
+
+# --- Server plugins (optional) ----------------------------------------------
+# Each plugin installs under /srv/drumee/runtime/plugins/server/<endpoint>/<name>
+# and serves at /-/<endpoint>/svc/<module>.<method>. Listed here, they are written
+# to plugins.json on render and installed automatically (drumee plugin apply).
+# `source` may be a git URL (optionally #ref), a local dir, or a .tgz/.zip.
+# plugins:
+#   - name: hello
+#     endpoint: acme
+#     source: https://github.com/acme/drumee-hello.git#v1.0.0
+#   - name: local-tool
+#     endpoint: acme
+#     source: ./my-plugins/local-tool
+#
+# Or manage them imperatively any time (native: `drumee plugin …`):
+#   drumee-ctl plugin add https://github.com/acme/drumee-hello.git#v1.0.0 --endpoint=acme
+#   drumee-ctl plugin list | remove acme/hello | disable acme/hello
