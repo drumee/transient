@@ -249,10 +249,13 @@ class __private_hub extends Hub {
    * 
    */
   _getShareLink(token) {
-    let keysel = this.hub.get(Attr.id);
-    const pathname = `/?keysel=${keysel}/#/dmz/share/`;
-    this.debug("AAA:142", this.input.homepath())
-    let link = `${this.input.homepath(this.hub.get(Attr.hostname))}${pathname}`;
+    // Clean DMZ share link — same format as secure_share.js (no keysel). The old
+    // `?keysel=<hub_id>/` prefix was consumed by the socket/session layer as a
+    // session-key selector, so a recipient (who has no session for that keysel)
+    // landed in an offline guest loop. The share resolves by token and the FE reads
+    // hub_id from the dmz.login response, so the keysel isn't needed here. Domain
+    // resolution via homepath(hostname) is unchanged.
+    const link = `${this.input.homepath(this.hub.get(Attr.hostname))}#/dmz/share/`;
     if (token) return link + token;
     return link;
   }
