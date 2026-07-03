@@ -443,7 +443,14 @@ class __dmz extends Mfs {
       // or the hub name for the root/hub node — correct in both cases. Capture before
       // the file→pid swap below so a file share titles on the file, not its parent.
       if (nodeAttr.filename) info.title = nodeAttr.filename;
-      if (nodeAttr.filetype && nodeAttr.filetype !== 'folder' && nodeAttr.filetype !== 'hub' && nodeAttr.pid) {
+      // Only remap a real FILE to its parent. Containers — folder, hub, AND the
+      // workspace 'root' node (its filetype is 'root', not 'folder'/'hub') — must
+      // keep their own nid so show_node_by lists their children and the folder
+      // node-grant below is issued on the shared node. Without exempting 'root',
+      // a workspace-root share (Manage access) was treated as a file → file_nid set
+      // → the recipient grant branch skipped → recipient had 0 permission on every
+      // child → blank list (uploads still wrote via the token path).
+      if (nodeAttr.filetype && nodeAttr.filetype !== 'folder' && nodeAttr.filetype !== 'hub' && nodeAttr.filetype !== 'root' && nodeAttr.pid) {
         info.file_nid = info.nid;  // specific file — sent to UI for filtering
         info.nid = nodeAttr.pid;   // parent folder — used by show_node_by
       }
