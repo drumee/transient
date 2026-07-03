@@ -35,7 +35,12 @@ class __secure_share extends Mfs {
     const hours  = this.input.get(Attr.hours) || 0;
     const expiryHours = (days * 24) + (hours * 1);
 
-    const token    = this.randomString();
+    // Shorter share token to keep the copyable link compact. 12 random bytes →
+    // ~16 base64url chars (96 bits entropy — still unguessable for a bearer link),
+    // vs the previous 16-byte (~22 char) default. Only affects NEW tokens; existing
+    // tokens resolve by exact-match id (secure_share_token.id varchar(80), UNIQUE),
+    // so older/longer links keep working. No length assumption exists downstream.
+    const token    = this.randomString(12);
     const hub_id   = this.hub.get(Attr.id);
     const fullname = this.user.get('fullname');
     const lang     = this.user.language() || this.input.app_language();
