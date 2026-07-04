@@ -19,8 +19,14 @@ const { Attr, RedisStore, toArray } = require('@drumee/server-essentials');
 const { isEmpty } = require('lodash');
 const { Entity } = require('@drumee/server-core');
 
+// Built-in Kanban columns. Custom columns live in the task_column table and
+// use their row id as the task.status key — see _isValidStatus().
 const VALID_STATUSES = ['todo', 'in_progress', 'to_review', 'complete'];
 const VALID_PRIORITIES = ['low', 'medium', 'high', 'urgent'];
+const VALID_THEMES = [
+  'default', 'orange', 'yellow', 'green', 'cyan',
+  'blue', 'purple', 'pink', 'red',
+];
 
 class __private_task extends Entity {
 
@@ -44,6 +50,21 @@ class __private_task extends Entity {
     this.comment_update = this.comment_update.bind(this);
     this.comment_delete = this.comment_delete.bind(this);
     this.comment_react = this.comment_react.bind(this);
+    this.column_list = this.column_list.bind(this);
+    this.column_create = this.column_create.bind(this);
+    this.column_update = this.column_update.bind(this);
+    this.column_delete = this.column_delete.bind(this);
+  }
+
+  /**
+   * A status key is valid when it's one of the built-in columns or the id of
+   * an existing custom column (task_column row) in this hub.
+   */
+  async _isValidStatus(status) {
+    if (VALID_STATUSES.includes(status)) return true;
+    if (!status || !/^[A-Za-z0-9_-]{1,32}$/.test(status)) return false;
+    const col = await this.db.await_proc('task_column_get', status);
+    return !isEmpty(col);
   }
 
   /**
@@ -243,7 +264,7 @@ class __private_task extends Entity {
     const assignees = (await this._validateAssignees(this._readAssignees() || []));
     if (assignees == null) return; // invalid assignee — exception already raised
 
-    if (!VALID_STATUSES.includes(status)) status = 'todo';
+    if (!(await this._isValidStatus(status))) status = 'todo';
     if (!VALID_PRIORITIES.includes(priority)) priority = 'medium';
 
     const id = await this.yp.await_func('uniqueId');
@@ -301,13 +322,14 @@ class __private_task extends Entity {
 
   /**
    * Move a task to a different Kanban column.
-   * Params: id (required), status (required — todo|in_progress|to_review|complete)
+   * Params: id (required), status (required — a built-in column key or a
+   * custom task_column id)
    */
   async update_status() {
     const id = this.input.need(Attr.id);
     let status = this.input.need(Attr.status);
 
-    if (!VALID_STATUSES.includes(status)) {
+    if (!(await this._isValidStatus(status))) {
       return this.exception.user('INVALID_STATUS');
     }
 
@@ -580,6 +602,81 @@ class __private_task extends Entity {
       comment_id,
       emoji,
       count: row && row.count,
+    });
+    this.output.data(row);
+  }
+
+  /**
+   * List the custom Kanban columns for a folder scope.
+   * Params: nid (folder node id; null/absent = workspace root scope).
+   * Built-in columns (todo/in_progress/to_review/complete) are implicit
+   * client-side and never stored.
+   */
+  async column_list() {
+    const nid = this.input.use('nid', null);
+    const data = await this.db.await_run('CALL task_column_list(?)', [nid]);
+    this.output.list(data);
+  }
+
+  /**
+   * Create a custom Kanban column.
+   * Params: name (required), theme (palette key, optional), nid (folder scope).
+   * The new column's id becomes the task.status key for tasks placed in it.
+   */
+  async column_create() {
+    const name = String(this.input.need('name')).trim().slice(0, 100);
+    if (!name) return this.exception.user('INVALID_COLUMN_NAME');
+    let theme = this.input.use('theme', 'default');
+    if (!VALID_THEMES.includes(theme)) theme = 'default';
+    const nid = this.input.use('nid', null);
+
+    const id = await this.yp.await_func('uniqueId');
+    const data = await this.db.await_run(
+      'CALL task_column_create(?, ?, ?, ?)',
+      [id, nid, name, theme]
+    );
+    await this._broadcast('task.column_create', data);
+    this.output.data(data);
+  }
+
+  /**
+   * Rename and/or re-theme a custom column.
+   * Params: id (required); name / theme (optional — omit to keep).
+   */
+  async column_update() {
+    const id = this.input.need(Attr.id);
+    let name = this.input.use('name', null);
+    if (name != null) {
+      name = String(name).trim().slice(0, 100);
+      if (!name) return this.exception.user('INVALID_COLUMN_NAME');
+    }
+    let theme = this.input.use('theme', null);
+    if (theme != null && !VALID_THEMES.includes(theme)) theme = 'default';
+
+    const data = await this.db.await_run(
+      'CALL task_column_update(?, ?, ?)',
+      [id, name, theme]
+    );
+    if (isEmpty(data)) {
+      return this.exception.user('COLUMN_NOT_FOUND');
+    }
+    await this._broadcast('task.column_update', data);
+    this.output.data(data);
+  }
+
+  /**
+   * Delete a custom column. Its tasks are moved back to the built-in 'todo'
+   * column by the proc (never lost); the response carries moved_tasks so the
+   * client re-fetches its task list when non-zero.
+   */
+  async column_delete() {
+    const id = this.input.need(Attr.id);
+    const data = await this.db.await_proc('task_column_delete', id);
+    const row = Array.isArray(data) ? data[0] : data;
+    await this._broadcast('task.column_delete', {
+      id,
+      affected: row && row.affected,
+      moved_tasks: row && row.moved_tasks,
     });
     this.output.data(row);
   }
