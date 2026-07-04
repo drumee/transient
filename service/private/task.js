@@ -50,6 +50,7 @@ class __private_task extends Entity {
     this.comment_update = this.comment_update.bind(this);
     this.comment_delete = this.comment_delete.bind(this);
     this.comment_react = this.comment_react.bind(this);
+    this.activity = this.activity.bind(this);
     this.column_list = this.column_list.bind(this);
     this.column_create = this.column_create.bind(this);
     this.column_update = this.column_update.bind(this);
@@ -185,6 +186,39 @@ class __private_task extends Entity {
   }
 
   /**
+   * Append a row to the folder-scoped task activity feed (Project Health).
+   * Best-effort: a logging failure must never break the mutation it follows.
+   * For deletions call BEFORE the row is removed (the proc snapshots task.nid).
+   */
+  async _logActivity(task_id, action, meta = {}) {
+    try {
+      await this.db.await_run('CALL task_activity_log(?, ?, ?, ?)', [
+        task_id,
+        this.uid,
+        action,
+        JSON.stringify(meta || {}),
+      ]);
+    } catch (e) {
+      this.warn('[task._logActivity] failed:', e && e.message);
+    }
+  }
+
+  /**
+   * Recent activity feed for a folder scope (Project Health view).
+   * Params: nid, include_unscoped (mirror task.list), limit (default 30).
+   */
+  async activity() {
+    const nid = this.input.use('nid', null);
+    const include_unscoped = this.input.use('include_unscoped', 0) ? 1 : 0;
+    const limit = Number(this.input.use('limit', 30)) || 30;
+    const data = await this.db.await_run(
+      'CALL task_activity_list(?, ?, ?)',
+      [nid, include_unscoped, limit]
+    );
+    this.output.list(data);
+  }
+
+  /**
    * List tasks scoped to a folder node.
    * Params: nid (folder node id; null/absent = legacy unscoped), include_unscoped
    * (1 on the workspace-root view to also surface legacy nid-less tasks).
@@ -282,6 +316,7 @@ class __private_task extends Entity {
         [id, assignees.join(',')]
       );
     }
+    await this._logActivity(id, 'create', { title });
     await this._broadcast('task.create', data);
     // Every tagged member is newly mentioned on create.
     await this._notifyMentions(data, this.input.use('mention_uids', null));
@@ -314,6 +349,8 @@ class __private_task extends Entity {
     if (isEmpty(data)) {
       return this.exception.user('TASK_NOT_FOUND');
     }
+    const row = Array.isArray(data) ? data[0] : data;
+    await this._logActivity(id, 'update', { title: row && row.title });
     await this._broadcast('task.update', data);
     // Client sends only the newly-added mentions in `mention_uids`.
     await this._notifyMentions(data, this.input.use('mention_uids', null));
@@ -337,6 +374,12 @@ class __private_task extends Entity {
     if (isEmpty(data)) {
       return this.exception.user('TASK_NOT_FOUND');
     }
+    const row = Array.isArray(data) ? data[0] : data;
+    await this._logActivity(
+      id,
+      status === 'complete' ? 'complete' : 'status',
+      { title: row && row.title, status },
+    );
     await this._broadcast('task.update_status', data);
     this.output.data(data);
   }
@@ -373,6 +416,7 @@ class __private_task extends Entity {
     if (isEmpty(data)) {
       return this.exception.user('TASK_NOT_FOUND');
     }
+    await this._logActivity(id, 'assignee', {});
     await this._broadcast('task.update_assignee', data);
     // Notify only members added by this change (self excluded in _notifyAssignees).
     const added = assignees.filter((u) => !prior.has(String(u)));
@@ -386,6 +430,8 @@ class __private_task extends Entity {
    */
   async delete() {
     const id = this.input.need(Attr.id);
+    // Log BEFORE the delete — task_activity_log snapshots the task's nid/title.
+    await this._logActivity(id, 'update', { deleted: 1 });
     const data = await this.db.await_proc('task_delete', id);
     const result = { id, ...data };
     await this._broadcast('task.delete', result);
@@ -406,6 +452,7 @@ class __private_task extends Entity {
       file_nid,
       this.uid
     );
+    await this._logActivity(task_id, 'link_file', {});
     await this._broadcast('task.link_file', { task_id, files: data });
     this.output.list(data);
   }
@@ -537,6 +584,7 @@ class __private_task extends Entity {
       [id, task_id, this.uid, parent_id, body]
     );
     const row = Array.isArray(data) ? data[0] : data;
+    await this._logActivity(task_id, 'comment', {});
     await this._broadcast('task.comment_create', row);
     // Notify @-mentioned members; on a reply, also notify the parent author.
     let notify = toArray(this.input.use('mention_uids', null));

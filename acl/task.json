@@ -63,8 +63,7 @@
           "type": "string",
           "required": false,
           "default": "todo",
-          "enum": ["todo", "in_progress", "to_review", "complete"],
-          "doc": "Initial Kanban column. Defaults to todo."
+          "doc": "Initial Kanban column: a built-in key (todo | in_progress | to_review | complete) or a custom task_column id. Defaults to todo."
         },
         "priority": {
           "type": "string",
@@ -173,8 +172,7 @@
         "status": {
           "type": "string",
           "required": true,
-          "enum": ["todo", "in_progress", "to_review", "complete"],
-          "doc": "Destination Kanban column"
+          "doc": "Destination Kanban column: a built-in key (todo | in_progress | to_review | complete) or a custom task_column id"
         }
       },
       "returns": {
@@ -183,7 +181,7 @@
       },
       "errors": [
         { "code": "TASK_NOT_FOUND", "message": "No task found with the given ID", "http_status": 404 },
-        { "code": "INVALID_STATUS", "message": "status must be one of: todo, in_progress, to_review, complete", "http_status": 400 }
+        { "code": "INVALID_STATUS", "message": "status is neither a built-in column nor an existing custom column id", "http_status": 400 }
       ]
     },
     "update_assignee": {
@@ -504,6 +502,90 @@
           "id":       { "type": "string" },
           "task_id":  { "type": "string" },
           "affected": { "type": "number" }
+        }
+      }
+    },
+    "activity": {
+      "doc": "Recent task activity for a folder scope (Project Health feed): create / update / status / complete / assignee / link_file / comment events, newest first.",
+      "scope": "hub",
+      "permission": { "src": "read" },
+      "params": {
+        "nid": { "type": "string", "required": false, "doc": "Folder node id to scope to (mirrors task.list)" },
+        "include_unscoped": { "type": "number", "required": false, "default": 0, "doc": "When 1, also include legacy nid-less rows (workspace root)" },
+        "limit": { "type": "number", "required": false, "default": 30, "doc": "Max rows returned" }
+      },
+      "returns": {
+        "type": "array",
+        "doc": "Activity rows (task_id, actor_uid, action, meta, ctime, plus live task title/priority/status when the task still exists)"
+      }
+    },
+    "column_list": {
+      "doc": "List the custom Kanban columns for a folder scope. Built-in columns (todo / in_progress / to_review / complete) are implicit client-side and never stored.",
+      "scope": "hub",
+      "permission": { "src": "read" },
+      "params": {
+        "nid": { "type": "string", "required": false, "doc": "Folder node id to scope to (mirrors task.list)" }
+      },
+      "returns": {
+        "type": "array",
+        "doc": "Custom column rows in board order",
+        "items": {
+          "type": "object",
+          "properties": {
+            "id":       { "type": "string", "doc": "Column id — doubles as the task.status key for its tasks" },
+            "nid":      { "type": "string", "doc": "Folder node id, null at workspace root" },
+            "name":     { "type": "string", "doc": "User-entered column name" },
+            "theme":    { "type": "string", "doc": "Palette theme: default | orange | yellow | green | cyan | blue | purple | pink | red" },
+            "position": { "type": "number", "doc": "Board order among custom columns" },
+            "ctime":    { "type": "number" },
+            "mtime":    { "type": "number" }
+          }
+        }
+      }
+    },
+    "column_create": {
+      "doc": "Create a custom Kanban column for a folder scope.",
+      "scope": "hub",
+      "permission": { "src": "write" },
+      "params": {
+        "name":  { "type": "string", "required": true, "doc": "Column display name (1–100 chars)" },
+        "theme": { "type": "string", "required": false, "default": "default", "doc": "Palette theme key; invalid values fall back to default" },
+        "nid":   { "type": "string", "required": false, "doc": "Folder node id the column belongs to" }
+      },
+      "returns": { "type": "object", "doc": "The created column row" },
+      "errors": [
+        { "code": "INVALID_COLUMN_NAME", "message": "name is empty after trimming", "http_status": 400 }
+      ]
+    },
+    "column_update": {
+      "doc": "Rename and/or re-theme a custom column. Omit a field to keep it.",
+      "scope": "hub",
+      "permission": { "src": "write" },
+      "params": {
+        "id":    { "type": "string", "required": true, "doc": "Column id" },
+        "name":  { "type": "string", "required": false, "doc": "New display name" },
+        "theme": { "type": "string", "required": false, "doc": "New palette theme key" }
+      },
+      "returns": { "type": "object", "doc": "The updated column row" },
+      "errors": [
+        { "code": "INVALID_COLUMN_NAME", "message": "name is empty after trimming", "http_status": 400 },
+        { "code": "COLUMN_NOT_FOUND", "message": "No column with that id", "http_status": 404 }
+      ]
+    },
+    "column_delete": {
+      "doc": "Delete a custom column. Its tasks are moved back to the built-in 'todo' column (never lost).",
+      "scope": "hub",
+      "permission": { "src": "write" },
+      "params": {
+        "id": { "type": "string", "required": true, "doc": "Column id to delete" }
+      },
+      "returns": {
+        "type": "object",
+        "doc": "Deletion summary",
+        "properties": {
+          "id":          { "type": "string" },
+          "affected":    { "type": "number", "doc": "1 if the column existed" },
+          "moved_tasks": { "type": "number", "doc": "How many tasks were moved back to todo" }
         }
       }
     }
