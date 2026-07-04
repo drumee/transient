@@ -1962,6 +1962,19 @@ class __private_channel extends Entity {
    */
   async acknowledge() {
     const message_id = this.input.use(Attr.message_id);
+    // A personal/drumate entity resolved as the hub (e.g. a P2P conversation
+    // whose hub_id is the peer's personal entity_id). Personal DBs carry the
+    // single-JSON-arg acknowledge_message (not the 2-arg hub form), and P2P
+    // read receipts are owned by chat.acknowledge (contact.js) against the
+    // caller's own DB — so the hub path here both crashes
+    // (ER_SP_WRONG_NO_OF_ARGS) and would target the wrong DB. Skip it cleanly.
+    if (this.hub.get(Attr.area) === "personal") {
+      this.warn(
+        "[channel.acknowledge] skipped on personal entity; P2P ack belongs to chat.acknowledge",
+        this.hub.get(Attr.id)
+      );
+      return this.output.data({});
+    }
     let exclude = this.input.need(Attr.socket_id);
     if (exclude) exclude = [exclude];
 
