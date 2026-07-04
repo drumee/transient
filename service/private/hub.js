@@ -103,17 +103,30 @@ class __private_hub extends Hub {
   }
 
   /**
-   * 
+   * hub_get_members_by_type is a hub-only proc. When a hub-scoped endpoint is
+   * reached with a personal/drumate entity as hub_id (e.g. a P2P/personal
+   * context whose hub_id is a personal entity_id), the resolved DB may lack the
+   * proc (ER_SP_DOES_NOT_EXIST), which tears down the request's DB connection.
+   * A personal space has no workspace members, so return an empty set. Real
+   * hubs (area private/org/share/dmz/…) are never 'personal' and are unaffected.
    */
-  async get_members_by_type() {
-    const type = this.input.need(Attr.type);
-    const page = this.input.use(Attr.page, 1);
-    let members = await this.db.await_proc(
+  async _members_by_type(type, page) {
+    if (this.hub.get(Attr.area) === "personal") return [];
+    return await this.db.await_proc(
       "hub_get_members_by_type",
       this.uid,
       type,
       page
     );
+  }
+
+  /**
+   *
+   */
+  async get_members_by_type() {
+    const type = this.input.need(Attr.type);
+    const page = this.input.use(Attr.page, 1);
+    let members = await this._members_by_type(type, page);
     members = await this._hydrateMemberProfileNames(members, { type, page });
     this.output.list(members);
   }
@@ -524,12 +537,7 @@ class __private_hub extends Hub {
     opt.hubname = this.hub.get(Attr.name);
     let visitor = await this.db.await_proc("member_show_privilege", this.uid);
     opt.visitor = visitor;
-    let users = await this.db.await_proc(
-      "hub_get_members_by_type",
-      this.uid,
-      "all",
-      1
-    );
+    let users = await this._members_by_type("all", 1);
     // opt.users = users;
     users = toArray(users);
     opt.users = filter(users, (el) => {
@@ -546,12 +554,7 @@ class __private_hub extends Hub {
   async show_privilege() {
     let owner = {};
     if ([Attr.all, Attr.owner, 'not_owner', 'admin', Attr.other].includes(this.input.get(Attr.type))) {
-      owner = await this.db.await_proc(
-        "hub_get_members_by_type",
-        this.uid,
-        this.input.get(Attr.type),
-        1
-      )
+      owner = await this._members_by_type(this.input.get(Attr.type), 1)
     }
     let { filesize } = await this.db.await_query("SELECT sum(filesize) filesize FROM media");
     let visitor = await this.db.await_proc(
@@ -774,12 +777,7 @@ class __private_hub extends Hub {
     // res = filter(res, (el) => {
     //   return (el.privilege & 32) == 0;
     // });
-    users = await this.db.await_proc(
-      "hub_get_members_by_type",
-      this.uid,
-      "not_owner",
-      1
-    );
+    users = await this._members_by_type("not_owner", 1);
     this.output.data(users);
   }
 
@@ -1770,12 +1768,7 @@ class __private_hub extends Hub {
         log: `Member removed from workspace '${hub_name}'`,
       });
     }
-    users = await this.db.await_proc(
-      "hub_get_members_by_type",
-      this.uid,
-      "not_owner",
-      1
-    );
+    users = await this._members_by_type("not_owner", 1);
     this.output.list(users);
   }
 
@@ -1866,12 +1859,7 @@ class __private_hub extends Hub {
       entity_id: uid,
       log: `Member privilege set to ${privilege} in workspace '${this.hub.get(Attr.name) || this.hub.get(Attr.id)}'`,
     });
-    let users = await this.db.await_proc(
-      "hub_get_members_by_type",
-      this.uid,
-      "not_owner",
-      1
-    );
+    let users = await this._members_by_type("not_owner", 1);
     this.output.list(users);
   }
 
