@@ -683,6 +683,13 @@ class __private_task extends Entity {
       'CALL task_column_create(?, ?, ?, ?)',
       [id, nid, name, theme]
     );
+    // The DB layer swallows SQL errors (returns empty) — an empty result here
+    // means the insert didn't happen, most likely because this hub DB has not
+    // been migrated (task_column table / procs missing). Fail loudly instead
+    // of acking success with no data.
+    if (isEmpty(data)) {
+      return this.exception.user('COLUMN_CREATE_FAILED');
+    }
     await this._broadcast('task.column_create', data);
     this.output.data(data);
   }
