@@ -1906,6 +1906,7 @@ class __private_channel extends Entity {
             `SELECT ca.id, ca.timestamp AS ctime, ca.uid AS author_id,
               JSON_UNQUOTE(JSON_EXTRACT(ca.data, '$.task_id')) AS task_id,
               JSON_UNQUOTE(JSON_EXTRACT(ca.data, '$.hub_id')) AS hub_id,
+              JSON_UNQUOTE(JSON_EXTRACT(ca.data, '$.nid')) AS nid,
               JSON_UNQUOTE(JSON_EXTRACT(ca.data, '$.title')) AS name,
               CONCAT('["', ca.target_uid, '"]') AS mention_ids,
               COALESCE(CONCAT(d.firstname, ' ', d.lastname), d.email, '') AS fullname,

@@ -311,6 +311,7 @@ class MfsActivity extends Entity {
       if (r.task_title == null) r.task_title = meta.title || '';
       if (r.task_nid == null) r.task_nid = meta.nid || null;
       if (r.task_hub_id == null) r.task_hub_id = meta.hub_id || null;
+      if (r.task_id == null) r.task_id = meta.task_id || null;
     }
 
     this.output.list(result);

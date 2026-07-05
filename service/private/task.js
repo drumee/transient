@@ -71,7 +71,14 @@ class __private_task extends Entity {
     if (isEmpty(uids)) return;
     const hub_id = this.hub && this.hub.get(Attr.id);
     const task_id = data && data.id;
-    const meta = { task_id, hub_id, title: (data && data.title) || '' };
+    // `nid` lets the notification click open the task's folder on its Task tab;
+    // it is null for legacy/workspace-level tasks (opens the workspace root).
+    const meta = {
+      task_id,
+      hub_id,
+      title: (data && data.title) || '',
+      nid: (data && data.nid) || null,
+    };
     for (const target_uid of uids) {
       try {
         await this.yp.await_proc(
