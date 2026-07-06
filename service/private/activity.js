@@ -66,6 +66,26 @@ function mapNotificationRow(r) {
   return item;
 }
 
+// Surface task-assignment fields (title/nid/hub_id/task_id) at the top level from
+// the nested contact_activity `data` JSON, so the client renders "assigned you to
+// <task>" and navigates to the task without relying on the nested JSON surviving
+// the LETC model. Idempotent; only touches task_assigned rows.
+function flattenTaskAssigned(rows) {
+  for (const r of rows) {
+    if (!r || r.event !== 'task_assigned') continue;
+    let meta = r.data;
+    if (typeof meta === 'string') {
+      try { meta = JSON.parse(meta); } catch (e) { meta = null; }
+    }
+    meta = meta || {};
+    if (r.task_title == null) r.task_title = meta.title || '';
+    if (r.task_nid == null) r.task_nid = meta.nid || null;
+    if (r.task_hub_id == null) r.task_hub_id = meta.hub_id || null;
+    if (r.task_id == null) r.task_id = meta.task_id || null;
+  }
+  return rows;
+}
+
 class MfsActivity extends Entity {
 
 
@@ -278,43 +298,36 @@ class MfsActivity extends Entity {
       }
     }
 
-    // Task-assignment notifications ("{creator} assigned you to {task}"). Under
-    // Unread ON the base feed is mfs_get_activity_feed (MFS-only), so an
-    // assignment would be invisible until the user toggled Unread OFF. Merge the
-    // caller's UNDISMISSED task_assigned rows into the unread feed so it shows in
-    // the default view — mirroring the secure_share_open_feed merge above. Under
-    // Unread OFF, activity_get_feed_all already returns them (read + unread), so
-    // only merge for the unread view to avoid duplicates. Best-effort.
-    if (unreadOnly && filter !== 'mentions' && filter !== 'shares' && page <= 1) {
-      try {
-        const assigned = toArray(await this.yp.await_proc('contact_task_assigned_unread', this.uid));
-        for (const r of assigned) {
-          if (r) result.push(r);
-        }
-        result.sort((a, b) => (Number(b.timestamp || b.ctime || 0) - Number(a.timestamp || a.ctime || 0)));
-      } catch (e) {
-        this.warn('[ACTIVITY] contact_task_assigned_unread merge failed', e && e.message);
-      }
-    }
-
-    // Surface task-assignment fields at the top level so the client renders the
-    // task title and navigates to the tracker without depending on the nested
-    // `data` JSON surviving the LETC model. Applies to both the unread-merge rows
-    // and the activity_get_feed_all (Unread OFF) rows.
-    for (const r of result) {
-      if (!r || r.event !== 'task_assigned') continue;
-      let meta = r.data;
-      if (typeof meta === 'string') {
-        try { meta = JSON.parse(meta); } catch (e) { meta = null; }
-      }
-      meta = meta || {};
-      if (r.task_title == null) r.task_title = meta.title || '';
-      if (r.task_nid == null) r.task_nid = meta.nid || null;
-      if (r.task_hub_id == null) r.task_hub_id = meta.hub_id || null;
-      if (r.task_id == null) r.task_id = meta.task_id || null;
-    }
+    // Flatten task-assignment fields onto the Unread-OFF feed rows (from
+    // activity_get_feed_all) so the client renders "assigned you to <task>" and
+    // can open the task. Unread-ON visibility is handled by the pinned badge
+    // merge (list_task_assignments) — NOT by merging into this feed, which would
+    // double-show the row (pinned + feed) under Unread ON.
+    flattenTaskAssigned(result);
 
     this.output.list(result);
+  }
+
+  /**
+   * List the caller's UNDISMISSED task-assignment notifications for the pinned
+   * activity section + bell badge (mirrors how task @-mentions are surfaced).
+   * Rows come from contact_task_assigned_unread (shaped like
+   * activity_get_feed_all's contact branch); task fields are flattened so the
+   * item renders "assigned you to <task>" and the click opens the task. The
+   * panel merges these into its unread `merged` list so an assignment shows —
+   * and bumps the badge — even while the panel is closed.
+   * Endpoint: POST /activity.list_task_assignments
+   */
+  async list_task_assignments() {
+    let rows = [];
+    try {
+      rows = toArray(await this.yp.await_proc('contact_task_assigned_unread', this.uid));
+    } catch (e) {
+      this.warn('[ACTIVITY] contact_task_assigned_unread failed', e && e.message);
+      return this.output.list([]);
+    }
+    flattenTaskAssigned(rows);
+    this.output.list(rows);
   }
 
 
