@@ -50,7 +50,19 @@ class Account extends Entity {
       firstname = "",
       password,
       onboarded,
+      ref = "",                // referral handle recovered from oauth_state
+      utm,                     // UTM campaign params (source attribution)
     } = data;
+    ref = String(ref || "").trim().toLowerCase().slice(0, 64);
+    // Sanitize UTM to the three known keys — persisted as profile.utm and read
+    // by the analytics signup-source attribution alongside ref.
+    let _utm = {};
+    if (utm && typeof utm === "object") {
+      for (const k of ["utm_source", "utm_medium", "utm_campaign"]) {
+        const v = (utm[k] || "").toString().trim().slice(0, 64);
+        if (v) _utm[k] = v;
+      }
+    }
     // OAuth signups pass onboarded explicitly (always 0 — a Google/Apple name
     // says nothing about whether the user has done the industry/role/team-size
     // onboarding). Other callers fall back to the name-presence heuristic.
@@ -77,7 +89,11 @@ class Account extends Entity {
       lang: this.user.language() || this.input.app_language(),
       firstname,
       lastname,
-      email
+      email,
+      // Referral attribution — read by the analytics plugin
+      // (referrals / signup_sources / referral_members procs).
+      ...(ref ? { ref } : {}),
+      ...(Object.keys(_utm).length ? { utm: _utm } : {}),
     }
 
     let user = await this.yp.await_proc("drumate_create", password, profile);
@@ -150,7 +166,9 @@ class Account extends Entity {
       // Brand-new OAuth account: force onboarding regardless of the name Google
       // supplied. Without this, create_account's name-presence heuristic flags
       // the account onboarded=1 and the desk gate skips onboarding entirely.
-      onboarded: 0
+      onboarded: 0,
+      // Referral handle recovered from oauth_state by handleOAuthCallback.
+      ref: profile.ref || ""
     };
 
     const creationResult = await this.create_account(createData, 0) || {};
@@ -228,8 +246,11 @@ class Account extends Entity {
         return { status: 'error', error: 'missing_state' };
       }
 
-      const { validState, session_id } = await this.yp.await_query(
-        'SELECT 1 validState, session_id FROM oauth_state WHERE state = ? AND ctime > UNIX_TIMESTAMP() - 600 LIMIT 1',
+      // SELECT * (not an explicit column list) so this keeps working on
+      // databases that don't have the optional oauth_state.ref column yet —
+      // ref simply comes back undefined there.
+      const { validState, session_id, ref } = await this.yp.await_query(
+        'SELECT 1 validState, s.* FROM oauth_state s WHERE state = ? AND ctime > UNIX_TIMESTAMP() - 600 LIMIT 1',
         state
       ) || {};
 
@@ -291,6 +312,9 @@ class Account extends Entity {
 
       // CASE C: New user - sign up
       if (sessionData && sessionData.error_code === 'oauth_user_not_found') {
+        // Thread the referral handle (persisted at initiate) into the new
+        // account's profile for analytics attribution.
+        if (ref) profile.ref = ref;
         let res = await this.addUser(profile);
         res.method = 'signup';
         return res;
