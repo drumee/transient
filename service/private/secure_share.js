@@ -15,7 +15,7 @@
  * =============================================================================
  */
 const {
-  Attr, Cache, Messenger, RedisStore, toArray, sysEnv
+  Attr, Cache, Messenger, RedisStore, toArray
 } = require('@drumee/server-essentials');
 const { Mfs } = require('@drumee/server-core');
 const { isEmpty } = require('lodash');
@@ -102,7 +102,8 @@ class __secure_share extends Mfs {
       return this.output.data({ status: 'CREATE_FAILED' });
     }
 
-    const link = `${this._shareLinkBase()}#/dmz/share/${token}`;
+    const host = this.hub.get(Attr.vhost);
+    const link = `${this.input.homepath(host)}#/dmz/share/${token}`;
 
     // Send invitation email only when sharing with exactly one named recipient (not domain, not public)
     const singleEmail = allowedEmails && allowedEmails.length === 1
@@ -140,27 +141,13 @@ class __secure_share extends Mfs {
   }
 
   /**
-   * Base URL for every share link. Anchored to the neutral share host
-   * (share.<main_domain>) instead of the content workspace's vhost, so links no
-   * longer leak the workspace name. Safe because a share resolves 100% by token
-   * (dmz.login → secure_share_info), and the neutral host bootstraps via the
-   * default-hub fallback (_initHub → _default_hub; no dedicated hub required).
-   * homepath() supplies the correct per-endpoint scheme + mount path (/-/, /-/preview/…).
-   * Single source of truth — used by create(), list() and access_list().
-   */
-  _shareLinkBase() {
-    const { main_domain } = sysEnv();
-    return this.input.homepath(`share.${main_domain}`);
-  }
-
-  /**
    * List all secure share tokens created by the current user for a given node.
    */
   async list() {
     const nid    = this.input.need(Attr.nid);
     const hub_id = this.hub.get(Attr.id);
     const rows   = toArray(await this.yp.await_proc('secure_share_list', hub_id, nid, this.uid));
-    const base   = this._shareLinkBase();
+    const base   = this.input.homepath(this.hub.get(Attr.vhost));
     this.output.list(rows.map(r => ({ ...r, link: `${base}#/dmz/share/${r.id}` })));
   }
 
@@ -325,7 +312,7 @@ class __secure_share extends Mfs {
     const nid    = this.input.need(Attr.nid);
     const hub_id = this.hub.get(Attr.id);
     const rows   = toArray(await this.yp.await_proc('secure_share_list', hub_id, nid, this.uid));
-    const base   = this._shareLinkBase();
+    const base   = this.input.homepath(this.hub.get(Attr.vhost));
     this.output.list(rows.map(r => ({ ...r, link: `${base}#/dmz/share/${r.id}` })));
   }
 
