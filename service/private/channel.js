@@ -125,7 +125,20 @@ class __private_channel extends Entity {
     let cache = {};
     let hub_id = this.hub.get(Attr.id);
     for (let message of data) {
-      message.entity = { id: this.uid };
+      // Own-authored rows keep the viewer as the entity id, but also carry the
+      // SP-resolved display fields (incl. email) so a viewer who renders this
+      // author as NOT "me" on their side — e.g. a creator-bound secure-share
+      // recipient whose session uid equals the message author — still resolves a
+      // name/email instead of falling back to the raw author id. The
+      // `author_id != this.uid` branch below overwrites entity via
+      // shareroom_contact_get, so this only affects self-authored rows.
+      message.entity = {
+        id: this.uid,
+        firstname: message.firstname,
+        lastname: message.lastname,
+        fullname: message.fullname,
+        email: message.email,
+      };
       if (message.author_id != this.uid) {
         let key = message.author_id;
 
