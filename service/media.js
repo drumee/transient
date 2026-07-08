@@ -1810,8 +1810,18 @@ class __media extends Mfs {
     if (isArray(ids)) {
       let res = [];
       for (let n of ids) {
+        // Manifest EACH selected node on ITS OWN hub DB. The old code computed
+        // db_name but discarded it, and called mfs_manifest with the OUTER `nid`
+        // (source_granted's single node) on this.db every iteration — so a
+        // multi-item selection (e.g. "download the whole workspace", which sends
+        // every top-level item) manifested one node N times → after de-dup only
+        // that one node's content landed in the zip. Mirror the offline worker
+        // (offline/media/download.js get_branch_nodes): `${db_name}.mfs_manifest`
+        // with n.nid. mfs_manifest returns each node's own absolute file_path, so
+        // concatenating per-item manifests yields the full tree with no path
+        // collisions.
         let db_name = await this.yp.await_func("get_db_name", n.hub_id);
-        r = await this.db.await_proc("mfs_manifest", { nid, uid: this.uid, show_nodes: 1 });
+        r = await this.yp.await_proc(`${db_name}.mfs_manifest`, { nid: n.nid, uid: this.uid, show_nodes: 1 });
         res = res.concat(r[0]);
         size = parseInt(size) + parseInt(r[1].total_size);
       }
