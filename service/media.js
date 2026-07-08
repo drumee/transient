@@ -1772,6 +1772,15 @@ class __media extends Mfs {
     for (let k of dump) {
       if ([Attr.hub, Attr.folder].includes(k.type)) continue;
       if (existsSync(k.src)) {
+        // Clear any pre-existing entry at the destination before linking: two
+        // branch nodes can map to the same archive path (duplicate filenames),
+        // and a retried download can leave a stale symlink — either makes
+        // symlinkSync throw EEXIST and fail the whole download
+        // (SERVICE_FAILED:media.download). Mirror zip()'s rm-before-symlink.
+        // force:true = no error when there is nothing to remove (the normal
+        // case: dest_dir is freshly created per zipid), so behaviour is
+        // unchanged except in the colliding/stale case.
+        rmSync(k.dest, { force: true });
         symlinkSync(k.src, k.dest);
       }
     }
