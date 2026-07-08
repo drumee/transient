@@ -663,6 +663,15 @@ class __private_hub extends Hub {
               privilege,
               entity
             );
+            await writeAudit(this, {
+              db: this.hub.get(Attr.db_name),
+              uid: this.uid,
+              action: 'invite_sent',
+              category: 'member',
+              notify_to: 'admin',
+              entity_id: this.hub.get(Attr.id),
+              log: `Invite sent to ${entity} for workspace '${hubname}'`,
+            });
           }
         } else {
           let drumate = null;
@@ -686,6 +695,15 @@ class __private_hub extends Hub {
               privilege,
               entity
             );
+            await writeAudit(this, {
+              db: this.hub.get(Attr.db_name),
+              uid: this.uid,
+              action: 'invite_sent',
+              category: 'member',
+              notify_to: 'admin',
+              entity_id: this.hub.get(Attr.id),
+              log: `Invite sent to ${entity} for workspace '${hubname}'`,
+            });
             const isEmail = typeof entity === "string" && entity.indexOf("@") !== -1;
             if (isEmail) {
               try {
@@ -803,6 +821,15 @@ class __private_hub extends Hub {
       "permission_grant", mfs_home.chat_upload_id, uid, 0, 4,
       "no_traversal", "chat upload permission"
     );
+    await writeAudit(this, {
+      db: this.hub.get(Attr.db_name),
+      uid: this.uid,
+      action: 'added',
+      category: 'member',
+      notify_to: 'admin',
+      entity_id: uid,
+      log: `Member added to workspace '${hub_name || this.hub.get(Attr.id)}'`,
+    });
     try {
       await this.yp.await_proc(
         "contact_log_activity", this.uid, uid, "hub_invite_received",
@@ -873,6 +900,15 @@ class __private_hub extends Hub {
 
         if (isShareLink && !isDrumate) {
           await this._inviteViaToken(email, hubId, privilege, expiryTs, username, hubname, preview_items, workspace_restricted, recent_messages, publicLink);
+          await writeAudit(this, {
+            db: this.hub.get(Attr.db_name),
+            uid: this.uid,
+            action: 'invite_sent',
+            category: 'member',
+            notify_to: 'admin',
+            entity_id: hubId,
+            log: `Invite sent to ${email} for workspace '${hubname}'`,
+          });
           results.push({ email, branch: "A", status: "ok" });
         } else if (isDrumate) {
           const r = await this._grantMembership(drumate.id, privilege, 0, message, mfs_home, hubname, username);
@@ -912,6 +948,15 @@ class __private_hub extends Hub {
           await this.yp.await_proc(
             "yp_add_pending_invitation", hubId, 0, privilege, email
           );
+          await writeAudit(this, {
+            db: this.hub.get(Attr.db_name),
+            uid: this.uid,
+            action: 'invite_sent',
+            category: 'member',
+            notify_to: 'admin',
+            entity_id: hubId,
+            log: `Invite sent to ${email} for workspace '${hubname}'`,
+          });
           await this._sendInviteEmail("hub-invite-signup", email,
             `${username} invited you to join ${hubname}`,
             { inviter_name: username, workspace_name: hubname, link: publicLink, preview_items, workspace_restricted, recent_messages });
@@ -986,6 +1031,15 @@ class __private_hub extends Hub {
       '*', this.uid, 0, permission, 'system', 'Redeemed hub invite token'
     );
     await this.yp.await_proc('token_hub_invite_set_status', secret, 'accepted', null);
+    await writeAudit(this, {
+      db: db_name,
+      uid: this.uid,
+      action: 'invite_accepted',
+      category: 'member',
+      notify_to: 'admin',
+      entity_id: hub_id,
+      log: `Invite accepted — ${this.user.get(Attr.email) || this.uid} joined the workspace`,
+    });
     this.output.data({ hub_id });
   }
 
@@ -1187,6 +1241,15 @@ class __private_hub extends Hub {
                 'yp_add_pending_invitation',
                 hub_id, expiry, privilege, entity
               );
+              await writeAudit(this, {
+                db: hub_db,
+                uid: this.uid,
+                action: 'invite_sent',
+                category: 'member',
+                notify_to: 'admin',
+                entity_id: hub_id,
+                log: `Invite sent to ${entity} for workspace '${hubname}'`,
+              });
             }
           } else {
             // Not in contact list — check if user exists in Drumee
@@ -1212,6 +1275,15 @@ class __private_hub extends Hub {
                 'yp_add_pending_invitation',
                 hub_id, expiry, privilege, entity
               );
+              await writeAudit(this, {
+                db: hub_db,
+                uid: this.uid,
+                action: 'invite_sent',
+                category: 'member',
+                notify_to: 'admin',
+                entity_id: hub_id,
+                log: `Invite sent to ${entity} for workspace '${hubname}'`,
+              });
 
               // Only send email if entity looks like an email address
               const isEmail = typeof entity === 'string' && entity.indexOf('@') !== -1;
@@ -1255,6 +1327,15 @@ class __private_hub extends Hub {
         const r = await this.yp.await_proc(`${hub_db}.add_member`, uid, privilege, expiry);
         if (!r || !r.db_name) continue;
         rows.push(r);
+        await writeAudit(this, {
+          db: hub_db,
+          uid: this.uid,
+          action: 'added',
+          category: 'member',
+          notify_to: 'admin',
+          entity_id: uid,
+          log: `Member added to workspace '${hubname}'`,
+        });
 
         // Grant resource-level permission on hub root
         await this.yp.await_proc(
