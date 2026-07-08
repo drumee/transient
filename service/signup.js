@@ -166,6 +166,19 @@ class __signup extends Mfs {
           `${db_name}.permission_grant`,
           '*', newUser.id, expiry_time, permission, 'system', 'Resolved from pending_invitation on signup'
         );
+        // Audit: invite redeemed on signup — never let a failure break the join.
+        try {
+          const { writeAudit } = require("./private/_audit");
+          await writeAudit(this, {
+            db: db_name,
+            uid: newUser.id,
+            action: 'invite_accepted',
+            category: 'member',
+            notify_to: 'admin',
+            entity_id: hub_id,
+            log: `Invite accepted — ${email} joined the workspace on signup`,
+          });
+        } catch (e) { /* audit only */ }
 
         // Notify the (now online) user so the desk sidebar can pick up the
         // new workspace, mirroring hub.invite()'s notification for drumates.
