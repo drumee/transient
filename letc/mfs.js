@@ -402,7 +402,11 @@ class __core_mfs extends LetcBox {
     let options = this._fetchOptions();
     return fetch(o.url, options).then((response) => {
       if (!response.ok) {
-        this.warn(`Failed to fetch ${o.url}, code=${response.status}`);
+        if (response.status === 404) {
+          if (this.verbose) this.verbose(`Missing file ${o.url} (${response.status})`);
+        } else {
+          this.warn(`Failed to fetch ${o.url}, code=${response.status}`);
+        }
         return { error: response.status };
       }
       let total = Number(response.headers.get("content-length"));
