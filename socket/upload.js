@@ -6,30 +6,28 @@ const { makeHeaders } = require("./utils")
  * @returns 
  */
 function onReadyStateChange(r) {
-  let { target } = r;
-  if (target) {
-    try {
-      let { responseText, readyState, status } = target;
-      if (readyState == 4) {
-        let { data } = JSON.parse(responseText);
-        switch (status) {
-          case 200:
-            if (this.onUploadResponse) {
-              this.onUploadResponse(data);
-            }
-            break;
-          case 0:
-            break;
-          default:
-            if (this.onUploadError) {
-              this.onUploadError(this.pendingItem);
-            }
-        }
-        return;
-      }
-    } catch (e) {
-      this.warn("RESPONSE_PARSE_ERROR", e);
-      return;
+  const { target } = r;
+  if (!target || target.readyState !== 4) return;
+
+  const { responseText, status } = target;
+  if (status === 0) return;
+
+  if (status !== 200) {
+    if (this.onUploadError) {
+      this.onUploadError(this.pendingItem);
+    }
+    return;
+  }
+
+  try {
+    const { data } = JSON.parse(responseText);
+    if (this.onUploadResponse) {
+      this.onUploadResponse(data);
+    }
+  } catch (e) {
+    this.warn("RESPONSE_PARSE_ERROR", e);
+    if (this.onUploadError) {
+      this.onUploadError(this.pendingItem);
     }
   }
 }
