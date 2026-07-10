@@ -84,7 +84,19 @@ class MainPage extends RuntimeEnv {
   refreshAuthorization(data) {
     let { id, keysel } = this.input.authorization();
     let host = main_domain;
-    if (/^(dmz|share)$/.test(data.area)) {
+    // Isolate the DMZ/share session onto its OWN host-scoped cookie in two cases:
+    //   (1) the resolved hub is a dmz/share area (per-workspace vhost link), or
+    //   (2) the connect host is the NEUTRAL share host `share.<main_domain>` — where
+    //       the bootstrap hub is the generic fallback (not a dmz/share area), so
+    //       without this the session would fall back to the apex-scoped `regsid`.
+    // The critical safety property is `host = this.input.host()`: the cookie is scoped
+    // to the CONNECT host (share.<main_domain> on the neutral host), which is NARROWER
+    // than the apex `main_domain`, so this session cookie can NEVER be read as the
+    // auth (regsid) session on app.drumee.com. That makes a DMZ-session → auth-session
+    // rebind structurally impossible here — for authenticated AND anonymous viewers
+    // (Lexis prod issue #3). The dmz.login regsid guard remains as belt-and-suspenders.
+    const isNeutralShareHost = this.input.host() === `share.${main_domain}`;
+    if (/^(dmz|share)$/.test(data.area) || isNeutralShareHost) {
       data.icon = `${endpoint_path}/avatar/${data.owner_id}?type=vignette`;
       keysel = this.hub.get(Attr.id);
       host = this.input.host();
