@@ -645,11 +645,18 @@ class __dmz extends Mfs {
     //     access to elevate (they are already signed in → the request-access flow).
     //     ANONYMOUS viewers stay creator-bound until the capped guest principal lands
     //     (then they too are capped to the link's level; elevating requires login).
-    //   - FOLDER shares only (no info.file_nid): a single-file share has no
-    //     descendants and a different byte path — left on creator-binding.
+    //   - BOTH folder and single-FILE shares: the node-scoped grant is issued on the
+    //     shared node (info.node_id — the file itself for a file share; only info.nid
+    //     was remapped to the parent for the listing). The recipient then operates as
+    //     THEMSELVES for chat / downloads / notifications instead of the creator (Lexis
+    //     prod issue #4). File-share VIEWING keeps working because media.show_node_by
+    //     is src=anonymous + token-scoped: it lists the parent and hard-filters to the
+    //     shared file (see media.js `_secureShareListTarget`), so no parent ACL is
+    //     needed and no sibling is exposed. This also CLOSES the old sibling/nested
+    //     over-exposure that the creator-bound file session had.
     //   - member/owner already hold standing ACL → bind to self, NO extra grant.
     //   - a non-member gets the node-scoped grant; if the grant FAILS we keep the
-    //     creator binding so the share still WORKS (degrade, never break access).
+    //     creator binding (still CLAMPED by the ceiling) so the share degrades safely.
     // The share is guaranteed valid here (TICKET_REVOKED/EXPIRED/LOCKED returned
     // at the top of this method).
     // ---------------------------------------------------------------------
@@ -659,7 +666,7 @@ class __dmz extends Mfs {
     // (view/download 3, chat 7) so the gate clamps the grant's over-reach; edit (15) and
     // owner/member get NO ceiling (full / own access). null = no clamp.
     let ceilingToStamp = !isAuthenticated ? 3 : null;
-    if (isAuthenticated && user.id && !info.file_nid && info.node_id) {
+    if (isAuthenticated && user.id && info.node_id) {
       if (hasStanding || String(user.id) === String(info.creator_id)) {
         // Real member, manual collaborator, or owner — standing access independent
         // of any secure-share grant; operate as themselves. No extra grant. Any
@@ -668,14 +675,20 @@ class __dmz extends Mfs {
         bindUid = user.id;
       } else {
         // Pure recipient — holds only their own (or no) secure-share grant on this
-        // node. Grant capped node access, then bind to their uid. UPGRADE-ONLY:
-        // max with any already-earned secure-share priv so opening a lower link
-        // after a higher one never downgrades, and re-opening the same link is a
-        // no-op REPLACE.
+        // node (the shared FILE or FOLDER, info.node_id). Grant capped node access,
+        // then bind to their uid. UPGRADE-ONLY: max with any already-earned
+        // secure-share priv so opening a lower link after a higher one never
+        // downgrades, and re-opening the same link is a no-op REPLACE.
         let newCapPriv = 0b0000011;                                    // read / view / download
         if (caps.indexOf('can_chat') !== -1) newCapPriv = 0b0000111;   // write — chat.post
         if (caps.indexOf('can_edit') !== -1) newCapPriv = 0b0001111;   // delete/modify — edit
         const grantTarget = Math.max(newCapPriv, ownShareGrant);
+        // Clamp view/download (3) and chat (7) recipients with a session ceiling so
+        // router/rest denies file-writes (the node grant alone can't — chat grant 7
+        // carries the write bit). Edit (15) = full edit intended → no ceiling. Set
+        // BEFORE the grant so a grant FAILURE degrades to a CLAMPED creator binding,
+        // never an un-clamped creator session.
+        ceilingToStamp = grantTarget < 0b0001111 ? grantTarget : null;
         try {
           const db_name = await this.yp.await_func('get_db_name', info.hub_id);
           if (db_name) {
@@ -684,29 +697,10 @@ class __dmz extends Mfs {
               info.node_id, user.id, 0, grantTarget, 'system', 'Secure share access'
             );
             bindUid = user.id;            // rebind ONLY after the grant succeeds
-            // Clamp view/download (3) and chat (7) recipients with a session ceiling so
-            // router/rest denies file-writes (the node grant alone can't — chat grant 7
-            // carries the write bit). Edit (15) = full edit intended → no ceiling (the
-            // stamp site clears any stale one).
-            ceilingToStamp = grantTarget < 0b0001111 ? grantTarget : null;
           }
         } catch (e) {
-          this.warn('[dmz.login] secure_share node grant failed; keeping creator binding:', e && e.message);
+          this.warn('[dmz.login] secure_share node grant failed; keeping creator binding (clamped):', e && e.message);
         }
-      }
-    } else if (
-      isAuthenticated && info.file_nid && user.id &&
-      !(memberPriv > 0 || String(user.id) === String(info.creator_id))
-    ) {
-      // Authenticated NON-member recipient of a single-FILE share. The folder rebind
-      // above is skipped (a single file has no subtree to node-scope), so the session
-      // stays creator-bound — without a ceiling it would otherwise inherit FULL creator
-      // privilege and let a view/download/chat recipient run creator-authorized
-      // writes/deletes after signing in. Clamp the creator-bound session to the share
-      // caps. can_edit → no clamp (they may edit the shared file; the office-editor path
-      // is node-scoped via mfs_node_in_subtree).
-      if (caps.indexOf('can_edit') === -1) {
-        ceilingToStamp = (caps.indexOf('can_chat') !== -1) ? 7 : 3;
       }
     }
     // ---------------------------------------------------------------------
@@ -934,9 +928,18 @@ class __dmz extends Mfs {
     }
 
     if (info.validity == 'TICKET_OK' && info.uid) {
-      await this.yp.await_proc('cookie_touch', {
-        sid: this.input.sid(), uid: info.uid
-      });
+      // Same regsid-hijack guard as _loginSecureShare (defense-in-depth): NEVER rebind
+      // the caller's main-domain auth cookie (regsid) to the legacy share identity.
+      // Legacy links are per-vhost (isolated hub-cookie sid != regsid) so this normally
+      // binds the share's own hub-cookie session; the guard only trips if a legacy share
+      // ever resolves to regsid, in which case rebinding would clobber the auth session.
+      if (regsid && this.input.sid() === regsid) {
+        this.warn('[dmz.login][SECURITY] legacy dmz bind skipped: DMZ session resolved to the main-domain regsid', { share_uid: info.uid });
+      } else {
+        await this.yp.await_proc('cookie_touch', {
+          sid: this.input.sid(), uid: info.uid
+        });
+      }
     }
 
     if (info.is_public && !user.guest_name) {
