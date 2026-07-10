@@ -4,7 +4,8 @@
       "doc": "Book a new meeting room. Creates a scheduled meeting node (category=schedule, ext=schedule) in the user home directory with attendees, title, message, and date metadata. Title defaults to a locale-generated headline if not provided. Date defaults to current time if not provided.",
       "scope": "hub",
       "permission": {
-        "src": "admin"
+        "src": "write",
+        "fast_check": "user_permission"
       },
       "params": {
         "title": {
@@ -16,6 +17,21 @@
           "type": "string",
           "required": false,
           "description": "Meeting date/time string. Defaults to current moment formatted as locale long date-time if omitted."
+        },
+        "stime": {
+          "type": "integer",
+          "required": false,
+          "description": "Meeting start time as UNIX-epoch seconds. Canonical, range-queryable time (see room.list). Stored in metadata alongside the display date."
+        },
+        "etime": {
+          "type": "integer",
+          "required": false,
+          "description": "Meeting end time as UNIX-epoch seconds. Canonical, range-queryable time (see room.list)."
+        },
+        "recur": {
+          "type": "object",
+          "required": false,
+          "description": "Recurrence rule { freq: 'daily'|'weekly'|'monthly', until?: epoch-seconds }, or null for a one-off. Stored in metadata; occurrences are expanded client-side on the calendar."
         },
         "message": {
           "type": "string",
@@ -430,11 +446,48 @@
       "errors": []
     },
 
+    "list": {
+      "doc": "List the current hub's scheduled meetings whose time window overlaps [stime, etime]. Reads schedule nodes (category=schedule) via room_list_scheduled, filtering on the canonical UNIX-epoch time persisted in node metadata. Both bounds optional; omit to return every scheduled meeting. Feeds the folder-window meeting calendar.",
+      "scope": "hub",
+      "permission": {
+        "src": "read",
+        "fast_check": "user_permission"
+      },
+      "params": {
+        "stime": {
+          "type": "integer",
+          "required": false,
+          "description": "Range start as UNIX-epoch seconds. Omit (with etime) for no time filter."
+        },
+        "etime": {
+          "type": "integer",
+          "required": false,
+          "description": "Range end as UNIX-epoch seconds. Omit (with stime) for no time filter."
+        }
+      },
+      "returns": {
+        "type": "array",
+        "description": "Scheduled meetings in range, ordered by start time",
+        "items": {
+          "type": "object",
+          "properties": {
+            "id": { "type": "string", "description": "Meeting node id (also room_id)" },
+            "filename": { "type": "string", "description": "Meeting title" },
+            "stime": { "type": "integer", "description": "Start time (epoch seconds)" },
+            "etime": { "type": "integer", "description": "End time (epoch seconds)" },
+            "metadata": { "type": "object", "description": "Full node metadata (content: attendees/title/message/date/stime/etime/room_id)" }
+          }
+        }
+      },
+      "errors": []
+    },
+
     "remove": {
       "doc": "Remove a meeting room and revoke all permissions. Revokes all permissions on the meeting node using permission_revoke with scope 'meeting' and returns the node ID as confirmation.",
       "scope": "hub",
       "permission": {
-        "src": "admin"
+        "src": "write",
+        "fast_check": "user_permission"
       },
       "params": {
         "nid": {
@@ -602,7 +655,8 @@
       "doc": "Update a scheduled meeting room. Supports partial or full updates controlled by the flag parameter. Flags: 'when' updates date only, 'title' updates title and renames the node, 'agenda' updates message, 'member' updates attendees and sends email invitations, 'all' updates all fields. Commits invitation emails to new attendees when flag includes member changes.",
       "scope": "hub",
       "permission": {
-        "src": "admin"
+        "src": "write",
+        "fast_check": "user_permission"
       },
       "params": {
         "flag": {
@@ -620,6 +674,16 @@
           "required": false,
           "description": "New meeting date/time string. Applied when flag is 'when' or 'all'."
         },
+        "stime": {
+          "type": "integer",
+          "required": false,
+          "description": "New meeting start time as UNIX-epoch seconds. Applied when flag is 'when' or 'all'; preserved if omitted."
+        },
+        "etime": {
+          "type": "integer",
+          "required": false,
+          "description": "New meeting end time as UNIX-epoch seconds. Applied when flag is 'when' or 'all'; preserved if omitted."
+        },
         "title": {
           "type": "string",
           "required": false,
@@ -633,7 +697,12 @@
         "attendees": {
           "type": "array",
           "required": false,
-          "description": "Updated attendee list. Required when flag is 'member' or 'all'. Each entry should contain email and optionally name."
+          "description": "Updated attendee list of WORKSPACE MEMBERS (applied when flag is 'member' or 'all'). Each entry is { uid, name } — no email/DMZ invite. Newly-added members get an in-app notification; visibility is workspace-wide."
+        },
+        "recur": {
+          "type": "object",
+          "required": false,
+          "description": "Recurrence rule { freq: 'daily'|'weekly'|'monthly', until?: epoch-seconds } or null to clear. Flag-agnostic: applied whenever sent."
         }
       },
       "returns": {
