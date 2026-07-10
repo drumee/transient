@@ -43,7 +43,15 @@ class Goggle extends Loby {
       if (id && secret) {
         // Dynamic callback: works for all developer endpoints
         const redirect_uri = `https://${main_domain}${svc_location}/google.callback?`;
-        this.googleClient = new OAuth2Client(id, secret, redirect_uri);
+        // Timeout on every Google HTTP call (token exchange, cert fetch):
+        // a stalled egress must fail fast into the callback error path,
+        // not hang until nginx cuts the request with a 504 at 60s.
+        this.googleClient = new OAuth2Client({
+          clientId: id,
+          clientSecret: secret,
+          redirectUri: redirect_uri,
+          transporterOptions: { timeout: 10000 }
+        });
         this.googleClientId = id;
         this.debug("[Auth] Google Credentials loaded. Callback:", redirect_uri);
       } else {
@@ -137,30 +145,45 @@ class Goggle extends Loby {
    */
   async callback() {
     this.debug('[Auth] Google OAuth URL CALL BACK:');
-    const code = this.getOAuthCode('google');
-    if (!code) return;
-    const profile = await this._getGoogleProfile(code);
-    profile.provider = 'google';
-    let res = await this.handleOAuthCallback(profile);
-    // 2FA required: the session is pending, not finalized. Keep the pending
-    // session cookie (sendHtml/setAuthorization) and bounce the browser to the
-    // signin app's OTP screen, which finalizes via oauth.verify_otp.
-    if (res.status === 'otp_required') {
-      const redirect = `https://${main_domain}${endpoint_path}/#/welcome/signin?oauth_mfa=1&email=${encodeURIComponent(res.email || '')}`;
-      const tpl = resolve(__dirname, './templates/otp-challenge.html');
-      // res.session_id is the pending cookie's id (original signin session) —
-      // sendHtml binds the browser's authorization to it.
-      this.sendHtml({ ...res, redirect }, tpl);
-      return;
-    }
-    const home = `https://${res.domain}${endpoint_path}/`;
-    if (!res.error) {
+    try {
+      const code = this.getOAuthCode('google', true);
+      if (!code) {
+        // No/invalid code — typically the user cancelled on Google's
+        // consent screen (error=access_denied).
+        return this.sendOauthError('access_denied');
+      }
+      const profile = await this._getGoogleProfile(code);
+      profile.provider = 'google';
+      let res = await this.handleOAuthCallback(profile);
+      // 2FA required: the session is pending, not finalized. Keep the pending
+      // session cookie (sendHtml/setAuthorization) and bounce the browser to the
+      // signin app's OTP screen, which finalizes via oauth.verify_otp.
+      if (res.status === 'otp_required') {
+        const redirect = `https://${main_domain}${endpoint_path}/#/welcome/signin?oauth_mfa=1&email=${encodeURIComponent(res.email || '')}`;
+        const tpl = resolve(__dirname, './templates/otp-challenge.html');
+        // res.session_id is the pending cookie's id (original signin session) —
+        // sendHtml binds the browser's authorization to it.
+        this.sendHtml({ ...res, redirect }, tpl);
+        return;
+      }
+      if (res.error) {
+        // invalid_state, oauth_not_linked, account creation failures... —
+        // previously this fell through without ever answering the browser.
+        return this.sendOauthError(res.error);
+      }
+      const home = `https://${res.domain}${endpoint_path}/`;
       const tpl = resolve(__dirname, './templates/account-created.html');
       // New OAuth account: show the welcome card (auto_redirect off) so the
       // user lands on it; the CTA continues to the desk, where the onboarding
       // gate kicks in. Existing sign-ins skip the card and go straight home.
       const is_new = res.method === 'signup';
       this.sendHtml({ ...res, home, auto_redirect: is_new ? 0 : 1 }, tpl)
+    } catch (e) {
+      // getToken/verifyIdToken rejected or timed out (reused code, expired
+      // code, Google egress trouble) — the user gets the signin screen back
+      // instead of a raw 400/504 page.
+      this.warn('[Auth] Google OAuth callback failed:', e.message || e);
+      this.sendOauthError('oauth_failed');
     }
   }
 

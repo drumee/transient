@@ -127,11 +127,12 @@ class Account extends Entity {
   /**
    * 
    */
-  getOAuthCode(provider) {
+  getOAuthCode(provider, quiet = false) {
     const code = this.input.get(Attr.code);
     if (!code || !/^[A-Za-z0-9-_./]+$/.test(code)) {
       this.warn(`[Auth] Missing or invalid OAuth code from ${provider}`, Attr.code, code);
-      this.output.data({ status: 'error', error: 'invalid_code' });
+      // quiet: the caller sends its own response (e.g. a signin redirect)
+      if (!quiet) this.output.data({ status: 'error', error: 'invalid_code' });
       return null
     }
     return code;
@@ -441,9 +442,29 @@ class Account extends Entity {
 
 
   /**
- * 
- * @param {*} args 
- * @param {*} opt 
+   * OAuth callback error paths would otherwise leave the browser on a raw
+   * JSON/400 page (or a 504 when the provider call hangs) — bounce it back
+   * to the signin screen with a status flag instead.
+   * @param {string} error
+   */
+  sendOauthError(error) {
+    const { main_domain, endpoint_path } = sysEnv();
+    const redirect = `https://${main_domain}${endpoint_path}/#/welcome/signin?oauth_error=${encodeURIComponent(error || 'oauth_failed')}`;
+    const tpl = resolve(__dirname, '../templates/oauth-error.html');
+    const html = String(readFileSync(tpl)).trim();
+    const content = template(html)({ redirect });
+    this.output.set_header(
+      "Cache-Control",
+      "no-cache, no-store, must-revalidate"
+    );
+    this.output.html(content);
+  }
+
+
+  /**
+ *
+ * @param {*} args
+ * @param {*} opt
  */
   async createHub(args, opt = {}) {
     let { owner_id, domain, area, filename, hostname, pid, user_db } = args;
