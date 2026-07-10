@@ -214,6 +214,48 @@ class __media extends Mfs {
   }
 
   /**
+   * Resolve the token-authorized LISTING target for a secure-share DMZ request.
+   * A logged-in recipient is node-granted only on the SHARED node; for a FILE share
+   * that grant does NOT confer access to the file's PARENT — which is the folder
+   * media.show_node_by lists. This returns, derived from the TOKEN (authoritative,
+   * never client-supplied):
+   *   { nid: <folder to list>, file_nid: <shared file to hard-filter to | null> }
+   * so the listing can (a) target the shared file's parent even when the caller's own
+   * source resolution missed it, and (b) hard-filter to the shared file so NO sibling
+   * is ever returned. Returns null when NOT a valid secure-share request (no token /
+   * legacy / invalid / revoked / expired) → the caller leaves the listing untouched
+   * (byte-identical for every normal, token-less listing).
+   */
+  async _secureShareListTarget() {
+    const token = this.input.get(Attr.token);
+    if (!token) return null;
+    let info;
+    try {
+      info = toArray(await this.yp.await_proc('secure_share_info', token))[0];
+    } catch (e) {
+      return null; // cannot classify → leave listing untouched
+    }
+    if (!info || info.failed || !info.creator_id) return null;
+    if (info.validity && info.validity !== 'TICKET_OK') return null;
+    let listNid = info.node_id;
+    let file_nid = null;
+    try {
+      const attr = toArray(
+        await this.yp.await_proc('forward_proc', info.hub_id, 'mfs_node_attr', `'${info.node_id}'`)
+      )[0] || {};
+      // A real FILE (not folder / hub / workspace-root) → list its PARENT, hard-filtered
+      // to the file itself. Mirrors the node-type remap in dmz.js::_loginSecureShare.
+      if (attr.filetype && attr.filetype !== 'folder' && attr.filetype !== 'hub' && attr.filetype !== 'root' && attr.pid) {
+        file_nid = info.node_id;
+        listNid = attr.pid;
+      }
+    } catch (e) {
+      // Node-type probe failed → treat as a container (list node_id, no file filter).
+    }
+    return { nid: listNid, file_nid };
+  }
+
+  /**
    *
    * @returns
    */
@@ -1319,7 +1361,8 @@ class __media extends Mfs {
    * 
    */
   async show_node_by() {
-    const nid = this.source_granted().id || "0";
+    const granted = this.source_granted();
+    let nid = (granted && granted.id) || "0";
     const VALID_TYPES = ['all', 'node', Attr.file, Attr.hub, 'docs', 'pdf', 'image', 'other'];
     let sort_by = this.input.use(Attr.sort, Attr.rank).toLowerCase();
     let order = this.input.use(Attr.order, "asc").toLowerCase();
@@ -1334,13 +1377,24 @@ class __media extends Mfs {
       type = 'all';
     }
     const page = this.input.use(Attr.page, 1);
+    // Secure-share (DMZ) request: authorize the listing target from the TOKEN. A
+    // logged-in recipient node-granted only on the shared FILE has no ACL on its
+    // parent, so source resolution can miss it (nid === "0"); the token supplies the
+    // parent to list. For a file share we ALSO hard-filter to the shared file below so
+    // no sibling is ever exposed. null (no token / not a secure share) → unchanged.
+    const ssTarget = await this._secureShareListTarget();
+    if (ssTarget && ssTarget.nid && nid === "0") {
+      nid = ssTarget.nid;
+    }
     let data = await this.db.await_proc(
       "mfs_show_node_by",
       nid,
       this.uid,
       { sort_by, order, page, type }
     );
-    const file_nid = this.input.get('file_nid');
+    // Token-authoritative file filter wins over the client value so a crafted request
+    // (omitting file_nid) can never enumerate the shared file's siblings.
+    const file_nid = (ssTarget && ssTarget.file_nid) || this.input.get('file_nid');
     if (file_nid) {
       data = toArray(data).filter(item => item && item.nid === file_nid);
     }
@@ -1363,7 +1417,8 @@ class __media extends Mfs {
    *
    */
   async show_node_by_with_size() {
-    const nid = this.source_granted().id || "0";
+    const granted = this.source_granted();
+    let nid = (granted && granted.id) || "0";
     const VALID_TYPES = ['all', 'node', 'file', 'hub', 'docs', 'pdf', 'image', 'other'];
     let sort_by = this.input.use(Attr.sort, Attr.rank).toLowerCase();
     let order = this.input.use(Attr.order, "asc").toLowerCase();
@@ -1378,6 +1433,11 @@ class __media extends Mfs {
       type = 'all';
     }
     const page = this.input.use(Attr.page, 1);
+    // Secure-share (DMZ) token scoping — same as show_node_by (see there). null → unchanged.
+    const ssTarget = await this._secureShareListTarget();
+    if (ssTarget && ssTarget.nid && nid === "0") {
+      nid = ssTarget.nid;
+    }
     let branch = await this.db.await_proc(
       "mfs_show_node_by",
       nid,
@@ -1386,6 +1446,10 @@ class __media extends Mfs {
     );
     if (!isArray(branch)) {
       branch = [branch];
+    }
+    const ssFileNid = (ssTarget && ssTarget.file_nid) || this.input.get('file_nid');
+    if (ssFileNid) {
+      branch = toArray(branch).filter(item => item && item.nid === ssFileNid);
     }
     let tree = [];
     for (let file of branch) {
