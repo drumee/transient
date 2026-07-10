@@ -69,7 +69,13 @@ class __public_stripe_webhook extends Entity {
           if (entity_id) {
             // Mirror the live subscription for the status panel + Billing Portal.
             const customer_id = obj.customer || null;
-            const subscription_id = obj.subscription || obj.id || null;
+            // checkout.session.completed carries the SESSION in obj — its
+            // .subscription may still be null and the session id (cs_…, 66
+            // chars) must never be mirrored as a subscription id (VARCHAR(30)
+            // overflow silently killed the mirror row).
+            const subscription_id = obj.object === 'checkout.session'
+              ? (typeof obj.subscription === 'string' ? obj.subscription : null)
+              : (obj.id || null);
             const status = obj.status || 'active';
             const entity_type = md.entity_type || 'user';
             // Line items: the subscription object carries them; a checkout.session
@@ -86,7 +92,11 @@ class __public_stripe_webhook extends Entity {
             const { seats, price, extra_disk, extra_seats } = await this._itemsEntitlement(items);
             const seat_total = await this._seatTotal(entity_type, plan, period, seats, extra_seats);
             // 0, not null: await_proc maps null -> '' which a strict-mode INT param rejects.
-            await this.yp.await_proc('subscription_update', entity_id, customer_id, subscription_id, plan, period, 1, price, 0, status);
+            // Mirror only with a real subscription id — the subscription.created/
+            // updated events carry it when the session doesn't.
+            if (subscription_id) {
+              await this.yp.await_proc('subscription_update', entity_id, customer_id, subscription_id, plan, period, 1, price, 0, status);
+            }
             await this.yp.await_proc('payment_apply_entitlement', entity_id, plan, period_end, entity_type, seat_total, extra_disk);
             await this.notify_user(entity_id, { service: 'payment.plan_updated', plan, status: 'active' });
           }
