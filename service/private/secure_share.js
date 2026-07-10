@@ -15,7 +15,7 @@
  * =============================================================================
  */
 const {
-  Attr, Cache, Messenger, RedisStore, toArray, sysEnv
+  Attr, Cache, Messenger, RedisStore, toArray
 } = require('@drumee/server-essentials');
 const { Mfs } = require('@drumee/server-core');
 const { isEmpty } = require('lodash');
@@ -140,19 +140,18 @@ class __secure_share extends Mfs {
   }
 
   /**
-   * Base URL for every share link. Anchored to the neutral share host
-   * (share.<main_domain>) instead of the content workspace's vhost, so links no
-   * longer leak the workspace name. Safe because a share resolves 100% by token
-   * (dmz.login → secure_share_info) AND the recipient FE pins the content hub_id
-   * on every DMZ request (ui @drumee/ui-essentials defaultPayload patch), so the
-   * neutral connect host never mis-resolves the hub. The neutral host itself needs
-   * no dedicated hub — bootstrap get_env falls back to the default hub.
-   * homepath() supplies the per-endpoint scheme + mount path (/-/, /-/preview/…).
+   * Base URL for every share link. Anchored to the content workspace's own vhost.
+   * The neutral share host (share.<main_domain>) was REVERTED (hotfix
+   * 2026-07-10): on the neutral host the page bootstraps the default hub, so the
+   * dmz/share cookie-isolation in page.js never engaged and dmz.login's
+   * this.input.sid() resolved to the recipient's main-domain regsid — cookie_touch
+   * then rebound the recipient's AUTH session to the share creator (account
+   * takeover on app.drumee.com). The per-vhost host keeps the DMZ session on an
+   * isolated hub cookie. homepath() supplies the per-endpoint scheme + mount path.
    * Single source of truth — used by create(), list() and access_list().
    */
   _shareLinkBase() {
-    const { main_domain } = sysEnv();
-    return this.input.homepath(`share.${main_domain}`);
+    return this.input.homepath(this.hub.get(Attr.vhost));
   }
 
   /**
