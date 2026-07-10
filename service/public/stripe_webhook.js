@@ -76,7 +76,12 @@ class __public_stripe_webhook extends Entity {
             const subscription_id = obj.object === 'checkout.session'
               ? (typeof obj.subscription === 'string' ? obj.subscription : null)
               : (obj.id || null);
-            const status = obj.status || 'active';
+            // A pending cancellation (portal "Cancel subscription" = cancel at
+            // period end) keeps Stripe status 'active'; mirror it as 'canceled'
+            // so the UI status line reads "will be canceled on {period_end}"
+            // (the design's Settings-card copy). Entitlement stays until the
+            // final customer.subscription.deleted.
+            const status = obj.cancel_at_period_end ? 'canceled' : (obj.status || 'active');
             const entity_type = md.entity_type || 'user';
             // Line items: the subscription object carries them; a checkout.session
             // does not, so retrieve the subscription to read base + add-ons.
