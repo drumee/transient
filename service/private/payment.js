@@ -91,8 +91,12 @@ class __private_payment extends Entity {
       const addon = await this.yp.await_proc('payment_get_plan', bundle, period, 'eur');
       if (addon && addon.stripe_price_id) line_items.push({ price: addon.stripe_price_id, quantity: 1 });
     }
-    const success_url = this.input.servicepath({ service: 'callback.check_out_success' }) + '&session_id={CHECKOUT_SESSION_ID}';
-    const cancel_url = this.input.servicepath({ service: 'callback.check_out_cancel' });
+    // Build the return URLs from homepath (host-derived, endpoint-aware).
+    // servicepath() resolves the endpoint segment to 'undefined' on dev
+    // endpoints (/-/undefined/svc/...), which broke the post-payment redirect.
+    const svcbase = this.input.homepath().replace(/\/+$/, '') + '/svc/?service=';
+    const success_url = `${svcbase}callback.check_out_success&session_id={CHECKOUT_SESSION_ID}`;
+    const cancel_url = `${svcbase}callback.check_out_cancel`;
     const metadata = { entity_type, entity_id, plan, period };
     const session = await stripe.checkout.sessions.create({
       mode: 'subscription',
