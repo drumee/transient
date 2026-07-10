@@ -15,7 +15,7 @@
  * =============================================================================
  */
 const {
-  Attr, Cache, Messenger, RedisStore, toArray
+  Attr, Cache, Messenger, RedisStore, toArray, sysEnv
 } = require('@drumee/server-essentials');
 const { Mfs } = require('@drumee/server-core');
 const { isEmpty } = require('lodash');
@@ -140,18 +140,21 @@ class __secure_share extends Mfs {
   }
 
   /**
-   * Base URL for every share link. Anchored to the content workspace's own vhost.
-   * The neutral share host (share.<main_domain>) was REVERTED (hotfix
-   * 2026-07-10): on the neutral host the page bootstraps the default hub, so the
-   * dmz/share cookie-isolation in page.js never engaged and dmz.login's
-   * this.input.sid() resolved to the recipient's main-domain regsid — cookie_touch
-   * then rebound the recipient's AUTH session to the share creator (account
-   * takeover on app.drumee.com). The per-vhost host keeps the DMZ session on an
-   * isolated hub cookie. homepath() supplies the per-endpoint scheme + mount path.
-   * Single source of truth — used by create(), list() and access_list().
+   * Base URL for every share link. Anchored to the NEUTRAL share host
+   * (share.<main_domain>) so links don't leak the workspace vhost name. This was
+   * temporarily reverted to the per-vhost host on 2026-07-10 after the neutral host
+   * caused an auth-session takeover (Lexis prod issue #3) — the neutral host
+   * bootstrapped the generic fallback hub, so page.js never isolated the DMZ session
+   * and it fell back to the apex-scoped regsid. RE-ENABLED once page.js
+   * `refreshAuthorization` was taught to isolate the neutral share host onto its OWN
+   * `share.<main_domain>`-scoped session cookie (narrower than the apex → can never be
+   * the regsid auth session), so the takeover is now structurally impossible there.
+   * homepath() supplies the per-endpoint scheme + mount path. Single source of truth —
+   * used by create(), list() and access_list().
    */
   _shareLinkBase() {
-    return this.input.homepath(this.hub.get(Attr.vhost));
+    const { main_domain } = sysEnv();
+    return this.input.homepath(`share.${main_domain}`);
   }
 
   /**
