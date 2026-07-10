@@ -709,11 +709,37 @@ class __dmz extends Mfs {
         ceilingToStamp = (caps.indexOf('can_chat') !== -1) ? 7 : 3;
       }
     }
+    // ---------------------------------------------------------------------
+    // SECURITY GUARD (hotfix 2026-07-10 — regsid hijack, Lexis prod issue #3).
+    // The principal binding + ceiling below MUST only ever touch the share's
+    // ISOLATED hub-cookie session (page.js gives a dmz/share page its own sid).
+    // If this.input.sid() is instead the caller's `regsid` — the main_domain-scoped
+    // AUTH cookie that app.drumee.com reads — then:
+    //   * cookie_touch(uid=creator) would rebind the recipient's auth session to the
+    //     share creator → they are logged into the CREATOR's account on the main
+    //     domain (the reported account takeover); and
+    //   * set_session_priv_ceiling would clamp the recipient's OWN account to
+    //     read-only across the main domain.
+    // This happened once share links were served from the neutral host
+    // (share.<domain>), whose default-hub bootstrap skipped the page.js isolation so
+    // this.input.sid() fell back to regsid. NEVER apply either op to the regsid
+    // session: a share that ever resolves to it degrades (may not render) but can
+    // never hijack or clamp the auth session. Isolated sessions (sid != regsid) are
+    // completely unaffected — this is a no-op for every normal share open.
+    const _activeSid = this.input.sid();
+    const _isAuthSession = !!(regsid && _activeSid === regsid);
+    if (_isAuthSession) {
+      this.warn(
+        '[dmz.login][SECURITY] secure_share bind skipped: DMZ session resolved to the main-domain regsid (would hijack/clamp the auth session)',
+        { token, creator_id: info && info.creator_id, bindUid }
+      );
+    }
+
     // socket_id must be passed so entity_sockets() includes this guest socket in
     // hub broadcasts (e.g. secure_share_revoked). page.js ensures the hub cookie
     // has its own independent session id, so this never touches the authenticated
-    // user's regsid row.
-    if (bindUid) {
+    // user's regsid row (belt-and-suspenders: the _isAuthSession guard above).
+    if (bindUid && !_isAuthSession) {
       try {
         await this.yp.await_proc('cookie_touch', {
           sid       : this.input.sid(),
@@ -744,7 +770,7 @@ class __dmz extends Mfs {
     // serialises JS null to '' → ER_TRUNCATED_WRONG_VALUE). Best-effort: on failure
     // (e.g. the SP not yet applied to this DB) we keep the prior binding — fail-open
     // to today's behaviour, never blocking access.
-    if (bindUid) {
+    if (bindUid && !_isAuthSession) {
       try {
         if (ceilingToStamp != null) {
           await this.yp.await_proc('set_session_priv_ceiling', this.input.sid(), ceilingToStamp, bindUid);
