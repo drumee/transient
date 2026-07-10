@@ -446,6 +446,34 @@
       "errors": []
     },
 
+    "check_availability": {
+      "doc": "Free/busy for a proposed slot (workspace-scoped). Given attendee uids + [stime,etime], returns which invitees already have a meeting in this hub overlapping the slot. Warn-only; the organizer can still book.",
+      "scope": "hub",
+      "permission": {
+        "src": "read",
+        "fast_check": "user_permission"
+      },
+      "params": {
+        "stime": { "type": "integer", "required": true, "description": "Proposed start (epoch seconds)" },
+        "etime": { "type": "integer", "required": true, "description": "Proposed end (epoch seconds)" },
+        "attendees": { "type": "array", "required": false, "description": "Invitee list [{uid,name}] to check" },
+        "nid": { "type": "string", "required": false, "description": "Meeting being edited, excluded from its own check" }
+      },
+      "returns": {
+        "type": "array",
+        "description": "Per-invitee availability",
+        "items": {
+          "type": "object",
+          "properties": {
+            "uid": { "type": "string" },
+            "busy": { "type": "boolean" },
+            "conflicts": { "type": "array", "description": "Overlapping meetings [{nid,title,stime,etime}]" }
+          }
+        }
+      },
+      "errors": []
+    },
+
     "list": {
       "doc": "List the current hub's scheduled meetings whose time window overlaps [stime, etime]. Reads schedule nodes (category=schedule) via room_list_scheduled, filtering on the canonical UNIX-epoch time persisted in node metadata. Both bounds optional; omit to return every scheduled meeting. Feeds the folder-window meeting calendar.",
       "scope": "hub",

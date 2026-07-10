@@ -281,6 +281,46 @@ class __private_room extends __public_room {
   }
 
   /**
+   * Free/busy for a proposed slot (workspace-scoped). Given attendee uids +
+   * [stime, etime], returns which invitees already have a meeting IN THIS HUB
+   * overlapping that slot. Warn-only — the client still lets the organizer
+   * book. `nid` (the meeting being edited) is excluded from its own check.
+   * Returns [{ uid, busy, conflicts:[{nid,title,stime,etime}] }].
+   */
+  async check_availability() {
+    const stime = this.input.need(Attr.stime);
+    const etime = this.input.need(Attr.etime);
+    const exclude = this.input.use(Attr.nid, null);
+    let attendees = this.input.use(Attr.attendees, []);
+    if (!isArray(attendees)) attendees = attendees ? [attendees] : [];
+    const uids = attendees.map((a) => a && (a.uid || a)).filter(Boolean);
+
+    const rows = toArray(await this.db.await_proc('room_list_scheduled', stime, etime));
+    const meetings = [];
+    for (const r of rows) {
+      if (exclude && r.id == exclude) continue;
+      const content = this.parseJSON(this.parseJSON(r.metadata).content);
+      const s = Number(content.stime);
+      const e = Number(content.etime) || s;
+      if (!s || !(s <= etime && e >= stime)) continue; // must actually overlap
+      const parts = [];
+      if (content.created_by) parts.push(content.created_by);
+      if (isArray(content.attendees)) {
+        for (const a of content.attendees) parts.push(a && (a.uid || a));
+      }
+      meetings.push({ nid: r.id, title: content.title, stime: s, etime: e, parts });
+    }
+
+    const result = uids.map((uid) => {
+      const conflicts = meetings
+        .filter((m) => m.parts.includes(uid))
+        .map((m) => ({ nid: m.nid, title: m.title, stime: m.stime, etime: m.etime }));
+      return { uid, busy: conflicts.length > 0, conflicts };
+    });
+    this.output.data(result);
+  }
+
+  /**
    * 
    */
   async get_meeting_members() {
