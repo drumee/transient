@@ -75,8 +75,15 @@ class __private_payment extends Entity {
     // C1 Pro per-seat: the plan includes quota.$.seat seats (Pro: 5); seats
     // beyond that are a recurring pro_seat add-on line (quantity = extra).
     if (entity_type !== 'org') {
+      // plan_row.quota may arrive already parsed (driver auto-parses JSON
+      // columns) OR as a string — handle both, else JSON.parse(object) throws
+      // and the seat add-on is silently dropped (only the Pro base is billed).
       let included = 0;
-      try { included = ~~JSON.parse(plan_row.quota || '{}').seat || 0; } catch (e) { included = 0; }
+      try {
+        const q = plan_row.quota;
+        const obj = q && typeof q === 'object' ? q : JSON.parse(q || '{}');
+        included = ~~obj.seat || 0;
+      } catch (e) { included = 0; }
       const extra = seats - (included || 1);
       if (included > 0 && extra > 0) {
         const seat_addon = await this.yp.await_proc('payment_get_plan', 'pro_seat', period, 'eur');

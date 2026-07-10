@@ -33,7 +33,10 @@ class __public_stripe_webhook extends Entity {
     let included = 0;
     try {
       const row = await this.yp.await_proc('payment_get_plan', plan, period, 'eur');
-      included = ~~JSON.parse((row && row.quota) || '{}').seat || 0;
+      // quota may be a parsed object or a JSON string — handle both.
+      const q = row && row.quota;
+      const obj = q && typeof q === 'object' ? q : JSON.parse(q || '{}');
+      included = ~~obj.seat || 0;
     } catch (e) { included = 0; }
     return included + extra_seats;
   }
