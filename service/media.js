@@ -175,9 +175,23 @@ class __media extends Mfs {
   /**
    * Write (upload / mkdir) requires can_edit. Backward-compatible wrapper kept so
    * the existing pre_upload / make_dir callers stay byte-identical.
+   *
+   * FILE shares are additionally denied here: a single-file share exposes only the
+   * shared file, so the recipient may EDIT that file (media.save / the euroffice
+   * editor — separate paths, NOT gated by this method), but must never create a new
+   * node (make_dir) or upload into the file's PARENT folder. The DMZ view lists that
+   * parent (see _secureShareListTarget), so make_dir/upload target it; a recipient
+   * with any standing on the workspace (a prior folder/root-share grant, a member, or
+   * the creator) would otherwise write straight into the creator's folder even though
+   * only a file was shared (Lexis file-share report). Folder shares are unaffected
+   * (file_nid is null → allowed, no regression), and token-less / legacy / non-secure
+   * writes are unaffected (_secureShareListTarget returns null → allowed).
    */
   async _secureShareWriteAllowed() {
-    return this._secureShareCapAllowed(["can_edit"]);
+    if (!(await this._secureShareCapAllowed(["can_edit"]))) return false;
+    const listTarget = await this._secureShareListTarget();
+    if (listTarget && listTarget.file_nid) return false;
+    return true;
   }
 
   /**

@@ -213,6 +213,23 @@ const invariants = [
     assert.ok(/ssTarget\s*&&\s*ssTarget\.file_nid/.test(media), 'token-authoritative file filter missing');
   }],
 
+  ['media.js: file-share writes (make_dir/upload) are denied — only the shared file', async () => {
+    const media = src('service/media.js');
+    // Isolate the _secureShareWriteAllowed method body and assert it (a) still requires
+    // can_edit and (b) additionally denies when the share resolves to a single file
+    // (listTarget.file_nid). Removing this block reopens create/upload into the shared
+    // file's parent (the creator's folder) — the Lexis file-share report.
+    const mIdx = media.indexOf('_secureShareWriteAllowed()');
+    assert.ok(mIdx > 0, '_secureShareWriteAllowed method not found');
+    const body = media.slice(mIdx, mIdx + 400);
+    assert.ok(/_secureShareCapAllowed\(\["can_edit"\]\)/.test(body), 'write guard must still require can_edit');
+    assert.ok(/_secureShareListTarget\s*\(\s*\)/.test(body), 'write guard must resolve the share list target');
+    assert.ok(
+      /listTarget\s*&&\s*listTarget\.file_nid\)\s*return false/.test(body),
+      'write guard must deny file shares (create/upload confined to the shared file)'
+    );
+  }],
+
   ['neutral host: page.js isolates share.<main_domain> onto a host-scoped cookie', async () => {
     const page = src('client/page.js');
     assert.ok(/isNeutralShareHost/.test(page), 'neutral-host detection missing');
