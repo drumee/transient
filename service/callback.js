@@ -23,11 +23,17 @@ const {Entity} = require('@drumee/server-core');
 // the FE plan updates via the WS payment.plan_updated event.
 class __callback extends Entity {
   async check_out_cancel() {
-    this.output.html(`<script> window.location.href = '${this.input.homepath()}#/desk/' </script>`);
+    // ?checkout=cancel lets the desk show the payment-failure/cancel modal.
+    this.output.html(`<script> window.location.href = '${this.input.homepath()}?checkout=cancel#/desk/' </script>`);
   }
 
   async check_out_success() {
-    this.output.html(`<script> window.location.href = '${this.input.homepath()}#/desk/' </script>`);
+    // Carry the Checkout Session id back so the desk can show the payment-success
+    // modal with real receipt details (payment.checkout_result). The id is
+    // whitelisted to Stripe's session-id alphabet before being echoed into HTML.
+    const sid = String(this.input.use('session_id', '')).replace(/[^a-zA-Z0-9_]/g, '');
+    const flag = sid ? `?checkout=success&session_id=${sid}` : '?checkout=success';
+    this.output.html(`<script> window.location.href = '${this.input.homepath()}${flag}#/desk/' </script>`);
   }
 }
 

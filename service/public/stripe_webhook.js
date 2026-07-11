@@ -3,22 +3,42 @@ const { Entity } = require('@drumee/server-core');
 const { stripeClient, endpointSecret } = require('../lib/stripe');
 
 class __public_stripe_webhook extends Entity {
-  // Classify subscription line items: the base plan item (quantity = seats) vs
-  // storage add-on items (entity_type='addon' in yp.plan) — sum their disk *
-  // quantity into extra_disk so the entitlement = base + add-ons (P4).
+  // Classify subscription line items: the base plan item (quantity = seats for
+  // org) vs add-on items (entity_type='addon' in yp.plan) — storage add-ons sum
+  // disk * quantity into extra_disk (P4); pro_seat add-ons sum seat * quantity
+  // into extra_seats (C1 Pro per-seat).
   async _itemsEntitlement(items) {
-    let seats = 1, price = 0, extra_disk = 0;
+    let seats = 1, price = 0, extra_disk = 0, extra_seats = 0;
     for (const it of (items || [])) {
       const pid = it && it.price && it.price.id;
       const ad = pid ? await this.yp.await_proc('payment_get_addon', pid) : null;
-      if (ad && ad.disk) {
-        extra_disk += Number(ad.disk) * (it.quantity || 1);
+      if (ad && (Number(ad.disk) || Number(ad.seat))) {
+        if (Number(ad.disk)) extra_disk += Number(ad.disk) * (it.quantity || 1);
+        if (Number(ad.seat)) extra_seats += Number(ad.seat) * (it.quantity || 1);
       } else {
         seats = it.quantity || 1;
         price = (it.price && it.price.unit_amount) || 0;
       }
     }
-    return { seats, price, extra_disk };
+    return { seats, price, extra_disk, extra_seats };
+  }
+
+  // Seat total to record on the entitlement. Org (team): the base line's
+  // quantity IS the seat count. Individual (pro): the plan includes
+  // quota.$.seat seats; purchased pro_seat add-ons extend that. Returning 0
+  // keeps the plan's default $.seat (guard in payment_apply_entitlement).
+  async _seatTotal(entity_type, plan, period, base_seats, extra_seats) {
+    if (entity_type === 'org') return base_seats;
+    if (!extra_seats) return 0;
+    let included = 0;
+    try {
+      const row = await this.yp.await_proc('payment_get_plan', plan, period, 'eur');
+      // quota may be a parsed object or a JSON string — handle both.
+      const q = row && row.quota;
+      const obj = q && typeof q === 'object' ? q : JSON.parse(q || '{}');
+      included = ~~obj.seat || 0;
+    } catch (e) { included = 0; }
+    return included + extra_seats;
   }
 
   async receive() {
@@ -52,8 +72,19 @@ class __public_stripe_webhook extends Entity {
           if (entity_id) {
             // Mirror the live subscription for the status panel + Billing Portal.
             const customer_id = obj.customer || null;
-            const subscription_id = obj.subscription || obj.id || null;
-            const status = obj.status || 'active';
+            // checkout.session.completed carries the SESSION in obj — its
+            // .subscription may still be null and the session id (cs_…, 66
+            // chars) must never be mirrored as a subscription id (VARCHAR(30)
+            // overflow silently killed the mirror row).
+            const subscription_id = obj.object === 'checkout.session'
+              ? (typeof obj.subscription === 'string' ? obj.subscription : null)
+              : (obj.id || null);
+            // A pending cancellation (portal "Cancel subscription" = cancel at
+            // period end) keeps Stripe status 'active'; mirror it as 'canceled'
+            // so the UI status line reads "will be canceled on {period_end}"
+            // (the design's Settings-card copy). Entitlement stays until the
+            // final customer.subscription.deleted.
+            const status = obj.cancel_at_period_end ? 'canceled' : (obj.status || 'active');
             const entity_type = md.entity_type || 'user';
             // Line items: the subscription object carries them; a checkout.session
             // does not, so retrieve the subscription to read base + add-ons.
@@ -66,10 +97,15 @@ class __public_stripe_webhook extends Entity {
                 period_end = period_end || s.current_period_end || (items[0] && items[0].current_period_end) || 0;
               } catch (e3) { items = []; }
             }
-            const { seats, price, extra_disk } = await this._itemsEntitlement(items);
+            const { seats, price, extra_disk, extra_seats } = await this._itemsEntitlement(items);
+            const seat_total = await this._seatTotal(entity_type, plan, period, seats, extra_seats);
             // 0, not null: await_proc maps null -> '' which a strict-mode INT param rejects.
-            await this.yp.await_proc('subscription_update', entity_id, customer_id, subscription_id, plan, period, 1, price, 0, status);
-            await this.yp.await_proc('payment_apply_entitlement', entity_id, plan, period_end, entity_type, seats, extra_disk);
+            // Mirror only with a real subscription id — the subscription.created/
+            // updated events carry it when the session doesn't.
+            if (subscription_id) {
+              await this.yp.await_proc('subscription_update', entity_id, customer_id, subscription_id, plan, period, 1, price, 0, status);
+            }
+            await this.yp.await_proc('payment_apply_entitlement', entity_id, plan, period_end, entity_type, seat_total, extra_disk);
             await this.notify_user(entity_id, { service: 'payment.plan_updated', plan, status: 'active' });
           }
           break;
@@ -98,8 +134,9 @@ class __public_stripe_webhook extends Entity {
               // Recurring renewal succeeded -> re-apply entitlement (bumps period_end).
               const items = (sub && sub.items && sub.items.data) || [];
               const pend = (sub && sub.current_period_end) || (items[0] && items[0].current_period_end) || 0;
-              const { seats, extra_disk } = await this._itemsEntitlement(items);
-              await this.yp.await_proc('payment_apply_entitlement', eid, smd.plan || 'pro', pend, smd.entity_type || 'user', seats, extra_disk);
+              const { seats, extra_disk, extra_seats } = await this._itemsEntitlement(items);
+              const seat_total = await this._seatTotal(smd.entity_type || 'user', smd.plan || 'pro', smd.period || 'month', seats, extra_seats);
+              await this.yp.await_proc('payment_apply_entitlement', eid, smd.plan || 'pro', pend, smd.entity_type || 'user', seat_total, extra_disk);
               await this.notify_user(eid, { service: 'payment.plan_updated', plan: smd.plan, status: 'active' });
             } else {
               // Payment failed -> keep entitlement during Stripe's smart retries
