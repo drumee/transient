@@ -16,7 +16,7 @@
  */
 const { isEmpty, isArray, difference, map } = require('lodash');
 const __public_room = require("../room");
-const { Attr, Privilege, Cache, sysEnv } = require("@drumee/server-essentials")
+const { Attr, Privilege, Cache, sysEnv, RedisStore, toArray } = require("@drumee/server-essentials")
 
 //########################################
 class __private_room extends __public_room {
@@ -124,6 +124,14 @@ class __private_room extends __public_room {
     let message = this.input.use(Attr.message) || this.user.locale_message(
       '_x_invite_you_meeting'
     ).format(name);
+    // Canonical meeting time = UNIX-epoch seconds (stime/etime), the source of
+    // truth used for calendar range queries (see room_list_scheduled). `date`
+    // stays as a human display string for back-compat with player/schedule.
+    let stime = this.input.use(Attr.stime, null);
+    let etime = this.input.use(Attr.etime, null);
+    // Recurrence rule: { freq: 'daily'|'weekly'|'monthly', until?: epoch } or
+    // null for a one-off. The calendar expands occurrences client-side.
+    let recur = this.input.use('recur', null);
 
     let args = {
       owner_id: this.uid,
@@ -138,7 +146,8 @@ class __private_room extends __public_room {
     let results = { isOutput: 1 };
     let metadata = {
       content: {
-        attendees: [], title, message, date, room_id: "set-me"
+        attendees: [], title, message, date, stime, etime, recur,
+        created_by: this.uid, room_id: "set-me"
       },
       room_status: 'booked'
     };
@@ -159,14 +168,34 @@ class __private_room extends __public_room {
     let node = await this.db.await_proc('mfs_node_attr', nid);
     let metadata = this.parseJSON(node.metadata);
     let content = this.parseJSON(metadata.content);
+    // Owner-only edit: only the creator may modify (legacy meetings without a
+    // recorded creator stay editable for backward-compat).
+    if (content.created_by && content.created_by !== this.uid) {
+      this.exception.user("NOT_MEETING_OWNER");
+      return;
+    }
     let attendees = content.attendees
     let title = content.title
     let message = content.message
     let date = content.date
+    let stime = content.stime
+    let etime = content.etime
+    let recur = content.recur
 
     if (flag == 'when' || flag == 'all') {
       date = this.input.use(Attr.date) || Moment(Moment.now() / 1000, 'X').format('LLLL');
+      // Keep the queryable epochs in lockstep with the display date; only
+      // overwrite when the client actually sends them (preserve otherwise).
+      let _stime = this.input.use(Attr.stime, null);
+      let _etime = this.input.use(Attr.etime, null);
+      if (_stime != null) stime = _stime;
+      if (_etime != null) etime = _etime;
     }
+
+    // Recurrence is flag-agnostic: update it whenever the client sends `recur`
+    // (an object to set, or null to clear); preserve otherwise.
+    let _recur = this.input.use('recur', undefined);
+    if (_recur !== undefined) recur = _recur;
 
     if (flag == 'title' || flag == 'all') {
       let headline = this.user.locale_message('_meeting_scheduled_by_x').format(name);
@@ -182,31 +211,113 @@ class __private_room extends __public_room {
         '_x_invite_you_meeting'
       ).format(name);
     }
+    // Attendees are WORKSPACE MEMBERS, keyed by uid (no email/DMZ invite). We
+    // store { uid, name } and notify only the newly-added members in-app.
+    let addedUids = [];
     if (flag == 'member' || flag == 'all') {
-      attendees = this.input.need(Attr.attendees);
-      if (!isEmpty(attendees)) {
-        if (!isArray(attendees)) {
-          attendees = [attendees];
-        }
-      }
-      let members_mail = map(attendees, 'email');
-      let delete_mails = difference(members_mail, attendees);
-      let new_mails = difference(attendees, members_mail);
-      let headline = this.user.locale_message('_meeting_scheduled_by_x').format(name);
-      await this._commit_invitation(attendees, { ...node, message, date, title, headline });
+      let incoming = this.input.use(Attr.attendees, []);
+      if (!isArray(incoming)) incoming = incoming ? [incoming] : [];
+      const prevUids = (isArray(attendees) ? attendees : [])
+        .map((a) => (a && (a.uid || a)) )
+        .filter(Boolean);
+      const next = incoming
+        .map((a) => ({ uid: (a && (a.uid || a)), name: (a && a.name) || '' }))
+        .filter((a) => a.uid);
+      addedUids = next.map((a) => a.uid).filter((u) => !prevUids.includes(u));
+      attendees = next;
     }
     await this.db.await_proc('mfs_set_metadata',
       nid,
       {
         content: {
-          attendees, title, message, date, room_id: nid
+          attendees, title, message, date, stime, etime, recur,
+          created_by: content.created_by, room_id: nid
         },
         room_status: 'booked'
       }, 1);
+    // In-app popup for newly-invited workspace members (fire-and-forget).
+    if (addedUids.length) {
+      this._notify_invitees(addedUids, {
+        type: 'meeting_scheduled',
+        nid,
+        title,
+        date,
+        stime,
+        recur,
+        from: name,
+      });
+    }
     content = {
-      attendees, title, message, date
+      attendees, title, message, date, stime, etime, recur
     };
     await this.output.data((content));
+  }
+
+  /**
+   * Push an in-app "you're invited" notification to workspace members by uid
+   * (their active sockets). No email — workspace-internal only. Best-effort.
+   */
+  async _notify_invitees(uids, data) {
+    try {
+      if (isEmpty(uids)) return;
+      let recipients = toArray(await this.yp.await_proc('user_sockets', uids));
+      recipients = recipients.filter((r) => r && r.uid != this.uid);
+      if (isEmpty(recipients)) return;
+      await RedisStore.sendData(this.payload(data, { service: 'room.scheduled' }), recipients);
+    } catch (e) {
+      this.warn && this.warn('room._notify_invitees failed', e);
+    }
+  }
+
+  /**
+   * List the current hub's scheduled meetings whose time window overlaps
+   * [stime, etime] (UNIX-epoch seconds). Both bounds optional — omit to list
+   * every scheduled meeting (full refresh). Feeds the folder-window calendar.
+   */
+  async list() {
+    const stime = this.input.use(Attr.stime, null);
+    const etime = this.input.use(Attr.etime, null);
+    return this.db.call_proc('room_list_scheduled', stime, etime, this.output.data);
+  }
+
+  /**
+   * Free/busy for a proposed slot (workspace-scoped). Given attendee uids +
+   * [stime, etime], returns which invitees already have a meeting IN THIS HUB
+   * overlapping that slot. Warn-only — the client still lets the organizer
+   * book. `nid` (the meeting being edited) is excluded from its own check.
+   * Returns [{ uid, busy, conflicts:[{nid,title,stime,etime}] }].
+   */
+  async check_availability() {
+    const stime = this.input.need(Attr.stime);
+    const etime = this.input.need(Attr.etime);
+    const exclude = this.input.use(Attr.nid, null);
+    let attendees = this.input.use(Attr.attendees, []);
+    if (!isArray(attendees)) attendees = attendees ? [attendees] : [];
+    const uids = attendees.map((a) => a && (a.uid || a)).filter(Boolean);
+
+    const rows = toArray(await this.db.await_proc('room_list_scheduled', stime, etime));
+    const meetings = [];
+    for (const r of rows) {
+      if (exclude && r.id == exclude) continue;
+      const content = this.parseJSON(this.parseJSON(r.metadata).content);
+      const s = Number(content.stime);
+      const e = Number(content.etime) || s;
+      if (!s || !(s <= etime && e >= stime)) continue; // must actually overlap
+      const parts = [];
+      if (content.created_by) parts.push(content.created_by);
+      if (isArray(content.attendees)) {
+        for (const a of content.attendees) parts.push(a && (a.uid || a));
+      }
+      meetings.push({ nid: r.id, title: content.title, stime: s, etime: e, parts });
+    }
+
+    const result = uids.map((uid) => {
+      const conflicts = meetings
+        .filter((m) => m.parts.includes(uid))
+        .map((m) => ({ nid: m.nid, title: m.title, stime: m.stime, etime: m.etime }));
+      return { uid, busy: conflicts.length > 0, conflicts };
+    });
+    this.output.data(result);
   }
 
   /**
@@ -223,6 +334,13 @@ class __private_room extends __public_room {
    */
   async remove() {
     const nid = this.input.need(Attr.nid);
+    // Owner-only delete (legacy meetings without a recorded creator pass).
+    const node = await this.db.await_proc('mfs_node_attr', nid);
+    const content = this.parseJSON(this.parseJSON(node.metadata).content);
+    if (content.created_by && content.created_by !== this.uid) {
+      this.exception.user("NOT_MEETING_OWNER");
+      return;
+    }
     await this.db.await_proc('permission_revoke', nid, "meeting");
     this.output.data({ nid });
   }

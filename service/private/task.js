@@ -19,8 +19,14 @@ const { Attr, RedisStore, toArray } = require('@drumee/server-essentials');
 const { isEmpty } = require('lodash');
 const { Entity } = require('@drumee/server-core');
 
+// Built-in Kanban columns. Custom columns live in the task_column table and
+// use their row id as the task.status key — see _isValidStatus().
 const VALID_STATUSES = ['todo', 'in_progress', 'to_review', 'complete'];
 const VALID_PRIORITIES = ['low', 'medium', 'high', 'urgent'];
+const VALID_THEMES = [
+  'default', 'orange', 'yellow', 'green', 'cyan',
+  'blue', 'purple', 'pink', 'red',
+];
 
 class __private_task extends Entity {
 
@@ -44,6 +50,22 @@ class __private_task extends Entity {
     this.comment_update = this.comment_update.bind(this);
     this.comment_delete = this.comment_delete.bind(this);
     this.comment_react = this.comment_react.bind(this);
+    this.activity = this.activity.bind(this);
+    this.column_list = this.column_list.bind(this);
+    this.column_create = this.column_create.bind(this);
+    this.column_update = this.column_update.bind(this);
+    this.column_delete = this.column_delete.bind(this);
+  }
+
+  /**
+   * A status key is valid when it's one of the built-in columns or the id of
+   * an existing custom column (task_column row) in this hub.
+   */
+  async _isValidStatus(status) {
+    if (VALID_STATUSES.includes(status)) return true;
+    if (!status || !/^[A-Za-z0-9_-]{1,32}$/.test(status)) return false;
+    const col = await this.db.await_proc('task_column_get', status);
+    return !isEmpty(col);
   }
 
   /**
@@ -71,7 +93,14 @@ class __private_task extends Entity {
     if (isEmpty(uids)) return;
     const hub_id = this.hub && this.hub.get(Attr.id);
     const task_id = data && data.id;
-    const meta = { task_id, hub_id, title: (data && data.title) || '' };
+    // `nid` lets the notification click open the task's folder on its Task tab;
+    // it is null for legacy/workspace-level tasks (opens the workspace root).
+    const meta = {
+      task_id,
+      hub_id,
+      title: (data && data.title) || '',
+      nid: (data && data.nid) || null,
+    };
     for (const target_uid of uids) {
       try {
         await this.yp.await_proc(
@@ -157,6 +186,39 @@ class __private_task extends Entity {
   }
 
   /**
+   * Append a row to the folder-scoped task activity feed (Project Health).
+   * Best-effort: a logging failure must never break the mutation it follows.
+   * For deletions call BEFORE the row is removed (the proc snapshots task.nid).
+   */
+  async _logActivity(task_id, action, meta = {}) {
+    try {
+      await this.db.await_run('CALL task_activity_log(?, ?, ?, ?)', [
+        task_id,
+        this.uid,
+        action,
+        JSON.stringify(meta || {}),
+      ]);
+    } catch (e) {
+      this.warn('[task._logActivity] failed:', e && e.message);
+    }
+  }
+
+  /**
+   * Recent activity feed for a folder scope (Project Health view).
+   * Params: nid, include_unscoped (mirror task.list), limit (default 30).
+   */
+  async activity() {
+    const nid = this.input.use('nid', null);
+    const include_unscoped = this.input.use('include_unscoped', 0) ? 1 : 0;
+    const limit = Number(this.input.use('limit', 30)) || 30;
+    const data = await this.db.await_run(
+      'CALL task_activity_list(?, ?, ?)',
+      [nid, include_unscoped, limit]
+    );
+    this.output.list(data);
+  }
+
+  /**
    * List tasks scoped to a folder node.
    * Params: nid (folder node id; null/absent = legacy unscoped), include_unscoped
    * (1 on the workspace-root view to also surface legacy nid-less tasks).
@@ -222,7 +284,8 @@ class __private_task extends Entity {
 
   /**
    * Create a new task in the current hub (folder).
-   * Params: title (required), description, status, priority, due_date, assignee_uid (all optional)
+   * Params: title (required), description, status, priority, due_date,
+   * start_date, assignee_uid (all optional)
    */
   async create() {
     const title = this.input.need(Attr.title);
@@ -230,21 +293,23 @@ class __private_task extends Entity {
     let status = this.input.use(Attr.status, 'todo');
     let priority = this._readPriority('medium');
     const due_date = this.input.use('due_date', null);
+    // Optional range start (Duration toggle). null = single-date task.
+    const start_date = this.input.use('start_date', null);
     // Folder scope: media node id of the folder the task belongs to (nullable).
     const nid = this.input.use('nid', null);
     // Multi-assignee: array (or legacy single). null/[] = unassigned.
     const assignees = (await this._validateAssignees(this._readAssignees() || []));
     if (assignees == null) return; // invalid assignee — exception already raised
 
-    if (!VALID_STATUSES.includes(status)) status = 'todo';
+    if (!(await this._isValidStatus(status))) status = 'todo';
     if (!VALID_PRIORITIES.includes(priority)) priority = 'medium';
 
     const id = await this.yp.await_func('uniqueId');
     // Bypass `await_proc` which coerces JS null to '' before binding —
     // STRICT_TRANS_TABLES rejects '' for nullable DATE / VARCHAR columns.
     let data = await this.db.await_run(
-      'CALL task_create(?, ?, ?, ?, ?, ?, ?, ?)',
-      [id, title, description, status, priority, due_date, this.uid, nid]
+      'CALL task_create(?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      [id, title, description, status, priority, due_date, start_date, this.uid, nid]
     );
     if (assignees.length) {
       // Re-reads the row with assignee_uids populated, so the response/broadcast
@@ -254,6 +319,7 @@ class __private_task extends Entity {
         [id, assignees.join(',')]
       );
     }
+    await this._logActivity(id, 'create', { title });
     await this._broadcast('task.create', data);
     // Every tagged member is newly mentioned on create.
     await this._notifyMentions(data, this.input.use('mention_uids', null));
@@ -263,10 +329,12 @@ class __private_task extends Entity {
   }
 
   /**
-   * Update task title, description, priority, and/or due_date.
-   * Params: id (required); title / description / priority / due_date (optional).
+   * Update task title, description, priority, due_date, and/or start_date.
+   * Params: id (required); title / description / priority / due_date /
+   * start_date (optional).
    * For title / description / priority: omit the key to keep existing value.
-   * For due_date: the value is always written through (pass null to clear).
+   * For due_date / start_date: the value is always written through (pass null
+   * to clear; start_date null = Duration toggle OFF).
    */
   async update() {
     const id = this.input.need(Attr.id);
@@ -274,18 +342,23 @@ class __private_task extends Entity {
     const description = this.input.use('description', null);
     const priority = this._readPriority(null);
     const due_date = this.input.use('due_date', null);
+    // Range start (Duration toggle). Always written through: null clears it
+    // (toggle OFF), matching the due_date pass-through in task_update.
+    const start_date = this.input.use('start_date', null);
 
     if (priority != null && !VALID_PRIORITIES.includes(priority)) {
       return this.exception.user('INVALID_PRIORITY');
     }
 
     const data = await this.db.await_run(
-      'CALL task_update(?, ?, ?, ?, ?)',
-      [id, title, description, priority, due_date]
+      'CALL task_update(?, ?, ?, ?, ?, ?)',
+      [id, title, description, priority, due_date, start_date]
     );
     if (isEmpty(data)) {
       return this.exception.user('TASK_NOT_FOUND');
     }
+    const row = Array.isArray(data) ? data[0] : data;
+    await this._logActivity(id, 'update', { title: row && row.title });
     await this._broadcast('task.update', data);
     // Client sends only the newly-added mentions in `mention_uids`.
     await this._notifyMentions(data, this.input.use('mention_uids', null));
@@ -294,13 +367,14 @@ class __private_task extends Entity {
 
   /**
    * Move a task to a different Kanban column.
-   * Params: id (required), status (required — todo|in_progress|to_review|complete)
+   * Params: id (required), status (required — a built-in column key or a
+   * custom task_column id)
    */
   async update_status() {
     const id = this.input.need(Attr.id);
     let status = this.input.need(Attr.status);
 
-    if (!VALID_STATUSES.includes(status)) {
+    if (!(await this._isValidStatus(status))) {
       return this.exception.user('INVALID_STATUS');
     }
 
@@ -308,6 +382,12 @@ class __private_task extends Entity {
     if (isEmpty(data)) {
       return this.exception.user('TASK_NOT_FOUND');
     }
+    const row = Array.isArray(data) ? data[0] : data;
+    await this._logActivity(
+      id,
+      status === 'complete' ? 'complete' : 'status',
+      { title: row && row.title, status },
+    );
     await this._broadcast('task.update_status', data);
     this.output.data(data);
   }
@@ -344,6 +424,7 @@ class __private_task extends Entity {
     if (isEmpty(data)) {
       return this.exception.user('TASK_NOT_FOUND');
     }
+    await this._logActivity(id, 'assignee', {});
     await this._broadcast('task.update_assignee', data);
     // Notify only members added by this change (self excluded in _notifyAssignees).
     const added = assignees.filter((u) => !prior.has(String(u)));
@@ -357,6 +438,8 @@ class __private_task extends Entity {
    */
   async delete() {
     const id = this.input.need(Attr.id);
+    // Log BEFORE the delete — task_activity_log snapshots the task's nid/title.
+    await this._logActivity(id, 'update', { deleted: 1 });
     const data = await this.db.await_proc('task_delete', id);
     const result = { id, ...data };
     await this._broadcast('task.delete', result);
@@ -377,6 +460,7 @@ class __private_task extends Entity {
       file_nid,
       this.uid
     );
+    await this._logActivity(task_id, 'link_file', {});
     await this._broadcast('task.link_file', { task_id, files: data });
     this.output.list(data);
   }
@@ -446,10 +530,11 @@ class __private_task extends Entity {
    * Search media files in the current hub that can be linked to a task.
    * Filters by user read-permission. Files already linked to task_id
    * (when provided) are excluded.
-   * Params: pattern (required, ≥1 char), task_id (optional), page (optional, default 1).
+   * Params: pattern (optional — empty lists all linkable files, most-recent
+   * first), task_id (optional), page (optional, default 1).
    */
   async search_files() {
-    const pattern = this.input.need('pattern');
+    const pattern = this.input.use('pattern', '');
     const task_id = this.input.use('task_id', null);
     const page    = this.input.use('page', 1);
 
@@ -508,6 +593,7 @@ class __private_task extends Entity {
       [id, task_id, this.uid, parent_id, body]
     );
     const row = Array.isArray(data) ? data[0] : data;
+    await this._logActivity(task_id, 'comment', {});
     await this._broadcast('task.comment_create', row);
     // Notify @-mentioned members; on a reply, also notify the parent author.
     let notify = toArray(this.input.use('mention_uids', null));
@@ -573,6 +659,88 @@ class __private_task extends Entity {
       comment_id,
       emoji,
       count: row && row.count,
+    });
+    this.output.data(row);
+  }
+
+  /**
+   * List the custom Kanban columns for a folder scope.
+   * Params: nid (folder node id; null/absent = workspace root scope).
+   * Built-in columns (todo/in_progress/to_review/complete) are implicit
+   * client-side and never stored.
+   */
+  async column_list() {
+    const nid = this.input.use('nid', null);
+    const data = await this.db.await_run('CALL task_column_list(?)', [nid]);
+    this.output.list(data);
+  }
+
+  /**
+   * Create a custom Kanban column.
+   * Params: name (required), theme (palette key, optional), nid (folder scope).
+   * The new column's id becomes the task.status key for tasks placed in it.
+   */
+  async column_create() {
+    const name = String(this.input.need('name')).trim().slice(0, 100);
+    if (!name) return this.exception.user('INVALID_COLUMN_NAME');
+    let theme = this.input.use('theme', 'default');
+    if (!VALID_THEMES.includes(theme)) theme = 'default';
+    const nid = this.input.use('nid', null);
+
+    const id = await this.yp.await_func('uniqueId');
+    const data = await this.db.await_run(
+      'CALL task_column_create(?, ?, ?, ?)',
+      [id, nid, name, theme]
+    );
+    // The DB layer swallows SQL errors (returns empty) — an empty result here
+    // means the insert didn't happen, most likely because this hub DB has not
+    // been migrated (task_column table / procs missing). Fail loudly instead
+    // of acking success with no data.
+    if (isEmpty(data)) {
+      return this.exception.user('COLUMN_CREATE_FAILED');
+    }
+    await this._broadcast('task.column_create', data);
+    this.output.data(data);
+  }
+
+  /**
+   * Rename and/or re-theme a custom column.
+   * Params: id (required); name / theme (optional — omit to keep).
+   */
+  async column_update() {
+    const id = this.input.need(Attr.id);
+    let name = this.input.use('name', null);
+    if (name != null) {
+      name = String(name).trim().slice(0, 100);
+      if (!name) return this.exception.user('INVALID_COLUMN_NAME');
+    }
+    let theme = this.input.use('theme', null);
+    if (theme != null && !VALID_THEMES.includes(theme)) theme = 'default';
+
+    const data = await this.db.await_run(
+      'CALL task_column_update(?, ?, ?)',
+      [id, name, theme]
+    );
+    if (isEmpty(data)) {
+      return this.exception.user('COLUMN_NOT_FOUND');
+    }
+    await this._broadcast('task.column_update', data);
+    this.output.data(data);
+  }
+
+  /**
+   * Delete a custom column. Its tasks are moved back to the built-in 'todo'
+   * column by the proc (never lost); the response carries moved_tasks so the
+   * client re-fetches its task list when non-zero.
+   */
+  async column_delete() {
+    const id = this.input.need(Attr.id);
+    const data = await this.db.await_proc('task_column_delete', id);
+    const row = Array.isArray(data) ? data[0] : data;
+    await this._broadcast('task.column_delete', {
+      id,
+      affected: row && row.affected,
+      moved_tasks: row && row.moved_tasks,
     });
     this.output.data(row);
   }

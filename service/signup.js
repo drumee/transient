@@ -45,8 +45,16 @@ class __signup extends Mfs {
     // Referral attribution: the signup UI forwards the referrer handle from a
     // ?ref=<member> link. Persisted as profile.ref so the analytics plugin's
     // `referrals` / `signup_sources` procs can count referred signups. Kept
-    // short/sanitized; omitted entirely when absent.
-    const ref = (this.input.get("ref") || "").toString().trim().slice(0, 64);
+    // short/sanitized (lowercased so `ref=V` and `ref=v` unify at the store,
+    // not just at query time); omitted entirely when absent.
+    const ref = (this.input.get("ref") || "").toString().trim().toLowerCase().slice(0, 64);
+
+    // UTM campaign params (source attribution) — stored as profile.utm.
+    const utm = {};
+    for (const k of ["utm_source", "utm_medium", "utm_campaign"]) {
+      const v = (this.input.get(k) || "").toString().trim().slice(0, 64);
+      if (v) utm[k] = v;
+    }
 
     const profile = {
       username,
@@ -61,6 +69,7 @@ class __signup extends Mfs {
       auth_method: "local",
       password_set: 1,
       ...(ref ? { ref } : {}),
+      ...(Object.keys(utm).length ? { utm } : {}),
     };
 
     const user = await this.yp.await_proc("drumate_create", password, profile);

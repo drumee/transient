@@ -25,19 +25,58 @@
         "items": {
           "type": "object",
           "properties": {
-            "id": { "type": "string", "doc": "Task ID" },
-            "title": { "type": "string", "doc": "Task title" },
-            "description": { "type": "string", "doc": "Task description (long text), null if not set" },
-            "status": { "type": "string", "doc": "Kanban column: todo | in_progress | to_review | complete" },
-            "priority": { "type": "string", "doc": "Priority: low | medium | high | urgent" },
-            "due_date": { "type": "string", "doc": "Due date (YYYY-MM-DD), null if not set" },
-            "created_by": { "type": "string", "doc": "UID of the user who created the task" },
-            "nid": { "type": "string", "doc": "Folder node id the task belongs to, null if workspace-level (legacy)" },
-            "assignee_uids": { "type": "string", "doc": "Comma-separated list of assignee UIDs, null if unassigned" },
-            "rank": { "type": "number", "doc": "Position within the status column" },
-            "ctime": { "type": "number", "doc": "Unix timestamp of creation" },
-            "mtime": { "type": "number", "doc": "Unix timestamp of last update" },
-            "label_ids": { "type": "string", "doc": "Comma-separated list of label IDs attached to the task, null if none" }
+            "id": {
+              "type": "string",
+              "doc": "Task ID"
+            },
+            "title": {
+              "type": "string",
+              "doc": "Task title"
+            },
+            "description": {
+              "type": "string",
+              "doc": "Task description (long text), null if not set"
+            },
+            "status": {
+              "type": "string",
+              "doc": "Kanban column: todo | in_progress | to_review | complete"
+            },
+            "priority": {
+              "type": "string",
+              "doc": "Priority: low | medium | high | urgent"
+            },
+            "due_date": {
+              "type": "string",
+              "doc": "Due date (YYYY-MM-DD), null if not set"
+            },
+            "created_by": {
+              "type": "string",
+              "doc": "UID of the user who created the task"
+            },
+            "nid": {
+              "type": "string",
+              "doc": "Folder node id the task belongs to, null if workspace-level (legacy)"
+            },
+            "assignee_uids": {
+              "type": "string",
+              "doc": "Comma-separated list of assignee UIDs, null if unassigned"
+            },
+            "rank": {
+              "type": "number",
+              "doc": "Position within the status column"
+            },
+            "ctime": {
+              "type": "number",
+              "doc": "Unix timestamp of creation"
+            },
+            "mtime": {
+              "type": "number",
+              "doc": "Unix timestamp of last update"
+            },
+            "label_ids": {
+              "type": "string",
+              "doc": "Comma-separated list of label IDs attached to the task, null if none"
+            }
           }
         }
       }
@@ -63,14 +102,18 @@
           "type": "string",
           "required": false,
           "default": "todo",
-          "enum": ["todo", "in_progress", "to_review", "complete"],
-          "doc": "Initial Kanban column. Defaults to todo."
+          "doc": "Initial Kanban column: a built-in key (todo | in_progress | to_review | complete) or a custom task_column id. Defaults to todo."
         },
         "priority": {
           "type": "string",
           "required": false,
           "default": "medium",
-          "enum": ["low", "medium", "high", "urgent"],
+          "enum": [
+            "low",
+            "medium",
+            "high",
+            "urgent"
+          ],
           "doc": "Task priority. Defaults to medium."
         },
         "due_date": {
@@ -87,7 +130,9 @@
           "type": "array",
           "required": false,
           "doc": "UIDs of the users to assign. Optional. Each must be a valid drumate.",
-          "items": { "type": "string" }
+          "items": {
+            "type": "string"
+          }
         },
         "assignee_uid": {
           "type": "string",
@@ -98,7 +143,9 @@
           "type": "array",
           "required": false,
           "doc": "UIDs @-mentioned in the description. Server notifies each (excluding self).",
-          "items": { "type": "string" }
+          "items": {
+            "type": "string"
+          }
         }
       },
       "returns": {
@@ -106,7 +153,11 @@
         "doc": "Newly created task object"
       },
       "errors": [
-        { "code": "INVALID_ASSIGNEE", "message": "assignee_uid does not reference a valid user", "http_status": 400 }
+        {
+          "code": "INVALID_ASSIGNEE",
+          "message": "assignee_uid does not reference a valid user",
+          "http_status": 400
+        }
       ]
     },
     "update": {
@@ -134,7 +185,12 @@
         "priority": {
           "type": "string",
           "required": false,
-          "enum": ["low", "medium", "high", "urgent"],
+          "enum": [
+            "low",
+            "medium",
+            "high",
+            "urgent"
+          ],
           "doc": "New priority. Omit to keep existing value."
         },
         "due_date": {
@@ -146,7 +202,9 @@
           "type": "array",
           "required": false,
           "doc": "UIDs newly @-mentioned in this edit. Server notifies each (excluding self).",
-          "items": { "type": "string" }
+          "items": {
+            "type": "string"
+          }
         }
       },
       "returns": {
@@ -154,8 +212,16 @@
         "doc": "Updated task object"
       },
       "errors": [
-        { "code": "TASK_NOT_FOUND", "message": "No task found with the given ID", "http_status": 404 },
-        { "code": "INVALID_PRIORITY", "message": "priority must be one of: low, medium, high, urgent", "http_status": 400 }
+        {
+          "code": "TASK_NOT_FOUND",
+          "message": "No task found with the given ID",
+          "http_status": 404
+        },
+        {
+          "code": "INVALID_PRIORITY",
+          "message": "priority must be one of: low, medium, high, urgent",
+          "http_status": 400
+        }
       ]
     },
     "update_status": {
@@ -173,8 +239,7 @@
         "status": {
           "type": "string",
           "required": true,
-          "enum": ["todo", "in_progress", "to_review", "complete"],
-          "doc": "Destination Kanban column"
+          "doc": "Destination Kanban column: a built-in key (todo | in_progress | to_review | complete) or a custom task_column id"
         }
       },
       "returns": {
@@ -182,8 +247,16 @@
         "doc": "Updated task object with new status and rank"
       },
       "errors": [
-        { "code": "TASK_NOT_FOUND", "message": "No task found with the given ID", "http_status": 404 },
-        { "code": "INVALID_STATUS", "message": "status must be one of: todo, in_progress, to_review, complete", "http_status": 400 }
+        {
+          "code": "TASK_NOT_FOUND",
+          "message": "No task found with the given ID",
+          "http_status": 404
+        },
+        {
+          "code": "INVALID_STATUS",
+          "message": "status is neither a built-in column nor an existing custom column id",
+          "http_status": 400
+        }
       ]
     },
     "update_assignee": {
@@ -202,7 +275,9 @@
           "type": "array",
           "required": false,
           "doc": "Full new set of assignee UIDs. [] clears all. Each must be a valid drumate.",
-          "items": { "type": "string" }
+          "items": {
+            "type": "string"
+          }
         },
         "assignee_uid": {
           "type": "string",
@@ -215,8 +290,16 @@
         "doc": "Updated task object"
       },
       "errors": [
-        { "code": "TASK_NOT_FOUND", "message": "No task found with the given ID", "http_status": 404 },
-        { "code": "INVALID_ASSIGNEE", "message": "assignee_uid does not reference a valid user", "http_status": 400 }
+        {
+          "code": "TASK_NOT_FOUND",
+          "message": "No task found with the given ID",
+          "http_status": 404
+        },
+        {
+          "code": "INVALID_ASSIGNEE",
+          "message": "assignee_uid does not reference a valid user",
+          "http_status": 400
+        }
       ]
     },
     "delete": {
@@ -236,8 +319,14 @@
         "type": "object",
         "doc": "Deleted task ID and affected row count",
         "properties": {
-          "id": { "type": "string", "doc": "Deleted task ID" },
-          "affected": { "type": "number", "doc": "Number of rows deleted (1 if found, 0 if not found)" }
+          "id": {
+            "type": "string",
+            "doc": "Deleted task ID"
+          },
+          "affected": {
+            "type": "number",
+            "doc": "Number of rows deleted (1 if found, 0 if not found)"
+          }
         }
       }
     },
@@ -265,14 +354,38 @@
         "items": {
           "type": "object",
           "properties": {
-            "task_id": { "type": "string", "doc": "Task ID" },
-            "file_nid": { "type": "string", "doc": "File media node ID" },
-            "linked_by": { "type": "string", "doc": "UID of the user who linked the file" },
-            "ctime": { "type": "number", "doc": "Unix timestamp of when the file was linked" },
-            "filename": { "type": "string", "doc": "File display name (user_filename from media)" },
-            "category": { "type": "string", "doc": "File category (document, image, etc.)" },
-            "extension": { "type": "string", "doc": "File extension" },
-            "filesize": { "type": "number", "doc": "File size in bytes" }
+            "task_id": {
+              "type": "string",
+              "doc": "Task ID"
+            },
+            "file_nid": {
+              "type": "string",
+              "doc": "File media node ID"
+            },
+            "linked_by": {
+              "type": "string",
+              "doc": "UID of the user who linked the file"
+            },
+            "ctime": {
+              "type": "number",
+              "doc": "Unix timestamp of when the file was linked"
+            },
+            "filename": {
+              "type": "string",
+              "doc": "File display name (user_filename from media)"
+            },
+            "category": {
+              "type": "string",
+              "doc": "File category (document, image, etc.)"
+            },
+            "extension": {
+              "type": "string",
+              "doc": "File extension"
+            },
+            "filesize": {
+              "type": "number",
+              "doc": "File size in bytes"
+            }
           }
         }
       }
@@ -299,9 +412,18 @@
         "type": "object",
         "doc": "Confirmation of the unlinked pair",
         "properties": {
-          "task_id": { "type": "string", "doc": "Task ID" },
-          "file_nid": { "type": "string", "doc": "File media node ID" },
-          "affected": { "type": "number", "doc": "1 if removed, 0 if link did not exist" }
+          "task_id": {
+            "type": "string",
+            "doc": "Task ID"
+          },
+          "file_nid": {
+            "type": "string",
+            "doc": "File media node ID"
+          },
+          "affected": {
+            "type": "number",
+            "doc": "1 if removed, 0 if link did not exist"
+          }
         }
       }
     },
@@ -330,8 +452,16 @@
         "src": "write"
       },
       "params": {
-        "task_id":  { "type": "string", "required": true, "doc": "Task ID" },
-        "label_id": { "type": "string", "required": true, "doc": "Label ID" }
+        "task_id": {
+          "type": "string",
+          "required": true,
+          "doc": "Task ID"
+        },
+        "label_id": {
+          "type": "string",
+          "required": true,
+          "doc": "Label ID"
+        }
       },
       "returns": {
         "type": "array",
@@ -339,11 +469,26 @@
         "items": {
           "type": "object",
           "properties": {
-            "task_id":  { "type": "string", "doc": "Task ID" },
-            "label_id": { "type": "string", "doc": "Label ID" },
-            "ctime":    { "type": "number", "doc": "Unix timestamp of when the label was linked" },
-            "name":     { "type": "string", "doc": "Label name" },
-            "color":    { "type": "string", "doc": "Label color (hex with leading #)" }
+            "task_id": {
+              "type": "string",
+              "doc": "Task ID"
+            },
+            "label_id": {
+              "type": "string",
+              "doc": "Label ID"
+            },
+            "ctime": {
+              "type": "number",
+              "doc": "Unix timestamp of when the label was linked"
+            },
+            "name": {
+              "type": "string",
+              "doc": "Label name"
+            },
+            "color": {
+              "type": "string",
+              "doc": "Label color (hex with leading #)"
+            }
           }
         }
       }
@@ -355,16 +500,30 @@
         "src": "write"
       },
       "params": {
-        "task_id":  { "type": "string", "required": true, "doc": "Task ID" },
-        "label_id": { "type": "string", "required": true, "doc": "Label ID" }
+        "task_id": {
+          "type": "string",
+          "required": true,
+          "doc": "Task ID"
+        },
+        "label_id": {
+          "type": "string",
+          "required": true,
+          "doc": "Label ID"
+        }
       },
       "returns": {
         "type": "object",
         "doc": "Confirmation of the unlinked pair",
         "properties": {
-          "task_id":  { "type": "string" },
-          "label_id": { "type": "string" },
-          "affected": { "type": "number" }
+          "task_id": {
+            "type": "string"
+          },
+          "label_id": {
+            "type": "string"
+          },
+          "affected": {
+            "type": "number"
+          }
         }
       }
     },
@@ -375,7 +534,11 @@
         "src": "read"
       },
       "params": {
-        "task_id": { "type": "string", "required": true, "doc": "Task ID" }
+        "task_id": {
+          "type": "string",
+          "required": true,
+          "doc": "Task ID"
+        }
       },
       "returns": {
         "type": "array",
@@ -389,9 +552,24 @@
         "src": "read"
       },
       "params": {
-        "pattern": { "type": "string", "required": true, "minLength": 1, "doc": "Filename substring" },
-        "task_id": { "type": "string", "required": false, "doc": "Exclude files already linked to this task" },
-        "page":    { "type": "number", "required": false, "default": 1, "min": 1, "doc": "Page number for pagination" }
+        "pattern": {
+          "type": "string",
+          "required": true,
+          "minLength": 1,
+          "doc": "Filename substring"
+        },
+        "task_id": {
+          "type": "string",
+          "required": false,
+          "doc": "Exclude files already linked to this task"
+        },
+        "page": {
+          "type": "number",
+          "required": false,
+          "default": 1,
+          "min": 1,
+          "doc": "Page number for pagination"
+        }
       },
       "returns": {
         "type": "array",
@@ -399,13 +577,34 @@
         "items": {
           "type": "object",
           "properties": {
-            "nid":      { "type": "string", "doc": "Media node ID" },
-            "filename": { "type": "string", "doc": "Display filename" },
-            "ext":      { "type": "string", "doc": "File extension" },
-            "category": { "type": "string", "doc": "File category" },
-            "filesize": { "type": "number", "doc": "File size in bytes" },
-            "mtime":    { "type": "number", "doc": "Unix timestamp of last upload" },
-            "score":    { "type": "number", "doc": "Match score (higher = better)" }
+            "nid": {
+              "type": "string",
+              "doc": "Media node ID"
+            },
+            "filename": {
+              "type": "string",
+              "doc": "Display filename"
+            },
+            "ext": {
+              "type": "string",
+              "doc": "File extension"
+            },
+            "category": {
+              "type": "string",
+              "doc": "File category"
+            },
+            "filesize": {
+              "type": "number",
+              "doc": "File size in bytes"
+            },
+            "mtime": {
+              "type": "number",
+              "doc": "Unix timestamp of last upload"
+            },
+            "score": {
+              "type": "number",
+              "doc": "Match score (higher = better)"
+            }
           }
         }
       }
@@ -413,9 +612,15 @@
     "comment_list": {
       "doc": "List a task's comments (flat, chronological). Author name/avatar is resolved client-side from the hub member list.",
       "scope": "hub",
-      "permission": { "src": "read" },
+      "permission": {
+        "src": "read"
+      },
       "params": {
-        "task_id": { "type": "string", "required": true, "doc": "Task ID to list comments for" }
+        "task_id": {
+          "type": "string",
+          "required": true,
+          "doc": "Task ID to list comments for"
+        }
       },
       "returns": {
         "type": "array",
@@ -423,13 +628,34 @@
         "items": {
           "type": "object",
           "properties": {
-            "id":         { "type": "string", "doc": "Comment ID" },
-            "task_id":    { "type": "string", "doc": "Parent task ID" },
-            "author_uid": { "type": "string", "doc": "UID of the comment author" },
-            "body":       { "type": "string", "doc": "Comment body in marker form [@Name](user:uid)" },
-            "edited":     { "type": "number", "doc": "1 if the comment was edited" },
-            "ctime":      { "type": "number", "doc": "Unix timestamp of creation" },
-            "mtime":      { "type": "number", "doc": "Unix timestamp of last edit" }
+            "id": {
+              "type": "string",
+              "doc": "Comment ID"
+            },
+            "task_id": {
+              "type": "string",
+              "doc": "Parent task ID"
+            },
+            "author_uid": {
+              "type": "string",
+              "doc": "UID of the comment author"
+            },
+            "body": {
+              "type": "string",
+              "doc": "Comment body in marker form [@Name](user:uid)"
+            },
+            "edited": {
+              "type": "number",
+              "doc": "1 if the comment was edited"
+            },
+            "ctime": {
+              "type": "number",
+              "doc": "Unix timestamp of creation"
+            },
+            "mtime": {
+              "type": "number",
+              "doc": "Unix timestamp of last edit"
+            }
           }
         }
       }
@@ -437,73 +663,339 @@
     "comment_create": {
       "doc": "Add a comment to a task. @-mentioned members are notified.",
       "scope": "hub",
-      "permission": { "src": "write" },
+      "permission": {
+        "src": "write"
+      },
       "params": {
-        "task_id": { "type": "string", "required": true, "doc": "Task ID to comment on" },
-        "body":    { "type": "string", "required": true, "doc": "Comment body in marker form [@Name](user:uid)" },
-        "parent_id": { "type": "string", "required": false, "doc": "Root comment id when this is a reply; omit/null for a top-level comment" },
+        "task_id": {
+          "type": "string",
+          "required": true,
+          "doc": "Task ID to comment on"
+        },
+        "body": {
+          "type": "string",
+          "required": true,
+          "doc": "Comment body in marker form [@Name](user:uid)"
+        },
+        "parent_id": {
+          "type": "string",
+          "required": false,
+          "doc": "Root comment id when this is a reply; omit/null for a top-level comment"
+        },
         "mention_uids": {
           "type": "array",
           "required": false,
           "doc": "UIDs @-mentioned in the body. Server notifies each (excluding self).",
-          "items": { "type": "string" }
+          "items": {
+            "type": "string"
+          }
         }
       },
-      "returns": { "type": "object", "doc": "The created comment row" }
+      "returns": {
+        "type": "object",
+        "doc": "The created comment row"
+      }
     },
     "comment_react": {
       "doc": "Toggle the caller's emoji reaction on a comment (add if absent, remove if present).",
       "scope": "hub",
-      "permission": { "src": "write" },
+      "permission": {
+        "src": "write"
+      },
       "params": {
-        "comment_id": { "type": "string", "required": true, "doc": "Comment ID to react to" },
-        "task_id":    { "type": "string", "required": true, "doc": "Parent task ID (so the broadcast targets the right feed)" },
-        "emoji":      { "type": "string", "required": true, "doc": "Reaction emoji" }
+        "comment_id": {
+          "type": "string",
+          "required": true,
+          "doc": "Comment ID to react to"
+        },
+        "task_id": {
+          "type": "string",
+          "required": true,
+          "doc": "Parent task ID (so the broadcast targets the right feed)"
+        },
+        "emoji": {
+          "type": "string",
+          "required": true,
+          "doc": "Reaction emoji"
+        }
       },
       "returns": {
         "type": "object",
         "doc": "Toggled reaction summary",
         "properties": {
-          "comment_id": { "type": "string" },
-          "emoji":      { "type": "string" },
-          "count":      { "type": "number", "doc": "Remaining count for that emoji" }
+          "comment_id": {
+            "type": "string"
+          },
+          "emoji": {
+            "type": "string"
+          },
+          "count": {
+            "type": "number",
+            "doc": "Remaining count for that emoji"
+          }
         }
       }
     },
     "comment_update": {
       "doc": "Edit your own comment. Returns COMMENT_NOT_FOUND if the caller is not the author.",
       "scope": "hub",
-      "permission": { "src": "write" },
+      "permission": {
+        "src": "write"
+      },
       "params": {
-        "id":   { "type": "string", "required": true, "doc": "Comment ID to edit" },
-        "body": { "type": "string", "required": true, "doc": "New comment body in marker form" },
+        "id": {
+          "type": "string",
+          "required": true,
+          "doc": "Comment ID to edit"
+        },
+        "body": {
+          "type": "string",
+          "required": true,
+          "doc": "New comment body in marker form"
+        },
         "mention_uids": {
           "type": "array",
           "required": false,
           "doc": "UIDs @-mentioned in the body. Server notifies each (excluding self).",
-          "items": { "type": "string" }
+          "items": {
+            "type": "string"
+          }
         }
       },
-      "returns": { "type": "object", "doc": "The updated comment row" },
+      "returns": {
+        "type": "object",
+        "doc": "The updated comment row"
+      },
       "errors": [
-        { "code": "COMMENT_NOT_FOUND", "message": "No comment with that ID owned by the caller", "http_status": 404 }
+        {
+          "code": "COMMENT_NOT_FOUND",
+          "message": "No comment with that ID owned by the caller",
+          "http_status": 404
+        }
       ]
     },
     "comment_delete": {
       "doc": "Delete your own comment.",
       "scope": "hub",
-      "permission": { "src": "write" },
+      "permission": {
+        "src": "write"
+      },
       "params": {
-        "id":      { "type": "string", "required": true, "doc": "Comment ID to delete" },
-        "task_id": { "type": "string", "required": true, "doc": "Parent task ID (so the broadcast targets the right feed)" }
+        "id": {
+          "type": "string",
+          "required": true,
+          "doc": "Comment ID to delete"
+        },
+        "task_id": {
+          "type": "string",
+          "required": true,
+          "doc": "Parent task ID (so the broadcast targets the right feed)"
+        }
       },
       "returns": {
         "type": "object",
         "doc": "Deleted comment ID and affected row count",
         "properties": {
-          "id":       { "type": "string" },
-          "task_id":  { "type": "string" },
-          "affected": { "type": "number" }
+          "id": {
+            "type": "string"
+          },
+          "task_id": {
+            "type": "string"
+          },
+          "affected": {
+            "type": "number"
+          }
+        }
+      }
+    },
+    "activity": {
+      "doc": "Recent task activity for a folder scope (Project Health feed): create / update / status / complete / assignee / link_file / comment events, newest first.",
+      "scope": "hub",
+      "permission": {
+        "src": "read"
+      },
+      "params": {
+        "nid": {
+          "type": "string",
+          "required": false,
+          "doc": "Folder node id to scope to (mirrors task.list)"
+        },
+        "include_unscoped": {
+          "type": "number",
+          "required": false,
+          "default": 0,
+          "doc": "When 1, also include legacy nid-less rows (workspace root)"
+        },
+        "limit": {
+          "type": "number",
+          "required": false,
+          "default": 30,
+          "doc": "Max rows returned"
+        }
+      },
+      "returns": {
+        "type": "array",
+        "doc": "Activity rows (task_id, actor_uid, action, meta, ctime, plus live task title/priority/status when the task still exists)"
+      }
+    },
+    "column_list": {
+      "doc": "List the custom Kanban columns for a folder scope. Built-in columns (todo / in_progress / to_review / complete) are implicit client-side and never stored.",
+      "scope": "hub",
+      "permission": {
+        "src": "read"
+      },
+      "params": {
+        "nid": {
+          "type": "string",
+          "required": false,
+          "doc": "Folder node id to scope to (mirrors task.list)"
+        }
+      },
+      "returns": {
+        "type": "array",
+        "doc": "Custom column rows in board order",
+        "items": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "doc": "Column id — doubles as the task.status key for its tasks"
+            },
+            "nid": {
+              "type": "string",
+              "doc": "Folder node id, null at workspace root"
+            },
+            "name": {
+              "type": "string",
+              "doc": "User-entered column name"
+            },
+            "theme": {
+              "type": "string",
+              "doc": "Palette theme: default | orange | yellow | green | cyan | blue | purple | pink | red"
+            },
+            "position": {
+              "type": "number",
+              "doc": "Board order among custom columns"
+            },
+            "ctime": {
+              "type": "number"
+            },
+            "mtime": {
+              "type": "number"
+            }
+          }
+        }
+      }
+    },
+    "column_create": {
+      "doc": "Create a custom Kanban column for a folder scope.",
+      "scope": "hub",
+      "permission": {
+        "src": "write"
+      },
+      "params": {
+        "name": {
+          "type": "string",
+          "required": true,
+          "doc": "Column display name (1–100 chars)"
+        },
+        "theme": {
+          "type": "string",
+          "required": false,
+          "default": "default",
+          "doc": "Palette theme key; invalid values fall back to default"
+        },
+        "nid": {
+          "type": "string",
+          "required": false,
+          "doc": "Folder node id the column belongs to"
+        }
+      },
+      "returns": {
+        "type": "object",
+        "doc": "The created column row"
+      },
+      "errors": [
+        {
+          "code": "INVALID_COLUMN_NAME",
+          "message": "name is empty after trimming",
+          "http_status": 400
+        },
+        {
+          "code": "COLUMN_CREATE_FAILED",
+          "message": "insert returned no row — hub DB likely missing the task_column migration",
+          "http_status": 500
+        }
+      ]
+    },
+    "column_update": {
+      "doc": "Rename and/or re-theme a custom column. Omit a field to keep it.",
+      "scope": "hub",
+      "permission": {
+        "src": "write"
+      },
+      "params": {
+        "id": {
+          "type": "string",
+          "required": true,
+          "doc": "Column id"
+        },
+        "name": {
+          "type": "string",
+          "required": false,
+          "doc": "New display name"
+        },
+        "theme": {
+          "type": "string",
+          "required": false,
+          "doc": "New palette theme key"
+        }
+      },
+      "returns": {
+        "type": "object",
+        "doc": "The updated column row"
+      },
+      "errors": [
+        {
+          "code": "INVALID_COLUMN_NAME",
+          "message": "name is empty after trimming",
+          "http_status": 400
+        },
+        {
+          "code": "COLUMN_NOT_FOUND",
+          "message": "No column with that id",
+          "http_status": 404
+        }
+      ]
+    },
+    "column_delete": {
+      "doc": "Delete a custom column. Its tasks are moved back to the built-in 'todo' column (never lost).",
+      "scope": "hub",
+      "permission": {
+        "src": "write"
+      },
+      "params": {
+        "id": {
+          "type": "string",
+          "required": true,
+          "doc": "Column id to delete"
+        }
+      },
+      "returns": {
+        "type": "object",
+        "doc": "Deletion summary",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "affected": {
+            "type": "number",
+            "doc": "1 if the column existed"
+          },
+          "moved_tasks": {
+            "type": "number",
+            "doc": "How many tasks were moved back to todo"
+          }
         }
       }
     }

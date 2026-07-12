@@ -398,6 +398,17 @@
       }
     },
 
+    "list_task_assignments": {
+      "doc": "List the caller's undismissed task-assignment notifications for the pinned activity section and bell badge. Read-only; rows come from yp.contact_task_assigned_unread with task title/nid/hub_id/task_id flattened to the top level.",
+      "scope": "hub",
+      "permission": { "src": "read" },
+      "params": {},
+      "returns": {
+        "type": "array",
+        "description": "Undismissed task_assigned activity rows for the caller"
+      }
+    },
+
     "list": {
       "doc": "Single-call notification feed combining notification_center rollups + standalone hub-invite rows. Returns a flat array; client renders by `category` (chat | contact | media | teamchat | ticket | hub_invite).",
       "scope": "hub",
