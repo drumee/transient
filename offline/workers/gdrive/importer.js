@@ -176,8 +176,45 @@ class GoogleDriveImporter {
     if (!dbName) throw new Error(`dest hub db unresolved: hub=${hub_id} user=${user_id}`);
 
     const hubDb = new Mariadb({ name: dbName });
+
+    // The importer holds ONE hubDb connection for the whole job while doing many
+    // slow Drive downloads between DB writes (it also uses the shared yp
+    // connection for the per-file filecap lookup). During a download-heavy
+    // stretch a connection sits idle long enough for MariaDB's wait_timeout (or
+    // a network/LB idle timeout) to close it; the driver then emits an ASYNC
+    // socket 'error' with no pending query. With no 'error' listener Node turns
+    // that into an UNCAUGHT exception that CRASHES the worker mid-job — every
+    // file after that point is silently never imported (the reported symptom:
+    // sub-folder images missing / no thumbnail / won't open). Two guards keep
+    // the job alive:
+    //   1) attach an 'error' listener to the live connection so a dropped socket
+    //      degrades to a reconnect-on-next-query (the wrapper's isValid() check
+    //      re-dials) instead of crashing the process;
+    //   2) a 60s keep-alive ping (well under wait_timeout) keeps hubDb + yp warm
+    //      across downloads and re-arms the guard on the fresh connection object
+    //      a reconnect creates.
+    const guardConn = (db, label) => {
+      const c = db && typeof db.connection === 'function' && db.connection();
+      if (c && typeof c.on === 'function' && !c.__gdriveGuarded) {
+        c.__gdriveGuarded = 1;
+        c.on('error', (e) =>
+          console.warn(`[GDriveImporter] ${label} socket error (reconnect on next query): ${e && (e.code || e.message)}`));
+      }
+    };
+    const keepAlive = setInterval(() => {
+      for (const [db, label] of [[hubDb, 'hubDb'], [this.yp, 'yp']]) {
+        Promise.resolve()
+          .then(() => db.await_query('SELECT 1'))
+          .then(() => guardConn(db, label))
+          .catch(() => {});
+      }
+    }, 60000);
+
     try {
       const destFolder = await hubDb.await_proc('mfs_node_attr', nid);
+      // Arm the socket-error guard on the now-live connections.
+      guardConn(hubDb, 'hubDb');
+      guardConn(this.yp, 'yp');
       if (!destFolder || !destFolder.home_dir) {
         throw new Error(`dest_nid ${nid} invalid`);
       }
@@ -218,6 +255,7 @@ class GoogleDriveImporter {
         });
       }
     } finally {
+      clearInterval(keepAlive);
       // Mariadb.end() returns undefined (not a promise) and swallows its own
       // errors internally. Chaining `.catch()` on it threw "Cannot read
       // properties of undefined (reading 'catch')" in this finally block —

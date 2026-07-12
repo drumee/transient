@@ -47,6 +47,20 @@ async function startWorker() {
     await yp.await_query('SELECT 1'); // throw → crash → pm2 restarts
   }
 
+  // The shared yp connection is long-lived and used by every job for the
+  // per-file filecap lookup. If it drops (wait_timeout / network idle) the
+  // driver emits an async socket 'error' with no pending query — without a
+  // listener that becomes an uncaught exception (see the process handler
+  // below). Attach a listener so a drop degrades to reconnect-on-next-query
+  // (the Mariadb wrapper re-dials via its isValid() check) instead of a crash.
+  try {
+    const c = typeof yp.connection === 'function' && yp.connection();
+    if (c && typeof c.on === 'function') {
+      c.on('error', (e) =>
+        console.warn('[GDriveWorker] yp socket error (reconnect on next query):', e && (e.code || e.message)));
+    }
+  } catch (_) {}
+
   migrationQueue.process('migrate_google_drive', CONCURRENCY, processJob);
 
   console.log('[GDriveWorker] Worker started, waiting for jobs...');
@@ -87,6 +101,21 @@ process.on('SIGTERM', shutdown);
 process.on('SIGINT', shutdown);
 
 process.on('uncaughtException', (error) => {
+  // A dropped DB socket surfaces here as a fatal async error with no pending
+  // query (errno 45009 / ER_SOCKET_UNEXPECTED_CLOSE / PROTOCOL_CONNECTION_LOST /
+  // ECONNRESET). The Mariadb wrapper re-dials on the next query (isValid check),
+  // so it's recoverable — log and KEEP the worker (and every in-flight import)
+  // alive rather than crashing mid-migration, which would leave the imported
+  // tree half-populated (files after the drop silently never land). Any other
+  // uncaught error still exits so pm2 restarts a genuinely broken worker.
+  const blob = `${(error && error.code) || ''} ${(error && error.message) || ''}`;
+  const recoverableDbDrop =
+    error && (error.fatal || error.errno === 45009) &&
+    /SOCKET|CONNECTION_LOST|CLOSED|ECONNRESET|EPIPE|ETIMEDOUT|08S01/i.test(blob);
+  if (recoverableDbDrop) {
+    console.warn('[GDriveWorker] recoverable DB connection drop (continuing):', blob.trim());
+    return;
+  }
   console.error('[GDriveWorker] Uncaught exception:', error);
   process.exit(1);
 });
