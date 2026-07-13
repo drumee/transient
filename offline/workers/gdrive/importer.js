@@ -110,6 +110,23 @@ class GoogleDriveImporter {
     // Per-job scratch dir — wiped on completion to avoid /tmp growing
     // unboundedly across migrations. Set in run() once job.id is known.
     this._scratchDir = null;
+    // Per-parent-folder serialization of the create-node → resolve-id →
+    // write-bytes critical section. The slow Drive download stays parallel
+    // (FILE_CONCURRENCY); only the DB+disk write serializes per folder, which
+    // lets us resolve the just-created node as the newest child under the
+    // parent — correct even when Drive has duplicate filenames that
+    // mfs_create_node auto-renames (S → S(1) → S(2)). pid → tail promise.
+    this._pidLocks = new Map();
+  }
+
+  // Run fn while holding an exclusive lock for `pid`; concurrent calls for the
+  // same pid run one at a time (different pids stay parallel). The stored tail
+  // swallows errors so one failed file never wedges the folder's queue.
+  async _withPidLock(pid, fn) {
+    const prev = this._pidLocks.get(pid) || Promise.resolve();
+    const run = prev.then(() => fn(), () => fn());
+    this._pidLocks.set(pid, run.then(() => {}, () => {}));
+    return run;
   }
 
   async run() {
@@ -176,8 +193,45 @@ class GoogleDriveImporter {
     if (!dbName) throw new Error(`dest hub db unresolved: hub=${hub_id} user=${user_id}`);
 
     const hubDb = new Mariadb({ name: dbName });
+
+    // The importer holds ONE hubDb connection for the whole job while doing many
+    // slow Drive downloads between DB writes (it also uses the shared yp
+    // connection for the per-file filecap lookup). During a download-heavy
+    // stretch a connection sits idle long enough for MariaDB's wait_timeout (or
+    // a network/LB idle timeout) to close it; the driver then emits an ASYNC
+    // socket 'error' with no pending query. With no 'error' listener Node turns
+    // that into an UNCAUGHT exception that CRASHES the worker mid-job — every
+    // file after that point is silently never imported (the reported symptom:
+    // sub-folder images missing / no thumbnail / won't open). Two guards keep
+    // the job alive:
+    //   1) attach an 'error' listener to the live connection so a dropped socket
+    //      degrades to a reconnect-on-next-query (the wrapper's isValid() check
+    //      re-dials) instead of crashing the process;
+    //   2) a 60s keep-alive ping (well under wait_timeout) keeps hubDb + yp warm
+    //      across downloads and re-arms the guard on the fresh connection object
+    //      a reconnect creates.
+    const guardConn = (db, label) => {
+      const c = db && typeof db.connection === 'function' && db.connection();
+      if (c && typeof c.on === 'function' && !c.__gdriveGuarded) {
+        c.__gdriveGuarded = 1;
+        c.on('error', (e) =>
+          console.warn(`[GDriveImporter] ${label} socket error (reconnect on next query): ${e && (e.code || e.message)}`));
+      }
+    };
+    const keepAlive = setInterval(() => {
+      for (const [db, label] of [[hubDb, 'hubDb'], [this.yp, 'yp']]) {
+        Promise.resolve()
+          .then(() => db.await_query('SELECT 1'))
+          .then(() => guardConn(db, label))
+          .catch(() => {});
+      }
+    }, 60000);
+
     try {
       const destFolder = await hubDb.await_proc('mfs_node_attr', nid);
+      // Arm the socket-error guard on the now-live connections.
+      guardConn(hubDb, 'hubDb');
+      guardConn(this.yp, 'yp');
       if (!destFolder || !destFolder.home_dir) {
         throw new Error(`dest_nid ${nid} invalid`);
       }
@@ -218,6 +272,7 @@ class GoogleDriveImporter {
         });
       }
     } finally {
+      clearInterval(keepAlive);
       // Mariadb.end() returns undefined (not a promise) and swallows its own
       // errors internally. Chaining `.catch()` on it threw "Cannot read
       // properties of undefined (reading 'catch')" in this finally block —
@@ -681,7 +736,14 @@ class GoogleDriveImporter {
       }
     }
 
-    const ext = extname(filename).replace(/^\.+/, '');
+    // Lowercase the extension. It flows into BOTH the media node's `extension`
+    // column AND the on-disk file name (`orig.<ext>`). The server always reads
+    // the original back as `orig.<ext.toLowerCase()>` (get_node_content), so an
+    // uppercase Drive extension (e.g. "L.PNG") would write `orig.PNG` but be read
+    // as `orig.png` — a mismatch on a case-sensitive (Linux) filesystem → the
+    // file is "not found" → the image shows no thumbnail and won't open. The
+    // filecap lookup is case-insensitive either way.
+    const ext = extname(filename).replace(/^\.+/, '').toLowerCase();
     // Cache key includes file.id + (optional) export mime so two different
     // Workspace export formats of the same doc don't collide on the URL
     // base. The cache lives in the per-job scratch dir so it's wiped at
@@ -757,53 +819,46 @@ class GoogleDriveImporter {
 
     const filenameWithoutExt = filename.replace(new RegExp(`\\.(${ext})$`, 'i'), '');
 
-    await opts.hubDb.await_proc(
-      'mfs_create_node',
-      {
-        owner_id,
-        filename: filenameWithoutExt,
-        pid,
-        category: filetype,
-        ext,
-        mimetype,
-        filesize: item.size || stat.size,
-        showResults: 1,
-      },
-      {},
-      { isOutput: 1 }
-    );
-    // Resolve the new node id with a direct query (mfs_create_node's CALL
-    // return shape is unreliable in the worker). Match by (pid, name); fall
-    // back to the most-recent non-folder child under pid — files are imported
-    // sequentially within a job, so that's the one just created.
-    // Resolve by (pid, name). The old "most-recent non-folder child under pid"
-    // fallback is REMOVED: under the file pool it could resolve a DIFFERENT
-    // file's id (wrong node). Name resolution is race-safe for DISTINCT names —
-    // the overwhelming common case in a folder. KNOWN LIMITATION: Google Drive
-    // permits two files with the SAME name in one folder; imported concurrently
-    // they both resolve to the first-created node (one ends up byte-less). The
-    // serial path skipped the 2nd via the path dedup above (when file_path is
-    // present); a future conflict-policy pass (rename/overwrite) is the proper
-    // fix. Accepted here over a per-folder write mutex, which would serialize
-    // every file's DB write and erode the concurrency win for a rare case.
-    const nodeId = await this._findChildId(opts.hubDb, pid, filenameWithoutExt, false);
-    if (!nodeId) throw new Error(`could not resolve created file '${filenameWithoutExt}' under pid=${pid}`);
+    // Create the node, resolve its id, and write the bytes as ONE critical
+    // section serialized per parent folder (_withPidLock). mfs_create_node's
+    // CALL return shape is unreliable in the worker, so the id is resolved with
+    // a direct SELECT — and because mfs_create_node AUTO-RENAMES a duplicate
+    // filename (S → S(1)), a match by the ORIGINAL name would resolve the wrong
+    // (already-written) node, leaving the duplicate byte-less (no thumbnail /
+    // won't open). Resolving the NEWEST child under pid instead is exact — but
+    // only while creates under this pid don't interleave, which the lock
+    // guarantees. Downloads (the slow part) already ran in parallel above.
+    await this._withPidLock(pid, async () => {
+      await opts.hubDb.await_proc(
+        'mfs_create_node',
+        {
+          owner_id,
+          filename: filenameWithoutExt,
+          pid,
+          category: filetype,
+          ext,
+          mimetype,
+          filesize: item.size || stat.size,
+          showResults: 1,
+        },
+        {},
+        { isOutput: 1 }
+      );
+      const nodeId = await this._findNewestChildId(opts.hubDb, pid);
+      if (!nodeId) throw new Error(`could not resolve created file '${filenameWithoutExt}' under pid=${pid}`);
 
-    const base = join(home_dir, '__storage__', nodeId);
-    const orig = join(base, `orig.${ext}`);
-    await fsp.mkdir(base, { recursive: true });
-    try {
-      await fsp.copyFile(source, orig);
-    } finally {
-      // Free the scratch copy immediately after the durable write so peak /tmp
-      // stays at ~one file instead of the whole tree — a 10k-file import would
-      // otherwise accumulate every downloaded byte until the end-of-job rm in
-      // run() (→ ENOSPC). async fsp.unlink (never unlinkSync) per the Bull
-      // lock-stall invariant. Best-effort: the end-of-job rm is the backstop.
-      // Trade-off: defeats the in-job same-id dedup (existsSync on `source`) for
-      // a file.id|exportMime that appears twice in one tree — rare, acceptable.
-      try { await fsp.unlink(source); } catch (_) {}
-    }
+      const base = join(home_dir, '__storage__', nodeId);
+      await fsp.mkdir(base, { recursive: true });
+      await fsp.copyFile(source, join(base, `orig.${ext}`));
+    });
+    // Free the scratch copy immediately after the durable write so peak /tmp
+    // stays at ~one file instead of the whole tree — a 10k-file import would
+    // otherwise accumulate every downloaded byte until the end-of-job rm in
+    // run() (→ ENOSPC). async fsp.unlink (never unlinkSync) per the Bull
+    // lock-stall invariant. Best-effort: the end-of-job rm is the backstop.
+    // Trade-off: defeats the in-job same-id dedup (existsSync on `source`) for
+    // a file.id|exportMime that appears twice in one tree — rare, acceptable.
+    try { await fsp.unlink(source); } catch (_) {}
   }
 
   /**
@@ -821,6 +876,24 @@ class GoogleDriveImporter {
            ${isFolder ? "AND category = 'folder'" : "AND category <> 'folder'"}
          ORDER BY id ASC LIMIT 1`,
       pid, name
+    );
+    const row = toArray(rows)[0];
+    return (row && row.id) || null;
+  }
+
+  /**
+   * Resolve the id of the just-created FILE node as the newest non-folder child
+   * under `pid` (highest sys_id). Correct only while called inside the pid lock
+   * (no interleaving creates under this pid) — but then it's exact even when
+   * mfs_create_node auto-renamed a duplicate filename, which a name match can't
+   * handle. Returns the id string or null.
+   */
+  async _findNewestChildId(hubDb, pid) {
+    const rows = await hubDb.await_query(
+      `SELECT id FROM media
+         WHERE parent_id = ? AND category <> 'folder'
+         ORDER BY sys_id DESC LIMIT 1`,
+      pid
     );
     const row = toArray(rows)[0];
     return (row && row.id) || null;
