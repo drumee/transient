@@ -707,8 +707,11 @@ class GoogleDriveImporter {
       item.mimeType.startsWith('application/vnd.google-apps');
     if (isWorkspaceDoc) {
       // Google Workspace doc — has no binary content; must be exported.
+      // Docs export as DOCX (editable, layout preserved) to match the
+      // Sheets→XLSX / Slides→PPTX convention — PDF froze the document into a
+      // non-editable, often distorted rendering.
       const EXPORT = {
-        'google-apps.document':     { mime: 'application/pdf',                                                                      ext: 'pdf'  },
+        'google-apps.document':     { mime: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',              ext: 'docx' },
         'google-apps.spreadsheet':  { mime: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',                    ext: 'xlsx' },
         'google-apps.presentation': { mime: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',            ext: 'pptx' },
         'google-apps.drawing':      { mime: 'image/png',                                                                            ext: 'png'  },
