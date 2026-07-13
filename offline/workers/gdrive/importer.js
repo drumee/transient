@@ -719,7 +719,14 @@ class GoogleDriveImporter {
       }
     }
 
-    const ext = extname(filename).replace(/^\.+/, '');
+    // Lowercase the extension. It flows into BOTH the media node's `extension`
+    // column AND the on-disk file name (`orig.<ext>`). The server always reads
+    // the original back as `orig.<ext.toLowerCase()>` (get_node_content), so an
+    // uppercase Drive extension (e.g. "L.PNG") would write `orig.PNG` but be read
+    // as `orig.png` — a mismatch on a case-sensitive (Linux) filesystem → the
+    // file is "not found" → the image shows no thumbnail and won't open. The
+    // filecap lookup is case-insensitive either way.
+    const ext = extname(filename).replace(/^\.+/, '').toLowerCase();
     // Cache key includes file.id + (optional) export mime so two different
     // Workspace export formats of the same doc don't collide on the URL
     // base. The cache lives in the per-job scratch dir so it's wiped at
