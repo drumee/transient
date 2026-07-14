@@ -66,6 +66,36 @@ const {
 } = require("fs");
 
 const {
+  mkdir: mkdirAsync,
+  rename: renameAsync,
+  copyFile: copyFileAsync,
+  unlink: unlinkAsync,
+} = require("fs/promises");
+
+/**
+ * Non-blocking file move. The uploaded file lands in tmp_dir (root fs) while
+ * the MFS storage tree lives on a separate data volume, so a plain rename
+ * throws EXDEV and the shared MfsTools.mv() falls back to the SYNCHRONOUS
+ * cpSync — which blocks the single-process Node event loop for the whole copy
+ * of every uploaded file, freezing all other requests during a bulk upload.
+ * Here rename is tried first (O(1) when same-device); the cross-device copy
+ * runs on the libuv threadpool (copyFile), keeping the event loop responsive.
+ */
+async function moveFileAsync(src, dest) {
+  try {
+    await renameAsync(src, dest);
+  } catch (e) {
+    if (e && e.code === "EXDEV") {
+      await copyFileAsync(src, dest);
+      await unlinkAsync(src);
+    } else {
+      return false;
+    }
+  }
+  return true;
+}
+
+const {
   isString,
   isObject,
   map,
@@ -1321,7 +1351,7 @@ class __media extends Mfs {
    */
   async after_store(pid, incoming_file, data) {
     const base = resolve(data.mfs_root, data.id);
-    mkdirSync(base, { recursive: true });
+    await mkdirAsync(base, { recursive: true });
     const ext = data.extension.toLowerCase();
     let orig = `${base}/orig.${ext}`;
     this.granted_node(data);
@@ -1335,7 +1365,7 @@ class __media extends Mfs {
       return content;
     }
 
-    if (!mv(incoming_file, orig) || !existsSync(orig)) {
+    if (!(await moveFileAsync(incoming_file, orig)) || !existsSync(orig)) {
       this.warn(`${__filename}:337 ${orig} not found`);
       this.exception.user(FAILED_CREATE_FILE);
       return { ...data, error: 1 };
