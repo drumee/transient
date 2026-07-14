@@ -106,15 +106,28 @@ class __public_stripe_webhook extends Entity {
               await this.yp.await_proc('subscription_update', entity_id, customer_id, subscription_id, plan, period, 1, price, 0, status);
             }
             await this.yp.await_proc('payment_apply_entitlement', entity_id, plan, period_end, entity_type, seat_total, extra_disk);
-            await this.notify_user(entity_id, { service: 'payment.plan_updated', plan, status: 'active' });
+            // Push the REAL status (canceled when cancel_at_period_end), not a
+            // hardcoded 'active' — a pending cancel must reach the client so the
+            // billing screen flips to "ends on {period_end}" in realtime. Carry
+            // period_end so the FE can render the date without a refetch.
+            await this.notify_user(entity_id, { service: 'payment.plan_updated', plan, status, period_end });
           }
           break;
         }
         case 'customer.subscription.deleted': {
           const entity_id = md.entity_id;
           if (entity_id) {
+            const etype = md.entity_type || 'user';
             await this.yp.await_proc('subscription_remove', entity_id, obj.id || '');
-            await this.yp.await_proc('payment_apply_entitlement', entity_id, 'free', 0, md.entity_type || 'user', 0, 0);
+            if (etype === 'org') {
+              // Team cancel: DELETE the org entitlement row so every member
+              // falls back to the per-user free tier. Applying a 'free' plan to
+              // an org yields disk 0 (no ('free','org') plan row → 50GB*0 seats)
+              // and locks out the whole team.
+              await this.yp.await_proc('payment_clear_entitlement', entity_id);
+            } else {
+              await this.yp.await_proc('payment_apply_entitlement', entity_id, 'free', 0, 'user', 0, 0);
+            }
             await this.notify_user(entity_id, { service: 'payment.plan_updated', plan: 'free', status: 'canceled' });
           }
           break;
@@ -151,6 +164,11 @@ class __public_stripe_webhook extends Entity {
       }
     } catch (e) {
       this.error(`stripe reducer failed for ${event.id}: ${e.message}`); // message only, no secrets
+      // Undo the 'seen' row so Stripe's retry re-processes this event instead of
+      // hitting the duplicate guard and skipping it (which would silently drop a
+      // cancellation/downgrade). Return 500 so Stripe actually retries.
+      try { await this.yp.await_proc('stripe_event_delete', event.id); } catch (e2) {}
+      return this.exception.server({ error: '_internal_error', service: 'stripe_webhook' });
     }
     await this.yp.await_proc('stripe_event_processed', event.id);
     this.output.data({ ok: 1 });
