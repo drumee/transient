@@ -155,6 +155,58 @@ class __private_payment extends Entity {
     this.output.data({ url: session.url });
   }
 
+  // Native in-app cancel: schedule the subscription to end at the current
+  // period end (Stripe cancel_at_period_end=true). The user keeps the paid tier
+  // until period_end; the customer.subscription.updated webhook mirrors
+  // status='canceled', and the entitlement is dropped only by the final
+  // customer.subscription.deleted. Returns the live status + period_end so the
+  // FE flips to "ends on {date}" immediately, without waiting on the webhook.
+  // _subscription_row() is caller-scoped (own sub, or the org this owner owns),
+  // so a member can never cancel someone else's / a team they don't own.
+  async cancel_subscription() {
+    let stripe;
+    try { stripe = this._stripe(); }
+    catch (e) { return this.output.data({ status: 'STRIPE_NOT_CONFIGURED' }); }
+    const sub = await this._subscription_row();
+    const subscription_id = sub && sub.subscription_id;
+    if (!subscription_id) return this.output.data({ status: 'NO_SUBSCRIPTION' });
+    let s;
+    try {
+      s = await stripe.subscriptions.update(subscription_id, { cancel_at_period_end: true });
+    } catch (e) {
+      return this.output.data({ status: 'CANCEL_FAILED', error: e && e.message });
+    }
+    const items = (s.items && s.items.data) || [];
+    this.output.data({
+      status: 'canceled',
+      cancel_at_period_end: true,
+      period_end: s.current_period_end || (items[0] && items[0].current_period_end) || (sub && sub.period_end) || 0,
+    });
+  }
+
+  // Undo a scheduled cancellation (Stripe cancel_at_period_end=false) — the
+  // subscription resumes normal renewal. The webhook re-mirrors status='active'.
+  async resume_subscription() {
+    let stripe;
+    try { stripe = this._stripe(); }
+    catch (e) { return this.output.data({ status: 'STRIPE_NOT_CONFIGURED' }); }
+    const sub = await this._subscription_row();
+    const subscription_id = sub && sub.subscription_id;
+    if (!subscription_id) return this.output.data({ status: 'NO_SUBSCRIPTION' });
+    let s;
+    try {
+      s = await stripe.subscriptions.update(subscription_id, { cancel_at_period_end: false });
+    } catch (e) {
+      return this.output.data({ status: 'RESUME_FAILED', error: e && e.message });
+    }
+    const items = (s.items && s.items.data) || [];
+    this.output.data({
+      status: s.status || 'active',
+      cancel_at_period_end: false,
+      period_end: s.current_period_end || (items[0] && items[0].current_period_end) || (sub && sub.period_end) || 0,
+    });
+  }
+
   // Post-Checkout receipt details for the success/failure modal: total paid,
   // invoice number, payment date and card brand/last4, straight from the
   // Checkout Session the browser was redirected back with.
