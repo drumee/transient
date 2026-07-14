@@ -696,7 +696,33 @@ class __dmz extends Mfs {
               `${db_name}.permission_grant`,
               info.node_id, user.id, 0, grantTarget, 'system', 'Secure share access'
             );
-            bindUid = user.id;            // rebind ONLY after the grant succeeds
+            // FILE share: the grant above lands on the file (info.node_id), but
+            // media.show_node_by lists the file's PARENT (info.nid, remapped ~L455).
+            // show_node_by is src=anonymous, yet its ACL gate resolves the caller's
+            // real user_permission on that parent BEFORE the worker body runs — and a
+            // logged-in NON-member has 0 there (the file grant does not confer parent
+            // access), so the listing is DENIED → 403 → the recipient sees no file.
+            // (Anonymous escapes this: it stays creator-bound; members have standing;
+            // folder shares grant the listed node itself.) Grant the recipient a
+            // READ-ONLY, NON-INHERITING grant on the parent so the gate passes without
+            // exposing siblings:
+            //   * assign_via='root' makes parent_permission() treat this grant as 0 for
+            //     CHILDREN (its anchor CASEs 'root' → 0), so siblings' user_permission
+            //     stays 0 → no sibling is listable or directly reachable. Only
+            //     parent_permission consumes assign_via='root'; nothing else keys off it
+            //     (membership is resource_id='*' + assign_via='system').
+            //   * read-only bits only (grantTarget & 0b0000011) → never write/edit on
+            //     the parent folder (defense-in-depth with the file-share write block).
+            //   * media.show_node_by ALSO hard-filters to info.file_nid → belt & braces.
+            // Gated on a real FILE share (info.file_nid set AND parent !== the file); a
+            // no-op for folder/workspace shares, anonymous, members, and non-share desk.
+            if (info.file_nid && info.nid && info.nid !== info.node_id) {
+              await this.yp.await_proc(
+                `${db_name}.permission_grant`,
+                info.nid, user.id, 0, (grantTarget & 0b0000011), 'root', 'Secure share access'
+              );
+            }
+            bindUid = user.id;            // rebind ONLY after the grant(s) succeed
           }
         } catch (e) {
           this.warn('[dmz.login] secure_share node grant failed; keeping creator binding (clamped):', e && e.message);

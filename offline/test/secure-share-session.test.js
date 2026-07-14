@@ -207,6 +207,29 @@ const invariants = [
     );
   }],
 
+  ['file share: recipient gets a NON-INHERITING parent grant so the listing gate passes', async () => {
+    const dmz = src('service/dmz.js');
+    // A logged-in NON-member rebound to self is granted only on the shared FILE, but
+    // media.show_node_by lists the file's PARENT (info.nid) and its src=anonymous ACL
+    // gate resolves user_permission on that parent BEFORE the body → 0 for a non-member
+    // → 403 (the reported "public file share shows no video"). The fix grants the parent
+    // a read-only, NON-INHERITING ('root') grant so the gate passes WITHOUT exposing
+    // siblings (parent_permission CASEs assign_via='root' → 0 for children). Removing
+    // this reopens the 403; changing 'root'→'system' would leak every sibling.
+    const grantIdx = dmz.indexOf("'system', 'Secure share access'");
+    assert.ok(grantIdx > 0, 'file-node grant call not found');
+    // The parent-traversal grant sits just after the file grant, still inside the branch.
+    const after = dmz.slice(grantIdx, grantIdx + 2000);
+    assert.ok(
+      /info\.file_nid\s*&&\s*info\.nid\s*&&\s*info\.nid\s*!==\s*info\.node_id/.test(after),
+      'parent-traversal grant must be gated on a real FILE share (file_nid set, parent !== file)'
+    );
+    assert.ok(
+      /info\.nid,\s*user\.id,\s*0,\s*\(grantTarget\s*&\s*0b0000011\),\s*'root',\s*'Secure share access'/.test(after),
+      "parent-traversal grant must be READ-ONLY (grantTarget & 0b0000011) and NON-INHERITING (assign_via='root')"
+    );
+  }],
+
   ['#4 media.js: listing is token-scoped + hard-filtered to the shared file', async () => {
     const media = src('service/media.js');
     assert.ok(/_secureShareListTarget\s*\(/.test(media), 'token listing helper missing');
