@@ -66,24 +66,76 @@ function mapNotificationRow(r) {
   return item;
 }
 
-// Surface task-assignment fields (title/nid/hub_id/task_id) at the top level from
-// the nested contact_activity `data` JSON, so the client renders "assigned you to
-// <task>" and navigates to the task without relying on the nested JSON surviving
-// the LETC model. Idempotent; only touches task_assigned rows.
-function flattenTaskAssigned(rows) {
+// Surface task fields at the top level from the nested contact_activity `data`
+// JSON so the client renders the right text and can navigate to the task,
+// without relying on the nested JSON surviving the LETC model. Handles BOTH
+// task_assigned ("assigned you to <task>") and task_mention ("mentioned you in
+// <task>"). Idempotent; only touches those two events. The two events use
+// different client field names (assignment nav reads task_hub_id/task_nid;
+// mention nav reads top-level hub_id/nid), so flatten to each one's contract.
+function flattenTaskFields(rows) {
   for (const r of rows) {
-    if (!r || r.event !== 'task_assigned') continue;
+    if (!r) continue;
+    if (r.event !== 'task_assigned' && r.event !== 'task_mention') continue;
     let meta = r.data;
     if (typeof meta === 'string') {
       try { meta = JSON.parse(meta); } catch (e) { meta = null; }
     }
     meta = meta || {};
     if (r.task_title == null) r.task_title = meta.title || '';
-    if (r.task_nid == null) r.task_nid = meta.nid || null;
-    if (r.task_hub_id == null) r.task_hub_id = meta.hub_id || null;
     if (r.task_id == null) r.task_id = meta.task_id || null;
+    if (r.event === 'task_assigned') {
+      if (r.task_nid == null) r.task_nid = meta.nid || null;
+      if (r.task_hub_id == null) r.task_hub_id = meta.hub_id || null;
+    } else {
+      // task_mention: the client nav branch reads top-level hub_id/nid.
+      // activity_get_feed_all sets hub_id NULL for contact rows, so populate
+      // it (and nid, when the task carries one) from the task meta.
+      if (meta.hub_id != null) r.hub_id = meta.hub_id;
+      if (r.nid == null && meta.nid != null) r.nid = meta.nid;
+    }
   }
   return rows;
+}
+
+// Shape a hub-invite row (yp.contact_activity 'hub_invite_received') into the
+// same notification item shape as mapNotificationRow. Extracted so both list()
+// and get_feed() build hub-invite items identically (single source of truth).
+function mapHubInviteRow(r) {
+  let meta = {};
+  if (r.data) {
+    try { meta = typeof r.data === 'string' ? JSON.parse(r.data) : r.data; } catch (_) { }
+  }
+  return {
+    category: 'hub_invite',
+    key_id: String(r.id),
+    hub_id: meta.hub_id || null,
+    last_id: r.id,
+    cnt: 1,
+    ctime: r.ctime,
+    firstname: meta.from_firstname || r.inviter_firstname,
+    lastname: meta.from_lastname || r.inviter_lastname,
+    surname: meta.from_fullname || r.hub_headline,
+    email: r.inviter_email,
+    author_id: r.author_id,
+    hub_name: r.hub_headline || r.hub_ident,
+  };
+}
+
+// Shape a refused-invitation row into the common notification item shape.
+function mapContactRefusedRow(r) {
+  return {
+    category: 'contact_refused',
+    key_id: String(r.id),
+    last_id: r.id,
+    cnt: 1,
+    ctime: r.ctime,
+    firstname: r.firstname,
+    lastname: r.lastname,
+    email: r.email,
+    author_id: r.author_id,
+    drumate_id: r.author_id,
+  };
 }
 
 class MfsActivity extends Entity {
@@ -298,12 +350,67 @@ class MfsActivity extends Entity {
       }
     }
 
-    // Flatten task-assignment fields onto the Unread-OFF feed rows (from
-    // activity_get_feed_all) so the client renders "assigned you to <task>" and
-    // can open the task. Unread-ON visibility is handled by the pinned badge
-    // merge (list_task_assignments) — NOT by merging into this feed, which would
-    // double-show the row (pinned + feed) under Unread ON.
-    flattenTaskAssigned(result);
+    // Interleave rollup + task notifications chronologically into the
+    // All-activity feed, instead of the client pinning them in a separate box on
+    // top (product request: one single time-sorted list, newest first). Merged
+    // on page 1 only (same as the share-open merge above) so they aren't repeated
+    // per page; they're extra rows beyond pagelength, so none are dropped and the
+    // feed's pagination of older items is unaffected. The client still fetches
+    // these via activity.list / channel.list_notifications for the unread BADGE —
+    // this only changes WHERE they render. Best-effort: a failure never breaks
+    // the rest of the feed.
+    if (filter !== 'mentions' && filter !== 'shares' && page <= 1) {
+      try {
+        // chat/media/teamchat/ticket rollups are NOT returned by
+        // activity_get_feed_all, so merge them in BOTH modes. contact /
+        // hub-invite / refused-invitation rollups ARE returned by
+        // activity_get_feed_all (the Unread-OFF feed), so only merge them under
+        // Unread ON — otherwise the same event double-shows under Unread OFF.
+        const ALWAYS = new Set(['chat', 'media', 'teamchat', 'ticket']);
+        const rollups = await this._notificationRollups();
+        for (const r of rollups) {
+          if (!r) continue;
+          if (!ALWAYS.has(r.category) && !unreadOnly) continue;
+          // Item skeleton + sort read `timestamp` first, then `ctime`; rollups
+          // only carry ctime, so mirror it to timestamp for correct ordering.
+          if (r.timestamp == null) r.timestamp = r.ctime;
+          result.push(r);
+        }
+        // Task @-mentions / assignments live in yp.contact_activity → under
+        // Unread OFF they already come from activity_get_feed_all; merge their
+        // UNREAD rows only under Unread ON so they show in the default view
+        // without double-showing under OFF. Each proc is independently
+        // best-effort so a missing/failing one never sinks the others.
+        if (unreadOnly) {
+          for (const proc of ['contact_task_assigned_unread', 'contact_task_mention_unread']) {
+            try {
+              const rows = toArray(await this.yp.await_proc(proc, this.uid));
+              for (const r of rows) {
+                if (!r) continue;
+                if (r.timestamp == null) r.timestamp = r.ctime;
+                result.push(r);
+              }
+            } catch (e) {
+              // debug (not warn) on purpose: a missing proc during the rollout
+              // window (server deployed before the SQL is applied) is expected
+              // and degrades gracefully (task items still show under Unread OFF
+              // via activity_get_feed_all). warn would spam the Telegram alert
+              // bot every call until the proc lands.
+              this.debug(`[ACTIVITY] ${proc} merge skipped`, e && e.message);
+            }
+          }
+        }
+        result.sort((a, b) => (Number(b.timestamp || b.ctime || 0) - Number(a.timestamp || a.ctime || 0)));
+      } catch (e) {
+        this.warn('[ACTIVITY] rollup merge failed', e && e.message);
+      }
+    }
+
+    // Flatten task fields onto the feed rows so the client renders "assigned you
+    // to <task>" / "mentioned you in <task>" and can open the task. Covers both
+    // the Unread-ON merged rows above and the Unread-OFF rows from
+    // activity_get_feed_all.
+    flattenTaskFields(result);
 
     this.output.list(result);
   }
@@ -326,7 +433,7 @@ class MfsActivity extends Entity {
       this.warn('[ACTIVITY] contact_task_assigned_unread failed', e && e.message);
       return this.output.list([]);
     }
-    flattenTaskAssigned(rows);
+    flattenTaskFields(rows);
     this.output.list(rows);
   }
 
@@ -512,6 +619,18 @@ class MfsActivity extends Entity {
    * Endpoint: POST /activity.list
    */
   async list() {
+    this.output.list(await this._notificationRollups());
+  }
+
+  /**
+   * Build the flat list of rollup notification items (the 5 notification_center
+   * rollup categories + hub-invites + refused-invitations), each mapped to the
+   * common item shape. Shared by `list()` (the badge/priority source) and
+   * `get_feed()` (which now interleaves these rollups chronologically into the
+   * activity feed instead of the client pinning them in a separate section).
+   * Best-effort: a failing sub-source degrades to [] rather than throwing.
+   */
+  async _notificationRollups() {
     const [rollups, hubInvites] = await Promise.all([
       this._callUserProc('notification_center_next'),
       this._callUserProc('notification_hub_invites'),
@@ -522,42 +641,11 @@ class MfsActivity extends Entity {
     try {
       refused = toArray(await this._callUserProc('notification_contact_refused'));
     } catch (_) { }
-    const items = [
+    return [
       ...rows.map(mapNotificationRow),
-      ...hubs.map((r) => {
-        let meta = {};
-        if (r.data) {
-          try { meta = typeof r.data === 'string' ? JSON.parse(r.data) : r.data; } catch (_) { }
-        }
-        return {
-          category: 'hub_invite',
-          key_id: String(r.id),
-          hub_id: meta.hub_id || null,
-          last_id: r.id,
-          cnt: 1,
-          ctime: r.ctime,
-          firstname: meta.from_firstname || r.inviter_firstname,
-          lastname: meta.from_lastname || r.inviter_lastname,
-          surname: meta.from_fullname || r.hub_headline,
-          email: r.inviter_email,
-          author_id: r.author_id,
-          hub_name: r.hub_headline || r.hub_ident,
-        };
-      }),
-      ...refused.map((r) => ({
-        category: 'contact_refused',
-        key_id: String(r.id),
-        last_id: r.id,
-        cnt: 1,
-        ctime: r.ctime,
-        firstname: r.firstname,
-        lastname: r.lastname,
-        email: r.email,
-        author_id: r.author_id,
-        drumate_id: r.author_id,
-      })),
+      ...hubs.map(mapHubInviteRow),
+      ...refused.map(mapContactRefusedRow),
     ];
-    this.output.list(items);
   }
 
   /**
