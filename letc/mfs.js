@@ -401,6 +401,14 @@ class __core_mfs extends LetcBox {
   async fetchFile(o) {
     let options = this._fetchOptions();
     return fetch(o.url, options).then((response) => {
+      if (response.status === 204) {
+        // Thumb endpoints reply 204 when the source is missing (nothing to
+        // generate a thumb from). Same fallback as 404 — without the
+        // browser-console error a 404 would log, and without falling into
+        // the success path below (a 204 has no body/content-type to read).
+        if (this.verbose) this.verbose(`No content for ${o.url}`);
+        return { error: 404 };
+      }
       if (!response.ok) {
         if (response.status === 404) {
           if (this.verbose) this.verbose(`Missing file ${o.url} (${response.status})`);
