@@ -54,7 +54,7 @@ class __image_smart extends View {
   }
 
   /**
-   * 
+   *
    */
   _loadHighQuality(e) {
     const url = this.mget(_a.high) || this.mget(_a.src);
@@ -64,14 +64,37 @@ class __image_smart extends View {
     this._loaded = true;
     if (e.type === _e.load) {
       this.el.onload = null;
-      let timer = setInterval(() => {
+      this._clearQualityTimer();
+      this._qualityTimer = setInterval(() => {
         if (this.el.naturalWidth || this.el.naturalHeight) {
           this.trigger(_e.loaded, this);
-          clearInterval(timer)
+          this._clearQualityTimer();
         }
       }, 200)
     }
 
+  }
+
+  /**
+   * A high-res 404 leaves naturalWidth at 0 forever: without cleanup the
+   * poll above outlives the widget (nothing else clears it), leaking one
+   * immortal interval per failed open/close cycle.
+   */
+  _clearQualityTimer() {
+    if (this._qualityTimer) {
+      clearInterval(this._qualityTimer);
+      this._qualityTimer = null;
+    }
+  }
+
+  /**
+   * Surface load failures instead of hanging silently: consumers (e.g. the
+   * image player) reveal themselves on `loaded`, so a 404 with no error
+   * signal leaves them stuck invisible.
+   */
+  onBeforeDestroy() {
+    this._clearQualityTimer();
+    if (this.el) this.el.onerror = null;
   }
 
   /**
@@ -89,6 +112,10 @@ class __image_smart extends View {
     }
 
     this.el.onload = this._loadHighQuality;
+    this.el.onerror = () => {
+      this._clearQualityTimer();
+      this.trigger("load:error", this);
+    };
     if (this.mget(_a.low)) {
       this.el.dataset.quality = _a.low;
       this.el.src = this.mget(_a.low);
