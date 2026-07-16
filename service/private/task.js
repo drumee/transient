@@ -55,6 +55,10 @@ class __private_task extends Entity {
     this.column_create = this.column_create.bind(this);
     this.column_update = this.column_update.bind(this);
     this.column_delete = this.column_delete.bind(this);
+    this.column_reorder = this.column_reorder.bind(this);
+    this.column_watch_list = this.column_watch_list.bind(this);
+    this.column_watch_set = this.column_watch_set.bind(this);
+    this.column_watch_unset = this.column_watch_unset.bind(this);
   }
 
   /**
@@ -66,6 +70,21 @@ class __private_task extends Entity {
     if (!status || !/^[A-Za-z0-9_-]{1,32}$/.test(status)) return false;
     const col = await this.db.await_proc('task_column_get', status);
     return !isEmpty(col);
+  }
+
+  /**
+   * Whether a status/column key is a "done" column (is_done = 1). Completion is
+   * column-driven now, so this replaces the old literal `status === 'complete'`
+   * checks — a renamed or user-created done column still counts as complete.
+   */
+  async _isDoneColumn(status) {
+    try {
+      const col = await this.db.await_proc('task_column_get', status);
+      const row = Array.isArray(col) ? col[0] : col;
+      return !!(row && Number(row.is_done));
+    } catch (e) {
+      return status === 'complete';
+    }
   }
 
   /**
@@ -182,6 +201,91 @@ class __private_task extends Entity {
       }
     } catch (e) {
       this.warn('[task._notifyAssignees] push failed:', e && e.message);
+    }
+  }
+
+  /**
+   * Notify everyone watching a column (bell toggle in the column header) that a
+   * task in it changed. Mirrors _notifyAssignees: persist a deduped
+   * `task_column_change` row (offline-safe, coalesced per column) then live-push
+   * to online watchers. The actor is always excluded. `columnKeys` may be one
+   * key or several (a status move affects both the source and target columns).
+   */
+  async _notifyColumnWatchers(row, columnKeys) {
+    const r = Array.isArray(row) ? row[0] : row;
+    if (!r) return;
+    const keys = toArray(columnKeys).filter(Boolean);
+    if (isEmpty(keys)) return;
+    const nid = r.nid || '0';
+    const hub_id = this.hub && this.hub.get(Attr.id);
+    // Union of watchers across the affected column(s), actor excluded.
+    const watchers = new Set();
+    for (const key of keys) {
+      try {
+        const rows = await this.db.await_proc('task_column_watchers', nid, key);
+        for (const w of toArray(rows)) {
+          if (w && w.uid && w.uid !== this.uid) watchers.add(w.uid);
+        }
+      } catch (e) {
+        this.warn('[task._notifyColumnWatchers] resolve failed:', e && e.message);
+      }
+    }
+    const uids = Array.from(watchers);
+    if (isEmpty(uids)) return;
+
+    // The persisted/click meta names the column so the notification reads
+    // "activity in <column>" and the click can open that folder's Task tab.
+    const meta = {
+      task_id: r.id,
+      hub_id,
+      nid,
+      column_key: keys[0],
+      title: r.title || '',
+    };
+    for (const target_uid of uids) {
+      try {
+        await this.yp.await_proc(
+          'contact_log_activity',
+          this.uid,
+          target_uid,
+          'task_column_change',
+          meta,
+        );
+      } catch (e) {
+        this.warn('[task._notifyColumnWatchers] log failed:', e && e.message);
+      }
+    }
+    try {
+      const recipients = await this.yp.await_proc('user_sockets', uids);
+      if (!isEmpty(recipients)) {
+        await RedisStore.sendData(
+          this.payload(
+            { ...(r || {}), event: 'task_column_change', hub_id, nid },
+            { service: 'task.column_change' },
+          ),
+          recipients,
+        );
+      }
+    } catch (e) {
+      this.warn('[task._notifyColumnWatchers] push failed:', e && e.message);
+    }
+  }
+
+  // Read a task's column/folder so mutations whose SP result doesn't carry the
+  // row (comment_create) or runs after removal (delete) can still notify.
+  async _taskColMeta(id) {
+    try {
+      return (
+        toArray(
+          await this.db.await_run(
+            'SELECT id, status, nid, title FROM task WHERE id = ?',
+            [id],
+          ),
+        )[0] || null
+      );
+    } catch (e) {
+      this.warn('[task._taskColMeta] failed:', e && e.message);
+      return null;
     }
   }
 
@@ -325,6 +429,9 @@ class __private_task extends Entity {
     await this._notifyMentions(data, this.input.use('mention_uids', null));
     // Every assignee is newly assigned on create → notify them (self excluded).
     await this._notifyAssignees(data, assignees);
+    // Notify watchers of the column the task landed in.
+    const created = Array.isArray(data) ? data[0] : data;
+    await this._notifyColumnWatchers(created, created && created.status);
     this.output.data(data);
   }
 
@@ -362,6 +469,8 @@ class __private_task extends Entity {
     await this._broadcast('task.update', data);
     // Client sends only the newly-added mentions in `mention_uids`.
     await this._notifyMentions(data, this.input.use('mention_uids', null));
+    // Notify watchers of the task's current column.
+    await this._notifyColumnWatchers(row, row && row.status);
     this.output.data(data);
   }
 
@@ -378,6 +487,11 @@ class __private_task extends Entity {
       return this.exception.user('INVALID_STATUS');
     }
 
+    // Capture the source column BEFORE the move so its watchers are told the
+    // task left, in addition to the destination column's watchers.
+    const prev = await this._taskColMeta(id);
+    const prevStatus = prev && prev.status;
+
     const data = await this.db.await_proc('task_update_status', id, status);
     if (isEmpty(data)) {
       return this.exception.user('TASK_NOT_FOUND');
@@ -385,10 +499,13 @@ class __private_task extends Entity {
     const row = Array.isArray(data) ? data[0] : data;
     await this._logActivity(
       id,
-      status === 'complete' ? 'complete' : 'status',
+      (await this._isDoneColumn(status)) ? 'complete' : 'status',
       { title: row && row.title, status },
     );
     await this._broadcast('task.update_status', data);
+    const cols =
+      prevStatus && prevStatus !== status ? [status, prevStatus] : [status];
+    await this._notifyColumnWatchers(row, cols);
     this.output.data(data);
   }
 
@@ -438,11 +555,14 @@ class __private_task extends Entity {
    */
   async delete() {
     const id = this.input.need(Attr.id);
+    // Snapshot the column BEFORE removal so watchers learn a task was deleted.
+    const meta = await this._taskColMeta(id);
     // Log BEFORE the delete — task_activity_log snapshots the task's nid/title.
     await this._logActivity(id, 'update', { deleted: 1 });
     const data = await this.db.await_proc('task_delete', id);
     const result = { id, ...data };
     await this._broadcast('task.delete', result);
+    if (meta) await this._notifyColumnWatchers(meta, meta.status);
     this.output.data(result);
   }
 
@@ -608,6 +728,9 @@ class __private_task extends Entity {
       }
     }
     await this._notifyCommentMentions(task_id, [...new Set(notify)]);
+    // Notify watchers of the commented task's column.
+    const tmeta = await this._taskColMeta(task_id);
+    if (tmeta) await this._notifyColumnWatchers(tmeta, tmeta.status);
     this.output.data(row);
   }
 
@@ -743,6 +866,49 @@ class __private_task extends Entity {
       moved_tasks: row && row.moved_tasks,
     });
     this.output.data(row);
+  }
+
+  /**
+   * Persist a drag-reorder of the custom columns. `order` is the comma-separated
+   * column ids in their new left-to-right order; the proc sets each column's
+   * position to its index in that list (built-in columns are client-side only
+   * and unaffected). Scoped to the folder node so one folder's reorder can't
+   * touch another's rows. Returns the columns in their new order.
+   */
+  async column_reorder() {
+    const order = String(this.input.need('order') || '').trim();
+    if (!order) return this.exception.user('INVALID_COLUMN_ORDER');
+    const nid = this.input.use('nid', null);
+    const data = await this.db.await_run(
+      'CALL task_column_reorder(?, ?)',
+      [nid, order]
+    );
+    await this._broadcast('task.column_reorder', { nid, order });
+    this.output.list(data);
+  }
+
+  // ── Column notification subscriptions (bell toggle) ──────────────
+  // Per-user, per-column, per-folder watch. When on, the user is notified of
+  // any task change in that column (see _notifyColumnWatchers).
+
+  async column_watch_list() {
+    const nid = this.input.use('nid', '0') || '0';
+    const data = await this.db.await_proc('task_column_watch_list', this.uid, nid);
+    this.output.list(toArray(data).map((r) => r.column_key));
+  }
+
+  async column_watch_set() {
+    const nid = this.input.use('nid', '0') || '0';
+    const column_key = this.input.need('column_key');
+    await this.db.await_proc('task_column_watch_set', this.uid, nid, column_key);
+    this.output.data({ nid, column_key, watching: 1 });
+  }
+
+  async column_watch_unset() {
+    const nid = this.input.use('nid', '0') || '0';
+    const column_key = this.input.need('column_key');
+    await this.db.await_proc('task_column_watch_unset', this.uid, nid, column_key);
+    this.output.data({ nid, column_key, watching: 0 });
   }
 }
 

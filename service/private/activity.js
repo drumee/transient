@@ -138,6 +138,25 @@ function mapContactRefusedRow(r) {
   };
 }
 
+// Same flattening for column-watch notifications, plus the affected column key
+// so the item can render "activity in <column>".
+function flattenTaskColumnChange(rows) {
+  for (const r of rows) {
+    if (!r || r.event !== 'task_column_change') continue;
+    let meta = r.data;
+    if (typeof meta === 'string') {
+      try { meta = JSON.parse(meta); } catch (e) { meta = null; }
+    }
+    meta = meta || {};
+    if (r.task_title == null) r.task_title = meta.title || '';
+    if (r.task_nid == null) r.task_nid = meta.nid || null;
+    if (r.task_hub_id == null) r.task_hub_id = meta.hub_id || null;
+    if (r.task_id == null) r.task_id = meta.task_id || null;
+    if (r.column_key == null) r.column_key = meta.column_key || null;
+  }
+  return rows;
+}
+
 class MfsActivity extends Entity {
 
 
@@ -434,6 +453,18 @@ class MfsActivity extends Entity {
       return this.output.list([]);
     }
     flattenTaskFields(rows);
+    // Merge undismissed column-watch notifications into the same unread list so
+    // they show in the pinned section + bump the badge, exactly like assignments.
+    try {
+      const colRows = toArray(
+        await this.yp.await_proc('contact_task_column_change_unread', this.uid),
+      );
+      flattenTaskColumnChange(colRows);
+      rows = rows.concat(colRows);
+      rows.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+    } catch (e) {
+      this.warn('[ACTIVITY] contact_task_column_change_unread failed', e && e.message);
+    }
     this.output.list(rows);
   }
 
