@@ -33,6 +33,53 @@ class __private_payment extends Entity {
     this.output.data({ plans });
   }
 
+  // ── TEAM org bootstrap ────────────────────────────────────────────────
+  // The subdomain (org ident) is collected BEFORE Stripe Checkout (product
+  // decision 2026-07-17) and threaded through the session metadata; the
+  // webhook provisions the organisation atomically (yp org_provision) on
+  // checkout.session.completed. These helpers validate the ident up-front.
+
+  // Shared validation for the org ident (subdomain label).
+  async _validateOrgIdent(ident) {
+    ident = String(ident || '').trim().toLowerCase();
+    // DNS label: 2-63 chars, a-z 0-9 hyphen, no leading/trailing hyphen.
+    if (!/^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])$/.test(ident)) {
+      return { status: 'IDENT_INVALID', ident };
+    }
+    // Move-semantics membership: a payer already inside another domain
+    // cannot bootstrap a second organisation.
+    if (~~this.user.domain_id() > 1) {
+      return { status: 'ALREADY_IN_OTHER_DOMAIN', ident };
+    }
+    let taken = await this.yp.await_proc('ident_exists', ident);
+    if (Array.isArray(taken) ? taken.length : (taken && taken.id)) {
+      return { status: 'IDENT_NOT_AVAILABLE', ident };
+    }
+    // The org URL is `${ident}.${main_domain()}` (domain_create convention) —
+    // reject when the fqdn or domain row already exists.
+    let rows = await this.yp.await_query(
+      `SELECT (SELECT COUNT(*) FROM vhost  WHERE fqdn = CONCAT(?, '.', main_domain()))
+            + (SELECT COUNT(*) FROM domain WHERE name = CONCAT(?, '.', main_domain())) AS c`,
+      ident, ident
+    );
+    if (Array.isArray(rows)) rows = rows[0];
+    if (rows && ~~rows.c > 0) {
+      return { status: 'IDENT_NOT_AVAILABLE', ident };
+    }
+    let fqdn = await this.yp.await_query(
+      `SELECT CONCAT(?, '.', main_domain()) AS fqdn`, ident
+    );
+    if (Array.isArray(fqdn)) fqdn = fqdn[0];
+    return { status: 'OK', ident, fqdn: fqdn && fqdn.fqdn };
+  }
+
+  // Pre-checkout validation endpoint for the FE subdomain step.
+  async validate_org_ident() {
+    const ident = this.input.need('ident');
+    const res = await this._validateOrgIdent(ident);
+    this.output.data(res);
+  }
+
   // Hosted Checkout. entity_type 'user' (individual Free->Pro) or 'org' (team,
   // per-seat: Stripe quantity = seats, customer = the org the caller owns).
   async checkout() {
@@ -44,11 +91,30 @@ class __private_payment extends Entity {
     const seats = Math.max(1, ~~this.input.use('seats', 1));
 
     let plan, entity_id, email, name, existing_customer;
+    let org_bootstrap = null;
     if (entity_type === 'org') {
       plan = this.input.use('plan', 'team');
       const org = await this.yp.await_proc('payment_get_org', this.uid);
-      if (!org || !org.id) return this.output.data({ status: 'NOT_ORG_OWNER' });
-      entity_id = org.id; name = org.name; existing_customer = org.customer_id;
+      if (org && org.id) {
+        entity_id = org.id; name = org.name; existing_customer = org.customer_id;
+      } else {
+        // TEAM bootstrap: no organisation yet — the FE collected the
+        // subdomain; validate it now, thread it through the session
+        // metadata and let the webhook provision atomically after payment.
+        const ident = this.input.use('ident', '');
+        const org_name = this.input.use('org_name', '') || this.input.use('name', '');
+        if (!ident || !org_name) {
+          return this.output.data({ status: 'ORG_IDENT_REQUIRED' });
+        }
+        const v = await this._validateOrgIdent(ident);
+        if (v.status !== 'OK') return this.output.data(v);
+        org_bootstrap = { ident: v.ident, org_name: String(org_name).trim() };
+        // Stripe customer keyed by the PAYER while the org doesn't exist yet.
+        entity_id = this.uid;
+        const payer = await this.yp.await_proc('payment_get_payer', this.uid);
+        email = payer && payer.email; name = org_bootstrap.org_name;
+        existing_customer = payer && payer.customer_id;
+      }
     } else {
       plan = this.input.use('plan', 'pro');
       entity_id = this.uid;
@@ -104,7 +170,14 @@ class __private_payment extends Entity {
     const svcbase = this.input.homepath().replace(/\/+$/, '') + '/svc/?service=';
     const success_url = `${svcbase}callback.check_out_success&session_id={CHECKOUT_SESSION_ID}`;
     const cancel_url = `${svcbase}callback.check_out_cancel`;
-    const metadata = { entity_type, entity_id, plan, period };
+    // payer_id always travels with the subscription so the webhook can
+    // resolve/provision the organisation regardless of which event arrives
+    // first; org_ident/org_name are present only on the TEAM bootstrap.
+    const metadata = { entity_type, entity_id, plan, period, payer_id: this.uid };
+    if (org_bootstrap) {
+      metadata.org_ident = org_bootstrap.ident;
+      metadata.org_name = org_bootstrap.org_name;
+    }
     const session = await stripe.checkout.sessions.create({
       mode: 'subscription',
       customer: customer_id,
@@ -121,8 +194,11 @@ class __private_payment extends Entity {
   // subscriptions by the ORGANISATION id, so when the personal row is empty
   // fall back to the org the caller owns — org owners see their team sub.
   async _subscription_row() {
-    let row = await this.yp.await_proc('payment_get_subscription', this.uid);
-    if (row && row.subscription_id) return row;
+    // Tenant-first: the ORG subscription outranks a leftover personal one —
+    // a pro→team upgrader owns both for a while, and the plan they're ON is
+    // the tenant's (the Billing page otherwise kept showing 'pro' after a
+    // successful TEAM upgrade). Mirrors the quota cascade fix in
+    // disk_limit/my_disk_limit/get_quota.
     const org = await this.yp.await_proc('payment_get_org', this.uid);
     if (org && org.id) {
       const orgRow = await this.yp.await_proc('payment_get_subscription', org.id);
@@ -132,6 +208,7 @@ class __private_payment extends Entity {
         return orgRow;
       }
     }
+    const row = await this.yp.await_proc('payment_get_subscription', this.uid);
     return row || {};
   }
 

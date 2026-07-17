@@ -73,7 +73,9 @@
     "get_referral_code": {
       "doc": "Get or create the signed-in user's referral code and link.",
       "scope": "hub",
-      "permission": { "src": "owner" }
+      "permission": {
+        "src": "owner"
+      }
     },
     "change_password": {
       "doc": "Change user password with old password verification",
@@ -675,56 +677,6 @@
         {
           "code": "_ident_already_exists",
           "message": "Username is already taken in this domain",
-          "http_status": 409
-        }
-      ]
-    },
-    "hub_to_pro": {
-      "doc": "Upgrade free user account to Pro account with custom domain and organization",
-      "scope": "hub",
-      "permission": {
-        "src": "owner"
-      },
-      "params": {
-        "ident": {
-          "type": "string",
-          "required": true,
-          "doc": "Domain identifier (subdomain)"
-        },
-        "name": {
-          "type": "string",
-          "required": true,
-          "doc": "Organization name"
-        }
-      },
-      "returns": {
-        "id": {
-          "type": "string",
-          "doc": "Domain ID"
-        },
-        "name": {
-          "type": "string",
-          "doc": "Domain name (ident.drumee.com)"
-        },
-        "status": {
-          "type": "string",
-          "doc": "Status code (PRO_USER, NAME_NOT_AVAILABLE, or URL_NOT_AVAILABLE if failed)"
-        }
-      },
-      "errors": [
-        {
-          "code": "PRO_USER",
-          "message": "User is already a Pro account",
-          "http_status": 400
-        },
-        {
-          "code": "NAME_NOT_AVAILABLE",
-          "message": "Organization name is already taken",
-          "http_status": 409
-        },
-        {
-          "code": "URL_NOT_AVAILABLE",
-          "message": "Domain identifier is already taken",
           "http_status": 409
         }
       ]
