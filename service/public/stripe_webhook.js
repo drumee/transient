@@ -36,8 +36,11 @@ class __public_stripe_webhook extends Entity {
    * Stripe never emails customers in test mode (and live receipts are a
    * dashboard opt-in), so the app owns this email. Callers must not let a
    * mail failure fail the webhook.
+   * heading/intro/subject override the default "plan is active" copy — the
+   * resume confirmation (Figma 3050-96856) sends the same receipt shell with
+   * "plan is resumed" copy.
    */
-  async _sendReceiptEmail(invoice, sub, smd, { seat_total } = {}) {
+  async _sendReceiptEmail(invoice, sub, smd, { seat_total, heading, intro, subject } = {}) {
     let recipient = invoice.customer_email || null;
     if (!recipient && smd.entity_id && (smd.entity_type || 'user') !== 'org') {
       const payer = await this.yp.await_proc('payment_get_payer', smd.entity_id);
@@ -60,10 +63,14 @@ class __public_stripe_webhook extends Entity {
     }));
     let app_link = '';
     try { app_link = this.input.homepath(); } catch (e) { app_link = ''; }
-    const subject = `Your Drumee ${plan_label} plan is active — receipt ${invoice.number || ''}`.trim();
+    heading = heading || `Your Drumee ${plan_label} plan is active`;
+    intro = intro || "Your payment went through. Here's your receipt.";
+    subject = subject || `${heading} — receipt ${invoice.number || ''}`.trim();
     const msg = new Messenger({ subject, recipient, handler: this.exception && this.exception.email });
     const tpl = resolve(__dirname, '..', 'private', 'templates', 'butler', 'payment-receipt.html');
     const html = msg.renderFrom(tpl, {
+      heading,
+      intro,
       plan_label,
       cycle_label,
       seats: Number(seat_total) || 0,
@@ -80,7 +87,7 @@ class __public_stripe_webhook extends Entity {
       support_email: 'contact@drumee.org',
     });
     const text = [
-      `Your Drumee ${plan_label} plan is active.`,
+      `${heading}.`,
       ``,
       `Receipt from Drumee: ${this._money(invoice.amount_paid, currency)} — paid ${this._longDate(paidTs)}.`,
       `Invoice number: ${invoice.number || invoice.id || ''}`,
@@ -325,6 +332,32 @@ class __public_stripe_webhook extends Entity {
             // billing screen flips to "ends on {period_end}" in realtime. Carry
             // period_end so the FE can render the date without a refetch.
             await this.notify_user(entity_id, { service: 'payment.plan_updated', plan, status, period_end });
+            // Resume confirmation email (Figma 3050-96856): a pending cancel
+            // flipping back to renewing. previous_attributes carries only the
+            // changed fields, so cancel_at_period_end true→false IS the resume
+            // signal — covers both the in-app Resume and the Billing Portal.
+            // No new invoice is issued on resume; attach the latest one as the
+            // receipt. A mail failure must never fail the webhook.
+            const prev = (event.data && event.data.previous_attributes) || {};
+            if (event.type === 'customer.subscription.updated'
+              && prev.cancel_at_period_end === true && !obj.cancel_at_period_end) {
+              try {
+                const invId = typeof obj.latest_invoice === 'string'
+                  ? obj.latest_invoice : (obj.latest_invoice && obj.latest_invoice.id);
+                if (invId) {
+                  const invoice = await stripe.invoices.retrieve(invId);
+                  const plan_label = plan.charAt(0).toUpperCase() + plan.slice(1);
+                  await this._sendReceiptEmail(invoice, obj, md, {
+                    seat_total,
+                    heading: `Your Drumee ${plan_label} plan is resumed`,
+                    subject: `Your Drumee ${plan_label} plan is resumed`,
+                    intro: "Your subscription has been resumed. Here's your receipt, and what's new.",
+                  });
+                }
+              } catch (e5) {
+                this.error(`resume email failed for ${event.id}: ${e5.message}`);
+              }
+            }
           }
           break;
         }
