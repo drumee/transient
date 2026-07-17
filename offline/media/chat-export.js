@@ -13,8 +13,8 @@
  *   Spawn('offline/media/chat-export.js', [JSON.stringify(args)], SPAWN_OPT)
  *
  * Args (argv[0] JSON):
- *   { uid, hub_id, hub_name, scope_sel, start_date, end_date,
- *     format:'pdf', zipid, zipname, socket_id, lang }
+ *   { uid, hub_id, hub_name, root_nid, root_name, folder_sel, thread_sel,
+ *     start_date, end_date, format:'pdf', zipid, zipname, socket_id, lang }
  *
  * Progress events sent via RedisStore.sendData:
  *   { phase:'prepare'|'gather'|'build'|'convert'|'exit', progress:0-100,
@@ -81,6 +81,21 @@ function releaseLock() {
 const { parse: jsonParse, stringify } = JSON;
 const PAGE_SIZE = 45;
 
+// Meeting system messages are stored as a body sentinel `[[MEETING:start|end:
+// {json}]]` (no message_type). Render as "X started/ended a meeting" like the
+// live chat. Kept in sync with the same helper in service/private/channel.js.
+const MEETING_SENTINEL = /^\[\[MEETING:(start|end):(.+)\]\]$/;
+function meetingEventText(message, fallbackName) {
+  if (typeof message !== "string") return null;
+  const m = message.match(MEETING_SENTINEL);
+  if (!m) return null;
+  let md = {};
+  try { md = jsonParse(m[2]) || {}; } catch (_) {}
+  const by = md.by || fallbackName || "Someone";
+  const verb = m[1] === "start" ? "started a meeting" : "ended the meeting";
+  return `${by} ${verb}`;
+}
+
 /**
  * Parse attachment JSON into [{name, link}] array.
  * @param {string|object|null} attachment
@@ -114,20 +129,27 @@ function parseAttachments(attachment, hub_id) {
  * @returns {object}
  */
 function normalizeRow(row, hub_id) {
-  return {
+  const authorName = row.fullname ||
+    `${row.firstname || ""} ${row.lastname || ""}`.trim() ||
+    row.author_id;
+  const out = {
     id: row.message_id,
-    author: {
-      id: row.author_id,
-      name: row.fullname ||
-        `${row.firstname || ""} ${row.lastname || ""}`.trim() ||
-        row.author_id,
-    },
+    author: { id: row.author_id, name: authorName },
     time: row.ctime,
     text: row.message || "",
     attachments: parseAttachments(row.attachment, hub_id),
     reply_to: row.thread_id || null,
     // reactions intentionally omitted from PDF
   };
+  // Meeting start/end sentinel → friendly event line (mirrors live chat).
+  const meeting = meetingEventText(row.message, authorName);
+  if (meeting) {
+    out.type = "event";
+    out.text = meeting;
+    out.attachments = [];
+    out.reply_to = null;
+  }
+  return out;
 }
 
 /**
@@ -163,24 +185,27 @@ function orderFolderTree(folders) {
  * @param {string}  uid
  * @param {string}  hub_id
  * @param {string|null} root_nid  export subtree root (null = hub root)
- * @param {string|string[]} scope_sel
- * @param {boolean} include_folders  whether to include folder/general chat when
- *   scope_sel is an explicit thread array (folder modal true, file-scope false).
- *   Ignored for 'all'/'hub_chat_only' (always include folders).
+ * @param {string|string[]} folder_sel  'all' | [folder_nids] | 'none'
+ * @param {string|string[]} thread_sel  'all' | [file_thread_ids] | 'none'
  * @param {number|null} date_start
  * @param {number|null} date_end
  * @param {Array}   file_threads  from channel_export_file_thread_list
  * @param {Array}   folder_tree   from channel_export_folder_tree
  * @returns {Promise<Array>}
  */
-async function gatherSections(db, uid, hub_id, root_nid, scope_sel, include_folders, date_start, date_end, file_threads, folder_tree) {
-  const includeFolders = !Array.isArray(scope_sel) ? true : !!include_folders;
+async function gatherSections(db, uid, hub_id, root_nid, folder_sel, thread_sel, date_start, date_end, file_threads, folder_tree) {
+  // Folder axis: 'all' → every folder; array → only those; 'none' → skip.
+  const includeFolders = folder_sel === "all" ||
+    (Array.isArray(folder_sel) && folder_sel.length > 0);
+  const folderSelSet = Array.isArray(folder_sel)
+    ? new Set(folder_sel.map(String)) : null;
 
+  // Thread axis: 'all' → every thread; array → only those; 'none' → skip.
   let selectedFts = [];
-  if (scope_sel === "all") {
+  if (thread_sel === "all") {
     selectedFts = file_threads;
-  } else if (Array.isArray(scope_sel)) {
-    const sel = new Set(scope_sel.map(String));
+  } else if (Array.isArray(thread_sel)) {
+    const sel = new Set(thread_sel.map(String));
     selectedFts = file_threads.filter((ft) => sel.has(String(ft.file_thread_id)));
   }
 
@@ -258,9 +283,11 @@ async function gatherSections(db, uid, hub_id, root_nid, scope_sel, include_fold
     });
   };
 
-  // Pass 1 — all folder/general chat sections first (tree order).
+  // Pass 1 — folder/general chat sections first (tree order). When folder_sel
+  // is an explicit list, only those folders are emitted.
   if (includeFolders) {
     for (const folder of folders) {
+      if (folderSelSet && !folderSelSet.has(`${folder.id}`)) continue;
       const messages = byFolder.get(`${folder.id}`) || [];
       if (!messages.length) continue;
       sections.push({
@@ -310,11 +337,10 @@ class __chat_export_job extends Offline {
     this.hub_name   = data.hub_name || data.hub_id;
     this.root_nid   = data.root_nid || null;
     this.root_name  = data.root_name || this.hub_name;
-    this.scope_sel  = data.scope_sel || "all";
-    // Default true so a folder-modal mixed selection still exports folder chat;
-    // the file-scope path sends false explicitly.
-    this.include_folders = data.include_folders === undefined
-      ? true : !!data.include_folders;
+    // Scope axes come pre-resolved from channel.export() as 'all' | array |
+    // 'none' (see _resolveScope). Default to 'all' for safety.
+    this.folder_sel = data.folder_sel === undefined ? "all" : data.folder_sel;
+    this.thread_sel = data.thread_sel === undefined ? "all" : data.thread_sel;
     this.date_start = data.start_date || null;
     this.date_end   = data.end_date   || null;
     this.zipid      = data.zipid;
@@ -410,7 +436,7 @@ class __chat_export_job extends Offline {
 
     const sections = await gatherSections(
       db, this.uid, this.hub_id, this.root_nid,
-      this.scope_sel, this.include_folders, this.date_start, this.date_end,
+      this.folder_sel, this.thread_sel, this.date_start, this.date_end,
       file_threads, folder_tree,
     );
 

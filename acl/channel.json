@@ -1030,7 +1030,7 @@
       },
       "returns": {
         "type": "object",
-        "doc": "{ hub:{name, message_count, mtime}, file_threads:[{file_thread_id, file_nid, filename, folder_nid, folder_name, reply_count}] }"
+        "doc": "{ hub:{name, message_count, mtime}, folders:[{nid, name, path}], file_threads:[{file_thread_id, file_nid, filename, folder_nid, folder_name, reply_count}] }"
       },
       "errors": []
     },
@@ -1056,15 +1056,25 @@
           "required": true,
           "doc": "Export format: json or pdf"
         },
+        "folder_sel": {
+          "type": "string",
+          "required": false,
+          "doc": "Which folders' general chat to include: 'all' (every folder in the subtree, default), a JSON array of folder nids, or 'none'. Folder nids come from export_scope.folders."
+        },
+        "thread_sel": {
+          "type": "string",
+          "required": false,
+          "doc": "Which file threads to include: 'all' (default), a JSON array of file_thread_id values, or 'none'."
+        },
         "scope_sel": {
           "type": "string",
           "required": false,
-          "doc": "Scope selector: 'all' (folder chat + all file threads), 'hub_chat_only', or JSON array of file_thread_id values"
+          "doc": "DEPRECATED legacy selector (mapped to folder_sel/thread_sel when those are absent): 'all', 'hub_chat_only', or JSON array of file_thread_id values."
         },
         "include_folders": {
           "type": "boolean",
           "required": false,
-          "doc": "When scope_sel is a thread array, whether to ALSO include folder/general chat. Default true (folder modal keeps folder chat when unchecking some threads); file-scope sends false. Ignored for 'all'/'hub_chat_only'."
+          "doc": "DEPRECATED legacy flag paired with scope_sel array. Ignored when folder_sel/thread_sel are sent."
         },
         "start_date": {
           "type": "number",

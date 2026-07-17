@@ -38,6 +38,23 @@ const OFFLINE_DIR = pathResolve(__dirname, "..", "..", "offline", "media");
 const EXPORT_CAP = 10000;
 const EXPORT_MIME = { json: "application/json", pdf: "application/pdf" };
 
+// Meeting system messages are stored as a body sentinel `[[MEETING:start|end:
+// {json}]]` (no message_type) — the live chat renders them as "X started/ended
+// a meeting" (see ui chat-item template/meeting-event.js). The export mirrors
+// that instead of dumping the raw markup. Kept in sync with the same helper in
+// offline/media/chat-export.js.
+const MEETING_SENTINEL = /^\[\[MEETING:(start|end):(.+)\]\]$/;
+function meetingEventText(message, fallbackName) {
+  if (typeof message !== "string") return null;
+  const m = message.match(MEETING_SENTINEL);
+  if (!m) return null;
+  let md = {};
+  try { md = JSON.parse(m[2]) || {}; } catch (_) {}
+  const by = md.by || fallbackName || "Someone";
+  const verb = m[1] === "start" ? "started a meeting" : "ended the meeting";
+  return `${by} ${verb}`;
+}
+
 /** ========================================== */
 class __private_channel extends Entity {
   constructor(...args) {
@@ -2821,12 +2838,10 @@ class __private_channel extends Entity {
    * changes, update BOTH.
    *
    * @param {object} opts
-   * @param {string|string[]} opts.scope_sel  'all' | 'hub_chat_only' | [file_thread_ids]
-   * @param {boolean}         opts.include_folders  whether to include folder/general
-   *   chat. Only consulted when scope_sel is an array — 'all'/'hub_chat_only'
-   *   always include folder chat. Lets the folder modal keep "This folder"
-   *   checked while unchecking a subset of threads (mixed selection); the
-   *   file-scope path (single file's thread) sends false.
+   * @param {string|string[]} opts.folder_sel  which folders' general chat to
+   *   include: 'all' (every folder in the subtree) | [folder_nids] | 'none'.
+   * @param {string|string[]} opts.thread_sel  which file threads to include:
+   *   'all' | [file_thread_ids] | 'none'.
    * @param {string|null}     opts.root_nid    folder the export is rooted at (null = hub root)
    * @param {number|null}     opts.date_start  epoch seconds or null
    * @param {number|null}     opts.date_end    epoch seconds or null
@@ -2834,20 +2849,23 @@ class __private_channel extends Entity {
    * @param {Array}           opts.folder_tree   rows from channel_export_folder_tree
    * @returns {Promise<Array>} sections[]
    */
-  async _gatherSections({ scope_sel, include_folders, root_nid, date_start, date_end, file_threads, folder_tree }) {
-    // 'all'/'hub_chat_only' always include folder chat; for an explicit thread
-    // array the caller decides via include_folders (folder modal keeps the hub,
-    // file-scope drops it).
-    const includeFolders = !Array.isArray(scope_sel) ? true : !!include_folders;
+  async _gatherSections({ folder_sel, thread_sel, root_nid, date_start, date_end, file_threads, folder_tree }) {
+    // Folder axis: 'all' → every folder; array → only those nids; 'none' → skip
+    // all folder chat. folderSelSet is null when 'all' (no per-folder filter).
+    const includeFolders = folder_sel === "all" ||
+      (Array.isArray(folder_sel) && folder_sel.length > 0);
+    const folderSelSet = Array.isArray(folder_sel)
+      ? new Set(folder_sel.map(String)) : null;
 
+    // Thread axis: 'all' → every thread; array → only those ids; 'none' → skip.
     let selectedFts = [];
-    if (scope_sel === "all") {
+    if (thread_sel === "all") {
       selectedFts = file_threads;
-    } else if (Array.isArray(scope_sel)) {
-      const sel = new Set(scope_sel.map(String));
+    } else if (Array.isArray(thread_sel)) {
+      const sel = new Set(thread_sel.map(String));
       selectedFts = file_threads.filter((ft) => sel.has(String(ft.file_thread_id)));
     }
-    // scope_sel === 'hub_chat_only' → selectedFts stays []
+    // thread_sel === 'none' → selectedFts stays []
 
     const folders = this._orderFolderTree(toArray(folder_tree));
     const rootFolder = folders[0] || null;
@@ -2928,10 +2946,11 @@ class __private_channel extends Entity {
       });
     };
 
-    // Pass 1 — all folder/general chat sections first (tree order), so the
-    // reader sees every folder's conversation before any file thread.
+    // Pass 1 — folder/general chat sections first (tree order). When folder_sel
+    // is an explicit list, only those folders are emitted.
     if (includeFolders) {
       for (const folder of folders) {
+        if (folderSelSet && !folderSelSet.has(`${folder.id}`)) continue;
         const messages = byFolder.get(`${folder.id}`) || [];
         if (!messages.length) continue;
         sections.push({
@@ -3007,19 +3026,29 @@ class __private_channel extends Entity {
       } catch (_) {}
     }
 
-    return {
+    const authorName = row.fullname ||
+      `${row.firstname || ""} ${row.lastname || ""}`.trim() || row.author_id;
+
+    const out = {
       id: row.message_id,
       sys_id: row.sys_id,
-      author: {
-        id: row.author_id,
-        name: row.fullname || `${row.firstname || ""} ${row.lastname || ""}`.trim() || row.author_id,
-      },
+      author: { id: row.author_id, name: authorName },
       time: row.ctime,
       text: row.message || "",
       attachments,
       reply_to: row.thread_id || null,
       reactions,
     };
+
+    // Meeting start/end sentinel → friendly event line (mirrors live chat).
+    const meeting = meetingEventText(row.message, authorName);
+    if (meeting) {
+      out.type = "event";
+      out.text = meeting;
+      out.attachments = [];
+      out.reply_to = null;
+    }
+    return out;
   }
 
   /**
@@ -3065,14 +3094,87 @@ class __private_channel extends Entity {
     );
     const hub_name = this._exportHubName(hub_id, folder_tree);
 
+    // Ordered folder list (tree order, with display path) so the export modal
+    // can offer a per-folder scope pick. Reuses the same DFS ordering the
+    // gather step uses so nids/paths line up with the emitted sections.
+    const folders = this._orderFolderTree(folder_tree).map((f) => ({
+      nid: f.id,
+      name: f.name,
+      path: f.path,
+    }));
+
     this.output.data({
       hub: { name: hub_name, message_count, mtime: hub_mtime },
+      folders,
       file_threads,
     });
   }
 
   /**
-   * POST channel.export {hub_id, format, scope_sel, start_date, end_date, socket_id}
+   * Parse the two scope axes from the request, with a fallback from the legacy
+   * scope_sel/include_folders contract so older clients keep working.
+   *
+   * New params (preferred):
+   *   folder_sel : 'all' | JSON array of folder nids | 'none'
+   *   thread_sel : 'all' | JSON array of file_thread_ids | 'none'
+   *
+   * Legacy mapping (when folder_sel/thread_sel absent):
+   *   scope_sel 'all'            → folder 'all',  thread 'all'
+   *   scope_sel 'hub_chat_only'  → folder 'all',  thread 'none'
+   *   scope_sel [ids] + include_folders truthy → folder 'all',  thread [ids]
+   *   scope_sel [ids] + include_folders falsy  → folder 'none', thread [ids]
+   *
+   * @returns {{folder_sel:(string|string[]), thread_sel:(string|string[])}}
+   */
+  _resolveScope() {
+    const parseSel = (raw) => {
+      if (raw === "all" || raw === "none") return raw;
+      if (Array.isArray(raw)) return raw;
+      if (typeof raw === "string") {
+        try {
+          const v = jsonParse(raw);
+          return Array.isArray(v) ? v : "all";
+        } catch (_) { return "all"; }
+      }
+      return null; // absent
+    };
+
+    const folderRaw = this.input.use("folder_sel");
+    const threadRaw = this.input.use("thread_sel");
+    let folder_sel = parseSel(folderRaw);
+    let thread_sel = parseSel(threadRaw);
+    if (folder_sel !== null && thread_sel !== null) {
+      return { folder_sel, thread_sel };
+    }
+
+    // ── Legacy fallback ──────────────────────────────────────────────────────
+    const scopeRaw = this.input.use("scope_sel") || "all";
+    let scope_sel;
+    if (scopeRaw === "all" || scopeRaw === "hub_chat_only") {
+      scope_sel = scopeRaw;
+    } else {
+      try {
+        scope_sel = Array.isArray(scopeRaw) ? scopeRaw : jsonParse(scopeRaw);
+        if (!Array.isArray(scope_sel)) scope_sel = "all";
+      } catch (_) { scope_sel = "all"; }
+    }
+    const incRaw = this.input.use("include_folders");
+    const include_folders =
+      incRaw === undefined || incRaw === null
+        ? true
+        : incRaw === true || incRaw === 1 || incRaw === "1" || incRaw === "true";
+
+    if (scope_sel === "all") return { folder_sel: "all", thread_sel: "all" };
+    if (scope_sel === "hub_chat_only") return { folder_sel: "all", thread_sel: "none" };
+    // array of thread ids
+    return {
+      folder_sel: include_folders ? "all" : "none",
+      thread_sel: scope_sel,
+    };
+  }
+
+  /**
+   * POST channel.export {hub_id, format, folder_sel, thread_sel, start_date, end_date, socket_id}
    * Returns: { wait:0|1, zipid, zipname, format }
    */
   async export() {
@@ -3081,39 +3183,16 @@ class __private_channel extends Entity {
       return this.output.data({ status: "INVALID_FORMAT" });
     }
 
-    const scope_sel_raw = this.input.use("scope_sel") || "all";
-    // scope_sel is 'all', 'hub_chat_only', or a JSON array / real array of file_thread_ids
-    let scope_sel;
-    if (scope_sel_raw === "all" || scope_sel_raw === "hub_chat_only") {
-      scope_sel = scope_sel_raw;
-    } else {
-      try {
-        scope_sel = Array.isArray(scope_sel_raw)
-          ? scope_sel_raw
-          : jsonParse(scope_sel_raw);
-        if (!Array.isArray(scope_sel)) scope_sel = "all";
-      } catch (_) {
-        scope_sel = "all";
-      }
-    }
+    // Two independent scope axes: folder_sel picks which folders' general chat
+    // to include, thread_sel picks which file threads. Each is 'all' | array |
+    // 'none'. When absent, fall back from the legacy scope_sel/include_folders
+    // contract so older clients keep working (see _legacyScope).
+    const { folder_sel, thread_sel } = this._resolveScope();
 
     const date_start = this.input.use("start_date") || null;
     const date_end = this.input.use("end_date") || null;
     // Folder subtree root — export covers this folder and everything below it.
     const root_nid = this.input.use(Attr.nid) || null;
-    // Whether folder/general chat is included alongside an explicit thread
-    // selection. Default true so the folder modal's mixed selection (hub kept,
-    // some threads unchecked) still exports folder chat; the file-scope path
-    // (single file's thread) sends include_folders=false. Ignored for
-    // 'all'/'hub_chat_only' scope_sel (those always include folders).
-    const include_folders_raw = this.input.use("include_folders");
-    const include_folders =
-      include_folders_raw === undefined || include_folders_raw === null
-        ? true
-        : include_folders_raw === true ||
-          include_folders_raw === 1 ||
-          include_folders_raw === "1" ||
-          include_folders_raw === "true";
     // PDF progress requires socket_id; reject early so the client spinner
     // is not left hanging with no progress events.
     const socket_id = this.input.use(Attr.socket_id) || null;
@@ -3127,7 +3206,9 @@ class __private_channel extends Entity {
     );
 
     // ── 10k guard ────────────────────────────────────────────────────────────
-    // Hub team-chat: counted via channel_export_count (date-aware).
+    // Folder chat: counted via channel_export_count (date-aware, whole subtree).
+    // NOTE the count is subtree-wide even when only some folders are selected —
+    // an over-count that keeps the guard conservative (no schema change).
     // File threads: when no date filter is active, reply_count is an exact
     // total and avoids N extra DB calls. When a date filter is active,
     // reply_count is an overcount (messages outside the window still increment
@@ -3137,9 +3218,9 @@ class __private_channel extends Entity {
     const hasDateFilter = date_start !== null || date_end !== null;
 
     let totalCount = 0;
-    // Mirror _gatherSections: array scope consults include_folders; the string
-    // scopes always include folder chat.
-    const includeHub = !Array.isArray(scope_sel) ? true : include_folders;
+    // Any folder selection (all or a non-empty list) means folder chat is counted.
+    const includeHub = folder_sel === "all" ||
+      (Array.isArray(folder_sel) && folder_sel.length > 0);
 
     if (includeHub) {
       const cr = toArray(
@@ -3149,10 +3230,10 @@ class __private_channel extends Entity {
     }
 
     let selectedFts = [];
-    if (scope_sel === "all") {
+    if (thread_sel === "all") {
       selectedFts = file_threads;
-    } else if (Array.isArray(scope_sel)) {
-      const sel = new Set(scope_sel.map(String));
+    } else if (Array.isArray(thread_sel)) {
+      const sel = new Set(thread_sel.map(String));
       selectedFts = file_threads.filter((ft) => sel.has(String(ft.file_thread_id)));
     }
 
@@ -3204,8 +3285,8 @@ class __private_channel extends Entity {
     // ── JSON (synchronous) ────────────────────────────────────────────────────
     if (format === "json") {
       const sections = await this._gatherSections({
-        scope_sel,
-        include_folders,
+        folder_sel,
+        thread_sel,
         root_nid,
         date_start,
         date_end,
@@ -3245,8 +3326,8 @@ class __private_channel extends Entity {
       hub_name,
       root_nid,
       root_name: (rootFolder && rootFolder.name) || hub_name,
-      scope_sel,
-      include_folders,
+      folder_sel,
+      thread_sel,
       start_date: date_start,
       end_date: date_end,
       format: "pdf",
