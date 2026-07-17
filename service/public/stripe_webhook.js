@@ -181,6 +181,39 @@ class __public_stripe_webhook extends Entity {
     await sendButlerMail(msg, { recipient, subject, html, text });
   }
 
+  // TEAM bootstrap resolution: metadata for org subscriptions created before
+  // the org existed carries entity_id = payer uid plus payer_id (+ org_ident/
+  // org_name on the bootstrap checkout). Resolve the payer's organisation —
+  // provisioning it atomically on first contact (yp org_provision is
+  // idempotent: an existing org for this owner is returned untouched, so the
+  // session event and an early invoice.paid can race safely). A provisioning
+  // failure throws so the event returns 500 and Stripe retries instead of
+  // applying a mis-keyed entitlement.
+  async _resolveOrgEntity(md) {
+    if ((md.entity_type || 'user') !== 'org' || !md.payer_id) return md.entity_id;
+    let org = await this.yp.await_proc('payment_get_org', md.payer_id);
+    if ((!org || !org.id) && md.org_ident) {
+      const provisioned = await this.yp.await_proc(
+        'org_provision', md.payer_id, md.org_name || md.org_ident, md.org_ident
+      );
+      if (provisioned && provisioned.error) {
+        throw new Error(`org_provision failed: ${provisioned.error}`);
+      }
+      org = await this.yp.await_proc('payment_get_org', md.payer_id);
+      if (org && org.id) {
+        // Tell the payer's live session about its new home so the FE can
+        // transition (the next full bootstrap lands on the new domain anyway).
+        await this.notify_user(md.payer_id, {
+          service: 'payment.org_provisioned',
+          domain_id: org.domain_id,
+          ident: org.ident,
+          link: org.link,
+        });
+      }
+    }
+    return (org && org.id) ? org.id : md.entity_id;
+  }
+
   // Classify subscription line items: the base plan item (quantity = seats for
   // org) vs add-on items (entity_type='addon' in yp.plan) — storage add-ons sum
   // disk * quantity into extra_disk (P4); pro_seat add-ons sum seat * quantity
@@ -244,9 +277,12 @@ class __public_stripe_webhook extends Entity {
         case 'checkout.session.completed':
         case 'customer.subscription.created':
         case 'customer.subscription.updated': {
-          const entity_id = md.entity_id;
+          let entity_id = md.entity_id;
           const plan = md.plan || 'pro';
           const period = md.period || 'month';
+          // TEAM bootstrap: the organisation may not exist at checkout time —
+          // resolve (and provision if needed) before billing the ORG entity.
+          entity_id = await this._resolveOrgEntity(md);
           if (entity_id) {
             // Mirror the live subscription for the status panel + Billing Portal.
             const customer_id = obj.customer || null;
@@ -293,9 +329,16 @@ class __public_stripe_webhook extends Entity {
           break;
         }
         case 'customer.subscription.deleted': {
-          const entity_id = md.entity_id;
+          let entity_id = md.entity_id;
+          const etype = md.entity_type || 'user';
+          // Bootstrap-era org subscriptions carry entity_id = payer uid in
+          // their metadata (the org didn't exist at checkout) — resolve the
+          // real org so the cancel clears the ORG entitlement row.
+          if (etype === 'org' && md.payer_id) {
+            const org = await this.yp.await_proc('payment_get_org', md.payer_id);
+            if (org && org.id) entity_id = org.id;
+          }
           if (entity_id) {
-            const etype = md.entity_type || 'user';
             await this.yp.await_proc('subscription_remove', entity_id, obj.id || '');
             if (etype === 'org') {
               // Team cancel: DELETE the org entitlement row so every member
@@ -319,7 +362,10 @@ class __public_stripe_webhook extends Entity {
           let sub = null;
           if (subId) { try { sub = await stripe.subscriptions.retrieve(subId); } catch (e2) {} }
           const smd = (sub && sub.metadata) || {};
-          const eid = smd.entity_id;
+          // Bootstrap-era org subscriptions carry entity_id = payer uid —
+          // resolve (and, on an early invoice.paid racing the session event,
+          // provision) the real org before applying entitlement.
+          const eid = await this._resolveOrgEntity(smd);
           if (eid) {
             if (event.type === 'invoice.paid') {
               // Recurring renewal succeeded -> re-apply entitlement (bumps period_end).

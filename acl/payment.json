@@ -1,13 +1,132 @@
 {
   "services": {
-    "catalog":             { "scope": "hub", "permission": { "src": "owner" }, "params": {} },
-    "checkout":            { "scope": "hub", "permission": { "src": "owner" }, "params": { "period": { "type": "string", "required": true }, "plan": { "type": "string", "required": false }, "seats": { "type": "integer", "required": false, "default": 1 }, "entity_type": { "type": "string", "required": false }, "bundle": { "type": "string", "required": false } } },
-    "subscription_status": { "scope": "hub", "permission": { "src": "owner" }, "params": {} },
-    "portal":              { "scope": "hub", "permission": { "src": "owner" }, "params": {} },
-    "cancel_subscription": { "scope": "hub", "permission": { "src": "owner" }, "params": {} },
-    "resume_subscription": { "scope": "hub", "permission": { "src": "owner" }, "params": {} },
-    "checkout_result":     { "scope": "hub", "permission": { "src": "owner" }, "params": { "session_id": { "type": "string", "required": true } } },
-    "webhook":             { "scope": "hub", "permission": { "src": "read", "fast_check": "public-api" }, "method": "receive", "params": { "stripe-signature": { "type": "string", "required": true }, "raw_body": { "type": "string", "required": true } }, "errors": [{ "code": "WEBHOOK_ERROR", "http_status": 400 }] }
+    "catalog": {
+      "scope": "hub",
+      "permission": {
+        "src": "owner"
+      },
+      "params": {}
+    },
+    "checkout": {
+      "scope": "hub",
+      "permission": {
+        "src": "owner"
+      },
+      "params": {
+        "period": {
+          "type": "string",
+          "required": true
+        },
+        "plan": {
+          "type": "string",
+          "required": false
+        },
+        "seats": {
+          "type": "integer",
+          "required": false,
+          "default": 1
+        },
+        "entity_type": {
+          "type": "string",
+          "required": false
+        },
+        "bundle": {
+          "type": "string",
+          "required": false
+        },
+        "ident": {
+          "type": "string",
+          "required": false,
+          "doc": "Org subdomain label (TEAM bootstrap: no organisation yet)"
+        },
+        "org_name": {
+          "type": "string",
+          "required": false,
+          "doc": "Organisation display name (TEAM bootstrap)"
+        }
+      }
+    },
+    "validate_org_ident": {
+      "doc": "Pre-checkout validation of the TEAM org subdomain (ident). Bootstrap exception: scope hub/owner because the payer has no org-domain privilege yet.",
+      "scope": "hub",
+      "permission": {
+        "src": "owner"
+      },
+      "params": {
+        "ident": {
+          "type": "string",
+          "required": true,
+          "doc": "Subdomain label to validate"
+        }
+      }
+    },
+    "subscription_status": {
+      "scope": "hub",
+      "permission": {
+        "src": "owner"
+      },
+      "params": {}
+    },
+    "portal": {
+      "scope": "hub",
+      "permission": {
+        "src": "owner"
+      },
+      "params": {}
+    },
+    "cancel_subscription": {
+      "scope": "hub",
+      "permission": {
+        "src": "owner"
+      },
+      "params": {}
+    },
+    "resume_subscription": {
+      "scope": "hub",
+      "permission": {
+        "src": "owner"
+      },
+      "params": {}
+    },
+    "checkout_result": {
+      "scope": "hub",
+      "permission": {
+        "src": "owner"
+      },
+      "params": {
+        "session_id": {
+          "type": "string",
+          "required": true
+        }
+      }
+    },
+    "webhook": {
+      "scope": "hub",
+      "permission": {
+        "src": "read",
+        "fast_check": "public-api"
+      },
+      "method": "receive",
+      "params": {
+        "stripe-signature": {
+          "type": "string",
+          "required": true
+        },
+        "raw_body": {
+          "type": "string",
+          "required": true
+        }
+      },
+      "errors": [
+        {
+          "code": "WEBHOOK_ERROR",
+          "http_status": 400
+        }
+      ]
+    }
   },
-  "modules": { "private": "service/private/payment", "public": "service/public/stripe_webhook" }
+  "modules": {
+    "private": "service/private/payment",
+    "public": "service/public/stripe_webhook"
+  }
 }
