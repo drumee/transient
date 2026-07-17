@@ -194,8 +194,11 @@ class __private_payment extends Entity {
   // subscriptions by the ORGANISATION id, so when the personal row is empty
   // fall back to the org the caller owns — org owners see their team sub.
   async _subscription_row() {
-    let row = await this.yp.await_proc('payment_get_subscription', this.uid);
-    if (row && row.subscription_id) return row;
+    // Tenant-first: the ORG subscription outranks a leftover personal one —
+    // a pro→team upgrader owns both for a while, and the plan they're ON is
+    // the tenant's (the Billing page otherwise kept showing 'pro' after a
+    // successful TEAM upgrade). Mirrors the quota cascade fix in
+    // disk_limit/my_disk_limit/get_quota.
     const org = await this.yp.await_proc('payment_get_org', this.uid);
     if (org && org.id) {
       const orgRow = await this.yp.await_proc('payment_get_subscription', org.id);
@@ -205,6 +208,7 @@ class __private_payment extends Entity {
         return orgRow;
       }
     }
+    const row = await this.yp.await_proc('payment_get_subscription', this.uid);
     return row || {};
   }
 
