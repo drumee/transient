@@ -1,9 +1,12 @@
 <%
 // Payment receipt email — Figma 2803-1288 ("email invoice").
-// Vars: plan_label, cycle_label, seats (0 hides row), next_billing_date,
+// Vars: heading (headline + <title>), intro (one-liner under the headline),
+// plan_label, cycle_label, seats (0 hides row), next_billing_date,
 // amount, paid_date_long, invoice_number, invoice_url ('' hides link),
 // receipt_url ('' hides link), lines [{label, amount}], total,
 // features [string] ([] hides block), app_link, support_email.
+// The resume variant (Figma 3050-96856) reuses this shell with its own
+// heading/intro ("… plan is resumed").
 var FONT = "'Geist','SF Pro Display',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif";
 %><!DOCTYPE html>
 <html>
@@ -11,7 +14,7 @@ var FONT = "'Geist','SF Pro Display',-apple-system,BlinkMacSystemFont,'Segoe UI'
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="x-apple-disable-message-reformatting">
-  <title>Your Drumee <%= plan_label %> plan is active</title>
+  <title><%= heading %></title>
 </head>
 <body style="margin:0;padding:0;background:#fff;-webkit-font-smoothing:antialiased;font-family:'Geist','SF Pro Display',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;">
   <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#fff;">
@@ -40,8 +43,8 @@ var FONT = "'Geist','SF Pro Display',-apple-system,BlinkMacSystemFont,'Segoe UI'
                   </tr></table>
                 </td></tr>
                 <tr><td align="center">
-                  <h1 style="margin:0 0 8px 0;padding:0;font-family:<%= FONT %>;font-weight:600;font-size:24px;line-height:1.2;color:#0b0a21;">Your Drumee <%= plan_label %> plan is active</h1>
-                  <p style="margin:0;padding:0;font-family:<%= FONT %>;font-weight:400;font-size:14px;line-height:1.5;color:#65656c;">Your payment went through. Here's your receipt.</p>
+                  <h1 style="margin:0 0 8px 0;padding:0;font-family:<%= FONT %>;font-weight:600;font-size:24px;line-height:1.2;color:#0b0a21;"><%= heading %></h1>
+                  <p style="margin:0;padding:0;font-family:<%= FONT %>;font-weight:400;font-size:14px;line-height:1.5;color:#65656c;"><%= intro %></p>
                 </td></tr>
               </table>
 
