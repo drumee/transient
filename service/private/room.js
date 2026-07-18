@@ -153,6 +153,9 @@ class __private_room extends __public_room {
     };
     let node = await this.db.await_proc("mfs_create_node", args, metadata, results);
     this.debug(`call mfs_create_node('${JSON.stringify(args)}', '${JSON.stringify(metadata)}')`);
+    // Register in the global reminder index (creator only for now — attendees
+    // are added by a subsequent update() with flag 'member').
+    await this._index_meeting(node && (node.id || node.nid), metadata.content);
     this.output.data(node);
   }
 
@@ -248,8 +251,12 @@ class __private_room extends __public_room {
       });
     }
     content = {
-      attendees, title, message, date, stime, etime, recur
+      attendees, title, message, date, stime, etime, recur,
+      created_by: content.created_by
     };
+    // Keep the global reminder index in lockstep with the edited meeting
+    // (attendee set, moved time, cleared/added recurrence).
+    await this._index_meeting(nid, content);
     await this.output.data((content));
   }
 
@@ -266,6 +273,50 @@ class __private_room extends __public_room {
       await RedisStore.sendData(this.payload(data, { service: 'room.scheduled' }), recipients);
     } catch (e) {
       this.warn && this.warn('room._notify_invitees failed', e);
+    }
+  }
+
+  /**
+   * Write-through the scheduled meeting into the GLOBAL yp.meeting_schedule
+   * index so the reminderWorker can poll for meetings whose start time has
+   * arrived without scanning every hub's media table. Best-effort — a failure
+   * here must never break booking. A meeting without a queryable stime isn't a
+   * time-driven reminder, so its index row (if any) is dropped instead.
+   */
+  async _index_meeting(nid, content = {}) {
+    try {
+      if (!nid) return;
+      const hub_id = this.hub.get(Attr.id);
+      const stime = Number(content.stime) || 0;
+      if (!stime) return this._unindex_meeting(nid);
+      const attendees = (isArray(content.attendees) ? content.attendees : [])
+        .map((a) => a && (a.uid || a))
+        .filter(Boolean);
+      await this.yp.await_proc('meeting_schedule_upsert',
+        hub_id,
+        nid,
+        stime,
+        Number(content.etime) || 0,
+        content.created_by || this.uid,
+        (content.title || '').slice(0, 255),
+        JSON.stringify(attendees),
+        content.recur ? JSON.stringify(content.recur) : null,
+      );
+    } catch (e) {
+      this.warn && this.warn('room._index_meeting failed', e);
+    }
+  }
+
+  /**
+   * Drop a meeting from the global reminder index (delete / cleared start time).
+   */
+  async _unindex_meeting(nid) {
+    try {
+      if (!nid) return;
+      const hub_id = this.hub.get(Attr.id);
+      await this.yp.await_proc('meeting_schedule_remove', hub_id, nid);
+    } catch (e) {
+      this.warn && this.warn('room._unindex_meeting failed', e);
     }
   }
 
@@ -342,6 +393,7 @@ class __private_room extends __public_room {
       return;
     }
     await this.db.await_proc('permission_revoke', nid, "meeting");
+    await this._unindex_meeting(nid);
     this.output.data({ nid });
   }
 
