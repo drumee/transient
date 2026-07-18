@@ -415,6 +415,12 @@ class __private_task extends Entity {
       'CALL task_create(?, ?, ?, ?, ?, ?, ?, ?, ?)',
       [id, title, description, status, priority, due_date, start_date, this.uid, nid]
     );
+    // The DB layer swallows SQL errors (returns empty) — an empty result here
+    // means the row was NOT inserted, e.g. a hub DB missing the task-v2
+    // migrations (cf. column_create). Fail loudly instead of acking success.
+    if (isEmpty(data)) {
+      return this.exception.user('TASK_CREATE_FAILED');
+    }
     if (assignees.length) {
       // Re-reads the row with assignee_uids populated, so the response/broadcast
       // reflect the assignments.
