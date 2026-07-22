@@ -998,6 +998,93 @@
           }
         }
       }
+    },
+    "column_reorder": {
+      "doc": "Persist a drag-reorder of the custom columns. Sets each column's position to its index in the supplied order. Scoped to the folder node.",
+      "scope": "hub",
+      "permission": {
+        "src": "write"
+      },
+      "params": {
+        "order": {
+          "type": "string",
+          "required": true,
+          "doc": "Comma-separated custom column ids in their new left-to-right order"
+        },
+        "nid": {
+          "type": "string",
+          "required": false,
+          "doc": "Folder node id the columns belong to. Defaults to workspace root."
+        }
+      },
+      "returns": {
+        "type": "array",
+        "doc": "The custom column rows in their new board order"
+      }
+    },
+    "column_watch_list": {
+      "doc": "List the column keys the caller is subscribed to (bell on) within a folder scope, so the board can render each column's bell state.",
+      "scope": "hub",
+      "permission": {
+        "src": "read"
+      },
+      "params": {
+        "nid": {
+          "type": "string",
+          "required": false,
+          "doc": "Folder node id to scope to (mirrors task.list). Defaults to workspace root."
+        }
+      },
+      "returns": {
+        "type": "array",
+        "doc": "Array of watched column keys (built-in status strings or custom column ids)"
+      }
+    },
+    "column_watch_set": {
+      "doc": "Subscribe the caller to change-notifications for a column. Idempotent.",
+      "scope": "hub",
+      "permission": {
+        "src": "read"
+      },
+      "params": {
+        "column_key": {
+          "type": "string",
+          "required": true,
+          "doc": "Built-in status string (todo | in_progress | to_review | complete) or a custom column id"
+        },
+        "nid": {
+          "type": "string",
+          "required": false,
+          "doc": "Folder node id the column belongs to. Defaults to workspace root."
+        }
+      },
+      "returns": {
+        "type": "object",
+        "doc": "{ nid, column_key, watching: 1 }"
+      }
+    },
+    "column_watch_unset": {
+      "doc": "Unsubscribe the caller from a column's change-notifications.",
+      "scope": "hub",
+      "permission": {
+        "src": "read"
+      },
+      "params": {
+        "column_key": {
+          "type": "string",
+          "required": true,
+          "doc": "Built-in status string or custom column id"
+        },
+        "nid": {
+          "type": "string",
+          "required": false,
+          "doc": "Folder node id the column belongs to. Defaults to workspace root."
+        }
+      },
+      "returns": {
+        "type": "object",
+        "doc": "{ nid, column_key, watching: 0 }"
+      }
     }
   },
   "modules": {

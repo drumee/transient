@@ -13,8 +13,8 @@
  *   Spawn('offline/media/chat-export.js', [JSON.stringify(args)], SPAWN_OPT)
  *
  * Args (argv[0] JSON):
- *   { uid, hub_id, hub_name, scope_sel, start_date, end_date,
- *     format:'pdf', zipid, zipname, socket_id, lang }
+ *   { uid, hub_id, hub_name, root_nid, root_name, folder_sel, thread_sel,
+ *     start_date, end_date, format:'pdf', zipid, zipname, socket_id, lang }
  *
  * Progress events sent via RedisStore.sendData:
  *   { phase:'prepare'|'gather'|'build'|'convert'|'exit', progress:0-100,
@@ -41,7 +41,7 @@ const { spawn } = require("child_process");
 
 const { DOWNLOAD_FOLDER } = Constants;
 const { tmp_dir } = sysEnv();
-const { buildHtml } = require("./chat-export-html");
+const { buildOdt } = require("./chat-export-odt");
 
 // ─── Lock-file guard (mirrors to-pdf.js pattern) ─────────────────────────────
 // Only one soffice conversion at a time per process; track PID to detect stale.
@@ -81,6 +81,21 @@ function releaseLock() {
 const { parse: jsonParse, stringify } = JSON;
 const PAGE_SIZE = 45;
 
+// Meeting system messages are stored as a body sentinel `[[MEETING:start|end:
+// {json}]]` (no message_type). Render as "X started/ended a meeting" like the
+// live chat. Kept in sync with the same helper in service/private/channel.js.
+const MEETING_SENTINEL = /^\[\[MEETING:(start|end):(.+)\]\]$/;
+function meetingEventText(message, fallbackName) {
+  if (typeof message !== "string") return null;
+  const m = message.match(MEETING_SENTINEL);
+  if (!m) return null;
+  let md = {};
+  try { md = jsonParse(m[2]) || {}; } catch (_) {}
+  const by = md.by || fallbackName || "Someone";
+  const verb = m[1] === "start" ? "started a meeting" : "ended the meeting";
+  return `${by} ${verb}`;
+}
+
 /**
  * Parse attachment JSON into [{name, link}] array.
  * @param {string|object|null} attachment
@@ -114,73 +129,131 @@ function parseAttachments(attachment, hub_id) {
  * @returns {object}
  */
 function normalizeRow(row, hub_id) {
-  return {
+  const authorName = row.fullname ||
+    `${row.firstname || ""} ${row.lastname || ""}`.trim() ||
+    row.author_id;
+  const out = {
     id: row.message_id,
-    author: {
-      id: row.author_id,
-      name: row.fullname ||
-        `${row.firstname || ""} ${row.lastname || ""}`.trim() ||
-        row.author_id,
-    },
+    author: { id: row.author_id, name: authorName },
     time: row.ctime,
     text: row.message || "",
     attachments: parseAttachments(row.attachment, hub_id),
     reply_to: row.thread_id || null,
     // reactions intentionally omitted from PDF
   };
+  // Meeting start/end sentinel → friendly event line (mirrors live chat).
+  const meeting = meetingEventText(row.message, authorName);
+  if (meeting) {
+    out.type = "event";
+    out.text = meeting;
+    out.attachments = [];
+    out.reply_to = null;
+  }
+  return out;
 }
 
 /**
- * Gather all messages (page-by-page) into sections[].
+ * Order channel_export_folder_tree rows depth-first (parent before children,
+ * siblings by name — the proc pre-sorts by depth/name) and attach a display
+ * `path` string to each row.
+ * @param {Array} folders  rows {id, parent_id, depth, name}
+ * @returns {Array}
+ */
+function orderFolderTree(folders) {
+  const byParent = new Map();
+  for (const f of folders) {
+    const key = `${f.parent_id}`;
+    if (!byParent.has(key)) byParent.set(key, []);
+    byParent.get(key).push(f);
+  }
+  const root = folders.find((f) => Number(f.depth) === 0);
+  const out = [];
+  const walk = (node, trail) => {
+    const path = trail ? `${trail} / ${node.name}` : `${node.name}`;
+    out.push({ ...node, path });
+    for (const child of byParent.get(`${node.id}`) || []) walk(child, path);
+  };
+  if (root) walk(root, "");
+  return out;
+}
+
+/**
+ * Gather all messages (page-by-page) into sections[]: one folder_chat section
+ * per folder (tree order), each folder's file threads following it. Root-card
+ * "file.thread" rows become type:'event' lines.
  * @param {Mariadb} db     Hub DB connection
  * @param {string}  uid
  * @param {string}  hub_id
- * @param {string|string[]} scope_sel
+ * @param {string|null} root_nid  export subtree root (null = hub root)
+ * @param {string|string[]} folder_sel  'all' | [folder_nids] | 'none'
+ * @param {string|string[]} thread_sel  'all' | [file_thread_ids] | 'none'
  * @param {number|null} date_start
  * @param {number|null} date_end
  * @param {Array}   file_threads  from channel_export_file_thread_list
+ * @param {Array}   folder_tree   from channel_export_folder_tree
  * @returns {Promise<Array>}
  */
-async function gatherSections(db, uid, hub_id, scope_sel, date_start, date_end, file_threads) {
-  const sections = [];
+async function gatherSections(db, uid, hub_id, root_nid, folder_sel, thread_sel, date_start, date_end, file_threads, folder_tree) {
+  // Folder axis: 'all' → every folder; array → only those; 'none' → skip.
+  const includeFolders = folder_sel === "all" ||
+    (Array.isArray(folder_sel) && folder_sel.length > 0);
+  const folderSelSet = Array.isArray(folder_sel)
+    ? new Set(folder_sel.map(String)) : null;
 
-  const includeHub =
-    scope_sel === "all" ||
-    scope_sel === "hub_chat_only" ||
-    !Array.isArray(scope_sel);
-
+  // Thread axis: 'all' → every thread; array → only those; 'none' → skip.
   let selectedFts = [];
-  if (scope_sel === "all") {
+  if (thread_sel === "all") {
     selectedFts = file_threads;
-  } else if (Array.isArray(scope_sel)) {
-    const sel = new Set(scope_sel.map(String));
+  } else if (Array.isArray(thread_sel)) {
+    const sel = new Set(thread_sel.map(String));
     selectedFts = file_threads.filter((ft) => sel.has(String(ft.file_thread_id)));
   }
 
-  // Hub team-chat
-  if (includeHub) {
-    const messages = [];
+  const folders = orderFolderTree(toArray(folder_tree));
+  const rootFolder = folders[0] || null;
+  const ftByFileNid = new Map(
+    toArray(file_threads).map((ft) => [`${ft.file_nid}`, ft]),
+  );
+
+  // General chat grouped by folder (metadata._scope_nid)
+  const byFolder = new Map();
+  if (includeFolders) {
     let page = 1;
     while (true) {
       const rows = toArray(
         await db.await_proc(
           "channel_export_messages",
           uid,
+          root_nid || null,
           date_start || null,
           date_end || null,
           page,
         ),
       );
       if (!rows.length) break;
-      for (const row of rows) messages.push(normalizeRow(row, hub_id));
+      for (const row of rows) {
+        const msg = normalizeRow(row, hub_id);
+        if (row.message_type === "file.thread") {
+          let meta = {};
+          try {
+            meta = typeof row.metadata === "string"
+              ? jsonParse(row.metadata) : row.metadata || {};
+          } catch (_) {}
+          const ft = ftByFileNid.get(`${meta._file_nid}`);
+          msg.type = "event";
+          msg.text = `Chat thread started for "${(ft && ft.filename) || meta._file_nid || "a file"}"`;
+        }
+        const key = row.scope_nid || (rootFolder ? `${rootFolder.id}` : "");
+        if (!byFolder.has(key)) byFolder.set(key, []);
+        byFolder.get(key).push(msg);
+      }
       if (rows.length < PAGE_SIZE) break;
       page++;
     }
-    sections.push({ type: "hub_chat", name: "This Folder Chat", messages });
   }
 
-  // File-thread sections
-  for (const ft of selectedFts) {
+  const sections = [];
+  const pushThreadSection = async (ft, folder) => {
     const messages = [];
     let page = 1;
     while (true) {
@@ -204,8 +277,42 @@ async function gatherSections(db, uid, hub_id, scope_sel, date_start, date_end, 
       name: ft.filename || ft.file_thread_id,
       file_thread_id: ft.file_thread_id,
       file_nid: ft.file_nid,
+      folder_nid: ft.folder_nid || (folder && folder.id) || null,
+      folder_name: ft.folder_name || (folder && folder.name) || null,
       messages,
     });
+  };
+
+  // Pass 1 — folder/general chat sections first (tree order). When folder_sel
+  // is an explicit list, only those folders are emitted.
+  if (includeFolders) {
+    for (const folder of folders) {
+      if (folderSelSet && !folderSelSet.has(`${folder.id}`)) continue;
+      const messages = byFolder.get(`${folder.id}`) || [];
+      if (!messages.length) continue;
+      sections.push({
+        type: "folder_chat",
+        name: folder.name,
+        path: folder.path,
+        nid: folder.id,
+        messages,
+      });
+    }
+  }
+
+  // Pass 2 — file threads after all folder chat, grouped by their folder's
+  // tree position.
+  const emittedThreads = new Set();
+  for (const folder of folders) {
+    for (const ft of selectedFts) {
+      if (`${ft.folder_nid}` !== `${folder.id}`) continue;
+      emittedThreads.add(`${ft.file_thread_id}`);
+      await pushThreadSection(ft, folder);
+    }
+  }
+  for (const ft of selectedFts) {
+    if (emittedThreads.has(`${ft.file_thread_id}`)) continue;
+    await pushThreadSection(ft, null);
   }
 
   return sections;
@@ -228,7 +335,12 @@ class __chat_export_job extends Offline {
     this.uid        = data.uid;
     this.hub_id     = data.hub_id;
     this.hub_name   = data.hub_name || data.hub_id;
-    this.scope_sel  = data.scope_sel || "all";
+    this.root_nid   = data.root_nid || null;
+    this.root_name  = data.root_name || this.hub_name;
+    // Scope axes come pre-resolved from channel.export() as 'all' | array |
+    // 'none' (see _resolveScope). Default to 'all' for safety.
+    this.folder_sel = data.folder_sel === undefined ? "all" : data.folder_sel;
+    this.thread_sel = data.thread_sel === undefined ? "all" : data.thread_sel;
     this.date_start = data.start_date || null;
     this.date_end   = data.end_date   || null;
     this.zipid      = data.zipid;
@@ -316,16 +428,19 @@ class __chat_export_job extends Offline {
     });
 
     const file_threads = toArray(
-      await db.await_proc("channel_export_file_thread_list", this.uid),
+      await db.await_proc("channel_export_file_thread_list", this.uid, this.root_nid),
+    );
+    const folder_tree = toArray(
+      await db.await_proc("channel_export_folder_tree", this.hub_id, this.root_nid),
     );
 
     const sections = await gatherSections(
-      db, this.uid, this.hub_id,
-      this.scope_sel, this.date_start, this.date_end,
-      file_threads,
+      db, this.uid, this.hub_id, this.root_nid,
+      this.folder_sel, this.thread_sel, this.date_start, this.date_end,
+      file_threads, folder_tree,
     );
 
-    // ── Build HTML ────────────────────────────────────────────────────────────
+    // ── Build the Flat ODT document ─────────────────────────────────────────
     await this._send({
       phase: "build", progress: 50,
       zipid: this.zipid, message: "BUILDING_DOCUMENT",
@@ -338,18 +453,21 @@ class __chat_export_job extends Offline {
     const dateEnd = this.date_end
       ? Moment(this.date_end, "X").format("YYYY-MM-DD") : null;
 
-    const html = buildHtml({
-      hubName: this.hub_name,
+    // FODT (not HTML): soffice imports it through the real Writer filter, so
+    // table column widths stay pinned across page breaks and the header row
+    // repeats on every page (HTML goes through Writer/Web, which drifts).
+    const odt = buildOdt({
+      hubName: this.root_name || this.hub_name,
       exportedAt,
       dateStart,
       dateEnd,
       sections,
     });
 
-    const htmlPath = pathJoin(stageDir, "export.html");
-    writeFileSync(htmlPath, html, "utf8");
+    const odtPath = pathJoin(stageDir, "export.fodt");
+    writeFileSync(odtPath, odt, "utf8");
 
-    // ── soffice convert HTML → orig.pdf ────────────────────────────────────────
+    // ── soffice convert FODT → export.pdf ──────────────────────────────────────
     await this._send({
       phase: "convert", progress: 60,
       zipid: this.zipid, message: "CONVERTING_TO_PDF",
@@ -367,9 +485,9 @@ class __chat_export_job extends Offline {
 
     await new Promise((resolve, reject) => {
       // Script.soffice pattern: `${Script.soffice} {outdir} {inputfile}`
-      // → produces orig.pdf in outdir
-      const cmd = `${Script.soffice} ${stageDir} ${htmlPath}`;
-      const sp = spawn(Script.soffice, [stageDir, htmlPath], {
+      // → produces <basename>.pdf in outdir
+      const cmd = `${Script.soffice} ${stageDir} ${odtPath}`;
+      const sp = spawn(Script.soffice, [stageDir, odtPath], {
         stdio: ["ignore", "pipe", "pipe"],
       });
 
@@ -389,8 +507,7 @@ class __chat_export_job extends Offline {
     });
 
     // ── Rename soffice output → final zipname ──────────────────────────────────
-    // soffice names the PDF after the INPUT basename: export.html → export.pdf.
-    // (orig.pdf only applies when the input is orig.<ext>, as in to-pdf.js.)
+    // soffice names the PDF after the INPUT basename: export.fodt → export.pdf.
     const producedPdf = pathJoin(stageDir, "export.pdf");
     if (!existsSync(producedPdf)) {
       throw new Error(`chat-export: soffice did not produce export.pdf in ${stageDir}`);

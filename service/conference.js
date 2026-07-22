@@ -140,7 +140,10 @@ class conference extends __yp {
           const hub_id = this.hub.get(Attr.id);
           const hubMembers = await this.yp.await_proc('entity_sockets', { hub_id, exclude: [socket_id] });
           if (hubMembers && toArray(hubMembers).length) {
-            const startPayload = { ...user, details, room_type, hub_id };
+            // Include the workspace name so the recipients' meeting notification
+            // ("started a meeting in <name>") isn't left blank — details (the
+            // room node attrs) often carries no filename for a synthetic room_id.
+            const startPayload = { ...user, details, room_type, hub_id, hub_name: this.hub.get(Attr.name) };
             await RedisStore.sendData(this.payload(startPayload, { service: 'conference.start' }), toArray(hubMembers));
           }
         } catch (e) {
