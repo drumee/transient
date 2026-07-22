@@ -929,7 +929,7 @@
       ]
     },
     "column_update": {
-      "doc": "Rename and/or re-theme a custom column. Omit a field to keep it.",
+      "doc": "Rename and/or re-theme a column on one board. Omit a field to keep it.",
       "scope": "hub",
       "permission": {
         "src": "write"
@@ -939,6 +939,11 @@
           "type": "string",
           "required": true,
           "doc": "Column id"
+        },
+        "nid": {
+          "type": "string",
+          "required": false,
+          "doc": "Folder scope the column belongs to. Built-in ids are stored once per folder, so without it the rename would hit every board"
         },
         "name": {
           "type": "string",
@@ -969,7 +974,7 @@
       ]
     },
     "column_delete": {
-      "doc": "Delete a custom column. Its tasks are moved back to the built-in 'todo' column (never lost).",
+      "doc": "Delete a column from one board. Its tasks are re-homed onto the first surviving column of that same board (never lost).",
       "scope": "hub",
       "permission": {
         "src": "write"
@@ -979,6 +984,11 @@
           "type": "string",
           "required": true,
           "doc": "Column id to delete"
+        },
+        "nid": {
+          "type": "string",
+          "required": false,
+          "doc": "Folder scope the column belongs to. Built-in ids are stored once per folder, so without it the delete would hit every board"
         }
       },
       "returns": {

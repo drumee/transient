@@ -63,23 +63,28 @@ class __private_task extends Entity {
 
   /**
    * A status key is valid when it's one of the built-in columns or the id of
-   * an existing custom column (task_column row) in this hub.
+   * an existing column (task_column row) in the SAME folder scope.
+   *
+   * The scope matters: built-in ids are literal status keys stored once per
+   * scope, so an unscoped lookup would accept a key that only exists on some
+   * other board.
    */
-  async _isValidStatus(status) {
+  async _isValidStatus(status, nid) {
     if (VALID_STATUSES.includes(status)) return true;
     if (!status || !/^[A-Za-z0-9_-]{1,32}$/.test(status)) return false;
-    const col = await this.db.await_proc('task_column_get', status);
+    const col = await this.db.await_proc('task_column_get_v2', status, nid);
     return !isEmpty(col);
   }
 
   /**
-   * Whether a status/column key is a "done" column (is_done = 1). Completion is
-   * column-driven now, so this replaces the old literal `status === 'complete'`
-   * checks — a renamed or user-created done column still counts as complete.
+   * Whether a status/column key is a "done" column (is_done = 1) in this
+   * folder scope. Completion is column-driven, so this replaces the old
+   * literal `status === 'complete'` checks — a renamed or user-created done
+   * column still counts as complete.
    */
-  async _isDoneColumn(status) {
+  async _isDoneColumn(status, nid) {
     try {
-      const col = await this.db.await_proc('task_column_get', status);
+      const col = await this.db.await_proc('task_column_get_v2', status, nid);
       const row = Array.isArray(col) ? col[0] : col;
       return !!(row && Number(row.is_done));
     } catch (e) {
@@ -405,7 +410,7 @@ class __private_task extends Entity {
     const assignees = (await this._validateAssignees(this._readAssignees() || []));
     if (assignees == null) return; // invalid assignee — exception already raised
 
-    if (!(await this._isValidStatus(status))) status = 'todo';
+    if (!(await this._isValidStatus(status, nid))) status = 'todo';
     if (!VALID_PRIORITIES.includes(priority)) priority = 'medium';
 
     const id = await this.yp.await_func('uniqueId');
@@ -489,14 +494,22 @@ class __private_task extends Entity {
     const id = this.input.need(Attr.id);
     let status = this.input.need(Attr.status);
 
-    if (!(await this._isValidStatus(status))) {
+    // Capture the source column BEFORE the move so its watchers are told the
+    // task left, in addition to the destination column's watchers. This also
+    // yields the task's folder, which the status check needs: column ids are
+    // scoped, so a key must be validated against THIS task's board rather than
+    // any board in the workspace.
+    const prev = await this._taskColMeta(id);
+    if (!prev) {
+      // Same code the proc would have produced below; resolved earlier now
+      // that the task row is read up front.
+      return this.exception.user('TASK_NOT_FOUND');
+    }
+    const prevStatus = prev.status;
+
+    if (!(await this._isValidStatus(status, prev.nid))) {
       return this.exception.user('INVALID_STATUS');
     }
-
-    // Capture the source column BEFORE the move so its watchers are told the
-    // task left, in addition to the destination column's watchers.
-    const prev = await this._taskColMeta(id);
-    const prevStatus = prev && prev.status;
 
     const data = await this.db.await_proc('task_update_status', id, status);
     if (isEmpty(data)) {
@@ -505,7 +518,9 @@ class __private_task extends Entity {
     const row = Array.isArray(data) ? data[0] : data;
     await this._logActivity(
       id,
-      (await this._isDoneColumn(status)) ? 'complete' : 'status',
+      // nid is unchanged by a column move, so the task's folder still scopes
+      // the done-column lookup correctly.
+      (await this._isDoneColumn(status, prev.nid)) ? 'complete' : 'status',
       { title: row && row.title, status },
     );
     await this._broadcast('task.update_status', data);
@@ -833,11 +848,17 @@ class __private_task extends Entity {
   }
 
   /**
-   * Rename and/or re-theme a custom column.
-   * Params: id (required); name / theme (optional — omit to keep).
+   * Rename and/or re-theme a column.
+   * Params: id (required); nid (folder scope, nullable); name / theme
+   * (optional — omit to keep).
+   *
+   * Scoped: built-in ids are literal status keys stored once per folder, so
+   * an unscoped update would rename that built-in on EVERY board in the
+   * workspace. Each board's columns are independent.
    */
   async column_update() {
     const id = this.input.need(Attr.id);
+    const nid = this.input.use('nid', null);
     let name = this.input.use('name', null);
     if (name != null) {
       name = String(name).trim().slice(0, 100);
@@ -847,8 +868,8 @@ class __private_task extends Entity {
     if (theme != null && !VALID_THEMES.includes(theme)) theme = 'default';
 
     const data = await this.db.await_run(
-      'CALL task_column_update(?, ?, ?)',
-      [id, name, theme]
+      'CALL task_column_update_v2(?, ?, ?, ?)',
+      [id, nid, name, theme]
     );
     if (isEmpty(data)) {
       return this.exception.user('COLUMN_NOT_FOUND');
@@ -858,18 +879,25 @@ class __private_task extends Entity {
   }
 
   /**
-   * Delete a custom column. Its tasks are moved back to the built-in 'todo'
-   * column by the proc (never lost); the response carries moved_tasks so the
-   * client re-fetches its task list when non-zero.
+   * Delete a column. Its tasks are re-homed onto the first surviving column of
+   * the SAME board by the proc (never lost); the response carries moved_tasks
+   * so the client re-fetches its task list when non-zero.
+   * Params: id (required); nid (folder scope, nullable).
+   *
+   * Scoped for the same reason as column_update: deleting a built-in without
+   * the folder would remove it from every board in the workspace.
    */
   async column_delete() {
     const id = this.input.need(Attr.id);
-    const data = await this.db.await_proc('task_column_delete', id);
+    const nid = this.input.use('nid', null);
+    const data = await this.db.await_proc('task_column_delete_v2', id, nid);
     const row = Array.isArray(data) ? data[0] : data;
     await this._broadcast('task.column_delete', {
       id,
+      nid,
       affected: row && row.affected,
       moved_tasks: row && row.moved_tasks,
+      moved_to: row && row.moved_to,
     });
     this.output.data(row);
   }
