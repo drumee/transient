@@ -213,7 +213,24 @@ class __private_payment extends Entity {
   }
 
   async subscription_status() {
-    this.output.data(await this._subscription_row());
+    const row = await this._subscription_row();
+    // Whether THIS caller can actually reach checkout, decided by the same two
+    // rules checkout() enforces — so the client stops having to guess.
+    //
+    // It was guessing with domainCan(owner), the DOMAIN permission bit, while
+    // the server resolves the payer through organisation.owner_id. Those are
+    // different things: a member can hold `owner` on the domain and still not
+    // be the owner_id row. Such a caller saw live CTAs and only found out at
+    // the pay step, where checkout answers ORG_IDENT_REQUIRED (payment_get_org
+    // matched nothing they own) or ALREADY_IN_OTHER_DOMAIN (the move-semantics
+    // guard refuses a second org). Only the server can settle this, so it says
+    // so here.
+    const org = await this.yp.await_proc('payment_get_org', this.uid);
+    const is_personal = ~~this.user.domain_id() <= 1; // can bootstrap an org
+    const owns_org = !!(org && org.id);               // can pay for their own
+    row.can_buy = is_personal || owns_org;
+    if (!row.can_buy) row.buy_blocked = 'NOT_ORG_OWNER';
+    this.output.data(row);
   }
 
   // Stripe Billing Portal: one hosted surface for invoice history, cancel/resume,
