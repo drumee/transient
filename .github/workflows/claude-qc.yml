@@ -1,6 +1,8 @@
 name: Claude QC
 
-# Advisory AI quality-control review on PRs into the mainline branches. Posts a
+# Advisory AI quality-control review on PRs into test/preview, gated behind the
+# static code-quality checks (code-quality.yml) so Claude only reviews code that
+# passes lint/secret-scan. Posts a
 # structured QC report (bugs/regressions, impact analysis, test recommendations,
 # Drumee rule violations) as a PR comment; continue-on-error keeps it non-blocking
 # and it never touches the deploy pipeline (deploy.yml). Auth uses the
@@ -9,7 +11,7 @@ name: Claude QC
 on:
   pull_request:
     types: [opened, synchronize]
-    branches: [test, preview, main]
+    branches: [test, preview]
 
 permissions:
   contents: read
@@ -21,8 +23,13 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  quality:
+    name: Code quality gate
+    uses: ./.github/workflows/code-quality.yml
+
   review:
     name: AI QC report (advisory)
+    needs: quality
     runs-on: ubuntu-latest
     timeout-minutes: 25
     continue-on-error: true

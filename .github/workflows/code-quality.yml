@@ -1,0 +1,90 @@
+name: Code Quality
+
+# Static quality checks that run on EVERY commit pushed to any branch, and are
+# also invoked (workflow_call) as the gate in front of the Claude QC review on
+# PRs. Zero external accounts required: ESLint runs with an inline, bug-only
+# ruleset (no style noise), npm audit is advisory, TruffleHog scans for leaked
+# credentials.
+
+on:
+  push:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: Lint (bug rules only)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Run ESLint (correctness rules, no style)
+        run: |
+          npm i --no-save --no-audit --no-fund eslint@9
+          cat > /tmp/eslint.config.mjs <<'EOF'
+          export default [
+            {
+              files: ["**/*.js"],
+              languageOptions: {
+                ecmaVersion: 2022,
+                sourceType: "commonjs",
+              },
+              rules: {
+                "no-dupe-args": "error",
+                "no-dupe-keys": "error",
+                "no-dupe-else-if": "error",
+                "no-duplicate-case": "error",
+                "no-unreachable": "error",
+                "no-unsafe-negation": "error",
+                "no-cond-assign": "error",
+                "constructor-super": "error",
+                "no-this-before-super": "error",
+                "no-class-assign": "error",
+                "no-const-assign": "error",
+                "no-func-assign": "error",
+                "getter-return": "error",
+                "no-setter-return": "error",
+                "no-obj-calls": "error",
+                "no-sparse-arrays": "error",
+                "use-isnan": "error",
+                "valid-typeof": "error",
+                "no-async-promise-executor": "error",
+                "for-direction": "error",
+                "no-self-assign": "error",
+                "no-self-compare": "error",
+              },
+            },
+          ];
+          EOF
+          git ls-files '*.js' | xargs npx eslint --no-config-lookup -c /tmp/eslint.config.mjs
+
+  audit:
+    name: Dependency audit (advisory)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: npm audit (high and above, prod deps)
+        run: npm audit --package-lock-only --omit=dev --audit-level=high
+
+  secrets:
+    name: Secret scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: TruffleHog (verified credentials only)
+        uses: trufflesecurity/trufflehog@main
+        with:
+          extra_args: --results=verified
