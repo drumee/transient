@@ -26,6 +26,7 @@ jobs:
   quality:
     name: Code quality gate
     uses: ./.github/workflows/code-quality.yml
+    secrets: inherit
 
   review:
     name: AI QC report (advisory)

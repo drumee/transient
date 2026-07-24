@@ -101,6 +101,19 @@ jobs:
             exit 0
           }
 
+  sonar:
+    name: SonarCloud scan
+    if: github.event_name == 'pull_request' || contains(fromJSON('["test","preview","main"]'), github.ref_name)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: SonarSource/sonarqube-scan-action@v5
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+
   secrets:
     name: Secret scan
     runs-on: ubuntu-latest
