@@ -165,20 +165,22 @@ from .../@drumee/server-essentials/lib/mariadb.js not supported.   Node.js v18.2
 ```
 
 `mariadb` npm is **3.5.2** (ESM-only, `"type":"module"`), pulled transitively via
-`@drumee/server-essentials`. `require('mariadb')` works on the **container's Node 20**
-(`node:20`, ≥20.19 supports `require(ESM)`) but **fails on Debian 12's Node 18**, which the
-packages get via `Depends: nodejs, npm`. infra failing cascades to schemas.
+`@drumee/server-essentials`. `require('mariadb')` works on **Node ≥20.19** (which
+supports `require(ESM)`) — both channels now ship **Node 22 (current LTS)** — but
+**fails on Debian 12's Node 18**, which the packages get via `Depends: nodejs, npm`.
+infra failing cascades to schemas.
 
-**Fix (Option A, applied):** make the native install provide **Node 20.x (NodeSource)** —
+**Fix (Option A, applied):** make the native install provide **Node 22.x (NodeSource)** —
 `scripts/install-native.sh` adds the NodeSource repo before `apt install`, and the
-component `debian/control` files now `Depends: nodejs (>= 20)` and drop the Debian `npm`
+component `debian/control` files `Depends: nodejs (>= 20)` and drop the Debian `npm`
 dep (NodeSource's nodejs bundles npm and Debian's `npm` conflicts with it). This mirrors
-the container channel's `node:20` base. Without Node 20, `apt` now fails with a clear
-unmet-dependency message instead of the cryptic ESM crash mid-postinst.
+the container channel's `node:22` base. Without Node ≥20, `apt` now fails with a clear
+unmet-dependency message instead of the cryptic ESM crash mid-postinst. (Node 22, not 20,
+because the 20.x line's older point releases carried CVEs; 22 is the current LTS.)
 
-**Confirmed:** on `node:20-slim` (v20.20.2), `require('mariadb')` of the exact ESM
-`mariadb@3.5.2` that crashes on Node 18 returns OK — so Option A resolves the precise
-blocker. The only thing not yet run start-to-finish is a single clean full-stack
+**Confirmed (original ≥20 validation):** on `node:20-slim` (v20.20.2), `require('mariadb')`
+of the exact ESM `mariadb@3.5.2` that crashes on Node 18 returns OK — establishing the
+≥20 floor that Node 22 also satisfies. The only thing not yet run start-to-finish is a single clean full-stack
 install-to-serving pass; it's gated on container apt pulling the heavy deps
 (MariaDB + LibreOffice + ffmpeg + …) over a slow/flaky network, not on any code issue.
 

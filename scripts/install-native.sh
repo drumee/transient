@@ -33,14 +33,14 @@ echo "==> apt update"
 apt-get update
 
 # Drumee's runtime deps require Node.js >= 20 (e.g. the ESM-only mariadb npm), but
-# Debian/Ubuntu ship Node 18 or older. Ensure Node 20 from NodeSource so the
-# packages' `nodejs (>= 20)` dependency resolves (matches the container channel's
-# node:20). NodeSource's nodejs bundles npm.
+# Debian/Ubuntu ship Node 18 or older. Ensure Node 22 (current LTS) from NodeSource
+# so the packages' `nodejs (>= 20)` dependency resolves with a supported, non-EOL
+# Node (matches the container channel's node:22 base). NodeSource's nodejs bundles npm.
 node_major="$(command -v node >/dev/null 2>&1 && node -p 'process.versions.node.split(".")[0]' 2>/dev/null || echo 0)"
-if [ "${node_major:-0}" -lt 20 ]; then
-  echo "==> Installing Node.js 20 (NodeSource); current: ${node_major:-none}"
+if [ "${node_major:-0}" -lt 22 ]; then
+  echo "==> Installing Node.js 22 (NodeSource); current: ${node_major:-none}"
   command -v curl >/dev/null || apt-get install -y curl ca-certificates
-  curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
+  curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
   apt-get install -y nodejs
 fi
 
