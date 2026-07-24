@@ -20,10 +20,12 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: 20
-      - name: Run ESLint (correctness rules, no style)
+      - name: Run ESLint on changed files (correctness rules, no style)
         run: |
           npm i --no-save --no-audit --no-fund eslint@9
           cat > /tmp/eslint.config.mjs <<'EOF'
@@ -61,20 +63,43 @@ jobs:
             },
           ];
           EOF
-          git ls-files '*.js' | xargs npx eslint --no-config-lookup -c /tmp/eslint.config.mjs
+          # Lint only the files this push/PR actually changed: the codebase has
+          # ~56 pre-existing violations (tracked separately); new code must be clean.
+          if [ "${{ github.event_name }}" = "push" ]; then
+            base="${{ github.event.before }}"
+            if [ "$base" = "0000000000000000000000000000000000000000" ] || ! git cat-file -e "$base" 2>/dev/null; then
+              base=$(git rev-parse HEAD^ 2>/dev/null || echo "")
+            fi
+          else
+            base=$(git rev-parse HEAD^1 2>/dev/null || echo "")
+          fi
+          if [ -n "$base" ]; then
+            files=$(git diff --name-only --diff-filter=ACMR "$base" HEAD -- '*.js')
+          else
+            files=$(git ls-files '*.js')
+          fi
+          if [ -z "$files" ]; then
+            echo "No JS files changed - nothing to lint."
+            exit 0
+          fi
+          echo "Linting changed files:"; echo "$files"
+          echo "$files" | xargs npx eslint --no-config-lookup -c /tmp/eslint.config.mjs
 
   audit:
     name: Dependency audit (advisory)
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 20
       - name: npm audit (high and above, prod deps)
-        run: npm audit --package-lock-only --omit=dev --audit-level=high
+        run: |
+          npm audit --package-lock-only --omit=dev --audit-level=high || {
+            echo "::warning title=npm audit::High-severity vulnerabilities in production dependencies (advisory - see job log)"
+            exit 0
+          }
 
   secrets:
     name: Secret scan
