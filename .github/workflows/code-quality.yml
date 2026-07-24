@@ -27,7 +27,7 @@ jobs:
           node-version: 20
       - name: Run ESLint on changed files (correctness rules, no style)
         run: |
-          npm i --no-save --no-audit --no-fund eslint@9
+          npm i --no-save --no-audit --no-fund --ignore-scripts eslint@9.39.5
           cat > /tmp/eslint.config.mjs <<'EOF'
           export default [
             {
@@ -110,7 +110,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - uses: SonarSource/sonarqube-scan-action@v5
+      - uses: SonarSource/sonarqube-scan-action@2f77a1ec69fb1d595b06f35ab27e97605bdef703 # v5
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
 
@@ -123,6 +123,6 @@ jobs:
         with:
           fetch-depth: 0
       - name: TruffleHog (verified credentials only)
-        uses: trufflesecurity/trufflehog@main
+        uses: trufflesecurity/trufflehog@6f3c981e7b77f235fd2702dd74af25fc4b72bf11 # v3.96.0
         with:
           extra_args: --results=verified
