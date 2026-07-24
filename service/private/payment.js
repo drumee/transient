@@ -178,15 +178,41 @@ class __private_payment extends Entity {
       metadata.org_ident = org_bootstrap.ident;
       metadata.org_name = org_bootstrap.org_name;
     }
-    const session = await stripe.checkout.sessions.create({
+    const create = (cust) => stripe.checkout.sessions.create({
       mode: 'subscription',
-      customer: customer_id,
+      customer: cust,
       line_items,
       subscription_data: { metadata },
       metadata,
       success_url,
       cancel_url,
     });
+
+    let session;
+    try {
+      session = await create(customer_id);
+    } catch (e) {
+      // "You cannot combine currencies on a single customer."
+      //
+      // The 2026-07 rebuild moved the catalog from EUR to USD, and Stripe pins
+      // a customer to the currency of its first subscription or open Checkout
+      // session. Every customer created under the old catalog therefore CANNOT
+      // start a USD checkout — it fails with a 400 that surfaced to the client
+      // as a bare SERVICE_FAILED. A customer record carries no value we need to
+      // preserve here (invoices and payment history stay on the old record and
+      // remain visible in Stripe), so the recovery is simply to mint a fresh
+      // one for this entity and retry once.
+      const clash = /combine currencies/i.test((e && e.message) || '');
+      if (!clash) {
+        this.warn && this.warn('payment.checkout failed', e && e.message);
+        return this.output.data({ status: 'CHECKOUT_FAILED', reason: (e && e.message) || '' });
+      }
+      const fresh = await stripe.customers.create({
+        email, name, metadata: { id: entity_id },
+      });
+      customer_id = fresh.id;
+      session = await create(customer_id);
+    }
     this.output.data({ url: session.url, id: session.id });
   }
 
