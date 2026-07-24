@@ -3,6 +3,11 @@
 # so that drumee-schemas can be built and installed without any proprietary
 # seed data. This is what makes a fresh, outsider self-host possible.
 #
+# PREFERRED: scripts/build-seed.sh produces a FULL seed (base schema + a stocked
+# entity pool via server-team's offline/factory) in a throwaway Docker MariaDB —
+# schemas/build.sh invokes it automatically when no seed/SEEDS_DIR is present.
+# This script remains the no-Docker fallback (needs a schema DDL dump).
+#
 #   schemas/make-seed.sh --out=schemas/var/tmp/drumee/seeds.tgz [--schema-sql=FILE]
 #
 # The seed produced by schemas/bin/install is a `mariabackup` physical backup,
