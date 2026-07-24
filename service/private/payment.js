@@ -2,6 +2,12 @@
 const { Entity } = require('@drumee/server-core');
 const { stripeClient } = require('../lib/stripe');
 
+// Billing currency for every catalog / plan lookup. The 2026-07 pricing
+// rebuild moved the catalog to USD; the old EUR rows are deactivated in
+// yp.plan (a Stripe price's currency cannot be changed, so they are separate
+// rows). Lookups pass this explicitly, so it must match the active rows.
+const CURRENCY = 'usd';
+
 class __private_payment extends Entity {
   // Lazy Stripe client. catalog()/subscription_status() are DB-only and MUST
   // work even when Stripe isn't configured yet (no stripe_skey in sys_conf).
@@ -13,10 +19,11 @@ class __private_payment extends Entity {
 
   // Priced catalog from yp.plan. Enriched with the live Stripe unit amount when
   // a price id + key exist, so the FE can display the authoritative price.
-  // Returns ALL entity types (user plans + org/team + add-ons incl. pro_seat)
-  // so every price the billing UI shows is catalog-driven, not hardcoded.
+  // Returns every active row so the billing UI stays catalog-driven rather
+  // than hardcoding amounts. Since the 2026-07 rebuild that is free + team +
+  // business; the B2C Pro tier and its add-ons are deactivated in yp.plan.
   async catalog() {
-    const rows = (await this.yp.await_proc('payment_get_catalog', 'eur', '')) || [];
+    const rows = (await this.yp.await_proc('payment_get_catalog', CURRENCY, '')) || [];
     const plans = Array.isArray(rows) ? rows : [rows];
     let stripe = null;
     try { stripe = this._stripe(); } catch (e) { stripe = null; }
@@ -87,14 +94,13 @@ class __private_payment extends Entity {
   }
 
   // Hosted Checkout. entity_type 'user' (individual Free->Pro) or 'org' (team,
-  // per-seat: Stripe quantity = seats, customer = the org the caller owns).
+  // flat: Stripe quantity is always 1, customer = the org the caller owns).
   async checkout() {
     let stripe;
     try { stripe = this._stripe(); }
     catch (e) { return this.output.data({ status: 'STRIPE_NOT_CONFIGURED' }); }
     const entity_type = this.input.use('entity_type', 'user');
     const period = this.input.need('period');           // 'month' | 'year'
-    const seats = Math.max(1, ~~this.input.use('seats', 1));
 
     let plan, entity_id, email, name, existing_customer;
     let org_bootstrap = null;
@@ -122,13 +128,13 @@ class __private_payment extends Entity {
         existing_customer = payer && payer.customer_id;
       }
     } else {
-      plan = this.input.use('plan', 'pro');
+      plan = this.input.use('plan', 'team');
       entity_id = this.uid;
       const payer = await this.yp.await_proc('payment_get_payer', this.uid);
       email = payer && payer.email; name = payer && payer.fullname; existing_customer = payer && payer.customer_id;
     }
 
-    const plan_row = await this.yp.await_proc('payment_get_plan', plan, period, 'eur');
+    const plan_row = await this.yp.await_proc('payment_get_plan', plan, period, CURRENCY);
     if (!plan_row || !plan_row.stripe_price_id) {
       return this.output.data({ status: 'NO_PRICE' });
     }
@@ -142,34 +148,13 @@ class __private_payment extends Entity {
       const created = await stripe.customers.create({ email, name, metadata: { id: entity_id } });
       customer_id = created.id;
     }
-    const quantity = entity_type === 'org' ? seats : 1;
-    const line_items = [{ price: plan_row.stripe_price_id, quantity }];
-    // C1 Pro per-seat: the plan includes quota.$.seat seats (Pro: 5); seats
-    // beyond that are a recurring pro_seat add-on line (quantity = extra).
-    if (entity_type !== 'org') {
-      // plan_row.quota may arrive already parsed (driver auto-parses JSON
-      // columns) OR as a string — handle both, else JSON.parse(object) throws
-      // and the seat add-on is silently dropped (only the Pro base is billed).
-      let included = 0;
-      try {
-        const q = plan_row.quota;
-        const obj = q && typeof q === 'object' ? q : JSON.parse(q || '{}');
-        included = ~~obj.seat || 0;
-      } catch (e) { included = 0; }
-      const extra = seats - (included || 1);
-      if (included > 0 && extra > 0) {
-        const seat_addon = await this.yp.await_proc('payment_get_plan', 'pro_seat', period, 'eur');
-        if (seat_addon && seat_addon.stripe_price_id) {
-          line_items.push({ price: seat_addon.stripe_price_id, quantity: extra });
-        }
-      }
-    }
-    // Optional storage add-on (P4): a 2nd recurring line item for this period.
-    const bundle = this.input.use('bundle', '');
-    if (bundle) {
-      const addon = await this.yp.await_proc('payment_get_plan', bundle, period, 'eur');
-      if (addon && addon.stripe_price_id) line_items.push({ price: addon.stripe_price_id, quantity: 1 });
-    }
+    // One line item, quantity 1. Every plan is FLAT since the 2026-07 pricing
+    // rebuild: Team is $29 for 100 GB and up to 10 members, not $x per seat, so
+    // the subscription quantity no longer carries the seat count — sending
+    // `seats` here would multiply the bill. The per-seat add-on (pro_seat) and
+    // the storage bundles (storage_*) are retired with the B2C Pro tier and
+    // deactivated in yp.plan, so there are no extra lines to add.
+    const line_items = [{ price: plan_row.stripe_price_id, quantity: 1 }];
     // Build the return URLs from homepath (host-derived, endpoint-aware).
     // servicepath() resolves the endpoint segment to 'undefined' on dev
     // endpoints (/-/undefined/svc/...), which broke the post-payment redirect.
