@@ -18,7 +18,7 @@ class __public_stripe_webhook extends Entity {
   // "€169.90" from Stripe minor units; falls back to "<CODE> 12.34".
   _money(minor, currency) {
     const n = (Number(minor) || 0) / 100;
-    const sym = CURRENCY_SYMBOL[(currency || 'eur').toLowerCase()];
+    const sym = CURRENCY_SYMBOL[(currency || 'usd').toLowerCase()];
     return sym ? `${sym}${n.toFixed(2)}` : `${(currency || '').toUpperCase()} ${n.toFixed(2)}`;
   }
 
@@ -59,13 +59,13 @@ class __public_stripe_webhook extends Entity {
       this.warn(`receipt email skipped for ${invoice.id}: no recipient email`);
       return;
     }
-    const plan = (smd.plan || 'pro').toLowerCase();
+    const plan = (smd.plan || 'team').toLowerCase();
     const plan_label = plan.charAt(0).toUpperCase() + plan.slice(1);
     const cycle_label = (smd.period || 'month') === 'year' ? 'billed yearly' : 'billed monthly';
     const paidTs = (invoice.status_transitions && invoice.status_transitions.paid_at) || invoice.created;
     const items = (sub && sub.items && sub.items.data) || [];
     const nextTs = (sub && sub.current_period_end) || (items[0] && items[0].current_period_end) || 0;
-    const currency = invoice.currency || 'eur';
+    const currency = invoice.currency || 'usd';
     const lines = ((invoice.lines && invoice.lines.data) || []).map((l) => ({
       label: l.description || plan_label,
       amount: this._money(l.amount, l.currency || currency),
@@ -158,10 +158,10 @@ class __public_stripe_webhook extends Entity {
       this.warn(`dunning email skipped for ${invoice.id}: no recipient email`);
       return;
     }
-    const plan = (smd.plan || 'pro').toLowerCase();
+    const plan = (smd.plan || 'team').toLowerCase();
     const plan_label = plan.charAt(0).toUpperCase() + plan.slice(1);
     const cycle_label = (smd.period || 'month') === 'year' ? 'billed yearly' : 'billed monthly';
-    const currency = invoice.currency || 'eur';
+    const currency = invoice.currency || 'usd';
     const card_label = await this._cardLabel(stripe, invoice);
     let billing_link = '';
     try { billing_link = this.input.homepath(); } catch (e) { billing_link = ''; }
@@ -363,7 +363,7 @@ class __public_stripe_webhook extends Entity {
         case 'customer.subscription.created':
         case 'customer.subscription.updated': {
           let entity_id = md.entity_id;
-          const plan = md.plan || 'pro';
+          const plan = md.plan || 'team';
           const period = md.period || 'month';
           // TEAM bootstrap: the organisation may not exist at checkout time —
           // resolve (and provision if needed) before billing the ORG entity.
@@ -498,9 +498,16 @@ class __public_stripe_webhook extends Entity {
               // Recurring renewal succeeded -> re-apply entitlement (bumps period_end).
               const items = (sub && sub.items && sub.items.data) || [];
               const pend = (sub && sub.current_period_end) || (items[0] && items[0].current_period_end) || 0;
+              // Since the 2026-07 pricing rebuild every plan is flat and the
+              // add-ons (pro_seat, storage_*) are retired, so in practice this
+              // resolves to quantity 1 / no extra disk, and payment_apply_
+              // entitlement ignores the seat total for org rows (quota.$.seat
+              // is the plan's member cap, not a purchased quantity). Kept so a
+              // subscription created under the old catalog still reduces
+              // correctly on renewal.
               const { seats, extra_disk, extra_seats } = await this._itemsEntitlement(items);
-              const seat_total = await this._seatTotal(smd.entity_type || 'user', smd.plan || 'pro', smd.period || 'month', seats, extra_seats);
-              await this.yp.await_proc('payment_apply_entitlement', eid, smd.plan || 'pro', pend, smd.entity_type || 'user', seat_total, extra_disk);
+              const seat_total = await this._seatTotal(smd.entity_type || 'user', smd.plan || 'team', smd.period || 'month', seats, extra_seats);
+              await this.yp.await_proc('payment_apply_entitlement', eid, smd.plan || 'team', pend, smd.entity_type || 'user', seat_total, extra_disk);
               await this.notify_user(eid, { service: 'payment.plan_updated', plan: smd.plan, status: 'active' });
               // Payment-receipt email (initial payment AND every renewal both
               // arrive as invoice.paid). A mail failure must never fail the
