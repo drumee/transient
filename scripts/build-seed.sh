@@ -5,7 +5,7 @@
 # container, populate the base databases from the schemas repo's
 # templates/factory + STOCK the entity pool via server-team's offline/factory,
 # then mariabackup the datadir into a seeds.tgz laid out exactly as
-# setup-schemas/bin/install expects. See deploy/docker/seed-entrypoint.sh.
+# setup-schemas/bin/install expects. See scripts/seed-entrypoint.sh.
 #
 #   scripts/build-seed.sh [--out=PATH]
 #
@@ -49,8 +49,9 @@ docker buildx version >/dev/null 2>&1 || { echo "docker buildx required" >&2; ex
 
 say "Building drumee/seed:$TAG"
 docker buildx build \
-  -f "$root/deploy/docker/Dockerfile.seed" \
-  -t "drumee/seed:$TAG" --load "$root/deploy/docker"
+  -f "$root/scripts/Dockerfile.seed" \
+  --build-context "helpers=$root/deploy/docker" \
+  -t "drumee/seed:$TAG" --load "$root/scripts"
 
 out_dir="$(dirname "$OUT")"
 out_file="$(basename "$OUT")"

@@ -64,8 +64,8 @@ we generate the seed from source.
 
 ### Building the seed from source
 
-`scripts/build-seed.sh` + `deploy/docker/Dockerfile.seed` +
-`deploy/docker/seed-entrypoint.sh` reproduce, offline and in one throwaway
+`scripts/build-seed.sh` + `scripts/Dockerfile.seed` +
+`scripts/seed-entrypoint.sh` reproduce, offline and in one throwaway
 container, exactly what a freshly-populated reference system contains. The flow:
 
 1. **Local MariaDB** — the container starts its own `mariadbd` on loopback and a

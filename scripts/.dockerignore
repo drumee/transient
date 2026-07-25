@@ -1,0 +1,6 @@
+# scripts/ is a Docker build context only for scripts/Dockerfile.seed (see
+# scripts/build-seed.sh). That build pulls seed-entrypoint.sh from here and every
+# other asset from the `helpers=` context (deploy/docker), so send the daemon just
+# the one file it needs — exclude everything, then re-include seed-entrypoint.sh.
+*
+!seed-entrypoint.sh
