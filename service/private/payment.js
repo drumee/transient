@@ -2,6 +2,12 @@
 const { Entity } = require('@drumee/server-core');
 const { stripeClient } = require('../lib/stripe');
 
+// Billing currency for every catalog / plan lookup. The 2026-07 pricing
+// rebuild moved the catalog to USD; the old EUR rows are deactivated in
+// yp.plan (a Stripe price's currency cannot be changed, so they are separate
+// rows). Lookups pass this explicitly, so it must match the active rows.
+const CURRENCY = 'usd';
+
 class __private_payment extends Entity {
   // Lazy Stripe client. catalog()/subscription_status() are DB-only and MUST
   // work even when Stripe isn't configured yet (no stripe_skey in sys_conf).
@@ -13,10 +19,11 @@ class __private_payment extends Entity {
 
   // Priced catalog from yp.plan. Enriched with the live Stripe unit amount when
   // a price id + key exist, so the FE can display the authoritative price.
-  // Returns ALL entity types (user plans + org/team + add-ons incl. pro_seat)
-  // so every price the billing UI shows is catalog-driven, not hardcoded.
+  // Returns every active row so the billing UI stays catalog-driven rather
+  // than hardcoding amounts. Since the 2026-07 rebuild that is free + team +
+  // business; the B2C Pro tier and its add-ons are deactivated in yp.plan.
   async catalog() {
-    const rows = (await this.yp.await_proc('payment_get_catalog', 'eur', '')) || [];
+    const rows = (await this.yp.await_proc('payment_get_catalog', CURRENCY, '')) || [];
     const plans = Array.isArray(rows) ? rows : [rows];
     let stripe = null;
     try { stripe = this._stripe(); } catch (e) { stripe = null; }
@@ -87,14 +94,23 @@ class __private_payment extends Entity {
   }
 
   // Hosted Checkout. entity_type 'user' (individual Free->Pro) or 'org' (team,
-  // per-seat: Stripe quantity = seats, customer = the org the caller owns).
+  // flat: Stripe quantity is always 1, customer = the org the caller owns).
   async checkout() {
     let stripe;
     try { stripe = this._stripe(); }
     catch (e) { return this.output.data({ status: 'STRIPE_NOT_CONFIGURED' }); }
-    const entity_type = this.input.use('entity_type', 'user');
+    // entity_type decides which branch of this method runs, so it must be a
+    // closed set. It used to be a free string compared with === 'org', which
+    // meant 'ORG', 'Org', 'organization', 'org ' or a typo all fell silently
+    // into the PERSONAL branch — skipping the org ident requirement, the
+    // move-semantics guard and the owner check — while payment_get_plan
+    // happily returned the org-only Team price. The caller was charged $29 for
+    // a plan they could not receive. Reject the value instead of guessing.
+    const entity_type = String(this.input.use('entity_type', 'user')).trim().toLowerCase();
+    if (entity_type !== 'user' && entity_type !== 'org') {
+      return this.output.data({ status: 'ENTITY_TYPE_INVALID', entity_type });
+    }
     const period = this.input.need('period');           // 'month' | 'year'
-    const seats = Math.max(1, ~~this.input.use('seats', 1));
 
     let plan, entity_id, email, name, existing_customer;
     let org_bootstrap = null;
@@ -122,15 +138,25 @@ class __private_payment extends Entity {
         existing_customer = payer && payer.customer_id;
       }
     } else {
-      plan = this.input.use('plan', 'pro');
+      plan = this.input.use('plan', 'team');
       entity_id = this.uid;
       const payer = await this.yp.await_proc('payment_get_payer', this.uid);
       email = payer && payer.email; name = payer && payer.fullname; existing_customer = payer && payer.customer_id;
     }
 
-    const plan_row = await this.yp.await_proc('payment_get_plan', plan, period, 'eur');
+    const plan_row = await this.yp.await_proc('payment_get_plan', plan, period, CURRENCY);
     if (!plan_row || !plan_row.stripe_price_id) {
       return this.output.data({ status: 'NO_PRICE' });
+    }
+    // payment_get_plan matches on plan_code + period + currency only — it has
+    // no entity_type filter — so asking for an ORG plan as a 'user' returns the
+    // org price and bills for it. The entitlement side then looks the plan up
+    // WITH entity_type, finds nothing, and falls back to a bare 20 GB personal
+    // grant: money taken, wrong product delivered. Refuse the mismatch here.
+    if (plan_row.entity_type && plan_row.entity_type !== entity_type) {
+      return this.output.data({
+        status: 'PLAN_ENTITY_MISMATCH', plan, entity_type, expected: plan_row.entity_type,
+      });
     }
     // ensure a Stripe customer keyed by metadata.id = entity_id (idempotent)
     let customer_id = existing_customer;
@@ -142,34 +168,13 @@ class __private_payment extends Entity {
       const created = await stripe.customers.create({ email, name, metadata: { id: entity_id } });
       customer_id = created.id;
     }
-    const quantity = entity_type === 'org' ? seats : 1;
-    const line_items = [{ price: plan_row.stripe_price_id, quantity }];
-    // C1 Pro per-seat: the plan includes quota.$.seat seats (Pro: 5); seats
-    // beyond that are a recurring pro_seat add-on line (quantity = extra).
-    if (entity_type !== 'org') {
-      // plan_row.quota may arrive already parsed (driver auto-parses JSON
-      // columns) OR as a string — handle both, else JSON.parse(object) throws
-      // and the seat add-on is silently dropped (only the Pro base is billed).
-      let included = 0;
-      try {
-        const q = plan_row.quota;
-        const obj = q && typeof q === 'object' ? q : JSON.parse(q || '{}');
-        included = ~~obj.seat || 0;
-      } catch (e) { included = 0; }
-      const extra = seats - (included || 1);
-      if (included > 0 && extra > 0) {
-        const seat_addon = await this.yp.await_proc('payment_get_plan', 'pro_seat', period, 'eur');
-        if (seat_addon && seat_addon.stripe_price_id) {
-          line_items.push({ price: seat_addon.stripe_price_id, quantity: extra });
-        }
-      }
-    }
-    // Optional storage add-on (P4): a 2nd recurring line item for this period.
-    const bundle = this.input.use('bundle', '');
-    if (bundle) {
-      const addon = await this.yp.await_proc('payment_get_plan', bundle, period, 'eur');
-      if (addon && addon.stripe_price_id) line_items.push({ price: addon.stripe_price_id, quantity: 1 });
-    }
+    // One line item, quantity 1. Every plan is FLAT since the 2026-07 pricing
+    // rebuild: Team is $29 for 100 GB and up to 10 members, not $x per seat, so
+    // the subscription quantity no longer carries the seat count — sending
+    // `seats` here would multiply the bill. The per-seat add-on (pro_seat) and
+    // the storage bundles (storage_*) are retired with the B2C Pro tier and
+    // deactivated in yp.plan, so there are no extra lines to add.
+    const line_items = [{ price: plan_row.stripe_price_id, quantity: 1 }];
     // Build the return URLs from homepath (host-derived, endpoint-aware).
     // servicepath() resolves the endpoint segment to 'undefined' on dev
     // endpoints (/-/undefined/svc/...), which broke the post-payment redirect.
@@ -193,15 +198,41 @@ class __private_payment extends Entity {
       metadata.org_ident = org_bootstrap.ident;
       metadata.org_name = org_bootstrap.org_name;
     }
-    const session = await stripe.checkout.sessions.create({
+    const create = (cust) => stripe.checkout.sessions.create({
       mode: 'subscription',
-      customer: customer_id,
+      customer: cust,
       line_items,
       subscription_data: { metadata },
       metadata,
       success_url,
       cancel_url,
     });
+
+    let session;
+    try {
+      session = await create(customer_id);
+    } catch (e) {
+      // "You cannot combine currencies on a single customer."
+      //
+      // The 2026-07 rebuild moved the catalog from EUR to USD, and Stripe pins
+      // a customer to the currency of its first subscription or open Checkout
+      // session. Every customer created under the old catalog therefore CANNOT
+      // start a USD checkout — it fails with a 400 that surfaced to the client
+      // as a bare SERVICE_FAILED. A customer record carries no value we need to
+      // preserve here (invoices and payment history stay on the old record and
+      // remain visible in Stripe), so the recovery is simply to mint a fresh
+      // one for this entity and retry once.
+      const clash = /combine currencies/i.test(e?.message || '');
+      if (!clash) {
+        this.warn?.('payment.checkout failed', e?.message);
+        return this.output.data({ status: 'CHECKOUT_FAILED', reason: e?.message || '' });
+      }
+      const fresh = await stripe.customers.create({
+        email, name, metadata: { id: entity_id },
+      });
+      customer_id = fresh.id;
+      session = await create(customer_id);
+    }
     this.output.data({ url: session.url, id: session.id });
   }
 
@@ -228,7 +259,24 @@ class __private_payment extends Entity {
   }
 
   async subscription_status() {
-    this.output.data(await this._subscription_row());
+    const row = await this._subscription_row();
+    // Whether THIS caller can actually reach checkout, decided by the same two
+    // rules checkout() enforces — so the client stops having to guess.
+    //
+    // It was guessing with domainCan(owner), the DOMAIN permission bit, while
+    // the server resolves the payer through organisation.owner_id. Those are
+    // different things: a member can hold `owner` on the domain and still not
+    // be the owner_id row. Such a caller saw live CTAs and only found out at
+    // the pay step, where checkout answers ORG_IDENT_REQUIRED (payment_get_org
+    // matched nothing they own) or ALREADY_IN_OTHER_DOMAIN (the move-semantics
+    // guard refuses a second org). Only the server can settle this, so it says
+    // so here.
+    const org = await this.yp.await_proc('payment_get_org', this.uid);
+    const is_personal = ~~this.user.domain_id() <= 1; // can bootstrap an org
+    const owns_org = !!org?.id;                        // can pay for their own
+    row.can_buy = is_personal || owns_org;
+    if (!row.can_buy) row.buy_blocked = 'NOT_ORG_OWNER';
+    this.output.data(row);
   }
 
   // Stripe Billing Portal: one hosted surface for invoice history, cancel/resume,
