@@ -299,10 +299,11 @@ class __public_stripe_webhook extends Entity {
     return (org && org.id) ? org.id : md.entity_id;
   }
 
-  // Classify subscription line items: the base plan item (quantity = seats for
-  // org) vs add-on items (entity_type='addon' in yp.plan) — storage add-ons sum
-  // disk * quantity into extra_disk (P4); pro_seat add-ons sum seat * quantity
-  // into extra_seats (C1 Pro per-seat).
+  // Classify subscription line items: the base plan item vs add-on items
+  // (entity_type='addon' in yp.plan). Add-ons carrying $.seat — team_seat —
+  // sum seat * quantity into extra_seats; ones carrying $.disk sum into
+  // extra_disk. The base line's quantity is no longer a seat count: plans are
+  // flat, so it is always 1.
   async _itemsEntitlement(items) {
     let seats = 1, price = 0, extra_disk = 0, extra_seats = 0;
     for (const it of (items || [])) {
@@ -319,16 +320,25 @@ class __public_stripe_webhook extends Entity {
     return { seats, price, extra_disk, extra_seats };
   }
 
-  // Seat total to record on the entitlement. Org (team): the base line's
-  // quantity IS the seat count. Individual (pro): the plan includes
-  // quota.$.seat seats; purchased pro_seat add-ons extend that. Returning 0
-  // keeps the plan's default $.seat (guard in payment_apply_entitlement).
+  // Seats to hand payment_apply_entitlement.
+  //
+  // ORG: the procedure ADDS this to the plan's included count, so what it
+  // wants is the seats actually PURCHASED, not a total. Returning the base
+  // line's quantity (the old behaviour, back when that quantity was the seat
+  // count) would now write 1 — capping a Team org at eleven members however
+  // many seats they bought.
+  //
+  // Individual: unchanged legacy path — the proc treats _seats as a total
+  // there, so included + extras is correct.
   async _seatTotal(entity_type, plan, period, base_seats, extra_seats) {
-    if (entity_type === 'org') return base_seats;
+    if (entity_type === 'org') return extra_seats || 0;
     if (!extra_seats) return 0;
     let included = 0;
     try {
-      const row = await this.yp.await_proc('payment_get_plan', plan, period, 'eur');
+      // 'usd': the EUR rows were deactivated by the pricing rebuild, so the
+      // old hardcoded 'eur' matched nothing and silently reported no included
+      // seats.
+      const row = await this.yp.await_proc('payment_get_plan', plan, period, 'usd');
       // quota may be a parsed object or a JSON string — handle both.
       const q = row && row.quota;
       const obj = q && typeof q === 'object' ? q : JSON.parse(q || '{}');
