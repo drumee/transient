@@ -60,7 +60,7 @@ case "$1" in
 
     reconfigure)
     bridge_debconf_env
-    node /var/lib/drumee/setup-infra/index.js --force-install=1
+    node /var/lib/drumee/setup-infra/infra.js --force-install=1
     ;;
 
     abort-upgrade|abort-remove|abort-deconfigure)
