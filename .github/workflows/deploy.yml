@@ -82,11 +82,15 @@ jobs:
           sudo /usr/sbin/drumee start main
           sudo /usr/sbin/drumee start main/service
           # Offline workers run as separate pm2 apps and keep old code in
-          # memory until restarted; bounce every one declared in the ecosystem.
-          for W in indexWorker gdriveWorker trashWorker expiryWorker reminderWorker versionRetentionWorker; do
-            sudo /usr/sbin/drumee start "$W" \
-              && echo "worker $W restarted" \
-              || echo "worker $W not configured, skipped"
+          # memory until restarted. Their names vary per host (indexWorker,
+          # gdrive-worker, ...), so discover every running app whose name
+          # contains "worker" instead of hardcoding a list. /usr/sbin/drumee
+          # always exits 0, so echoes are informational only.
+          WORKERS=$(sudo /usr/sbin/drumee jlist | grep -oiE '"name":"[^"]*worker[^"]*"' | cut -d'"' -f4 | sort -u || true)
+          [ -n "$WORKERS" ] || echo "no offline workers running"
+          for W in $WORKERS; do
+            sudo /usr/sbin/drumee restart "$W" > /dev/null
+            echo "worker $W restarted"
           done
 
       - name: Verify stage main (TEST)
@@ -111,8 +115,9 @@ jobs:
           sudo bash -c "cd '$REPO_DIR' && npm run deploy -- deploy" || true
           sudo /usr/sbin/drumee start main || true
           sudo /usr/sbin/drumee start main/service || true
-          for W in indexWorker gdriveWorker trashWorker expiryWorker reminderWorker versionRetentionWorker; do
-            sudo /usr/sbin/drumee start "$W" || true
+          WORKERS=$(sudo /usr/sbin/drumee jlist | grep -oiE '"name":"[^"]*worker[^"]*"' | cut -d'"' -f4 | sort -u || true)
+          for W in $WORKERS; do
+            sudo /usr/sbin/drumee restart "$W" || true
           done
 
       # ---------------- UAT / PROD: deploy into prod box (sgp) container ----------------
@@ -185,10 +190,12 @@ jobs:
           # Offline workers (indexing, gdrive migration, trash/expiry/...) are
           # separate pm2 apps shared by the container; restart them so they
           # pick up the deployed code instead of keeping the old build in RAM.
-          for W in indexWorker gdriveWorker trashWorker expiryWorker reminderWorker versionRetentionWorker; do
-            /usr/sbin/drumee start "\$W" >> $LOG_FILE 2>&1 \
-              && echo "worker \$W restarted" \
-              || echo "worker \$W not configured, skipped"
+          # Names vary per host, so discover running apps matching "worker".
+          WORKERS=\$(/usr/sbin/drumee jlist | grep -oiE '"name":"[^"]*worker[^"]*"' | cut -d'"' -f4 | sort -u || true)
+          [ -n "\$WORKERS" ] || echo "no offline workers running"
+          for W in \$WORKERS; do
+            /usr/sbin/drumee restart "\$W" >> $LOG_FILE 2>&1
+            echo "worker \$W restarted"
           done
           EOSSH
 
