@@ -21,16 +21,7 @@
           "type": "string",
           "required": false
         },
-        "seats": {
-          "type": "integer",
-          "required": false,
-          "default": 1
-        },
         "entity_type": {
-          "type": "string",
-          "required": false
-        },
-        "bundle": {
           "type": "string",
           "required": false
         },
@@ -43,6 +34,12 @@
           "type": "string",
           "required": false,
           "doc": "Organisation display name (TEAM bootstrap)"
+        },
+        "extra_seats": {
+          "type": "integer",
+          "required": false,
+          "default": 0,
+          "doc": "Team only: members beyond the plan's included seats, billed as the volume-tiered team_seat add-on"
         }
       }
     },
