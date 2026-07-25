@@ -808,6 +808,20 @@
       },
       "method": "contacts"
     },
+    "backup_size": {
+      "doc": "Byte size of each backup category (files, chat, workspace, activity) so the export dialog can show what the download will contain. Read-only; counts the same mfs_manifest rows offline/drumate/backup.js archives.",
+      "scope": "hub",
+      "permission": {
+        "src": "owner"
+      },
+      "returns": {
+        "files": { "type": "number", "doc": "Bytes of user-owned files" },
+        "chat": { "type": "number", "doc": "Bytes of team chat text" },
+        "workspace": { "type": "number", "doc": "Bytes of workspace files the user can access" },
+        "activity": { "type": "number", "doc": "Approximate bytes of the activity CSVs" }
+      },
+      "method": "backup_size"
+    },
     "backup": {
       "doc": "Export user data as a ZIP archive. Accepts flags: personal (user-owned files/folders), hubs (workspace files where user has download permission), chat (P2P chat history per peer as CSV), logs (services_log + mfs_changelog + contact_activity as CSV). Runs as offline queue job — download link sent via email on completion.",
       "scope": "hub",
