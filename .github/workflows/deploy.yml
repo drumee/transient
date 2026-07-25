@@ -81,6 +81,13 @@ jobs:
           sudo bash -c "cd '$REPO_DIR' && npm run deploy -- deploy"
           sudo /usr/sbin/drumee start main
           sudo /usr/sbin/drumee start main/service
+          # Offline workers run as separate pm2 apps and keep old code in
+          # memory until restarted; bounce every one declared in the ecosystem.
+          for W in indexWorker gdriveWorker trashWorker expiryWorker reminderWorker versionRetentionWorker; do
+            sudo /usr/sbin/drumee start "$W" \
+              && echo "worker $W restarted" \
+              || echo "worker $W not configured, skipped"
+          done
 
       - name: Verify stage main (TEST)
         if: steps.target.outputs.mode == 'stage'
@@ -104,6 +111,9 @@ jobs:
           sudo bash -c "cd '$REPO_DIR' && npm run deploy -- deploy" || true
           sudo /usr/sbin/drumee start main || true
           sudo /usr/sbin/drumee start main/service || true
+          for W in indexWorker gdriveWorker trashWorker expiryWorker reminderWorker versionRetentionWorker; do
+            sudo /usr/sbin/drumee start "$W" || true
+          done
 
       # ---------------- UAT / PROD: deploy into prod box (sgp) container ----------------
       - name: Fetch and reset working tree
@@ -172,6 +182,14 @@ jobs:
           /usr/sbin/drumee start $EP         >> $LOG_FILE 2>&1
           /usr/sbin/drumee start $EP/service >> $LOG_FILE 2>&1
           echo "drumee start issued for $EP and $EP/service"
+          # Offline workers (indexing, gdrive migration, trash/expiry/...) are
+          # separate pm2 apps shared by the container; restart them so they
+          # pick up the deployed code instead of keeping the old build in RAM.
+          for W in indexWorker gdriveWorker trashWorker expiryWorker reminderWorker versionRetentionWorker; do
+            /usr/sbin/drumee start "\$W" >> $LOG_FILE 2>&1 \
+              && echo "worker \$W restarted" \
+              || echo "worker \$W not configured, skipped"
+          done
           EOSSH
 
       - name: Verify HTTP
