@@ -1,3 +1,9 @@
+drumee-ui-pod (3.3.50) stable; urgency=medium
+
+  * Release 3.3.50 (synced from release-manifest.yaml)
+
+ -- Somanos Sar <somanos.sar@drumee.com>  Sat, 25 Jul 2026 12:01:38 +0200
+
 drumee-ui-pod (3.3.1) stable; urgency=medium
   * Bugfix/contacts (#181)
   * Bugfix/contacts (#180)

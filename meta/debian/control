@@ -12,8 +12,8 @@ Depends: ${misc:Depends},
   drumee-infra (= 1.2.11),
   drumee-schemas (= 2.6.99),
   drumee-static (= 1.0.4),
-  drumee-server-pod (= 2.9.61),
-  drumee-ui-pod (= 3.3.26)
+  drumee-server-pod (= 2.9.73),
+  drumee-ui-pod (= 3.3.50)
 Description: Drumee sovereign data platform (metapackage)
  Installs the full Drumee runtime: infrastructure, database schemas, static
  assets, backend server and frontend UI. This metapackage pins every component
