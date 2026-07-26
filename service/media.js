@@ -1412,7 +1412,11 @@ class __media extends Mfs {
     let sort_by = this.input.use(Attr.sort, Attr.rank).toLowerCase();
     let order = this.input.use(Attr.order, "asc").toLowerCase();
     let type = this.input.use(Attr.type, 'all');
-    if (![Attr.rank, Attr.date, Attr.size, Attr.sort].includes(sort_by)) {
+    // 'mtime' = modified-newest-first (the desk's default listing order);
+    // 'name' was reachable in the proc but missing here (the list had
+    // Attr.sort — the PARAM name — instead), so a name sort silently
+    // degraded to rank.
+    if (![Attr.rank, Attr.date, Attr.size, Attr.name, 'mtime'].includes(sort_by)) {
       sort_by = Attr.rank;
     }
     if (!["asc", "desc"].includes(order)) {
@@ -1468,7 +1472,11 @@ class __media extends Mfs {
     let sort_by = this.input.use(Attr.sort, Attr.rank).toLowerCase();
     let order = this.input.use(Attr.order, "asc").toLowerCase();
     let type = this.input.use(Attr.type, 'all');
-    if (![Attr.rank, Attr.date, Attr.size, Attr.sort].includes(sort_by)) {
+    // 'mtime' = modified-newest-first (the desk's default listing order);
+    // 'name' was reachable in the proc but missing here (the list had
+    // Attr.sort — the PARAM name — instead), so a name sort silently
+    // degraded to rank.
+    if (![Attr.rank, Attr.date, Attr.size, Attr.name, 'mtime'].includes(sort_by)) {
       sort_by = Attr.rank;
     }
     if (!["asc", "desc"].includes(order)) {
