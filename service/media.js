@@ -1412,7 +1412,11 @@ class __media extends Mfs {
     let sort_by = this.input.use(Attr.sort, Attr.rank).toLowerCase();
     let order = this.input.use(Attr.order, "asc").toLowerCase();
     let type = this.input.use(Attr.type, 'all');
-    if (![Attr.rank, Attr.date, Attr.size, Attr.sort].includes(sort_by)) {
+    // 'mtime' = modified-newest-first (the desk's default listing order);
+    // 'name' was reachable in the proc but missing here (the list had
+    // Attr.sort — the PARAM name — instead), so a name sort silently
+    // degraded to rank.
+    if (![Attr.rank, Attr.date, Attr.size, Attr.name, 'mtime'].includes(sort_by)) {
       sort_by = Attr.rank;
     }
     if (!["asc", "desc"].includes(order)) {
@@ -1431,6 +1435,16 @@ class __media extends Mfs {
     if (ssTarget && ssTarget.nid && nid === "0") {
       nid = ssTarget.nid;
     }
+    // When the result is pinned to a single FILE (secure-share file link or an
+    // explicit file_nid), the post-filter below discards everything else — but
+    // it only ever saw one 45-row page. With directories now ordered before
+    // files, a busy parent's folders can consume the whole first page and the
+    // shared file silently filters to an empty listing. Restrict the scan to
+    // files so folders never spend the page budget the target needs.
+    const file_nid = (ssTarget && ssTarget.file_nid) || this.input.get('file_nid');
+    if (file_nid && (type === 'all' || type === 'node' || type === Attr.hub)) {
+      type = Attr.file;
+    }
     let data = await this.db.await_proc(
       "mfs_show_node_by",
       nid,
@@ -1439,7 +1453,6 @@ class __media extends Mfs {
     );
     // Token-authoritative file filter wins over the client value so a crafted request
     // (omitting file_nid) can never enumerate the shared file's siblings.
-    const file_nid = (ssTarget && ssTarget.file_nid) || this.input.get('file_nid');
     if (file_nid) {
       data = toArray(data).filter(item => item && item.nid === file_nid);
     }
@@ -1468,7 +1481,11 @@ class __media extends Mfs {
     let sort_by = this.input.use(Attr.sort, Attr.rank).toLowerCase();
     let order = this.input.use(Attr.order, "asc").toLowerCase();
     let type = this.input.use(Attr.type, 'all');
-    if (![Attr.rank, Attr.date, Attr.size, Attr.sort].includes(sort_by)) {
+    // 'mtime' = modified-newest-first (the desk's default listing order);
+    // 'name' was reachable in the proc but missing here (the list had
+    // Attr.sort — the PARAM name — instead), so a name sort silently
+    // degraded to rank.
+    if (![Attr.rank, Attr.date, Attr.size, Attr.name, 'mtime'].includes(sort_by)) {
       sort_by = Attr.rank;
     }
     if (!["asc", "desc"].includes(order)) {
@@ -1483,6 +1500,11 @@ class __media extends Mfs {
     if (ssTarget && ssTarget.nid && nid === "0") {
       nid = ssTarget.nid;
     }
+    // Same pinned-file page-budget guard as show_node_by above.
+    const ssFileNid = (ssTarget && ssTarget.file_nid) || this.input.get('file_nid');
+    if (ssFileNid && (type === 'all' || type === 'node' || type === 'hub')) {
+      type = 'file';
+    }
     let branch = await this.db.await_proc(
       "mfs_show_node_by",
       nid,
@@ -1492,7 +1514,6 @@ class __media extends Mfs {
     if (!isArray(branch)) {
       branch = [branch];
     }
-    const ssFileNid = (ssTarget && ssTarget.file_nid) || this.input.get('file_nid');
     if (ssFileNid) {
       branch = toArray(branch).filter(item => item && item.nid === ssFileNid);
     }

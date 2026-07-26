@@ -100,7 +100,7 @@ class __block extends Entity {
     }.bind(this);
     let l = lang;
     if(_.isArray(lang)){
-      l = lang[0] || 'fr';
+      l = lang[0] || 'en';
     }
     this.db.call_proc('block_get', pagename, device, l, cb);
   }
