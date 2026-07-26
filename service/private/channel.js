@@ -1706,7 +1706,12 @@ class __private_channel extends Entity {
         card.nid = folder_nid;
         card.hub_id = hub_id;
         card.message_type = "file.thread";
-        card.file_thread_id = file_thread_id;
+        // Do NOT stamp file_thread_id here. The root card is a folder-level row,
+        // not a thread child: the DB stores file_thread_id NULL, and the client
+        // treats any payload carrying file_thread_id as a thread child and hides
+        // it from folder chat. Stamping it made the live broadcast disagree with
+        // the reloaded row, so recipients only saw the card after a reload. The
+        // thread id already travels in metadata._file_thread_id.
         card.file_nid = `${file_nid}`;
         await RedisStore.sendData(
           this.payload(card, { service: "channel.post" }),
