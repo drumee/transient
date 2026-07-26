@@ -332,6 +332,25 @@
       },
       "errors": []
     },
+    "meeting_end": {
+      "doc": "Flip a posted 'meeting started' system card to its 'ended' state in place: sets metadata.meeting_status='ended' on the start message and re-broadcasts the same message (same message_id) to every hub participant, so the single meeting card transitions from 'Join meeting' to 'Meeting ended' instead of a second card being posted. Idempotent.",
+      "scope": "hub",
+      "permission": {
+        "src": "read"
+      },
+      "params": {
+        "message_id": {
+          "type": "string",
+          "required": true,
+          "doc": "ID of the 'meeting started' system message to flip to ended"
+        }
+      },
+      "returns": {
+        "type": "object",
+        "doc": "The updated message row (with metadata.meeting_status='ended'), or { found: 0 } if the message no longer exists"
+      },
+      "errors": []
+    },
     "post_ticket": {
       "doc": "Post a reply message to an existing support ticket. Supports threaded replies and file attachments. Broadcasts the new message to the ticket owner and all support domain members.",
       "scope": "hub",

@@ -99,7 +99,17 @@ class __private_payment extends Entity {
     let stripe;
     try { stripe = this._stripe(); }
     catch (e) { return this.output.data({ status: 'STRIPE_NOT_CONFIGURED' }); }
-    const entity_type = this.input.use('entity_type', 'user');
+    // entity_type decides which branch of this method runs, so it must be a
+    // closed set. It used to be a free string compared with === 'org', which
+    // meant 'ORG', 'Org', 'organization', 'org ' or a typo all fell silently
+    // into the PERSONAL branch — skipping the org ident requirement, the
+    // move-semantics guard and the owner check — while payment_get_plan
+    // happily returned the org-only Team price. The caller was charged $29 for
+    // a plan they could not receive. Reject the value instead of guessing.
+    const entity_type = String(this.input.use('entity_type', 'user')).trim().toLowerCase();
+    if (entity_type !== 'user' && entity_type !== 'org') {
+      return this.output.data({ status: 'ENTITY_TYPE_INVALID', entity_type });
+    }
     const period = this.input.need('period');           // 'month' | 'year'
 
     let plan, entity_id, email, name, existing_customer;
@@ -137,6 +147,16 @@ class __private_payment extends Entity {
     const plan_row = await this.yp.await_proc('payment_get_plan', plan, period, CURRENCY);
     if (!plan_row || !plan_row.stripe_price_id) {
       return this.output.data({ status: 'NO_PRICE' });
+    }
+    // payment_get_plan matches on plan_code + period + currency only — it has
+    // no entity_type filter — so asking for an ORG plan as a 'user' returns the
+    // org price and bills for it. The entitlement side then looks the plan up
+    // WITH entity_type, finds nothing, and falls back to a bare 20 GB personal
+    // grant: money taken, wrong product delivered. Refuse the mismatch here.
+    if (plan_row.entity_type && plan_row.entity_type !== entity_type) {
+      return this.output.data({
+        status: 'PLAN_ENTITY_MISMATCH', plan, entity_type, expected: plan_row.entity_type,
+      });
     }
     // ensure a Stripe customer keyed by metadata.id = entity_id (idempotent)
     let customer_id = existing_customer;
@@ -178,15 +198,41 @@ class __private_payment extends Entity {
       metadata.org_ident = org_bootstrap.ident;
       metadata.org_name = org_bootstrap.org_name;
     }
-    const session = await stripe.checkout.sessions.create({
+    const create = (cust) => stripe.checkout.sessions.create({
       mode: 'subscription',
-      customer: customer_id,
+      customer: cust,
       line_items,
       subscription_data: { metadata },
       metadata,
       success_url,
       cancel_url,
     });
+
+    let session;
+    try {
+      session = await create(customer_id);
+    } catch (e) {
+      // "You cannot combine currencies on a single customer."
+      //
+      // The 2026-07 rebuild moved the catalog from EUR to USD, and Stripe pins
+      // a customer to the currency of its first subscription or open Checkout
+      // session. Every customer created under the old catalog therefore CANNOT
+      // start a USD checkout — it fails with a 400 that surfaced to the client
+      // as a bare SERVICE_FAILED. A customer record carries no value we need to
+      // preserve here (invoices and payment history stay on the old record and
+      // remain visible in Stripe), so the recovery is simply to mint a fresh
+      // one for this entity and retry once.
+      const clash = /combine currencies/i.test((e && e.message) || '');
+      if (!clash) {
+        this.warn && this.warn('payment.checkout failed', e && e.message);
+        return this.output.data({ status: 'CHECKOUT_FAILED', reason: (e && e.message) || '' });
+      }
+      const fresh = await stripe.customers.create({
+        email, name, metadata: { id: entity_id },
+      });
+      customer_id = fresh.id;
+      session = await create(customer_id);
+    }
     this.output.data({ url: session.url, id: session.id });
   }
 

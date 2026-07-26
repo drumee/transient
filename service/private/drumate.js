@@ -611,6 +611,77 @@ class __private_drumate extends Entity {
    * Flags: personal | hubs | chat | logs
    * Runs as offline background process — sends download link via email on completion.
    */
+  /**
+   * Byte sizes for each backup category, so the export dialog can show what
+   * the user is actually about to download.
+   *
+   * The dialog used to print fixed placeholder figures ("240 MB", "12 MB",
+   * "88 MB", "2 MB") that were identical for every account and matched
+   * nothing: the archive measured here came to 1.8 GB of source data against
+   * a 342 MB total on screen.
+   *
+   * Files and workspace are counted from the same mfs_manifest rows and split
+   * on the same `area == personal` test that offline/drumate/backup.js uses,
+   * so the numbers describe the archive that command would actually build.
+   * Chat and activity are CSV exports — their cost is the text itself, so the
+   * message/row bytes are summed rather than guessed.
+   */
+  async backup_size() {
+    const out = { files: 0, chat: 0, workspace: 0, activity: 0 };
+
+    try {
+      const hub = await this.yp.await_proc('get_hub', this.hub.get(Attr.id));
+      if (hub?.db_name && hub?.home_id) {
+        const result = await this.yp.await_proc(
+          `${hub.db_name}.mfs_manifest`,
+          { nid: hub.home_id, uid: this.uid, show_nodes: 1 }
+        );
+        for (const row of toArray(result?.[0])) {
+          // The column is `filesize`; `size` doesn't exist on these rows and
+          // silently read as undefined -> 0, which is how the dialog first
+          // reported 0 B for an account holding 1.58 GB.
+          const size = Number(row.filesize) || 0;
+          if (row.area == Attr.personal) {
+            // backup.js skips hub rows in the personal branch; mirror that or
+            // the figure would count containers that never get archived.
+            if (row.filetype !== Attr.hub) out.files += size;
+          } else {
+            out.workspace += size;
+          }
+        }
+      }
+    } catch (e) {
+      this.warn('backup_size: manifest failed', e?.message);
+    }
+
+    try {
+      const { db_name } = this.user.toJSON();
+      const hubs = toArray(await this.yp.await_proc(`${db_name}.show_hubs`));
+      for (const hub of hubs) {
+        if (!hub.db_name) continue;
+        const rows = toArray(await this.yp.await_query(
+          `SELECT SUM(CHAR_LENGTH(IFNULL(message, ''))) AS bytes
+             FROM \`${hub.db_name}\`.channel WHERE status != 'trashed'`
+        ));
+        out.chat += Number(rows?.[0]?.bytes) || 0;
+      }
+    } catch (e) {
+      this.warn('backup_size: chat failed', e?.message);
+    }
+
+    try {
+      const rows = toArray(await this.yp.await_query(
+        `SELECT SUM(CHAR_LENGTH(IFNULL(args, ''))) + COUNT(*) * 64 AS bytes
+           FROM yp.services_log WHERE uid = ?`, this.uid
+      ));
+      out.activity = Number(rows?.[0]?.bytes) || 0;
+    } catch (e) {
+      this.warn('backup_size: activity failed', e?.message);
+    }
+
+    this.output.data(out);
+  }
+
   async backup() {
     const { spawn } = require('child_process');
     const SPAWN_OPT = { detached: true, stdio: ['ignore', 'ignore', 'ignore'] };

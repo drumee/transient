@@ -328,7 +328,11 @@ class __public_stripe_webhook extends Entity {
     if (!extra_seats) return 0;
     let included = 0;
     try {
-      const row = await this.yp.await_proc('payment_get_plan', plan, period, 'eur');
+      // 'usd': the pricing rebuild deactivated every EUR row, so the old
+      // hardcoded 'eur' matched nothing and silently reported no included
+      // seats. Unrelated to seat sales — this lookup is on the legacy
+      // individual path and was wrong either way.
+      const row = await this.yp.await_proc('payment_get_plan', plan, period, 'usd');
       // quota may be a parsed object or a JSON string — handle both.
       const q = row && row.quota;
       const obj = q && typeof q === 'object' ? q : JSON.parse(q || '{}');
