@@ -168,30 +168,13 @@ class __private_payment extends Entity {
       const created = await stripe.customers.create({ email, name, metadata: { id: entity_id } });
       customer_id = created.id;
     }
-    // The plan itself is FLAT: quantity 1 always. Team is $29 for 100 GB and
-    // its included members, not $x per seat, so putting a seat count in the
-    // base line's quantity would multiply the whole bill.
+    // One line item, quantity 1. Every plan is FLAT since the 2026-07 pricing
+    // rebuild: Team is $29 for 100 GB and up to 10 members, not $x per seat, so
+    // the subscription quantity no longer carries the seat count — sending
+    // `seats` here would multiply the bill. The per-seat add-on (pro_seat) and
+    // the storage bundles (storage_*) are retired with the B2C Pro tier and
+    // deactivated in yp.plan, so there are no extra lines to add.
     const line_items = [{ price: plan_row.stripe_price_id, quantity: 1 }];
-
-    // Extra seats ride along as a SECOND recurring line whose quantity is the
-    // number of members beyond the plan's included ten. The price is
-    // volume-tiered in Stripe (under 10 extra $3.00 each, 10 or more $2.90),
-    // so the tier is resolved there — we only send how many.
-    //
-    // Only Team sells them: Free has no seats to extend and Business is
-    // already unlimited, so a seat line on either would be a charge for
-    // nothing. A missing team_seat price (an environment that hasn't seeded it)
-    // is skipped rather than failing the checkout — the buyer still gets the
-    // plan, and the alternative is a dead Upgrade button.
-    const extra_seats = Math.max(0, ~~this.input.use('extra_seats', 0));
-    if (extra_seats > 0 && plan === 'team') {
-      const seat_row = await this.yp.await_proc('payment_get_plan', 'team_seat', period, CURRENCY);
-      if (seat_row?.stripe_price_id) {
-        line_items.push({ price: seat_row.stripe_price_id, quantity: extra_seats });
-      } else {
-        this.warn?.('payment.checkout: team_seat price missing, seats not billed', period);
-      }
-    }
     // Build the return URLs from homepath (host-derived, endpoint-aware).
     // servicepath() resolves the endpoint segment to 'undefined' on dev
     // endpoints (/-/undefined/svc/...), which broke the post-payment redirect.
