@@ -67,6 +67,7 @@ class __private_channel extends Entity {
     this.notify_chat = this.notify_chat.bind(this);
     this.acknowledge = this.acknowledge.bind(this);
     this.react = this.react.bind(this);
+    this.meeting_end = this.meeting_end.bind(this);
     this.typing = this.typing.bind(this);
     this.bookmark_add = this.bookmark_add.bind(this);
     this.bookmark_remove = this.bookmark_remove.bind(this);
@@ -2066,6 +2067,29 @@ class __private_channel extends Entity {
       recipients
     );
     this.output.data({ message_id, reactions, capped: row && row.capped ? 1 : 0 });
+  }
+
+  /**
+   * Flip a posted "meeting started" system card to its "ended" state IN PLACE:
+   * set metadata.meeting_status='ended' on the start message and re-broadcast
+   * the SAME message (same message_id) so every open chat updates that one card
+   * ("Join meeting" → "Meeting ended") instead of receiving a second card.
+   * Mirrors acknowledge()'s mutate → channel_get → broadcast pattern; the whole
+   * hub is notified (no exclude) so the ending host's own folder chat flips too.
+   */
+  async meeting_end() {
+    const message_id = this.input.need(Attr.message_id);
+    if (!message_id) return this.output.data({ found: 0 });
+    const res = await this.db.await_proc("channel_meeting_end", message_id);
+    const row = Array.isArray(res) ? res[0] : res;
+    if (!row || !row.found) return this.output.data({ found: 0 });
+    let message = await this.db.await_proc("channel_get", message_id);
+    message.key_id = this.hub.get(Attr.id);
+    let recipients = await this.yp.await_proc("entity_sockets", {
+      hub_id: message.key_id,
+    });
+    await RedisStore.sendData(this.payload(message), recipients);
+    this.output.data(message);
   }
 
   /**
