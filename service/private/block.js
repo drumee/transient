@@ -539,7 +539,7 @@ class __private_block extends Block {
   // ========================
   list_by() {
     const i = this.input;
-    const locale = i.get(_a.locale) || i.language() || i.app_language() || 'fr';
+    const locale = i.get(_a.locale) || i.language() || i.app_language() || 'en';
     const published = i.need(_a.published);
     const name = i.get(_a.name) || "";
     const sort_by = i.get(_a.sort_by) || _a.date;

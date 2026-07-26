@@ -12,6 +12,7 @@ const { READ } = Permission;
 const { main_domain, endpoint_path, server_dir } = sysEnv();
 
 const TPL_BASE = "templates";
+const pageLanguage = require("./page-language");
 class MainPage extends RuntimeEnv {
   /**
    * Propert isServingPage tells to Acl to grant access, since we
@@ -159,10 +160,17 @@ class MainPage extends RuntimeEnv {
    *
    */
   async start(opt) {
-    const lang = this.user.language() || this.input.app_language();
+    // Deterministic page language: stored profile choice or English — see
+    // client/page-language.js. The old chain ended in Accept-Language, so a
+    // browser listing French got a French-rendered page (html lang +
+    // bootstrap lang) even in an English account.
+    const lang = pageLanguage(this);
     let lex = DrumeeCache.lex(lang);
     const env = await this.getRuntimeEnv();
     let data = { ...lex, ...this.hub.toJSON(), ...env, ...opt };
+    // getRuntimeEnv computes its own language via the Accept-Language
+    // chain — override it so the template renders the deterministic one.
+    data.language = lang;
     if (data.ws_port && !/^:/.test(data.ws_port)) {
       data.ws_port = `:${data.ws_port}`
     }

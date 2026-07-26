@@ -70,7 +70,7 @@ class __private_lang extends Lang {
    * @returns 
    */
   add() {
-    const lang_code = this.input.use("locale") || this.input.use("lang_code") || "fr";
+    const lang_code = this.input.use("locale") || this.input.use("lang_code") || "en";
     return this.db.call_proc("language_add_next", lang_code, this.output.data);
   }
 
@@ -204,7 +204,7 @@ class __private_lang extends Lang {
    * */    
   add_default_blocks(hashtag, lang) {
     const id = '0';
-    lang = this.input.use("locale") || this.input.use("lang_code") || "fr"; //@input.use(Attr.locale) ||  @input.use(Attr.locale) 
+    lang = this.input.use("locale") || this.input.use("lang_code") || "en"; //@input.use(Attr.locale) ||  @input.use(Attr.locale) 
     const editor = 'creator';
     const type = 'block';
     const device = this.input.use(Attr.device, Attr.desktop);
