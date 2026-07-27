@@ -313,12 +313,15 @@ class __core_user extends Backbone.Model {
    * Return disk free 
    */
   diskFree() {
-    let storage = this.quota("storage") || {};
     if (defaultQuota == null) {
       return Infinity;
     }
-    let free = storage - this.diskUsed();
-    return free;
+    // `|| {}` on a number: with quota('storage') answering 0 this became
+    // {} - used === NaN, which every caller then compared against and got
+    // false. A missing allowance means "no known limit", not "no space".
+    const storage = Number(this.quota("storage"));
+    if (!storage) return Infinity;
+    return storage - this.diskUsed();
   }
 
   /**
@@ -386,8 +389,18 @@ class __core_user extends Backbone.Model {
   quota(name) {
     let q = this.get(_a.quota);
     if (!q) {
-      let { storage } = this.get(_a.quota) || {};
-      q = { storage: storage || Infinity };
+      // Nothing loaded yet. The old form re-read the same empty value and
+      // destructured `storage` out of it, so this branch could only ever
+      // produce Infinity — say that directly instead of pretending to read.
+      q = { storage: Infinity };
+    } else if (q.storage == null && q.disk != null) {
+      // The allowance arrives as `disk` (desk.get_env is fed by the get_quota
+      // FUNCTION, which returns the raw quota JSON; only the PROCEDURE of the
+      // same name aliases it to `storage`). Every consumer here and in the app
+      // asks for `storage`, so an unaliased payload made quota('storage') 0 and
+      // diskFree() NaN, and the account screen showed a total of "0 B".
+      // Normalise once, at the single place the value is read.
+      q = { ...q, storage: q.disk };
     }
     if (!name) return q || {};
     return q[name] || 0;
