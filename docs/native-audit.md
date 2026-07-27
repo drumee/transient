@@ -26,6 +26,8 @@ stands between "works after a few manual nudges" and a fully turnkey `apt instal
 | `mariadb-backup` not a dependency → seed restore silently no-op | add to `drumee-schemas` `Depends` | ✅ fixed (committed) |
 | factory pool not stocked by `populate.js` → `EMPTY_FACTORY` | `stockFactory()` before account creation | ✅ fixed + pushed to `setup-schemas`; genesis templates packaged |
 | debconf→env bridge missing (metapackage path) | templates + config + postinst export | ✅ fixed + verified |
+| preseeded `network.ip4/ip6` dropped by the bridge → `infra.js` skipped the whole public branch (nginx `01-public.conf`, BIND public/reverse zones, postfix/opendkim) | postinst exports `PUBLIC_IP4`/`PUBLIC_IP6` from `ip4`/`public_ip4` | ✅ fixed (committed) |
+| `ip4`/`ip6` never *asked* interactively — `config` has no `db_input` and nothing `db_subst`s `${__IP4_LIST__}` (only the wizard's `prompt.sh` does) | add detection + prompts to `infra/debian/config`, or drop the templates and document `network.ip4` as wizard-only | ⏳ open |
 | nginx `stream{}` (turn-relay) without the stream module → config invalid | `drumee-infra` `Depends: libnginx-mod-stream` | ✅ fixed (committed) |
 | pm2 not installed → `/etc/init.d/drumee` can't launch the app | `drumee-server-pod` postinst `npm i -g pm2` | ✅ fixed (committed) |
 | `ecosystem.config.js` not generated → init.d has nothing to start | `main()` never called `writeEcoSystem()` | ✅ fixed + pushed to `setup-infra` (verified via chroot render) |

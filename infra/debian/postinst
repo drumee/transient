@@ -38,6 +38,22 @@ bridge_debconf_env() {
     db_get drumee-infra/data_dir         || true; export DRUMEE_DATA_DIR="$RET"
     db_get drumee-infra/backup_location  || true; export BACKUP_LOCATION="$RET"
     db_get drumee-infra/exchange_location|| true; export EXCHANGE_LOCATION="$RET"
+    # Public addresses. The select answer *is* the address unless it reads
+    # "other", in which case the free-text answer carries it — same shape as the
+    # wizard (setup/menu/install.sh). render.mjs preseeds the pair only when
+    # drumee.yaml pins an explicit address; with `network.ip4: auto` nothing is
+    # preseeded, both stay empty, and infra.js behaves as before. Without this,
+    # a pinned address reached debconf and was dropped here, leaving
+    # data.public_ip4 empty so infra.js skipped the whole public branch (nginx
+    # 01-public.conf, the BIND public/reverse zones, and postfix/opendkim).
+    # No db_get inside $(...) — confmodule speaks the debconf protocol over
+    # stdout, and a command substitution would capture it instead.
+    db_get drumee-infra/ip4 || true; PUBLIC_IP4="$RET"
+    if [ "$PUBLIC_IP4" = "other" ]; then db_get drumee-infra/public_ip4 || true; PUBLIC_IP4="$RET"; fi
+    export PUBLIC_IP4
+    db_get drumee-infra/ip6 || true; PUBLIC_IP6="$RET"
+    if [ "$PUBLIC_IP6" = "other" ]; then db_get drumee-infra/public_ip6 || true; PUBLIC_IP6="$RET"; fi
+    export PUBLIC_IP6
     OWN_SSL=""
     db_get drumee-infra/own_ssl || true
     if [ "$RET" = "true" ]; then db_get drumee-infra/own_ssl_path || true; OWN_SSL="$RET"; fi
