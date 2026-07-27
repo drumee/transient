@@ -2,7 +2,7 @@ drumee-static (1.0.4) stable; urgency=medium
   * Updated pdfium
   * Cleaned node_modules
   * Added .gitignore
- -- Somanos Sar <somanos.sar@drumee.com>  Sun, 28 Jun 2026 23:07:36 +0700
+ -- Somanos Sar <somanos.sar@drumee.com>  Fri, 03 Jul 2026 15:29:33 +0200
 
 drumee-static (1.0.3) stable; urgency=medium
   * Cleaned node_modules

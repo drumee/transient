@@ -23,7 +23,7 @@ lib_dir=var/lib/drumee
 
 bundle $base "setup-infra" "main" "" "$lib_dir/setup-infra"
 bundle_acme $base "usr/share/acme"
-rsync -ar --exclude ".github:.git:.npmrc" ${base}/usr $build_dir/files/
+[ -d ${base}/usr ] && rsync -ar --exclude ".github:.git:.npmrc" ${base}/usr $build_dir/files/
 rsync -ar --exclude ".git:.npmrc" ${base}/etc $build_dir/files/
 
 mkdir -p $build_dir/files/$lib_dir
