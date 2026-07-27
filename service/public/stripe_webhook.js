@@ -6,20 +6,27 @@ const { stripeClient, endpointSecret } = require('../lib/stripe');
 const { sendButlerMail } = require('../lib/butler-mail');
 
 // "What's unlocked" checklist per plan (payment-receipt email, Figma 2803-1288).
-// Static marketing copy matching the billing plans page; unknown plans get none.
+// Static marketing copy matching the billing plans page (the July 2026 FINAL
+// pricing table: flat plans, Business self-serve); unknown plans get none.
+// 'pro' is the retired B2C tier — kept so receipts for its remaining renewals
+// still describe what the subscriber actually has.
 const PLAN_FEATURES = {
   pro: ['50 GB storage', '5 editor seats included', '7-day version history', 'Permissions & roles', 'Guest access'],
-  team: ['50 GB storage per seat', 'Org-wide entitlement', '30-day version history', 'Admin-managed billing'],
+  team: ['100 GB storage', 'Up to 10 members', '30-day version history', 'Granular permissions (role-based)', 'Guest access', 'Admin panel'],
+  business: ['Multiple workspaces', 'Unlimited members', '1 TB storage', '1-year version history', 'Granular permissions + audit', 'Admin panel + audit logs', 'API access', 'SSO / SAML', 'Priority support + SLA'],
 };
 
 const CURRENCY_SYMBOL = { eur: '€', usd: '$', gbp: '£' };
 
 class __public_stripe_webhook extends Entity {
-  // "€169.90" from Stripe minor units; falls back to "<CODE> 12.34".
+  // "€169.90" from Stripe minor units; falls back to "<CODE> 12.34". Negative
+  // amounts (downgrade proration credits) render as "-$58.00", not "$-58.00".
   _money(minor, currency) {
     const n = (Number(minor) || 0) / 100;
+    const sign = n < 0 ? '-' : '';
+    const abs = Math.abs(n);
     const sym = CURRENCY_SYMBOL[(currency || 'usd').toLowerCase()];
-    return sym ? `${sym}${n.toFixed(2)}` : `${(currency || '').toUpperCase()} ${n.toFixed(2)}`;
+    return sym ? `${sign}${sym}${abs.toFixed(2)}` : `${sign}${(currency || '').toUpperCase()} ${abs.toFixed(2)}`;
   }
 
   // "January 7, 2026" (en-US, UTC) from a unix timestamp.
@@ -303,6 +310,47 @@ class __public_stripe_webhook extends Entity {
   // org) vs add-on items (entity_type='addon' in yp.plan) — storage add-ons sum
   // disk * quantity into extra_disk (P4); pro_seat add-ons sum seat * quantity
   // into extra_seats (C1 Pro per-seat).
+  // Resolve what a subscription is ACTUALLY on, from the price its items carry.
+  //
+  // Everything downstream — the yp.subscription mirror, the quota applied by
+  // payment_apply_entitlement, the receipt heading — reads plan/period out of
+  // the subscription METADATA, which is written once at checkout and rewritten
+  // only by payment.change_plan. A price switched by any other route (the
+  // Stripe Billing Portal, a dashboard edit, a support action) leaves that
+  // metadata behind: the customer is charged the new price while the OLD plan's
+  // quota keeps being applied, and the receipt names the plan they just left.
+  // yp.plan holds the price ids, so the mapping back is a lookup — take it when
+  // it disagrees, and fall back to the metadata when there is nothing to find
+  // (an add-on-only item, a price retired from the catalog).
+  //
+  // Returns null when the items resolve to no catalog plan.
+  async _planFromItems(items) {
+    for (const it of (items || [])) {
+      const pid = it && it.price && it.price.id;
+      if (!pid) continue;
+      let row = await this.yp.await_query(
+        `SELECT plan_code, period, entity_type FROM plan
+          WHERE stripe_price_id = ? AND active = 1 AND entity_type <> 'addon' LIMIT 1`,
+        pid
+      );
+      if (Array.isArray(row)) row = row[0];
+      if (row && row.plan_code) {
+        // entity_type travels with the plan. Correcting the plan while leaving
+        // the metadata's entity kind behind is worse than not correcting at
+        // all: payment_apply_entitlement looks the plan up WITH entity_type, so
+        // an org plan applied as 'user' matches no row and falls back to a bare
+        // 20 GB personal grant — the customer pays for Team and receives less
+        // than Free.
+        return {
+          plan: String(row.plan_code),
+          period: String(row.period || ''),
+          entity_type: String(row.entity_type || ''),
+        };
+      }
+    }
+    return null;
+  }
+
   async _itemsEntitlement(items) {
     let seats = 1, price = 0, extra_disk = 0, extra_seats = 0;
     for (const it of (items || [])) {
@@ -413,28 +461,46 @@ class __public_stripe_webhook extends Entity {
               } catch (e3) { items = []; }
             }
             const { seats, price, extra_disk, extra_seats } = await this._itemsEntitlement(items);
-            const seat_total = await this._seatTotal(entity_type, plan, period, seats, extra_seats);
+            // The price on the subscription outranks the metadata: see
+            // _planFromItems. Without this a Billing Portal price switch kept
+            // applying the plan the caller left.
+            const actual = await this._planFromItems(items);
+            const eff_plan = (actual && actual.plan) || plan;
+            const eff_period = (actual && actual.period) || period;
+            const eff_entity = (actual && actual.entity_type) || entity_type;
+            const seat_total = await this._seatTotal(eff_entity, eff_plan, eff_period, seats, extra_seats);
             // 0, not null: await_proc maps null -> '' which a strict-mode INT param rejects.
             // Mirror only with a real subscription id — the subscription.created/
             // updated events carry it when the session doesn't.
             if (subscription_id) {
-              await this.yp.await_proc('subscription_update', entity_id, customer_id, subscription_id, plan, period, 1, price, 0, status);
+              await this.yp.await_proc('subscription_update', entity_id, customer_id, subscription_id, eff_plan, eff_period, 1, price, 0, status);
             }
-            await this.yp.await_proc('payment_apply_entitlement', entity_id, plan, period_end, entity_type, seat_total, extra_disk);
+            await this.yp.await_proc('payment_apply_entitlement', entity_id, eff_plan, period_end, eff_entity, seat_total, extra_disk);
             // Push the REAL status (canceled when cancel_at_period_end), not a
             // hardcoded 'active' — a pending cancel must reach the client so the
             // billing screen flips to "ends on {period_end}" in realtime. Carry
             // period_end so the FE can render the date without a refetch.
-            await this.notify_user(entity_id, { service: 'payment.plan_updated', plan, status, period_end });
+            await this.notify_user(entity_id, { service: 'payment.plan_updated', plan: eff_plan, status, period_end });
             // Resume confirmation email (Figma 3050-96856): a pending cancel
             // flipping back to renewing. previous_attributes carries only the
             // changed fields, so cancel_at_period_end true→false IS the resume
             // signal — covers both the in-app Resume and the Billing Portal.
             // No new invoice is issued on resume; attach the latest one as the
             // receipt. A mail failure must never fail the webhook.
+            //
+            // payment.change_plan also clears cancel_at_period_end (switching
+            // plan implies staying), so a plan change made from the
+            // pending-cancel window trips this same signal. Its latest_invoice
+            // is the PRORATION invoice, whose own invoice.paid already sends
+            // "your plan is now X" — sending the resume receipt too would mail
+            // two differently-worded receipts for one invoice, the first
+            // announcing a plan the user never held. prev.items is present
+            // exactly when the update also swapped the price, so it separates
+            // a bare resume from a resume-by-plan-change.
             const prev = (event.data && event.data.previous_attributes) || {};
             if (event.type === 'customer.subscription.updated'
-              && prev.cancel_at_period_end === true && !obj.cancel_at_period_end) {
+              && prev.cancel_at_period_end === true && !obj.cancel_at_period_end
+              && !prev.items) {
               try {
                 const invId = typeof obj.latest_invoice === 'string'
                   ? obj.latest_invoice : (obj.latest_invoice && obj.latest_invoice.id);
@@ -494,9 +560,17 @@ class __public_stripe_webhook extends Entity {
           // provision) the real org before applying entitlement.
           const eid = await this._resolveOrgEntity(smd, stripe);
           if (eid) {
+            // What the subscription is ACTUALLY on, from the price its items
+            // carry rather than the metadata (see _planFromItems). Resolved
+            // once here so the paid and failed branches describe the same plan.
+            const inv_items = (sub && sub.items && sub.items.data) || [];
+            const actual = await this._planFromItems(inv_items);
+            const eff_plan = (actual && actual.plan) || smd.plan || 'team';
+            const eff_period = (actual && actual.period) || smd.period || 'month';
+            const eff_entity = (actual && actual.entity_type) || smd.entity_type || 'user';
             if (event.type === 'invoice.paid') {
               // Recurring renewal succeeded -> re-apply entitlement (bumps period_end).
-              const items = (sub && sub.items && sub.items.data) || [];
+              const items = inv_items;
               const pend = (sub && sub.current_period_end) || (items[0] && items[0].current_period_end) || 0;
               // Since the 2026-07 pricing rebuild every plan is flat and the
               // add-ons (pro_seat, storage_*) are retired, so in practice this
@@ -506,26 +580,45 @@ class __public_stripe_webhook extends Entity {
               // subscription created under the old catalog still reduces
               // correctly on renewal.
               const { seats, extra_disk, extra_seats } = await this._itemsEntitlement(items);
-              const seat_total = await this._seatTotal(smd.entity_type || 'user', smd.plan || 'team', smd.period || 'month', seats, extra_seats);
-              await this.yp.await_proc('payment_apply_entitlement', eid, smd.plan || 'team', pend, smd.entity_type || 'user', seat_total, extra_disk);
-              await this.notify_user(eid, { service: 'payment.plan_updated', plan: smd.plan, status: 'active' });
+              const seat_total = await this._seatTotal(eff_entity, eff_plan, eff_period, seats, extra_seats);
+              await this.yp.await_proc('payment_apply_entitlement', eid, eff_plan, pend, eff_entity, seat_total, extra_disk);
+              await this.notify_user(eid, { service: 'payment.plan_updated', plan: eff_plan, status: 'active' });
               // Payment-receipt email (initial payment AND every renewal both
               // arrive as invoice.paid). A mail failure must never fail the
               // webhook — the entitlement above is already applied and Stripe
               // would re-deliver the whole event on a 500.
+              //
+              // A proration invoice (billing_reason 'subscription_update' —
+              // payment.change_plan swapping Team <-> Business) is a plan
+              // CHANGE, not a renewal: say so. The metadata is rewritten in
+              // the same subscriptions.update, so plan_label already names
+              // the NEW plan here.
               try {
-                await this._sendReceiptEmail(obj, sub, smd, { seat_total });
+                const changed = obj.billing_reason === 'subscription_update';
+                const plan_label = String(eff_plan)
+                  .replace(/^\w/, (c) => c.toUpperCase());
+                // The receipt describes what they now have, so it reads the
+                // effective plan too — otherwise a portal-side switch mailed a
+                // 'plan is now X' naming the plan they just left.
+                await this._sendReceiptEmail(obj, sub, { ...smd, plan: eff_plan, period: eff_period }, {
+                  seat_total,
+                  ...(changed ? {
+                    heading: `Your Drumee plan is now ${plan_label}`,
+                    subject: `Your Drumee plan is now ${plan_label}`,
+                    intro: "Your plan change is confirmed. Here's your receipt, and what's included.",
+                  } : {}),
+                });
               } catch (e4) {
                 this.error(`receipt email failed for ${event.id}: ${e4.message}`);
               }
             } else {
               // Payment failed -> keep entitlement during Stripe's smart retries
               // (grace); final failure downgrades via customer.subscription.deleted.
-              await this.notify_user(eid, { service: 'payment.payment_failed', plan: smd.plan, status: 'past_due' });
+              await this.notify_user(eid, { service: 'payment.payment_failed', plan: eff_plan, status: 'past_due' });
               // Dunning email (retry notice / final warning). Mail failures log
               // only — a 500 here would make Stripe re-deliver the whole event.
               try {
-                await this._sendDunningEmail(stripe, obj, sub, smd);
+                await this._sendDunningEmail(stripe, obj, sub, { ...smd, plan: eff_plan, period: eff_period });
               } catch (e5) {
                 this.error(`dunning email failed for ${event.id}: ${e5.message}`);
               }
