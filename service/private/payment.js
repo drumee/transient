@@ -112,6 +112,34 @@ class __private_payment extends Entity {
     }
     const period = this.input.need('period');           // 'month' | 'year'
 
+    // Already paying? Then there is nothing to sell here. Stripe happily
+    // creates a SECOND subscription on the same customer, and the webhook
+    // would overwrite entitlement/period_end with the new one while the old
+    // one keeps charging -- the caller is billed twice for one plan. The UI
+    // gates its plan cards on the current plan, but the checkout TAB (and any
+    // deep link, or a stale bundle) reaches this endpoint directly, so the
+    // refusal has to live here.
+    //
+    // Only 'active' and 'trialing' block. A subscription in the pending-cancel
+    // window reports 'canceled' with a future period_end: that caller resumes
+    // (payment.resume_subscription), and if they let it lapse they are free to
+    // buy again. Cycle changes (month <-> year) are a subscription UPDATE, not
+    // a new checkout -- they get their own status so the client can say so
+    // rather than showing a generic failure.
+    const current = await this._subscription_row();
+    if (current && current.subscription_id &&
+        /^(active|trialing)$/.test(String(current.status || ''))) {
+      const same_plan = String(current.plan || '') === String(this.input.use('plan', 'team'));
+      return this.output.data({
+        status: same_plan && String(current.period || '') === period
+          ? 'ALREADY_SUBSCRIBED'
+          : 'USE_SUBSCRIPTION_UPDATE',
+        plan: current.plan,
+        period: current.period,
+        period_end: current.period_end,
+      });
+    }
+
     let plan, entity_id, email, name, existing_customer;
     let org_bootstrap = null;
     if (entity_type === 'org') {
