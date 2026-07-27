@@ -1,22 +1,21 @@
 #!/bin/bash
 # Drumee native-channel bootstrap — adds the signed APT repo and installs Drumee.
 #
-#   curl -fsSL https://get.drumee.com/native | sudo bash
+#   curl -fsSL https://apt.drumee.net/install-native.sh | sudo bash
 #   # unattended (preseed answers first):
 #   sudo PRESEED=/path/to/install.conf bash install-native.sh
 #
-# The APT repo is a *flat* repository hosted on GitHub Releases (the .debs are too
-# large for the Pages git repo). APT_URL is the release-asset base; KEYRING_URL is
-# served from the get.drumee.com Pages site (stable, release-tag-independent).
+# The APT repo is a *flat* repository served from apt.drumee.net. APT_URL is the
+# base URL; KEYRING_URL points to the GPG public key used to verify the repo.
 #
 # Env:
-#   APT_URL      (default the apt-stable release of get-drumee-pages)  flat repo base
-#   KEYRING_URL  (default https://get.drumee.com/drumee-archive-keyring.asc)
+#   APT_URL      (default https://apt.drumee.net)  flat repo base
+#   KEYRING_URL  (default https://apt.drumee.net/drumee-archive-keyring.asc)
 #   PRESEED      (optional)  install.conf from config/render.mjs
 set -euo pipefail
 
-APT_URL="${APT_URL:-https://github.com/drumee/get-drumee-pages/releases/download/apt-stable}"
-KEYRING_URL="${KEYRING_URL:-https://get.drumee.com/drumee-archive-keyring.asc}"
+APT_URL="${APT_URL:-https://apt.drumee.net}"
+KEYRING_URL="${KEYRING_URL:-https://apt.drumee.net/drumee-archive-keyring.asc}"
 PRESEED="${PRESEED:-}"
 
 [ "$(id -u)" = "0" ] || { echo "error: run as root (sudo)" >&2; exit 1; }

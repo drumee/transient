@@ -7,7 +7,7 @@ the host via `apt`, configured from a debconf preseed for unattended runs.
 
 ```bash
 # Interactive
-curl -fsSL https://get.drumee.com/native | sudo bash
+curl -fsSL https://apt.drumee.net/install-native.sh | sudo bash
 
 # Unattended — preseed answers rendered from drumee.yaml first
 node config/render.mjs debconf --out install.conf
@@ -25,29 +25,41 @@ sudo PRESEED=install.conf bash scripts/install-native.sh
 static/build.sh                      # build drumee-static (REPO_BASE=https://github.com/drumee)
 meta/build.sh                        # build the drumee metapackage
 scripts/publish-apt.sh --debs=./out-debs --out=/tmp/apt-flat --key=release@drumee.org
-# upload every file in /tmp/apt-flat as assets of the 'apt-stable' GitHub Release
+APT_LOCAL_DIR=/tmp/apt-flat scripts/deploy-apt-repo.sh --host=USER@VPS_HOST
 ```
 
 `publish-apt.sh` builds a signed **flat** repo (`apt-ftparchive` + `gpg`), emits
 `InRelease`/`Release.gpg`, and exports the public key as
 `drumee-archive-keyring.asc`.
 
-The packages are hosted as **GitHub Release assets** (the `drumee-static` deb alone
-is ~175 MB, over GitHub's 100 MB git-file limit). Clients use a flat repo:
+`deploy-apt-repo.sh` rsyncs that directory to the VPS document root
+(`/var/www/apt.drumee.net` by default), writes an nginx vhost for the domain, and
+reloads nginx. Override with `--repo-dir=` / `--domain=`. TLS is provisioned
+separately (`certbot --nginx -d apt.drumee.net`); the script prints the follow-up
+steps, including uncommenting the port-80 → 443 redirect once the cert exists.
+
+The packages are **self-hosted on `apt.drumee.net`** — the `drumee-static` deb alone
+is ~175 MB, over GitHub's 100 MB git-file limit, so they cannot live in a Pages git
+repo. Clients use a flat repo:
 
 ```
-deb [signed-by=/etc/apt/keyrings/drumee.asc] \
-  https://github.com/drumee/get-drumee-pages/releases/download/apt-stable/ ./
+deb [signed-by=/etc/apt/keyrings/drumee.asc] https://apt.drumee.net/ ./
 ```
 
-The signing key is served from the Pages site at
-`https://get.drumee.com/drumee-archive-keyring.asc`.
+The signing key is served from the same host at
+`https://apt.drumee.net/drumee-archive-keyring.asc`.
 
 ## Needs your infrastructure
 
+- **VPS + DNS + TLS** — an `A`/`AAAA` record for `apt.drumee.net` pointing at the
+  nginx host, and a certbot cert for it.
 - **Signing key** — a project (not personal) GPG key in the publishing
-  environment; CI publishes with it (Phase 5). The current `apt-stable` release is
+  environment; CI publishes with it (Phase 5). The repo currently published is
   signed with a local build key and must be re-signed before launch.
+- **CI publishing path** — `scripts/publish-site.sh` (used by
+  `.github/workflows/release.yml`) still uploads the flat repo to the `apt-stable`
+  GitHub Release. Migrating it to `apt.drumee.net` needs an SSH deploy key and host
+  as repository secrets.
 
 ## Install ordering (resolved)
 

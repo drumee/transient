@@ -1,13 +1,11 @@
 #!/bin/bash
 # Build a signed *flat* APT repository from the built .deb files.
 #
-# The output is a flat directory (no dists/pool tree) suitable for hosting as
-# GitHub Release assets: the .debs are too large for a Pages git repo, so the
-# repo lives in the `apt-stable` release of drumee/get-drumee-pages and clients
-# point apt at the release-asset base URL:
+# The output is a flat directory (no dists/pool tree) served from the document
+# root of apt.drumee.net (see scripts/deploy-apt-repo.sh). Clients point apt at
+# the site root:
 #
-#   deb [signed-by=/etc/apt/keyrings/drumee.asc] \
-#     https://github.com/drumee/get-drumee-pages/releases/download/apt-stable/ ./
+#   deb [signed-by=/etc/apt/keyrings/drumee.asc] https://apt.drumee.net/ ./
 #
 # Usage:
 #   scripts/publish-apt.sh --debs=DIR --out=REPO_DIR [--key=EMAIL_OR_KEYID]
@@ -59,13 +57,15 @@ gpg "${KEYARG[@]}" --armor --export ${KEY:-} > "$OUT/drumee-archive-keyring.asc"
 
 cat <<MSG
 
-Done. Upload every file in $OUT as assets of the 'apt-stable' release, and serve
-drumee-archive-keyring.asc from get.drumee.com. Clients then run:
+Done. Deploy the repo with:
 
-  curl -fsSL https://get.drumee.com/drumee-archive-keyring.asc \\
+  scripts/deploy-apt-repo.sh --host=USER@VPS_HOST
+
+Or upload every file in $OUT to your web server's document root. Clients then run:
+
+  curl -fsSL https://apt.drumee.net/drumee-archive-keyring.asc \\
     | sudo tee /etc/apt/keyrings/drumee.asc >/dev/null
-  echo "deb [signed-by=/etc/apt/keyrings/drumee.asc] \\
-    https://github.com/drumee/get-drumee-pages/releases/download/apt-stable/ ./" \\
+  echo "deb [signed-by=/etc/apt/keyrings/drumee.asc] https://apt.drumee.net/ ./" \\
     | sudo tee /etc/apt/sources.list.d/drumee.list
   sudo apt update && sudo apt install drumee
 MSG

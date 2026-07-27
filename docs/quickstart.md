@@ -97,7 +97,7 @@ the container channel above.
 
 ```bash
 # Interactive
-curl -fsSL https://get.drumee.com/native | sudo bash
+curl -fsSL https://apt.drumee.net/install-native.sh | sudo bash
 
 # Unattended — render answers from drumee.yaml first
 node config/render.mjs debconf --config config/drumee.yaml --out install.conf

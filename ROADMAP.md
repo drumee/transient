@@ -45,7 +45,7 @@ This is what keeps "two channels" from meaning "double the bugs."
 ### Phase 3 — Native Debian channel (advanced)
 - [x] `drumee` metapackage (`meta/`) pulling the full runtime.
 - [x] Signed APT repo publisher (`scripts/publish-apt.sh`) + native bootstrap (`scripts/install-native.sh`) with unattended preseed.
-- [ ] Repo hosting (`get.drumee.com/apt`) + project signing key (your infra).
+- [ ] Repo hosting (`apt.drumee.net`, nginx on VPS via `scripts/deploy-apt-repo.sh`) + project signing key (your infra).
 - [ ] Explicit inter-package `Depends` for robust configure ordering.
 
 ### Phase 4 — Lifecycle CLI (both channels)
