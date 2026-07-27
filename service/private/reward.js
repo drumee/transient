@@ -13,14 +13,46 @@
  * Read side: analytics-server reward_tracking().
  */
 const { Entity } = require('@drumee/server-core');
+const { toArray } = require('@drumee/server-essentials');
 
 const CAMPAIGN = 'free-storage';
+/** Statuses that mean "this user still owes us a run". Terminal states (done,
+ *  dropped) are excluded; a later send re-arms the row back to 'emailed'
+ *  (see yp.reward_claim_emailed), which is what makes a re-send a real reset. */
+const OPEN = ['emailed', 'started'];
 /** Terminal and in-flight states the client may report. 'emailed' is NOT here:
  *  it is seeded at send time by analytics-server, never claimed by a browser. */
 const STATUS = ['started', 'dropped', 'done'];
 const STEPS = ['step1', 'step2', 'step3'];
 
 class __reward extends Entity {
+
+  /**
+   * Should the desk open the claim-reward flow for the caller, and where.
+   *
+   * This is the gate. It used to be `reward_flow_done` in localStorage, which
+   * made "has this user finished" a fact about a BROWSER: it did not follow the
+   * user to another device, it grew a key per user on a shared machine, and no
+   * amount of clearing the table could reset it. Here the row IS the answer.
+   *
+   * A missing row means this user was never mailed, so they are not eligible —
+   * that alone is what stops a second person on a shared browser from being
+   * handed someone else's campaign.
+   *
+   * `step` is the furthest card step reached, so a user who wandered off
+   * resumes where they were, on any device. Only sent when eligible; a
+   * terminal row has nothing to resume.
+   */
+  async get_state() {
+    const row = toArray(await this.yp.await_query(
+      `SELECT status, step FROM reward_claim WHERE uid=?`, this.uid
+    ))[0];
+    const eligible = !!(row && OPEN.includes(row.status));
+    this.output.data({
+      eligible: eligible ? 1 : 0,
+      step: (eligible && row.step) || '',
+    });
+  }
 
   /**
    * Record the caller's progress in the claim-reward flow.

@@ -3,6 +3,12 @@
     "private": "service/private/reward"
   },
   "services": {
+    "get_state": {
+      "doc": "Claim-reward gate for the desk. Returns { eligible, step } for the CALLER, read from yp.reward_claim: eligible=1 when the row's status is 'emailed' or 'started'. This replaces the browser's localStorage latch, so the answer follows the user across devices and a re-send re-arms them.",
+      "scope": "hub",
+      "permission": { "src": "owner" },
+      "returns": { "type": "object", "properties": { "eligible": { "type": "integer" }, "step": { "type": "string" } } }
+    },
     "track": {
       "doc": "Record how far the caller got in the claim-reward flow (ui-team builtins/widget/reward-flow). One row per user in yp.reward_claim; status and step only ever advance, so a re-post can never undo a completion. Fire-and-forget from the widget.",
       "scope": "hub",
