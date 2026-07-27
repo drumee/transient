@@ -120,20 +120,28 @@ class __private_payment extends Entity {
     // deep link, or a stale bundle) reaches this endpoint directly, so the
     // refusal has to live here.
     //
-    // Only 'active' and 'trialing' block. A subscription in the pending-cancel
-    // window reports 'canceled' with a future period_end: that caller resumes
-    // (payment.resume_subscription), and if they let it lapse they are free to
-    // buy again. Cycle changes (month <-> year) are a subscription UPDATE, not
-    // a new checkout -- they get their own status so the client can say so
-    // rather than showing a generic failure.
+    // "Live" is not the same as "active". A subscription in the PENDING-CANCEL
+    // window mirrors as status 'canceled' with a future period_end, but at
+    // Stripe it is still an active subscription carrying
+    // cancel_at_period_end -- buying now would run two paid subscriptions side
+    // by side just as surely. That caller resumes instead. Only once the paid
+    // period has actually lapsed (or the mirror row is gone) may they buy.
+    //
+    // Cycle changes (month <-> year) are a subscription UPDATE, not a new
+    // checkout, so they get their own status rather than a generic failure.
     const current = await this._subscription_row();
-    if (current && current.subscription_id &&
-        /^(active|trialing)$/.test(String(current.status || ''))) {
+    const now = Math.floor(Date.now() / 1000);
+    const status = String((current && current.status) || '');
+    const pending_cancel = status === 'canceled' && ~~(current && current.period_end) > now;
+    const live = /^(active|trialing)$/.test(status) || pending_cancel;
+    if (current && current.subscription_id && live) {
       const same_plan = String(current.plan || '') === String(this.input.use('plan', 'team'));
+      let refusal;
+      if (pending_cancel) refusal = 'PENDING_CANCEL_RESUME_INSTEAD';
+      else if (same_plan && String(current.period || '') === period) refusal = 'ALREADY_SUBSCRIBED';
+      else refusal = 'USE_SUBSCRIPTION_UPDATE';
       return this.output.data({
-        status: same_plan && String(current.period || '') === period
-          ? 'ALREADY_SUBSCRIBED'
-          : 'USE_SUBSCRIPTION_UPDATE',
+        status: refusal,
         plan: current.plan,
         period: current.period,
         period_end: current.period_end,
