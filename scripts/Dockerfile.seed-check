@@ -1,0 +1,29 @@
+# Drumee seed-check image — a throwaway toolbox for INSPECTING a built seed
+# (schemas' var/tmp/drumee/seeds.tgz, the mariabackup snapshot the native .deb
+# install restores). It restores the seed exactly the way setup-schemas/bin/install
+# does (tar --one-top-level=seeds -> mariabackup --copy-back), starts mariadbd, and
+# drops you into an interactive shell with the `mariadb` client pre-wired, so you
+# can run any query against the restored databases (yp.entity, per-entity DBs, …).
+#
+# The seed archive is bind-mounted read-only at runtime (see scripts/check-seed.sh),
+# so this image carries only the tools + entrypoint and stays independent of any
+# particular seed.
+#
+#   docker build -f scripts/Dockerfile.seed-check -t drumee/seed-check:local scripts
+FROM debian:bookworm-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      ca-certificates \
+      mariadb-server mariadb-client mariadb-backup \
+      less \
+    && rm -rf /var/lib/apt/lists/* \
+    && mkdir -p /run/mysqld && chown mysql:mysql /run/mysqld
+
+COPY seed-check-entrypoint.sh /usr/local/bin/seed-check
+RUN chmod +x /usr/local/bin/seed-check
+
+# Restores the seed + starts mariadbd, then execs the command (default: an
+# interactive login shell). `docker run -it drumee/seed-check` -> shell;
+# `docker run drumee/seed-check mariadb -e 'SELECT ...'` -> one-shot query.
+ENTRYPOINT ["seed-check"]
+CMD ["bash", "-l"]

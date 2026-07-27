@@ -14,7 +14,7 @@ SYNC=0; [ "${1:-}" = "--sync" ] && SYNC=1
 drift=0
 while read -r dir version; do
   [ -n "$dir" ] || continue
-  case "$dir" in \#*) continue ;; esac
+  case "$dir" in \#*|product) continue ;; esac   # 'product' is the release-train version, no changelog
   cl="$root/$dir/debian/changelog"
   [ -f "$cl" ] || { echo "WARN no changelog for $dir"; continue; }
   pkg="$(head -1 "$cl" | awk '{print $1}')"

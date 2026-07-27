@@ -26,13 +26,24 @@ stands between "works after a few manual nudges" and a fully turnkey `apt instal
 | `mariadb-backup` not a dependency → seed restore silently no-op | add to `drumee-schemas` `Depends` | ✅ fixed (committed) |
 | factory pool not stocked by `populate.js` → `EMPTY_FACTORY` | `stockFactory()` before account creation | ✅ fixed + pushed to `setup-schemas`; genesis templates packaged |
 | debconf→env bridge missing (metapackage path) | templates + config + postinst export | ✅ fixed + verified |
+| preseeded `network.ip4/ip6` dropped by the bridge → `infra.js` skipped the whole public branch (nginx `01-public.conf`, BIND public/reverse zones, postfix/opendkim) | postinst exports `PUBLIC_IP4`/`PUBLIC_IP6` from `ip4`/`public_ip4` | ✅ fixed (committed) |
+| `ip4`/`ip6` never *asked* interactively — `config` has no `db_input` and nothing `db_subst`s `${__IP4_LIST__}` (only the wizard's `prompt.sh` does) | add detection + prompts to `infra/debian/config`, or drop the templates and document `network.ip4` as wizard-only | ⏳ open |
 | nginx `stream{}` (turn-relay) without the stream module → config invalid | `drumee-infra` `Depends: libnginx-mod-stream` | ✅ fixed (committed) |
-| **pm2 not installed** → `/etc/init.d/drumee` can't launch the app | `drumee-server-pod` must install pm2 (npm global) | ⏳ needs packaging |
-| **`ecosystem.config.js` not generated** to `$DRUMEE_SERVER_HOME` (init.d looks for it) | `infra.js` template render / init.d path | ⏳ needs packaging (upstream `setup-infra`) |
-| **`--conf-path` doubled** (`/etc/drumee/conf.d/etc/drumee/conf.d`) | pass the parent (`/`), not the full path | ⏳ needs packaging (upstream ecosystem args) |
-| dpkg **conffile prompt** on infra-rendered MariaDB configs | install with `--force-confold` | ⏳ document in `install-native.sh` |
-| `server/var/lib/drumee/postinstall/patch.sh` missing from the repo | `dh_install` expects `files/var/*` | ⏳ ship a placeholder |
-| domain `local` is awkward for local browser testing | prefer `domain: localhost` for local installs | ⏳ docs / default |
+| pm2 not installed → `/etc/init.d/drumee` can't launch the app | `drumee-server-pod` postinst `npm i -g pm2` | ✅ fixed (committed) |
+| `ecosystem.config.js` not generated → init.d has nothing to start | `main()` never called `writeEcoSystem()` | ✅ fixed + pushed to `setup-infra` (verified via chroot render) |
+| dpkg **conffile prompt** on infra-rendered MariaDB configs | `install-native.sh` uses `--force-confold` | ✅ fixed (committed) |
+| `server/var/lib/drumee/postinstall/patch.sh` missing | ship a no-op placeholder (`dh_install` wants `files/var/*`) | ✅ fixed (committed) |
+| ~~`--conf-path` doubled~~ | **non-issue** — the generated ecosystem passes only `--pushPort/--restPort`; the doubling was a manual-invocation artifact, not a packaging bug | n/a |
+| domain `local` awkward for local browser testing | prefer `domain: localhost` for local installs | ⏳ docs / installer default |
+| `drumee-static` has no source to build → `/-/static/*` 404 (cosmetic) | obtain/build the `static` repo | ⏳ needs source |
+
+**Net after these fixes:** every blocking gap is closed — a fresh `apt install drumee`
+(via `install-native.sh`, which adds Node 20 + `--force-confold`; packages pull
+`mariadb-backup`/`libnginx-mod-stream`/`nodejs>=20` and install pm2; infra generates
+the ecosystem; populate stocks the pool) should reach a serving instance **without
+manual steps**. Only `domain: localhost` default and `drumee-static` remain (cosmetic /
+needs source). The last thing to do is re-run a clean single-pass `apt install drumee`
+on a fresh Debian VM to confirm zero-touch.
 
 ## Headline (original source audit)
 
@@ -156,20 +167,22 @@ from .../@drumee/server-essentials/lib/mariadb.js not supported.   Node.js v18.2
 ```
 
 `mariadb` npm is **3.5.2** (ESM-only, `"type":"module"`), pulled transitively via
-`@drumee/server-essentials`. `require('mariadb')` works on the **container's Node 20**
-(`node:20`, ≥20.19 supports `require(ESM)`) but **fails on Debian 12's Node 18**, which the
-packages get via `Depends: nodejs, npm`. infra failing cascades to schemas.
+`@drumee/server-essentials`. `require('mariadb')` works on **Node ≥20.19** (which
+supports `require(ESM)`) — both channels now ship **Node 22 (current LTS)** — but
+**fails on Debian 12's Node 18**, which the packages get via `Depends: nodejs, npm`.
+infra failing cascades to schemas.
 
-**Fix (Option A, applied):** make the native install provide **Node 20.x (NodeSource)** —
+**Fix (Option A, applied):** make the native install provide **Node 22.x (NodeSource)** —
 `scripts/install-native.sh` adds the NodeSource repo before `apt install`, and the
-component `debian/control` files now `Depends: nodejs (>= 20)` and drop the Debian `npm`
+component `debian/control` files `Depends: nodejs (>= 20)` and drop the Debian `npm`
 dep (NodeSource's nodejs bundles npm and Debian's `npm` conflicts with it). This mirrors
-the container channel's `node:20` base. Without Node 20, `apt` now fails with a clear
-unmet-dependency message instead of the cryptic ESM crash mid-postinst.
+the container channel's `node:22` base. Without Node ≥20, `apt` now fails with a clear
+unmet-dependency message instead of the cryptic ESM crash mid-postinst. (Node 22, not 20,
+because the 20.x line's older point releases carried CVEs; 22 is the current LTS.)
 
-**Confirmed:** on `node:20-slim` (v20.20.2), `require('mariadb')` of the exact ESM
-`mariadb@3.5.2` that crashes on Node 18 returns OK — so Option A resolves the precise
-blocker. The only thing not yet run start-to-finish is a single clean full-stack
+**Confirmed (original ≥20 validation):** on `node:20-slim` (v20.20.2), `require('mariadb')`
+of the exact ESM `mariadb@3.5.2` that crashes on Node 18 returns OK — establishing the
+≥20 floor that Node 22 also satisfies. The only thing not yet run start-to-finish is a single clean full-stack
 install-to-serving pass; it's gated on container apt pulling the heavy deps
 (MariaDB + LibreOffice + ffmpeg + …) over a slow/flaky network, not on any code issue.
 

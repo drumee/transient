@@ -7,7 +7,7 @@ the host via `apt`, configured from a debconf preseed for unattended runs.
 
 ```bash
 # Interactive
-curl -fsSL https://get.drumee.io/native | sudo bash
+curl -fsSL https://apt.drumee.net/install-native.sh | sudo bash
 
 # Unattended — preseed answers rendered from drumee.yaml first
 node config/render.mjs debconf --out install.conf
@@ -22,21 +22,47 @@ sudo PRESEED=install.conf bash scripts/install-native.sh
 
 ```bash
 ./build-all.sh                       # build the component .debs
+static/build.sh                      # build drumee-static (REPO_BASE=https://github.com/drumee)
 meta/build.sh                        # build the drumee metapackage
-scripts/publish-apt.sh --debs=./out-debs --out=./apt-repo --suite=stable --key=somanos.sar@drumee.com
-# serve ./apt-repo at https://apt.drumee.io
+scripts/publish-apt.sh --debs=./out-debs --out=/tmp/apt-flat --key=release@drumee.org
+APT_LOCAL_DIR=/tmp/apt-flat scripts/deploy-apt-repo.sh --host=USER@VPS_HOST
 ```
 
-`publish-apt.sh` builds a signed flat repo (`apt-ftparchive` + `gpg`), emits
+`publish-apt.sh` builds a signed **flat** repo (`apt-ftparchive` + `gpg`), emits
 `InRelease`/`Release.gpg`, and exports the public key as
 `drumee-archive-keyring.asc`.
 
+`deploy-apt-repo.sh` rsyncs that directory to the VPS document root
+(`/var/www/apt.drumee.net` by default), writes an nginx vhost for the domain, and
+reloads nginx. Override with `--repo-dir=` / `--domain=`. TLS is provisioned
+separately (`certbot --nginx -d apt.drumee.net`); the script prints the follow-up
+steps, including uncommenting the port-80 → 443 redirect once the cert exists.
+
+The packages are **self-hosted on `apt.drumee.net`** — the `drumee-static` deb alone
+is ~175 MB, over GitHub's 100 MB git-file limit, so they cannot live in a Pages git
+repo. Clients use a flat repo:
+
+```
+deb [signed-by=/etc/apt/keyrings/drumee.asc] https://apt.drumee.net/ ./
+```
+
+The signing key is served from the same host at
+`https://apt.drumee.net/drumee-archive-keyring.asc`.
+
 ## Needs your infrastructure
 
-- **Repo hosting** — somewhere to serve `apt-repo/` (object storage + CDN, or a
-  static host) at a stable URL (`apt.drumee.io`).
+- **VPS + DNS + TLS** — an `A`/`AAAA` record for `apt.drumee.net` pointing at the
+  nginx host, and a certbot cert for it.
 - **Signing key** — a project (not personal) GPG key in the publishing
-  environment; CI publishes with it (Phase 5).
+  environment; CI publishes with it (Phase 5). The repo currently published is
+  signed with a local build key and must be re-signed before launch.
+- **Deploy key** — `.github/workflows/release.yml` publishes the repo on a version
+  tag via `scripts/publish-site.sh`. It needs these repository secrets:
+  `APT_SSH_HOST` (`user@host`), `APT_SSH_KEY` (private half of a key authorized on
+  the VPS), and ideally `APT_SSH_KNOWN_HOSTS` (pinned host key — without it the
+  workflow falls back to `ssh-keyscan`, i.e. trust on first use). The deploy user
+  only needs write access to the doc root; CI runs `deploy-apt-repo.sh
+  --no-provision`, so no sudo.
 
 ## Install ordering (resolved)
 

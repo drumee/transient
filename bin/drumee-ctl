@@ -164,6 +164,18 @@ cmd_rollback() {
   cmd_restore "$latest"
 }
 
+cmd_plugin() {
+  # Run the channel-agnostic manager INSIDE server-pod (where node lives) against
+  # the host-mounted ./plugins volume, then restart server-pod from the host.
+  local self_dir; self_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  [ -f "$self_dir/drumee-plugin" ] || die "drumee-plugin not found next to drumee-ctl"
+  compose exec -T \
+    -e PLUGIN_DIR=/srv/drumee/runtime/plugins/server \
+    -e RESTART_CMD=true -e PLUGIN_OWNER=root \
+    server-pod bash -s -- "$@" < "$self_dir/drumee-plugin"
+  case "${1:-}" in add|remove|enable|disable|apply) compose restart server-pod ;; esac
+}
+
 # ----------------------------------------------------------------------- dispatch
 cmd="${1:-}"; shift || true
 case "$cmd" in
@@ -173,5 +185,6 @@ case "$cmd" in
   restore)  cmd_restore "$@" ;;
   upgrade)  cmd_upgrade "$@" ;;
   rollback) cmd_rollback "$@" ;;
-  *) die "usage: drumee-ctl status|doctor|backup|restore <f>|upgrade|rollback" ;;
+  plugin)   cmd_plugin "$@" ;;
+  *) die "usage: drumee-ctl status|doctor|backup|restore <f>|upgrade|rollback|plugin <add|list|remove|…>" ;;
 esac

@@ -49,8 +49,8 @@ dpkg-deb -Znone -b /tmp/stub /tmp/repo/drumee-static_stub.deb >/dev/null
 echo "deb [trusted=yes] file:/tmp/repo ./" > /etc/apt/sources.list.d/drumee.list
 apt-get update -qq 2>/dev/null
 
-log "Node 20 (NodeSource) — required by the runtime deps (Debian ships 18)"
-curl -fsSL https://deb.nodesource.com/setup_20.x 2>/dev/null | bash - >/dev/null 2>&1
+log "Node 22 (NodeSource) — required by the runtime deps (Debian ships 18)"
+curl -fsSL https://deb.nodesource.com/setup_22.x 2>/dev/null | bash - >/dev/null 2>&1
 apt-get install -y -qq nodejs >/dev/null 2>&1
 echo "  node: $(node --version 2>/dev/null)"
 

@@ -1,7 +1,7 @@
 #!/bin/bash
 # Drumee one-command installer — the "easy path".
 #
-#   curl -fsSL https://get.drumee.io | bash      # interactive: asks 3-4 questions, then installs
+#   curl -fsSL https://get.drumee.com/install | bash      # interactive: asks 3-4 questions, then installs
 #   scripts/get-drumee.sh                         # same, from a checkout
 #
 # One run does everything: checks (and can install) Docker, asks how people will
@@ -92,14 +92,14 @@ case "${1:-}" in
   -h|--help)
     # Print the leading comment block (skip the shebang, stop at the first code line).
     awk 'NR==1{next} /^#/{sub(/^# ?/,""); print; next} {exit}' "${BASH_SOURCE[0]:-$0}" 2>/dev/null \
-      || echo "Drumee installer — see https://get.drumee.io"
+      || echo "Drumee installer — see https://get.drumee.com"
     exit 0 ;;
 esac
 
 # --------------------------------------------------------------------- locate src
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd || echo)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." 2>/dev/null && pwd || echo)"
-RELEASE_BASE="${RELEASE_BASE:-https://get.drumee.io}"
+RELEASE_BASE="${RELEASE_BASE:-https://get.drumee.com}"
 [ -n "$REPO_ROOT" ] && [ -f "$REPO_ROOT/config/render.mjs" ] || REPO_ROOT=""
 fetch() { # fetch <relative-path> <dest>
   local rel="$1" dest="$2"
@@ -273,7 +273,12 @@ ensure_images() {
 # --------------------------------------------------------------- 3. render + run
 step "Rendering deployment files"
 if [ -n "$REPO_ROOT" ]; then render_cmd=(node "$REPO_ROOT/config/render.mjs" all --config drumee.yaml --out-dir .)
-else fetch config/render.mjs render.mjs && render_cmd=(node render.mjs all --config drumee.yaml --out-dir .); fi
+else
+  # render.mjs reads drumee.schema.json from next to itself — fetch both.
+  fetch config/render.mjs render.mjs
+  fetch config/drumee.schema.json drumee.schema.json
+  render_cmd=(node render.mjs all --config drumee.yaml --out-dir .)
+fi
 if ! render_out="$("${render_cmd[@]}" 2>&1)"; then echo "$render_out" | sed 's/^/    /'; die "Rendering failed."; fi
 [ -f docker-compose.yml ] && [ -f .env ] || die "Render did not produce docker-compose.yml/.env"
 ok "Wrote .env, docker-compose.yml, Caddyfile"
@@ -329,6 +334,32 @@ fi
 healthy=""; for _ in $(seq 1 30); do
   $DC ps --format '{{.Service}}:{{.Status}}' 2>/dev/null | grep -q '^server-pod:.*healthy' && { healthy=1; break; }; sleep 4
 done
+
+# --------------------------------------------------------------- 5. management CLI
+# Put drumee-ctl (+ its drumee-plugin helper) on PATH so management commands work
+# without a checkout. Prefer /usr/local/bin; fall back to the install dir.
+step "Installing the drumee-ctl CLI"
+bindir=/usr/local/bin
+if [ -w "$bindir" ] || sudo -n true 2>/dev/null; then SUDO=""; [ -w "$bindir" ] || SUDO=sudo
+else bindir="$DRUMEE_DIR/bin"; SUDO=""; mkdir -p "$bindir"; fi
+cli_ok=1
+for tool in drumee-ctl drumee-plugin; do
+  if fetch "bin/$tool" "/tmp/$tool.$$" 2>/dev/null; then
+    $SUDO install -m 0755 "/tmp/$tool.$$" "$bindir/$tool" 2>/dev/null || cli_ok=""
+    rm -f "/tmp/$tool.$$"
+  else cli_ok=""; fi
+done
+if [ -n "$cli_ok" ]; then
+  case ":$PATH:" in *":$bindir:"*) ok "Installed drumee-ctl to $bindir";;
+    *) ok "Installed drumee-ctl to $bindir"; say "add it to PATH:  export PATH=\"$bindir:\$PATH\"";; esac
+else warn "Could not install drumee-ctl automatically (get it from $RELEASE_BASE/bin/drumee-ctl)."; fi
+
+# Apply any declared plugins (render emits plugins.json from drumee.yaml's plugins:).
+if [ -f plugins.json ] && [ -n "$healthy" ]; then
+  step "Installing declared plugins"
+  DRUMEE_DIR="$DRUMEE_DIR" "$bindir/drumee-ctl" plugin apply plugins.json 2>&1 | sed 's/^/    /' \
+    || warn "plugin apply failed — run: drumee-ctl plugin apply plugins.json"
+fi
 
 if [ "$DRUMEE_DOMAIN" = "localhost" ]; then URL="http://localhost/"; else URL="https://${DRUMEE_DOMAIN}/"; fi
 echo

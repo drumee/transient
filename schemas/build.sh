@@ -18,7 +18,14 @@ build_dir=$(get_build_dir ${base}/build/$version)
 
 REPO_BASE=git@github.com:drumee
 bundle $base "setup-schemas" "main" "" "var/lib/drumee/setup-schemas"
+bundle $base "schemas" "preview" "" ""
+schemas_src=${base}/src/schemas
 
+# --- seed resolution ---------------------------------------------------------
+# The package must ship a mariabackup snapshot at var/tmp/drumee/seeds.tgz.
+# Resolution order: reuse an existing seed -> archive $SEEDS_DIR -> build one
+# offline from source (scripts/build-seed.sh: throwaway MariaDB + offline/factory
+# stocks the pool + mariabackup). See docs/reproducible-builds.md.
 if [ "$SEEDS_DIR" = "" ]; then
   SEEDS_DIR=$HOME/docker/data/seeds/
 fi
@@ -30,24 +37,25 @@ fi
 
 if [ -f $SEEDS_FILE ]; then
   echo Already have seeds file. Skipped
+elif [ -d "$SEEDS_DIR" ]; then
+  cd $SEEDS_DIR
+  echo Creating seeds $SEEDS_FILE
+  tar zcfp $SEEDS_FILE .
 else
-  if [ -d "$SEEDS_DIR" ]; then
-    cd $SEEDS_DIR
-    echo Creating seeds $SEEDS_FILE
-    tar zcfp $SEEDS_FILE .
-  else
-    echo "Missing seeds: $SEEDS_FILE"
-    echo "Provide a seed using one of:"
-    echo "  1. Place a prebuilt seed at $SEEDS_FILE"
-    echo "  2. Point SEEDS_DIR at a directory to archive (current: $SEEDS_DIR)"
-    echo "  3. Generate a minimal bootstrap seed: schemas/make-seed.sh --out=$SEEDS_FILE"
-    echo "See docs/reproducible-builds.md for details."
+  echo "No prebuilt seed and no SEEDS_DIR ($SEEDS_DIR) — building one offline"
+  # server-team supplies offline/factory + @drumee node_modules; default to the
+  # sibling checkout, honour SERVER_SRC if the caller set it.
+  export SERVER_SRC="${SERVER_SRC:-$(cd "$base/../.." && pwd)/server-team}"
+  if ! ${base}/../scripts/build-seed.sh --out=$SEEDS_FILE; then
+    echo "FATAL: offline seed build failed. Provide a seed instead via one of:" >&2
+    echo "  1. Place a prebuilt seed at $SEEDS_FILE" >&2
+    echo "  2. Point SEEDS_DIR at a directory to archive" >&2
+    echo "  3. Run scripts/build-seed.sh manually (needs Docker + server-team source)" >&2
+    echo "See docs/reproducible-builds.md for details." >&2
     exit 1
   fi
 fi
 
-bundle $base "schemas" "preview" "" ""
-schemas_src=${base}/src/schemas
 cd $schemas_src
 rsync -arv --exclude ".git:.npmrc" ${base}/var $build_dir/files/
 
