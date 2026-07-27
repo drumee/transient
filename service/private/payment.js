@@ -112,6 +112,42 @@ class __private_payment extends Entity {
     }
     const period = this.input.need('period');           // 'month' | 'year'
 
+    // Already paying? Then there is nothing to sell here. Stripe happily
+    // creates a SECOND subscription on the same customer, and the webhook
+    // would overwrite entitlement/period_end with the new one while the old
+    // one keeps charging -- the caller is billed twice for one plan. The UI
+    // gates its plan cards on the current plan, but the checkout TAB (and any
+    // deep link, or a stale bundle) reaches this endpoint directly, so the
+    // refusal has to live here.
+    //
+    // "Live" is not the same as "active". A subscription in the PENDING-CANCEL
+    // window mirrors as status 'canceled' with a future period_end, but at
+    // Stripe it is still an active subscription carrying
+    // cancel_at_period_end -- buying now would run two paid subscriptions side
+    // by side just as surely. That caller resumes instead. Only once the paid
+    // period has actually lapsed (or the mirror row is gone) may they buy.
+    //
+    // Cycle changes (month <-> year) are a subscription UPDATE, not a new
+    // checkout, so they get their own status rather than a generic failure.
+    const current = await this._subscription_row();
+    const now = Math.floor(Date.now() / 1000);
+    const status = String((current && current.status) || '');
+    const pending_cancel = status === 'canceled' && ~~(current && current.period_end) > now;
+    const live = /^(active|trialing)$/.test(status) || pending_cancel;
+    if (current && current.subscription_id && live) {
+      const same_plan = String(current.plan || '') === String(this.input.use('plan', 'team'));
+      let refusal;
+      if (pending_cancel) refusal = 'PENDING_CANCEL_RESUME_INSTEAD';
+      else if (same_plan && String(current.period || '') === period) refusal = 'ALREADY_SUBSCRIBED';
+      else refusal = 'USE_SUBSCRIPTION_UPDATE';
+      return this.output.data({
+        status: refusal,
+        plan: current.plan,
+        period: current.period,
+        period_end: current.period_end,
+      });
+    }
+
     let plan, entity_id, email, name, existing_customer;
     let org_bootstrap = null;
     if (entity_type === 'org') {
