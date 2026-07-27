@@ -9,8 +9,14 @@
 #   - certbot (or other ACME client) for TLS on apt.drumee.net
 #   - SSH access as the deploy user
 #
+# Provisioning (creating the doc root, writing the nginx vhost) needs passwordless
+# sudo on the VPS and is a one-time step. Pass --no-provision for repeat publishes
+# and for CI, where the deploy user should have write access to the doc root and
+# nothing more.
+#
 # Usage:
 #   scripts/deploy-apt-repo.sh --host=USER@HOST [--repo-dir=DIR] [--domain=DOMAIN]
+#                              [--no-provision]
 #
 # Env:
 #   APT_LOCAL_DIR   local repo dir to upload (default: apt-repo)
@@ -19,13 +25,15 @@ set -euo pipefail
 DOMAIN="apt.drumee.net"
 REPO_DIR="/var/www/apt.drumee.net"
 HOST=""
+PROVISION=1
 APT_LOCAL_DIR="${APT_LOCAL_DIR:-apt-repo}"
 
 for arg in "$@"; do
   case $arg in
-    --host=*)      HOST="${arg#*=}" ;;
-    --repo-dir=*)  REPO_DIR="${arg#*=}" ;;
-    --domain=*)    DOMAIN="${arg#*=}" ;;
+    --host=*)       HOST="${arg#*=}" ;;
+    --repo-dir=*)   REPO_DIR="${arg#*=}" ;;
+    --domain=*)     DOMAIN="${arg#*=}" ;;
+    --no-provision) PROVISION=0 ;;
     *) echo "unknown argument: $arg" >&2; exit 2 ;;
   esac
 done
@@ -34,11 +42,18 @@ done
 [ -d "$APT_LOCAL_DIR" ] || { echo "error: local repo dir not found: $APT_LOCAL_DIR" >&2; exit 2; }
 [ -f "$APT_LOCAL_DIR/InRelease" ] || { echo "error: $APT_LOCAL_DIR does not look like an APT repo (no InRelease)" >&2; exit 2; }
 
-echo "==> Creating remote directory $REPO_DIR"
-ssh "$HOST" "sudo mkdir -p $REPO_DIR && sudo chown \$(whoami): $REPO_DIR"
+if [ "$PROVISION" = 1 ]; then
+  echo "==> Creating remote directory $REPO_DIR"
+  ssh "$HOST" "sudo mkdir -p $REPO_DIR && sudo chown \$(whoami): $REPO_DIR"
+fi
 
 echo "==> Uploading repo files"
 rsync -avz --delete "$APT_LOCAL_DIR/" "$HOST:$REPO_DIR/"
+
+if [ "$PROVISION" = 0 ]; then
+  echo "==> Deployed to $HOST:$REPO_DIR (provisioning skipped)"
+  exit 0
+fi
 
 echo "==> Installing nginx config"
 NGINX_CONF=$(cat <<NGINX

@@ -245,10 +245,10 @@ scripts/publish-images.sh   # build + push to registry
 ### Full site publish (apt + Pages)
 
 ```bash
-scripts/publish-site.sh --debs=out-debs   # calls publish-apt.sh + deploys installers/CLIs to Pages
+APT_SSH_HOST=deploy@vps GH_TOKEN=<token> scripts/publish-site.sh --debs=out-debs [--key=KEYID]
 ```
 
-> **Note:** `publish-site.sh` still uploads the flat repo as `apt-stable` GitHub Release assets on `drumee/get-drumee-pages` (the pre-VPS hosting path) alongside the Pages content. Manual publishing now goes through `deploy-apt-repo.sh` to `apt.drumee.net`; this script has not been migrated.
+Builds the flat repo once, then deploys it to two independent targets: `apt.drumee.net` over rsync/SSH (`APT_SSH_HOST`, `APT_REPO_DIR`, `APT_DOMAIN`) and the `get.drumee.com` Pages content — installers, renderer, keyring, CLIs — to `PAGES_REPO` (`GH_TOKEN`). Each target is skipped with a notice when its credential is absent; setting neither is an error. `scripts/install-native.sh` is copied into the flat repo so `https://apt.drumee.net/install-native.sh` serves the bootstrap without depending on Pages.
 
 ## Deployment
 

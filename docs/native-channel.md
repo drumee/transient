@@ -56,10 +56,13 @@ The signing key is served from the same host at
 - **Signing key** — a project (not personal) GPG key in the publishing
   environment; CI publishes with it (Phase 5). The repo currently published is
   signed with a local build key and must be re-signed before launch.
-- **CI publishing path** — `scripts/publish-site.sh` (used by
-  `.github/workflows/release.yml`) still uploads the flat repo to the `apt-stable`
-  GitHub Release. Migrating it to `apt.drumee.net` needs an SSH deploy key and host
-  as repository secrets.
+- **Deploy key** — `.github/workflows/release.yml` publishes the repo on a version
+  tag via `scripts/publish-site.sh`. It needs these repository secrets:
+  `APT_SSH_HOST` (`user@host`), `APT_SSH_KEY` (private half of a key authorized on
+  the VPS), and ideally `APT_SSH_KNOWN_HOSTS` (pinned host key — without it the
+  workflow falls back to `ssh-keyscan`, i.e. trust on first use). The deploy user
+  only needs write access to the doc root; CI runs `deploy-apt-repo.sh
+  --no-provision`, so no sudo.
 
 ## Install ordering (resolved)
 
