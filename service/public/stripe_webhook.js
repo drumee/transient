@@ -478,13 +478,32 @@ class __public_stripe_webhook extends Entity {
             // Immediate cancel, not at period end: the user was warned they
             // lose the current plan, and leaving it running to its date is the
             // double charge this exists to prevent.
-            if (subscription_id && md.supersede) {
+            // Only on the checkout event. All three of checkout.session.completed,
+            // customer.subscription.created and invoice.paid land in this same
+            // case and arrive together, so without this the cancel ran three
+            // times over — one succeeding and two logging "No such
+            // subscription" against an id already gone.
+            if (subscription_id && md.supersede && event.type === 'checkout.session.completed') {
               try {
-                const prev = await this.yp.await_proc('payment_get_subscription', entity_id);
-                const prevId = prev && prev.subscription_id;
-                if (prevId && prevId !== subscription_id) {
-                  await stripe.subscriptions.cancel(prevId);
-                  this.debug(`superseded subscription ${prevId} cancelled for ${entity_id}`);
+                // Ask Stripe which subscriptions the customer still holds
+                // rather than reading our mirror. The mirror is upserted by the
+                // sibling events of this same replacement, so by the time we
+                // get here it may already name the NEW subscription — and then
+                // the old one would never be cancelled and would keep charging.
+                //
+                // Scoped to this entity: one customer can carry both a personal
+                // and an org subscription (see the personal supersede helper
+                // above), and those must survive.
+                const live = await stripe.subscriptions.list({
+                  customer: customer_id, status: 'active', limit: 20,
+                });
+                const stale = (live.data || []).filter(
+                  (s) => s.id !== subscription_id
+                    && s.metadata && s.metadata.entity_id === entity_id,
+                );
+                for (const s of stale) {
+                  await stripe.subscriptions.cancel(s.id);
+                  this.debug(`superseded subscription ${s.id} cancelled for ${entity_id}`);
                 }
               } catch (e6) {
                 // Never fail the webhook over this — the new subscription is
@@ -565,6 +584,48 @@ class __public_stripe_webhook extends Entity {
             if (org && org.id) entity_id = org.id;
           }
           if (entity_id) {
+            // Is this the subscription the entity actually HOLDS, or one that
+            // was replaced?
+            //
+            // A plan change through checkout cancels the old subscription the
+            // moment the new one is paid, and Stripe then sends this event for
+            // the OLD id. Acting on it destroys the entitlement the new,
+            // already-paid subscription just established: subscription_remove
+            // drops the mirror, and payment_clear_entitlement deletes the quota
+            // row by payer_id alone with no subscription check. Live symptom —
+            // an org paid $99 for Business and landed on free/5 GB.
+            //
+            // Ask STRIPE, not our own mirror. The mirror is written by the
+            // sibling events of the replacement (subscription.created /
+            // checkout.session.completed) and this deletion routinely overtakes
+            // them — they arrive in the same second and each handler is several
+            // awaits deep, so reading our own row here saw it empty and cleared
+            // the entitlement anyway. Stripe knows what the customer holds
+            // regardless of how far our writes have got.
+            let superseded = false;
+            if (stripe && obj.customer && obj.id) {
+              try {
+                const live = await stripe.subscriptions.list({
+                  customer: obj.customer, status: 'active', limit: 20,
+                });
+                // Scoped to this entity, like the cancel above: one customer
+                // can carry both a personal and an org subscription, and a
+                // genuine cancellation of one must not be waved off because
+                // the other is still running.
+                superseded = (live.data || []).some(
+                  (x) => x.id !== obj.id
+                    && x.metadata && x.metadata.entity_id === entity_id,
+                );
+              } catch (e7) {
+                // Unreachable Stripe: fall through and clear, which is the
+                // pre-existing behaviour for a genuine cancellation.
+                this.warn(`supersede check failed for ${entity_id}: ${e7.message}`);
+              }
+            }
+            if (superseded) {
+              this.debug(`ignoring deletion of superseded subscription ${obj.id}; customer ${obj.customer} still holds a live one`);
+              break;
+            }
             await this.yp.await_proc('subscription_remove', entity_id, obj.id || '');
             if (etype === 'org') {
               // Team cancel: DELETE the org entitlement row so every member
