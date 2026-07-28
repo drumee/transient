@@ -153,27 +153,48 @@ class __private_desk extends Media {
       }
     }
 
-    let remain = 0
-    let { private_hub, share_hub, public_hub } = await this.yp.await_func("get_quota", this.uid) || {};
-    let used = await this.yp.await_func("hub_usage", this.uid, area) || 0;
+    // get_quota is a SQL FUNCTION returning JSON, and the driver hands that
+    // back as a string, not an object — destructuring it directly yielded
+    // undefined for every key, which is the other half of why this guard never
+    // fired. Parse when needed; tolerate a driver that already decoded it.
+    let q = await this.yp.await_func("get_quota", this.uid);
+    if (typeof q === 'string') {
+      try { q = JSON.parse(q); } catch (e) { q = null; }
+    }
+    let { private_hub, share_hub, public_hub } = q || {};
+    let used = ~~(await this.yp.await_func("hub_usage", this.uid, area)) || 0;
+    let cap = null;
     let message = '_private_hub_limit_reached'
     switch (area) {
       case Attr.private:
-        remain = private_hub - used;
+        cap = private_hub;
         message = '_private_hub_limit_reached'
         break;
       case Attr.share:
-        remain = share_hub - used;
+        cap = share_hub;
         message = '_share_hub_limit_reached'
         break;
       case Attr.public:
-        remain = public_hub - used;
+        cap = public_hub;
         message = '_public_hub_limit_reached'
         break;
     }
-    if (remain <= 0) {
+    // A plan that does not state a cap for this area is unlimited there.
+    //
+    // This used to read `remain = cap - used` and refuse on `remain <= 0`,
+    // which inverted the intent whenever the cap was absent: the 2026-07 plan
+    // quotas carry no $.private_hub / $.share_hub, so `cap` was undefined,
+    // `remain` was NaN, and `NaN <= 0` is FALSE — the guard passed every time
+    // and the limit was never enforced for anyone. Decide on the cap itself,
+    // so a missing one is explicitly unlimited and a real one is compared as a
+    // number.
+    cap = Number(cap);
+    if (Number.isFinite(cap) && cap > 0 && used >= cap) {
       this.output.data({
-        error: "QUOTA_EXCEEDED"
+        error: "QUOTA_EXCEEDED",
+        reason: message,
+        cap,
+        used,
       })
       return;
     }
