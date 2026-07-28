@@ -66,7 +66,10 @@ Five additional system databases: `utils`, `mailserver`, `template`, `trash`, pl
 - **No root** — all scripts check `$UID` and abort if root
 - **Git SSH access** to `git@github.com:drumee/` (private repos)
 - **GPG key** matching maintainer email in `debian/changelog` (in local keyring)
-- **Node.js** (for packages running `npm install` or webpack)
+- **Node.js 22** — the `debian/control` files still say `nodejs (>= 20)`, but the
+  container images and `scripts/install-native.sh` (NodeSource) install **22**, and
+  the WireGuard agent needs it. Treat 22 as the real baseline; the `>= 20` pin is
+  deliberately not bumped (see the Node 22 guard under WireGuard).
 - **Debian build tools**: `dh-make`, `dpkg-buildpackage`, `debhelper`, `build-essential`
 
 ### Commands
@@ -107,9 +110,53 @@ Most scripts take **no** flags — version and email are read from `<package>/de
 | `SEEDS_DIR=/path` | Source for schemas seeds archive (default `$HOME/docker/data/seeds/`) |
 | `REPO_BASE=git@...` | Override GitHub base URL for `bundle()` (local mirror) |
 
-### schemas prerequisites
+### schemas prerequisites — the seed
 
-`schemas/build.sh` requires `var/tmp/drumee/seeds.tgz` (a `mariabackup` snapshot). If absent, it tries `$SEEDS_DIR`. `schemas/seeds/` is gitignored.
+`schemas/build.sh` must ship a `mariabackup` physical snapshot at
+`schemas/var/tmp/drumee/seeds.tgz`. Resolution order (in `schemas/build.sh`):
+
+1. reuse an existing `var/tmp/drumee/seeds.tgz`;
+2. archive `$SEEDS_DIR` (default `$HOME/docker/data/seeds/`) if that dir exists;
+3. **build one offline** via `scripts/build-seed.sh` — no insider snapshot needed.
+
+`schemas/seeds/` is gitignored. See **Offline Seed Builder** below.
+
+## Offline Seed Builder
+
+Removes the last "insider artifact" from the build (`docs/reproducible-builds.md`,
+roadmap 0.6). It produces `seeds.tgz` from source inside one throwaway container:
+a local MariaDB + Redis, base DBs from the `schemas` repo's `templates/factory/`,
+the **entity pool stocked** via `server-team`'s `offline/factory` (an empty pool
+trips the `EMPTY_FACTORY` guard in schemas' postinst), then
+`mariabackup --backup/--prepare` tarred in the exact layout
+`setup-schemas/bin/install` consumes (`tar --one-top-level=seeds` →
+`mariabackup --copy-back`).
+
+```bash
+scripts/build-seed.sh [--out=PATH]          # default out: schemas/var/tmp/drumee/seeds.tgz
+scripts/check-seed.sh [--seed=PATH]         # interactive shell on a restored seed
+scripts/check-seed.sh -- mariadb -N -B -e 'SELECT COUNT(*) FROM yp.entity'
+```
+
+| File | Role |
+|---|---|
+| `scripts/Dockerfile.seed` | Toolbox image (`drumee/seed:$TAG`) — MariaDB + mariabackup + Redis + Node 22 |
+| `scripts/seed-entrypoint.sh` | The seed flow (start DB → init → populate → mariabackup → tar) |
+| `scripts/Dockerfile.seed-check` / `seed-check-entrypoint.sh` | Restore a seed the way the `.deb` does, then hand over a shell |
+
+**Sources are bind-mounted read-only and their existing `node_modules` are
+reused** — so no access to the private `@drumee` registry is needed in-container.
+`SERVER_SRC` (default `../server-team`, must already have `node_modules/@drumee`),
+`SETUP_SCHEMAS_SRC` and `SCHEMAS_SRC` (default to the trees `schemas/build.sh`
+already cloned under `schemas/src/`). Other knobs: `TAG`, `POOL_COUNT` (default
+10), `DRUMEE_DOMAIN_NAME`.
+
+**Design rule worth preserving:** steps 1–2 reuse the container channel's assets
+verbatim (`deploy/docker/schemas-init.sh`, `populate-entrypoint.sh`,
+`container-populate.js`, pulled in via the `helpers` build context) pointed at a
+loopback MariaDB instead of the compose `mariadb` service. Both channels are
+therefore seeded by the same vetted code paths — don't fork these scripts for the
+seed builder.
 
 ## Install Order and Dependencies
 
@@ -150,6 +197,122 @@ Outputs: `.env`, `docker-compose.yml`, `install.conf` (debconf preseed), `Caddyf
 
 `config/drumee.schema.json` is the JSON Schema (draft 2020-12) defining the config contract. `config/drumee.example.yaml` is the annotated template.
 
+## WireGuard Peer Coordination
+
+Lets a Drumee node be reached from outside **without opening a port on the
+user's router**. Shipped by `drumee-infra`, **disabled by default**. This is
+the client half; the server half lives in the separate **`drumee/coord-server`**
+repo (signaling server + UDP reflector + relay). The two repos share a config
+contract (`coordinator_url`, `reflector_host`, `listen_port`) and must stay in
+sync — a change to the message protocol on one side needs the matching change
+on the other.
+
+### Why it exists
+
+Plugging a box into a home LAN gives it a routable (IPv6) address for free, but
+the router's stateful firewall drops unsolicited inbound, so `:443` is
+unreachable. Coordination exploits the one thing that always works — outbound.
+The node holds an outbound WSS connection to the coordination server; when a
+client wants in, both sides are told the other's public `IP:port` and fire
+their WireGuard handshake at the same instant, punching each firewall's return
+pinhole. Result: a direct, end-to-end encrypted P2P tunnel. The server never
+sees traffic content. If the direct path fails (e.g. symmetric NAT), traffic
+falls back through the server's relay.
+
+### Components (in this repo)
+
+| Piece | Path | Role |
+|---|---|---|
+| `bootstrap.sh` | `infra/var/lib/drumee/wireguard/` | First boot: generate keypair, bring up `wg0` on a **fixed** port |
+| `agent.js` | `infra/var/lib/drumee/wireguard/` | Long-lived: probe reflector, register over WSS, program peers on `peer-info` |
+| `drumee-wg-bootstrap.service` | `infra/etc/systemd/system/` | oneshot, ordered **before** the agent |
+| `drumee-wg-agent.service` | `infra/etc/systemd/system/` | `Restart=always`, `CAP_NET_ADMIN` only |
+| `wireguard.json` | generated into `/etc/drumee/conf.d/` by `postinst` | **Not** shipped as a conffile — avoids dpkg upgrade prompts |
+
+The private key is generated on-device and never leaves it; only the public key
+reaches the coordination server.
+
+### Config contract
+
+`config/drumee.yaml` (native channel only — the container channel ignores it):
+
+```yaml
+wireguard:
+  enabled: false
+  coordinator: coord.drumee.tech
+  listen_port: 51820      # MUST stay fixed — the NAT mapping is probed from it
+  reflector_port: 51821
+```
+
+Defined in `config/drumee.schema.json` and validated in `config/render.mjs`
+(`validate`): ports must be 1–65535, `coordinator` required when enabled, and
+**`enabled` is rejected together with `instance.local_mode`** (NAT traversal is
+meaningless on a LAN-only box). `render.mjs debconf` emits four keys:
+`wireguard_enabled`, `wireguard_coordinator`, `wireguard_listen_port`,
+`wireguard_reflector_port`.
+
+### Install flow
+
+The debconf `config` script asks the WireGuard questions **only when
+`local_mode` is false**. `postinst` bridges the answers to `WIREGUARD_*` env
+vars, writes `/etc/drumee/conf.d/wireguard.json`, and enables/starts the two
+units (or leaves them inactive when disabled). To change later:
+`dpkg-reconfigure drumee-infra`.
+
+### Two design decisions worth knowing
+
+- **`wireguard.json` is generated by `postinst`, not shipped** in `infra/etc/`.
+  This diverges from the other `conf.d/*.json` (which are shipped) but avoids
+  dpkg treating it as a conffile and prompting on every upgrade.
+- **Node 22 guard in `postinst`.** The agent uses the global `WebSocket` API
+  (stable from Node 22), but the package only `Depends: nodejs (>= 20)`.
+  `postinst` checks the running major version and, if < 22, leaves coordination
+  disabled with a clear message instead of installing a service that
+  crash-loops at boot. Bumping `Depends` was avoided because it would affect the
+  whole stack.
+
+### Why the listen port must stay fixed
+
+The agent learns its public `IP:port` by probing the coordination server's UDP
+reflector, which echoes back what it observes. That mapping is only usable if
+the probe leaves from the **same** port `wg0` uses. A random port would yield a
+mapping that points nowhere. Keep `listen_port` fixed in config; don't let
+`wg-quick`-style tooling randomize it.
+
+### Testing (lives in `coord-server`, references this repo)
+
+The `coord-server` repo carries the test harness; the netns test points back
+here for `agent.js` via `DRUMEE_AGENT_SRC`:
+
+```bash
+# Layer 1 — signaling logic, runs anywhere (no root, no wireguard module)
+DRUMEE_AGENT_SRC=$PWD/infra/var/lib/drumee/wireguard/agent.js \
+  bash ../coord-server/test/signaling-e2e.sh
+
+# Layer 2 — real WireGuard through simulated NAT (root + wireguard module + Node 22)
+sudo DRUMEE_AGENT_SRC=$PWD/infra/var/lib/drumee/wireguard/agent.js \
+  bash ../coord-server/test/netns-e2e.sh
+```
+
+Layer 1 is stable (35+ consecutive passes). Layer 2 has **not** been run yet —
+it needs a host with the `wireguard` kernel module (a VM, not the dev
+container). It is the test that actually proves reachability-without-port-open
+on real kernel WireGuard.
+
+### Open points / validation TODO
+
+- **Probe socket bind** (`agent.js`): the probe reuses `wg0`'s port via
+  `SO_REUSEADDR`, with an ephemeral-port fallback if the bind fails. The
+  reasoning (kernel-side wg socket) is sound but **unverified on a real Pi** —
+  validate here first.
+- **`WG_RELAY_PUBKEY`** must be set on the coordination server (from
+  `/etc/wireguard/server_public.key`) or relay fallback returns a clear
+  `connect-failed` instead of relaying.
+- **Symmetric NAT** always falls back to relay — known limitation, not a bug.
+- **The client APP is the connect initiator**; the shipped agent is purely
+  passive (it waits for `peer-info`). The initiator protocol reference is
+  `coord-server/test/initiator.js`.
+
 ## Container Channel
 
 ```bash
@@ -179,7 +342,7 @@ The authoritative version file. `product` is the user-facing release-train versi
 product: 1.0.0
 infra: 1.2.11
 schemas: 2.6.99
-server: 2.9.61
+server: 2.9.73
 ...
 ```
 
@@ -282,17 +445,27 @@ drumee restart   # patches are staged on install, applied at restart
 ## Testing
 
 ```bash
-tests/run-all.sh             # full suite (no private source or images needed)
+tests/run-all.sh             # CI suite (no private source or images needed)
 tests/smoke-config.sh        # 10-assertion config rendering smoke test
 tests/smoke-container.sh     # container install smoke test (needs Docker)
 tests/e2e-local.sh           # full-stack E2E against tag:local images
+tests/demo-stack.sh [--keep] # live compose stack from stub images (Docker + internet)
 tests/wizard-install.sh      # interactive installer render-only test
-tests/native/install-verify.sh      # native channel E2E (disposable Debian container)
-tests/native/control-deps.sh        # inter-package dependency ordering check
-tests/native/make-seed.sh           # generate bootstrap seeds.tgz for schemas build
+tests/native/install-verify.sh        # native channel E2E (disposable Debian container)
+tests/native/control-deps.sh         # inter-package dependency ordering check
+tests/native/verify-debconf-bridge.sh # preseed → debconf → DRUMEE_* env, in a real .deb install
+tests/native/make-seed.sh            # generate bootstrap seeds.tgz for schemas build
 ```
 
-`run-all.sh` runs: shell syntax (`bash -n`) → ShellCheck → renderer parse → config smoke → version drift guard → end-to-end render → compose validity (if Docker available) → operator CLI guards → wizard render → native packaging metadata.
+`run-all.sh` runs: shell syntax (`bash -n`, over `git ls-files '*.sh' 'bin/*'`
+excluding `*/src/*`) → ShellCheck → renderer parse → config smoke → version drift
+guard → end-to-end render → compose validity (if Docker available) → operator CLI
+guards → wizard render → `native/control-deps.sh`.
+
+The heavier suites are **not** in `run-all.sh` and must be run by hand:
+`smoke-container.sh`, `e2e-local.sh`, `demo-stack.sh`, `native/install-verify.sh`,
+`native/verify-debconf-bridge.sh`. All of them self-`SKIP` (exit 0) when Docker or
+Node is unavailable — check their output, not just the exit code.
 
 ## CI/CD (GitHub Actions)
 
@@ -364,7 +537,7 @@ Source can be git URL (`#ref`), local dir, or archive. Installs to `$PLUGIN_DIR/
 ```
 config/         drumee.yaml schema + render.mjs (single source of truth)
 deploy/docker/  Dockerfiles, Caddyfile, entrypoints (container channel)
-scripts/        build/publish images, get-drumee, dev-up/down, apt repo
+scripts/        build/publish images, get-drumee, dev-up/down, apt repo, seed builder
 bin/            drumee-ctl + drumee-plugin CLIs
 meta/           drumee metapackage + make-control.sh
 tests/          config + container + native + E2E test suites
@@ -372,9 +545,18 @@ target/         pre-built artifacts for drumee-bootstrap
 docs/           full documentation (quickstart, lifecycle, security, per-package details)
 ```
 
+Generated / untracked working dirs: `out/` and `out-debs/` (renderer + build
+output), `apt-repo/` (local flat repo staged by `publish-apt.sh`), `<pkg>/src/`
+(trees cloned by `bundle()`), `<pkg>/build/`. Never edit under `*/src/` — it is
+overwritten from the upstream repos on the next build.
+
 ## External Documentation
 
 Full docs are in `docs/` and at [drumee.github.io/docs/package-building](https://drumee.github.io/docs/package-building/):
 - Per-package deep dives: infra, schemas, server, ui, static, schemas-patch, builder
 - Quickstart, first-deploy runbook, production ops, lifecycle, security
 - Build pipeline, reproducible builds, release engineering, version management
+- `docs/wireguard.md` (peer coordination), `docs/native-audit.md` (native-channel gap audit)
+
+`ROADMAP.md` tracks what is done vs. outstanding per phase, including known
+upstream bugs and workarounds — read it before assuming a gap is an oversight.
