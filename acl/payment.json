@@ -43,6 +43,11 @@
           "type": "string",
           "required": false,
           "doc": "Organisation display name (TEAM bootstrap)"
+        },
+        "supersede": {
+          "type": "string",
+          "required": false,
+          "doc": "Set when the caller deliberately replaces the plan they already hold. Lifts the already-subscribed refusal; the webhook cancels the replaced subscription once this one is paid."
         }
       }
     },
