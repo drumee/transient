@@ -89,6 +89,17 @@
         "coturn": { "type": "boolean", "default": false }
       }
     },
+    "wireguard": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "WireGuard peer coordination (native channel). Lets the node be reached without opening a router port; ignored by the container channel.",
+      "properties": {
+        "enabled": { "type": "boolean", "default": false },
+        "coordinator": { "type": "string", "default": "coord.drumee.tech", "description": "Coordination server host (signaling only; never sees traffic content)." },
+        "listen_port": { "type": "integer", "minimum": 1, "maximum": 65535, "default": 51820, "description": "Fixed local UDP port. Must not change: the NAT mapping is probed from it." },
+        "reflector_port": { "type": "integer", "minimum": 1, "maximum": 65535, "default": 51821, "description": "UDP port of the endpoint reflector on the coordination server." }
+      }
+    },
     "ports": {
       "type": "object",
       "additionalProperties": false,

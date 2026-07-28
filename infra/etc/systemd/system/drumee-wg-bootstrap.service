@@ -1,0 +1,14 @@
+[Unit]
+Description=Drumee WireGuard bootstrap (keypair + wg0 interface)
+Documentation=man:drumee(1)
+After=network-online.target
+Wants=network-online.target
+Before=drumee-wg-agent.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/var/lib/drumee/wireguard/bootstrap.sh
+
+[Install]
+WantedBy=multi-user.target

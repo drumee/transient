@@ -5,6 +5,15 @@
 
 set -e
 
+# Tear down the WireGuard coordination units before the files disappear.
+case "$1" in
+    remove|deconfigure|upgrade)
+        deb-systemd-invoke stop drumee-wg-agent.service     >/dev/null 2>&1 || true
+        deb-systemd-invoke stop drumee-wg-bootstrap.service >/dev/null 2>&1 || true
+        ip link show wg0 >/dev/null 2>&1 && ip link delete dev wg0 || true
+    ;;
+esac
+
 # summary of how this script can be called:
 #        * <prerm> `remove'
 #        * <old-prerm> `upgrade' <new-version>

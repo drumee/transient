@@ -39,4 +39,19 @@ if [ "$RET" = "true" ]; then
   db_go || true
 fi
 
+# WireGuard peer coordination. Only asked for non-local instances: in local
+# mode the node is reachable on the LAN and NAT traversal is pointless.
+db_get drumee-infra/local_mode || true
+if [ "$RET" != "true" ]; then
+  db_input medium drumee-infra/wireguard_enabled || true
+  db_go || true
+  db_get drumee-infra/wireguard_enabled || true
+  if [ "$RET" = "true" ]; then
+    db_input medium drumee-infra/wireguard_coordinator || true
+    db_input low drumee-infra/wireguard_listen_port || true
+    db_input low drumee-infra/wireguard_reflector_port || true
+    db_go || true
+  fi
+fi
+
 exit 0

@@ -99,3 +99,34 @@ Type: string
 Description: Please enter the location of your SSL certificates
  Certificates must be wildcard and issued to example.com, *.example.com,
  jit.example.com and *.jit.example.com.
+
+Template: drumee-infra/wireguard_enabled
+Type: boolean
+Default: false
+Description: Enable WireGuard peer coordination?
+ Lets this instance be reached from outside without opening any port on the
+ local router. The node keeps an outbound connection to a coordination
+ server, which pairs it with clients so both sides punch their firewall at
+ the same instant. Traffic stays peer-to-peer and end-to-end encrypted; a
+ relay is used only when the direct path cannot be established.
+
+Template: drumee-infra/wireguard_coordinator
+Type: string
+Default: coord.drumee.tech
+Description: Please enter the coordination server host
+ Hostname of the Drumee coordination server. It handles signaling only and
+ never sees the content of your traffic.
+
+Template: drumee-infra/wireguard_listen_port
+Type: string
+Default: 51820
+Description: Please enter the WireGuard listen port
+ UDP port used by this node. It must stay fixed: the agent learns its public
+ NAT mapping by probing from this exact port, and a changing port would make
+ that mapping useless.
+
+Template: drumee-infra/wireguard_reflector_port
+Type: string
+Default: 51821
+Description: Please enter the coordination server reflector port
+ UDP port of the endpoint reflector on the coordination server.

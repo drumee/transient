@@ -58,6 +58,17 @@ optional_services:
   prosody: false
   coturn: false
 
+# Reach this instance from outside without opening a port on the router. The
+# node holds an outbound connection to a coordination server, which pairs it
+# with clients so both sides punch their firewall at the same instant. Traffic
+# is peer-to-peer and end-to-end encrypted; the relay is a fallback only.
+# Native channel only — ignored when rendering docker-compose.
+wireguard:
+  enabled: false
+  coordinator: coord.drumee.tech
+  listen_port: 51820      # must stay fixed: the NAT mapping is learned from it
+  reflector_port: 51821
+
 ports:
   api: 24000             # service.js REST listener (--restPort), proxied at /-/*
   ui: 23000              # index.js page + WebSocket listener (--pushPort)

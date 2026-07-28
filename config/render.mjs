@@ -177,6 +177,18 @@ function validate(cfg) {
     if (cfg[s][k] != null && !Number.isInteger(cfg[s][k]))
       errs.push(`${s}.${k} must be an integer`);
 
+  const wg = cfg.wireguard;
+  for (const k of ['listen_port', 'reflector_port']) {
+    if (!Number.isInteger(wg[k]) || wg[k] < 1 || wg[k] > 65535)
+      errs.push(`wireguard.${k} must be an integer between 1 and 65535`);
+  }
+  if (wg.enabled) {
+    if (!wg.coordinator) errs.push('wireguard.coordinator is required when wireguard.enabled');
+    // Coordination exists to traverse NAT from the public Internet; on a
+    // LAN-only instance it can never pair with anything.
+    if (i.local_mode) errs.push('wireguard.enabled cannot be combined with instance.local_mode');
+  }
+
   if (errs.length) die('config invalid:\n  - ' + errs.join('\n  - '));
 }
 
@@ -274,6 +286,12 @@ function renderDebconf(cfg) {
     dc('exchange_location', 'string', cfg.storage.exchange_location),
     dc('own_ssl', 'boolean', cfg.tls.mode === 'own'),
     dc('own_ssl_path', 'string', cfg.tls.own_cert_path ?? ''),
+    // WireGuard peer coordination (native channel only). Always preseeded, so
+    // an unattended install never stops on the question.
+    dc('wireguard_enabled', 'boolean', cfg.wireguard.enabled),
+    dc('wireguard_coordinator', 'string', cfg.wireguard.coordinator),
+    dc('wireguard_listen_port', 'string', cfg.wireguard.listen_port),
+    dc('wireguard_reflector_port', 'string', cfg.wireguard.reflector_port),
   ];
   // Only preseed an explicit IP; 'auto' leaves detection to the installer.
   if (cfg.network.ip4 && cfg.network.ip4 !== 'auto') {
