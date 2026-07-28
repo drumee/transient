@@ -115,7 +115,13 @@ function probeReflector(sock) {
     }
 
     sock.on('message', onMessage);
-    sock.send(payload, conf.reflector_port, conf.coordinator_host, (e) => {
+    // The reflector is a distinct UDP endpoint from the WS coordinator: its
+    // host is coordinator_host WITHOUT any port suffix (coordinator_url may
+    // carry host:port for the WS side, but that must never reach the UDP
+    // probe as a hostname). reflector_host lets a test override it explicitly.
+    const reflectorHost = conf.reflector_host
+      || conf.coordinator_host.replace(/:\d+$/, '');
+    sock.send(payload, conf.reflector_port, reflectorHost, (e) => {
       if (e) { clearTimeout(timer); reject(e); }
     });
   });
@@ -126,7 +132,11 @@ let ws = null;
 let reconnectDelay = 1000;
 
 async function connect(probeSock) {
-  const url = `wss://${conf.coordinator_host}/`;
+  // Production talks WSS to the coordinator (TLS terminated by nginx). A test
+  // harness can point at a plain ws:// coordinator via conf.coordinator_url,
+  // avoiding certificate setup in throwaway namespaces. Never set in shipped
+  // config, so real deployments keep wss:// unconditionally.
+  const url = conf.coordinator_url || `wss://${conf.coordinator_host}/`;
   log('connecting to', url);
   ws = new WebSocket(url);
 
