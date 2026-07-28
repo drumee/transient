@@ -8,6 +8,7 @@ const { isEmpty, isObject, values, template } = require('lodash');
 const { Attr } = require('@drumee/server-essentials');
 
 const { RuntimeEnv } = require('@drumee/server-core');
+const pageLanguage = require('./page-language');
 
 //########################################
 class BootstrapPage extends RuntimeEnv {
@@ -27,8 +28,11 @@ class BootstrapPage extends RuntimeEnv {
 
     const TPL_BASE = "templates";
     const tpl = resolve(__dirname, TPL_BASE, 'index.tpl');;
-    const lang = this.user.language() || this.input.app_language();
+    // Deterministic page language: stored profile choice or English — see
+    // client/page-language.js (no Accept-Language auto-adoption).
+    const lang = pageLanguage(this);
     let data = await this.getRuntimeEnv();
+    data.language = lang;
     if ((!isEmpty(md.description)) && isObject(md.description)) {
       data.description = md.description[lang] || values(description)[0] || data.description;
     }

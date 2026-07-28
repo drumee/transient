@@ -1010,7 +1010,15 @@ class __private_drumate extends Entity {
    * 
    */
   set_lang() {
-    let lang = this.supportedLanguage(this.input.get('Xlang'));
+    // supportedLanguage(falsy) returns the whole supported-language ARRAY —
+    // storing that into profile.lang corrupts the value every page render
+    // and every outgoing notification reads. Refuse a call without Xlang
+    // instead of persisting garbage.
+    const xlang = this.input.get('Xlang');
+    if (!xlang) {
+      return this.output.data({ status: 'LANG_REQUIRED' });
+    }
+    let lang = this.supportedLanguage(xlang);
     this.yp.call_proc('drumate_set_lang', this.user_id(), lang, this.output.data);
   }
 

@@ -68,6 +68,7 @@ class __private_channel extends Entity {
     this.notify_chat = this.notify_chat.bind(this);
     this.acknowledge = this.acknowledge.bind(this);
     this.react = this.react.bind(this);
+    this.meeting_end = this.meeting_end.bind(this);
     this.typing = this.typing.bind(this);
     this.bookmark_add = this.bookmark_add.bind(this);
     this.bookmark_remove = this.bookmark_remove.bind(this);
@@ -461,6 +462,51 @@ class __private_channel extends Entity {
         );
       }
     }
+  }
+
+  /**
+   * Existence check for folder-scoped chat, deliberately independent from
+   * `mfs_access_node`: that proc swallows SQLEXCEPTION into a silent empty
+   * result and returns rows from `media` UNION `trash_media` alike, so an
+   * empty/denied result cannot be told apart from a genuinely gone node
+   * (red-team F7). A false SCOPE_GONE would kill a legitimate post; a false
+   * negative would let messages pile up in a black hole — so this only
+   * answers "does the node exist", never "may this caller see it" (that
+   * authorization stays with the ACL layer downstream).
+   *
+   * Presence in `media` with status active/hidden = exists. Presence in
+   * `trash_media` = gone — this also covers nested descendants of a trashed
+   * subtree: `mfs_pre_trash_next` copies the whole subtree into
+   * `trash_media` but only flips `status='deleted'` on the trashed root
+   * itself, leaving child rows at `status='active'` in trash_media. So the
+   * signal here is presence-in-trash_media, never its status column.
+   * Absent from both tables = gone (hard-deleted/purged).
+   *
+   * A query failure (deadlock, lock-wait timeout, connection drop) must
+   * propagate as a normal error — never get mapped to SCOPE_GONE, which
+   * would misreport a transient DB hiccup as "the folder is gone".
+   */
+  async _scopeExists(nid) {
+    let media_rows = await this.db.await_query(
+      "SELECT status FROM media WHERE id=?",
+      `${nid}`,
+    );
+    let media_row = toArray(media_rows)[0];
+    if (media_row) {
+      return ["active", "hidden"].includes(`${media_row.status}`);
+    }
+    // No live media row: check trash_media purely to distinguish the two
+    // "gone" shapes for diagnostics — both still resolve to `false` here.
+    // Absent from trash too usually means a hard purge (expiryWorker) or a
+    // client-forged id; worth a log line, unlike the routine trashed case.
+    let trash_rows = await this.db.await_query(
+      "SELECT id FROM trash_media WHERE id=?",
+      `${nid}`,
+    );
+    if (isEmpty(toArray(trash_rows))) {
+      this.warn("channel._scopeExists: nid absent from media and trash_media", nid);
+    }
+    return false;
   }
 
   /**
@@ -1023,6 +1069,23 @@ class __private_channel extends Entity {
       }
     }
 
+    // Existence guard BEFORE minting message_id (~:1070 below) — a folder
+    // that moved/vanished cross-hub must not burn an id nor write anything;
+    // checked ahead of the staging-promote block so a gone scope also skips
+    // the write-permission probe on a destination that no longer exists.
+    const nid = this.input.use(Attr.nid);
+    if (!isEmpty(nid) && !(await this._scopeExists(nid))) {
+      const gone_staged = await this._classify_staged_attachment(
+        attachment,
+        folder_attachment,
+      );
+      await this._purge_staged_copies([
+        ...gone_staged.device,
+        ...gone_staged.workspace,
+      ]);
+      return this.output.data({ status: "SCOPE_GONE", nid });
+    }
+
     let message_id = await this.db.await_proc("message_id");
     let sbox;
     message_id = message_id.id;
@@ -1032,7 +1095,6 @@ class __private_channel extends Entity {
     } else {
       sbox = await this.db.call_proc("mfs_home");
     }
-    const nid = this.input.use(Attr.nid);
     // Folder-scoped posts: device uploads sit in the hub's chat staging
     // until the message is sent. Promote them into the scoped folder first
     // (the original lands in the Files tab), then copy (not move) every
@@ -1400,6 +1462,14 @@ class __private_channel extends Entity {
       `${file_nid}`,
     );
     if (isEmpty(file_node)) {
+      // mfs_access_node swallows SQLEXCEPTION and returns nothing for BOTH
+      // "no such node" and "caller denied" (F7/F4) — an empty result alone
+      // cannot tell gone from denied. Disambiguate with the dedicated
+      // existence check so a moved/purged file reports SCOPE_GONE instead
+      // of the misleading NO_PERMISSION.
+      if (!(await this._scopeExists(file_nid))) {
+        return this.output.data({ status: "SCOPE_GONE", nid: file_nid });
+      }
       return this.output.data({ status: "NO_PERMISSION" });
     }
     // mfs_access_node returns the node's media category as `filetype` and
@@ -1410,14 +1480,22 @@ class __private_channel extends Entity {
     if (["folder", "hub", "root"].includes(cat)) {
       return this.output.data({ status: "INVALID_FILE" });
     }
-    // Reject trashed/deleted nodes (trash_media rows surface as status
-    // 'deleted'; 'orphaned' is a transient pre-purge state).
+    // Trashed/deleted nodes (trash_media rows surface as status 'deleted';
+    // 'orphaned' is a transient pre-purge state) are a gone-scope, not a
+    // malformed request — the file existed, it just moved into trash.
     if (["deleted", "orphaned"].includes(`${file_node.status || ""}`)) {
-      return this.output.data({ status: "INVALID_FILE" });
+      return this.output.data({ status: "SCOPE_GONE", nid: file_nid });
     }
     const folder_nid = `${file_node.parent_id}`;
     if (isEmpty(folder_nid)) {
       return this.output.data({ status: "INVALID_FILE" });
+    }
+    // The file itself can be live while its parent folder was independently
+    // trashed/moved out from under it in the same instant (race with a
+    // cross-hub move) — re-derive existence from parent_id, never trust the
+    // client, per the same invariant as channel.post's folder-scope guard.
+    if (!(await this._scopeExists(folder_nid))) {
+      return this.output.data({ status: "SCOPE_GONE", nid: folder_nid });
     }
 
     attachment = toArray(attachment).map(String);
@@ -1625,7 +1703,12 @@ class __private_channel extends Entity {
         card.nid = folder_nid;
         card.hub_id = hub_id;
         card.message_type = "file.thread";
-        card.file_thread_id = file_thread_id;
+        // Do NOT stamp file_thread_id here. The root card is a folder-level row,
+        // not a thread child: the DB stores file_thread_id NULL, and the client
+        // treats any payload carrying file_thread_id as a thread child and hides
+        // it from folder chat. Stamping it made the live broadcast disagree with
+        // the reloaded row, so recipients only saw the card after a reload. The
+        // thread id already travels in metadata._file_thread_id.
         card.file_nid = `${file_nid}`;
         await RedisStore.sendData(
           this.payload(card, { service: "channel.post" }),
@@ -2063,6 +2146,29 @@ class __private_channel extends Entity {
       recipients
     );
     this.output.data({ message_id, reactions, capped: row && row.capped ? 1 : 0 });
+  }
+
+  /**
+   * Flip a posted "meeting started" system card to its "ended" state IN PLACE:
+   * set metadata.meeting_status='ended' on the start message and re-broadcast
+   * the SAME message (same message_id) so every open chat updates that one card
+   * ("Join meeting" → "Meeting ended") instead of receiving a second card.
+   * Mirrors acknowledge()'s mutate → channel_get → broadcast pattern; the whole
+   * hub is notified (no exclude) so the ending host's own folder chat flips too.
+   */
+  async meeting_end() {
+    const message_id = this.input.need(Attr.message_id);
+    if (!message_id) return this.output.data({ found: 0 });
+    const res = await this.db.await_proc("channel_meeting_end", message_id);
+    const row = Array.isArray(res) ? res[0] : res;
+    if (!row || !row.found) return this.output.data({ found: 0 });
+    let message = await this.db.await_proc("channel_get", message_id);
+    message.key_id = this.hub.get(Attr.id);
+    let recipients = await this.yp.await_proc("entity_sockets", {
+      hub_id: message.key_id,
+    });
+    await RedisStore.sendData(this.payload(message), recipients);
+    this.output.data(message);
   }
 
   /**
