@@ -200,7 +200,9 @@ Outputs: `.env`, `docker-compose.yml`, `install.conf` (debconf preseed), `Caddyf
 ## WireGuard Peer Coordination
 
 Lets a Drumee node be reached from outside **without opening a port on the
-user's router**. Shipped by `drumee-infra`, **disabled by default**. This is
+user's router**. **Disabled by default**, and available on **both channels** —
+systemd units from `drumee-infra` natively, a `wireguard` compose service in
+containers. This is
 the client half; the server half lives in the separate **`drumee/coord-server`**
 repo (signaling server + UDP reflector + relay). The two repos share a config
 contract (`coordinator_url`, `reflector_host`, `listen_port`) and must stay in
@@ -228,13 +230,16 @@ falls back through the server's relay.
 | `drumee-wg-bootstrap.service` | `infra/etc/systemd/system/` | oneshot, ordered **before** the agent |
 | `drumee-wg-agent.service` | `infra/etc/systemd/system/` | `Restart=always`, `CAP_NET_ADMIN` only |
 | `wireguard.json` | generated into `/etc/drumee/conf.d/` by `postinst` | **Not** shipped as a conffile — avoids dpkg upgrade prompts |
+| `Dockerfile.wireguard` + `wireguard-entrypoint.sh` | `deploy/docker/` | Container channel: **copies** `bootstrap.sh`/`agent.js` from the infra tree (build context `wg=`), renders `wireguard.json` from `WIREGUARD_*` env |
 
 The private key is generated on-device and never leaves it; only the public key
-reaches the coordination server.
+reaches the coordination server. The two channels must run byte-identical
+coordination logic (shared protocol with `coord-server`) — hence the copy from
+`infra/var/lib/drumee/wireguard/` instead of a second implementation.
 
 ### Config contract
 
-`config/drumee.yaml` (native channel only — the container channel ignores it):
+`config/drumee.yaml` — one block, both channels:
 
 ```yaml
 wireguard:
@@ -249,15 +254,40 @@ Defined in `config/drumee.schema.json` and validated in `config/render.mjs`
 **`enabled` is rejected together with `instance.local_mode`** (NAT traversal is
 meaningless on a LAN-only box). `render.mjs debconf` emits four keys:
 `wireguard_enabled`, `wireguard_coordinator`, `wireguard_listen_port`,
-`wireguard_reflector_port`.
+`wireguard_reflector_port`; `render.mjs env` emits the matching `WIREGUARD_*`
+and adds `wireguard` to `COMPOSE_PROFILES` when enabled.
 
-### Install flow
+### Install flow (native)
 
 The debconf `config` script asks the WireGuard questions **only when
 `local_mode` is false**. `postinst` bridges the answers to `WIREGUARD_*` env
 vars, writes `/etc/drumee/conf.d/wireguard.json`, and enables/starts the two
 units (or leaves them inactive when disabled). To change later:
 `dpkg-reconfigure drumee-infra`.
+
+`scripts/install-native.sh` asks the question itself (from `/dev/tty`) and
+preseeds those four keys before `apt install`. It must: on the documented
+`curl … | sudo bash` path stdin is the pipe, so debconf never gets a terminal
+and would silently take defaults. The script then hands `/dev/tty` to apt so the
+remaining questions work too. `WIREGUARD_ENABLED` / `WIREGUARD_COORDINATOR` /
+`…_LISTEN_PORT` / `…_REFLECTOR_PORT` skip the prompt.
+
+### Install flow (container)
+
+`scripts/get-drumee.sh` offers it as a **4th** answer to "How will people reach
+this server?" — *Behind a home router*. That mode writes the `wireguard:` block,
+keeps `local_mode: false`, and uses `tls.mode: self-signed` (with no inbound
+port, ACME HTTP-01 cannot be answered). Opt-in on the domain/IP modes with
+`WIREGUARD_ENABLED=true`; forced off in local mode. If the agent image is
+neither pullable nor built, the wizard disables coordination with a message
+rather than letting `compose up` fail on a missing image.
+
+The rendered service uses `network_mode: host` + `cap_add: [NET_ADMIN]` — `wg0`
+must live in the host namespace so the tunnel reaches the ports the proxy
+publishes there and the probed NAT mapping is the host's own. That also excludes
+the `drumee` network (mutually exclusive with host mode); the agent only talks to
+the coordinator. The keypair persists on the `drumee_cred` volume. **The host
+must have the `wireguard` kernel module** — a container cannot supply it.
 
 ### Two design decisions worth knowing
 
@@ -301,10 +331,18 @@ on real kernel WireGuard.
 
 ### Open points / validation TODO
 
-- **Probe socket bind** (`agent.js`): the probe reuses `wg0`'s port via
-  `SO_REUSEADDR`, with an ephemeral-port fallback if the bind fails. The
-  reasoning (kernel-side wg socket) is sound but **unverified on a real Pi** —
-  validate here first.
+- **Probe socket bind** (`agent.js`) — **now measured, and it does NOT work.**
+  The probe tries to reuse `wg0`'s port via `SO_REUSEADDR` and falls back to an
+  ephemeral port when the bind fails. On real kernel WireGuard the bind *does*
+  fail: running the new container image (`--cap-add NET_ADMIN`, module present)
+  logs `probe socket bind failed, falling back to ephemeral port: bind
+  EADDRINUSE 0.0.0.0:51820`. So `SO_REUSEADDR` does not let userspace share the
+  port with the kernel-side wg socket, and the mapping the reflector observes
+  belongs to the ephemeral port — it points nowhere for the real tunnel. Hole
+  punching therefore cannot work as written; every session would fall back to
+  the relay. Fixing it means changing how the endpoint is learned (e.g. have the
+  reflector observe the wg handshake itself), which is a **protocol change shared
+  with `coord-server`** — do not patch one side alone.
 - **`WG_RELAY_PUBKEY`** must be set on the coordination server (from
   `/etc/wireguard/server_public.key`) or relay fallback returns a clear
   `connect-failed` instead of relaying.

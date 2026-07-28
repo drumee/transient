@@ -219,6 +219,9 @@ function envValue(v) {
 function renderEnv(cfg) {
   const profiles = Object.entries(cfg.optional_services)
     .filter(([, on]) => on).map(([name]) => name);
+  // WireGuard is not in optional_services (it is its own config section, shared
+  // with the native channel) but it gates a compose service the same way.
+  if (cfg.wireguard.enabled) profiles.push('wireguard');
   // Variable names intentionally match what setup-infra's wizard already writes,
   // so existing scripts consume this file unchanged.
   const pairs = {
@@ -253,6 +256,12 @@ function renderEnv(cfg) {
     SMTP_PASSWORD: cfg.email.password ?? '',
     API_PORT: cfg.ports.api,
     UI_PORT: cfg.ports.ui,
+    // Consumed by the wireguard service's entrypoint, which renders the same
+    // conf.d/wireguard.json the native postinst writes.
+    WIREGUARD_ENABLED: cfg.wireguard.enabled,
+    WIREGUARD_COORDINATOR: cfg.wireguard.coordinator ?? '',
+    WIREGUARD_LISTEN_PORT: cfg.wireguard.listen_port,
+    WIREGUARD_REFLECTOR_PORT: cfg.wireguard.reflector_port,
     IMAGE_REGISTRY: cfg.images.registry,
     SERVER_TAG: cfg.versions.server ?? cfg.versions.product,
     UI_TAG: cfg.versions.ui ?? cfg.versions.product,
@@ -286,8 +295,9 @@ function renderDebconf(cfg) {
     dc('exchange_location', 'string', cfg.storage.exchange_location),
     dc('own_ssl', 'boolean', cfg.tls.mode === 'own'),
     dc('own_ssl_path', 'string', cfg.tls.own_cert_path ?? ''),
-    // WireGuard peer coordination (native channel only). Always preseeded, so
-    // an unattended install never stops on the question.
+    // WireGuard peer coordination. Always preseeded, so an unattended install
+    // never stops on the question. (The container channel reads the same values
+    // from .env — see WIREGUARD_* in renderEnv.)
     dc('wireguard_enabled', 'boolean', cfg.wireguard.enabled),
     dc('wireguard_coordinator', 'string', cfg.wireguard.coordinator),
     dc('wireguard_listen_port', 'string', cfg.wireguard.listen_port),
@@ -533,6 +543,28 @@ services:
       - ui_assets:/srv/ui:ro
       # Static assets (splash/fonts/logo); empty unless the 'static' profile ran.
       - static_assets:/srv/static:ro
+
+  # WireGuard peer coordination — lets this instance be reached without opening a
+  # port on the router. Gated by the 'wireguard' profile, which .env enables from
+  # wireguard.enabled. Runs the SAME bootstrap.sh + agent.js the native package
+  # ships (see deploy/docker/Dockerfile.wireguard).
+  wireguard:
+    profiles: ["wireguard"]
+    image: \${IMAGE_REGISTRY}/wireguard:\${SERVER_TAG}
+    restart: unless-stopped
+    # wg0 has to be created in the HOST network namespace: the tunnel must reach
+    # the ports the proxy publishes there, and the NAT mapping the agent probes
+    # must be the host's own. network_mode and 'networks:' are mutually exclusive,
+    # hence no drumee network here — the agent talks only to the coordinator.
+    network_mode: host
+    cap_add: [NET_ADMIN]
+    # Requires the wireguard kernel module on the HOST: sudo modprobe wireguard.
+    # Deliberately no depends_on: coordination is how the box becomes reachable
+    # at all, so it should come up even when the app stack is still starting.
+    env_file: [.env]
+    volumes:
+      # Persists the node keypair (generated on first start, never leaves here).
+      - drumee_cred:/etc/drumee/credential
 
   # Run-once: render the canonical optional-service configs (Jitsi/Prosody/Coturn,
   # Postfix/OpenDKIM, BIND) with setup-infra's own engine into the infra_* volumes

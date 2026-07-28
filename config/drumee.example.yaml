@@ -62,7 +62,9 @@ optional_services:
 # node holds an outbound connection to a coordination server, which pairs it
 # with clients so both sides punch their firewall at the same instant. Traffic
 # is peer-to-peer and end-to-end encrypted; the relay is a fallback only.
-# Native channel only — ignored when rendering docker-compose.
+# Both channels: native installs the systemd units, containers get a 'wireguard'
+# compose service (host netns + NET_ADMIN). Either way the host needs the
+# wireguard kernel module, and this cannot be combined with instance.local_mode.
 wireguard:
   enabled: false
   coordinator: coord.drumee.tech

@@ -12,7 +12,10 @@
 #
 # Non-interactive / automation (skip the questions by presetting these):
 #   DRUMEE_DOMAIN=         # domain name, or blank for IP/local
-#   ACCESS_MODE=           # domain | ip | local   (how to reach it)
+#   ACCESS_MODE=           # domain | ip | local | wireguard  (how to reach it)
+#   WIREGUARD_ENABLED=     # true = also coordinate a WireGuard tunnel (any mode
+#                          #   except local); implied by ACCESS_MODE=wireguard
+#   WIREGUARD_COORDINATOR= # coordination server host (default coord.drumee.tech)
 #   ADMIN_EMAIL=           # administrator login + notifications
 #   ADMIN_PASSWORD=        # blank = auto-generate and print
 #   INSTANCE_NAME=         # human label for the instance
@@ -167,9 +170,12 @@ else
     printf "    ${c_cyan}1${c_off}  A domain you own             ${c_dim}real HTTPS — best for production${c_off}\n"
     printf "    ${c_cyan}2${c_off}  This server's IP, no domain  ${c_dim}auto HTTPS via sslip.io${c_off}${PUBIP:+ ${c_dim}·${c_off} ${c_cyan}$PUBIP${c_off}}\n"
     printf "    ${c_cyan}3${c_off}  Local / testing only         ${c_dim}http://localhost, no HTTPS${c_off}\n"
+    printf "    ${c_cyan}4${c_off}  Behind a home router         ${c_dim}no port to open — WireGuard coordination${c_off}\n"
     case "$default_mode" in ip) def="2";; *) def="3";; esac
-    ask MENU "Choose 1-3" "$def"
-    case "$MENU" in 1) ACCESS_MODE=domain;; 2) ACCESS_MODE=ip;; *) ACCESS_MODE=local;; esac
+    ask MENU "Choose 1-4" "$def"
+    case "$MENU" in
+      1) ACCESS_MODE=domain;; 2) ACCESS_MODE=ip;; 4) ACCESS_MODE=wireguard;; *) ACCESS_MODE=local;;
+    esac
   fi
 
   case "$ACCESS_MODE" in
@@ -182,9 +188,23 @@ else
       [ -n "${PUBIP:-}" ] || die "Need a public IP for the no-domain path; re-run and pick a domain or local."
       DRUMEE_DOMAIN="${PUBIP//./-}.sslip.io"; TLS_MODE=acme; LOCAL_MODE=false
       warn "Using $DRUMEE_DOMAIN — ports 80 and 443 must be open to the internet for HTTPS." ;;
+    wireguard)
+      # No inbound port, so ACME's HTTP-01 challenge cannot be answered: TLS is a
+      # local CA cert, and clients reach the box through the tunnel rather than DNS.
+      ask DRUMEE_DOMAIN "Name for this instance (used in links, reached via the tunnel)" "drumee.local"
+      TLS_MODE=self-signed; LOCAL_MODE=false; WIREGUARD_ENABLED=true
+      say "Nothing to forward on the router — the node dials out to the coordination server." ;;
     *)
       DRUMEE_DOMAIN="localhost"; TLS_MODE=self-signed; LOCAL_MODE=true ;;
   esac
+
+  # Coordination is meaningless on a LAN-only instance (there is no NAT to
+  # traverse), and render.mjs rejects the combination outright.
+  [ "$LOCAL_MODE" = "true" ] && WIREGUARD_ENABLED=false
+  WIREGUARD_ENABLED="${WIREGUARD_ENABLED:-false}"
+  if [ "$WIREGUARD_ENABLED" = "true" ]; then
+    ask WIREGUARD_COORDINATOR "Coordination server host" "coord.drumee.tech"
+  fi
 
   ask ADMIN_EMAIL "Administrator email (your login)" "admin@${DRUMEE_DOMAIN}"
   while ! valid_email "$ADMIN_EMAIL"; do
@@ -222,6 +242,13 @@ else
     echo "  host: mariadb"
     echo "redis:"
     echo "  host: redis"
+    # Must stay ABOVE images:/versions: — use_local_images() rewrites the file
+    # from ^images: to EOF when it falls back to locally-built images.
+    if [ "$WIREGUARD_ENABLED" = "true" ]; then
+      echo "wireguard:"
+      echo "  enabled: true"
+      echo "  coordinator: ${WIREGUARD_COORDINATOR:-coord.drumee.tech}"
+    fi
     echo "images:"
     echo "  registry: ${REGISTRY}"
     echo "$ver_block"
@@ -235,6 +262,9 @@ DRUMEE_DOMAIN="${DRUMEE_DOMAIN:-$(yaml_get domain)}"
 ADMIN_EMAIL="${ADMIN_EMAIL:-$(yaml_get admin_email)}"
 REGISTRY="${REGISTRY:-$(yaml_get registry)}"
 TAG="${TAG:-$(yaml_get server)}"   # versions.server doubles as the shared image tag
+# 'enabled' only ever appears under wireguard: in the file we write.
+WIREGUARD_ENABLED="${WIREGUARD_ENABLED:-$(yaml_get enabled)}"
+WIREGUARD_ENABLED="${WIREGUARD_ENABLED:-false}"
 
 # --- image acquisition: ensure the images exist (pull) or can be built ---------
 have_sources() { [ -d "$HOME/server-team" ] && [ -d "$HOME/ui-team" ] && [ -d "$HOME/schemas" ]; }
@@ -266,9 +296,26 @@ ensure_images() {
   if $DOCKER pull "${REGISTRY}/server-pod:${TAG}" >/dev/null 2>&1; then ok "Images available from ${REGISTRY}"
   else warn "Could not pull ${REGISTRY}/server-pod:${TAG} (registry public? logged in?)."; build_or_die; fi
 }
+# Coordination ships as its own image. If it isn't there, keep the rest of the
+# stack working: turn coordination off with a clear message instead of letting
+# `compose up` abort on an unresolvable image.
+ensure_wireguard_image() {
+  [ "$WIREGUARD_ENABLED" = "true" ] || return 0
+  local ref="${REGISTRY}/wireguard:${TAG}"
+  if [ "$TAG" = "local" ]; then
+    $DOCKER image inspect drumee/wireguard:local >/dev/null 2>&1 \
+      && { ok "WireGuard agent image ready (:local)"; return 0; }
+  elif $DOCKER pull "$ref" >/dev/null 2>&1; then
+    ok "WireGuard agent image ready (${ref})"; return 0
+  fi
+  warn "WireGuard agent image unavailable (${ref}) — coordination left off."
+  say "Build it with scripts/build-images-local.sh, then re-run with RECONFIGURE=1."
+  sed -i 's/^  enabled: true$/  enabled: false/' drumee.yaml 2>/dev/null || true
+  WIREGUARD_ENABLED=false
+}
 # Skip in render-only mode (don't touch Docker); otherwise run before render so a
 # build-fallback's :local switch is reflected in the rendered compose.
-[ "${DRUMEE_NO_START:-0}" = "1" ] || ensure_images
+[ "${DRUMEE_NO_START:-0}" = "1" ] || { ensure_images; ensure_wireguard_image; }
 
 # --------------------------------------------------------------- 3. render + run
 step "Rendering deployment files"
@@ -370,6 +417,10 @@ else
 fi
 hr
 kv "Open" "${c_cyan}${URL}${c_off}"
+if [ "$WIREGUARD_ENABLED" = "true" ]; then
+  kv "Tunnel" "WireGuard via ${WIREGUARD_COORDINATOR:-coord.drumee.tech} ${c_dim}· no router port needed${c_off}"
+  say "needs the host's wireguard module: sudo modprobe wireguard  ·  logs: $DC logs wireguard"
+fi
 kv "Login" "$ADMIN_EMAIL"
 if [ -n "${ADMIN_PASSWORD:-}" ]; then
   kv "Password" "${c_dim}(the one you set)${c_off}"

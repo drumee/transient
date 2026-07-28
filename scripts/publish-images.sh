@@ -65,6 +65,11 @@ docker buildx build -f "$root/deploy/docker/Dockerfile.populate" \
   --build-arg "SERVER_IMAGE=$REGISTRY/server-pod:$TAG" \
   $(tags schemas-populate) "${out_flag[@]}" "$root/deploy/docker"
 
+say "wireguard (coordination agent; bootstrap.sh + agent.js from infra/)"
+docker buildx build -f "$root/deploy/docker/Dockerfile.wireguard" \
+  --build-context "wg=$root/infra/var/lib/drumee/wireguard" \
+  $(tags wireguard) "${out_flag[@]}" "$root/deploy/docker"
+
 if [ -d "$SETUP_INFRA_SRC" ]; then
   say "infra-init (FROM published server-pod)"
   docker buildx build -f "$root/deploy/docker/Dockerfile.infra-init" \
