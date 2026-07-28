@@ -159,7 +159,17 @@ class __private_payment extends Entity {
     const pending_cancel = status === 'canceled' && ~~(current && current.period_end) > now;
     const live = /^(active|trialing|past_due)$/.test(status) || pending_cancel;
     const holder = current && current.entity_type === 'org' ? 'org' : 'user';
-    if (current && current.subscription_id && live && holder === entity_type) {
+    // `supersede` is the caller saying, explicitly and after a warning, that
+    // they want to replace the plan they hold rather than be told they already
+    // have one. The refusals below exist to stop an ACCIDENTAL second
+    // subscription; they must not stand in the way of a deliberate change.
+    //
+    // This is safe only because the webhook finishes the job: on
+    // checkout.session.completed it cancels the entity's previous subscription
+    // as soon as the new one is paid, so the two never bill in parallel. Do not
+    // relax this guard without that half in place.
+    const supersede = !!this.input.use('supersede', '');
+    if (current && current.subscription_id && live && holder === entity_type && !supersede) {
       const same_plan = String(current.plan || '') === String(this.input.use('plan', 'team'));
       let refusal;
       if (pending_cancel) refusal = 'PENDING_CANCEL_RESUME_INSTEAD';
@@ -258,6 +268,10 @@ class __private_payment extends Entity {
     // through _cancelSupersededPersonalSubscription instead.
     if (entity_type === 'user' && this.input.use('supersede', '') === 'org') {
       metadata.supersede = 'org';
+    } else if (supersede) {
+      // Same-entity replacement (Team <-> Business). The webhook reads this to
+      // cancel the subscription being replaced once this one is paid.
+      metadata.supersede = '1';
     }
     if (org_bootstrap) {
       metadata.org_ident = org_bootstrap.ident;

@@ -464,6 +464,35 @@ class __public_stripe_webhook extends Entity {
                 period_end = period_end || s.current_period_end || (items[0] && items[0].current_period_end) || 0;
               } catch (e3) { items = []; }
             }
+            // SUPERSEDE, same entity. A subscriber who deliberately changed
+            // plan through checkout (payment.checkout with supersede=1) now has
+            // a SECOND Stripe subscription on the same customer: the mirror row
+            // is keyed UNIQUE(entity_id), so the upsert below would point at
+            // the new one while the old kept charging, unseen. Cancel it here,
+            // once the new subscription is confirmed paid.
+            //
+            // The pre-existing supersede helpers only cover a change of entity
+            // kind (personal <-> org); this covers the same entity moving
+            // between plans, which is the common case (Team <-> Business).
+            //
+            // Immediate cancel, not at period end: the user was warned they
+            // lose the current plan, and leaving it running to its date is the
+            // double charge this exists to prevent.
+            if (subscription_id && md.supersede) {
+              try {
+                const prev = await this.yp.await_proc('payment_get_subscription', entity_id);
+                const prevId = prev && prev.subscription_id;
+                if (prevId && prevId !== subscription_id) {
+                  await stripe.subscriptions.cancel(prevId);
+                  this.debug(`superseded subscription ${prevId} cancelled for ${entity_id}`);
+                }
+              } catch (e6) {
+                // Never fail the webhook over this — the new subscription is
+                // paid and entitlement must still be applied. A leftover is
+                // visible in Stripe and recoverable; a dropped event is not.
+                this.error(`superseded cancel failed for ${entity_id}: ${e6.message}`);
+              }
+            }
             const { seats, price, extra_disk, extra_seats } = await this._itemsEntitlement(items);
             // The price on the subscription outranks the metadata: see
             // _planFromItems. Without this a Billing Portal price switch kept
