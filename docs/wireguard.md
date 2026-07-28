@@ -114,6 +114,28 @@ reflector, which echoes back what it observes. That mapping is only useful if
 the probe leaves from the **same** port WireGuard will use. A random port would
 produce a mapping that points nowhere.
 
+### How the probe gets that port
+
+It cannot simply bind it. Kernel WireGuard's socket is created without
+`SO_REUSEPORT`, so a userspace bind to the same port fails with `EADDRINUSE` no
+matter what options are set — measured on real kernel WireGuard, and the reason
+an earlier `SO_REUSEADDR` attempt silently degraded to an ephemeral port and
+produced mappings that pointed nowhere.
+
+So `agent.js` **borrows** the port: `wg set wg0 listen-port 0` (wg keeps running
+on a random port) → bind → probe → hand the fixed port straight back, retrying
+if the handover fails, because losing it makes the node unreachable. Borrowing is
+only safe while nothing is happening on that port, which the agent enforces:
+
+| Guard | Behaviour |
+|---|---|
+| `tunnelBusy()` | Skip the probe if any peer handshook in the last 180 s (wg's keepalives already refresh the mapping) or a rendezvous was programmed in the last 30 s |
+| `probeInFlight` | One borrow at a time — a reconnect re-triggers the probe, and two overlapping cycles fight over the port |
+| `peer-info` handler | Awaits an in-flight probe before programming a peer, so the handshake never leaves from the temporary port |
+
+`tests/wireguard/probe-port.sh` covers all three against real kernel WireGuard,
+inside a container's own network namespace (the host's networking is untouched).
+
 ## Requirements and known limits
 
 - **The `wireguard` kernel module on the host.** A container cannot provide it:
@@ -123,13 +145,6 @@ produce a mapping that points nowhere.
   only requires `nodejs >= 20` for the rest of the stack, so postinst checks
   explicitly and leaves coordination disabled with a clear message rather than
   installing a service that crash-loops at boot.
-- **The probe cannot currently share `wg0`'s port** — measured, not theoretical.
-  `agent.js` binds the probe socket to `listen_port` with `SO_REUSEADDR`; against
-  real kernel WireGuard that bind fails with `EADDRINUSE` and the agent falls back
-  to an ephemeral port, so the mapping the reflector reports is not the one the
-  tunnel uses. Until the endpoint is learned differently (e.g. reflecting the wg
-  handshake itself — a protocol change shared with `coord-server`), expect the
-  relay path rather than a direct tunnel.
 - **Symmetric NAT** defeats the reflector: the mapping differs per destination,
   so the observed one won't work for the peer. These sessions fall back to the
   relay. This is a known limit, not a bug.

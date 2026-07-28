@@ -324,25 +324,56 @@ sudo DRUMEE_AGENT_SRC=$PWD/infra/var/lib/drumee/wireguard/agent.js \
   bash ../coord-server/test/netns-e2e.sh
 ```
 
-Layer 1 is stable (35+ consecutive passes). Layer 2 has **not** been run yet —
-it needs a host with the `wireguard` kernel module (a VM, not the dev
-container). It is the test that actually proves reachability-without-port-open
-on real kernel WireGuard.
+Layer 1 is stable (35+ consecutive passes) but uses `wg`/`ip` **shims**, so it
+cannot see anything about real kernel behaviour. Layer 2 (`netns-e2e.sh`, real
+WireGuard through simulated NAT) still has **not** been run.
+
+In between, in this repo:
+
+```bash
+tests/wireguard/probe-port.sh [once|cycle|race]   # real kernel wg, ~70s
+```
+
+It runs the shipped agent against real kernel WireGuard inside a container's own
+netns (Docker + the host's `wireguard` module; self-SKIPs otherwise, and never
+touches host networking). The dev host *does* have the module — that is how the
+port-borrowing bug below was found. Not in `run-all.sh`: needs Docker and a
+kernel module.
+
+### The endpoint probe borrows wg0's port (don't "simplify" this)
+
+The reflector records the mapping of **whatever source port it observes**
+(`coord-server/src/udpReflector.js` → `onObservedEndpoint`), so the probe must
+leave from the port `wg0` uses or the coordinator hands peers an endpoint that
+points nowhere.
+
+A userspace socket **cannot** share that port with kernel WireGuard: the wg
+socket is created kernel-side without `SO_REUSEPORT`, so the bind fails with
+`EADDRINUSE` whatever options are set. This was measured, and the original
+`SO_REUSEADDR`-plus-ephemeral-fallback silently produced useless mappings —
+every session would have fallen back to relay.
+
+`agent.js` therefore **borrows** the port: `wg set wg0 listen-port 0` → bind →
+probe → hand the fixed port straight back (with retries; losing it makes the node
+unreachable). Three invariants keep that safe, each with a regression scenario in
+`tests/wireguard/`:
+
+- **Never while busy.** `tunnelBusy()` skips the probe when a peer handshook in
+  the last 180 s (wg's own keepalives then refresh the mapping) or a rendezvous
+  was programmed in the last 30 s.
+- **Never concurrently.** `probeInFlight` serializes cycles — a reconnect
+  re-triggers the probe, and two overlapping borrows fight over the port.
+- **`peer-info` waits for the port.** Programming a peer mid-probe would fire the
+  handshake from the temporary ephemeral port, so the handler awaits
+  `probeInFlight` first.
+
+Also note `closeSocket()`: `dgram.close()` only *starts* teardown, and handing
+the port back before `'close'` fires races the kernel (`wg set listen-port` then
+fails with EADDRINUSE). Both this and the concurrency bug were caught by the
+tests, not by reading the code.
 
 ### Open points / validation TODO
 
-- **Probe socket bind** (`agent.js`) — **now measured, and it does NOT work.**
-  The probe tries to reuse `wg0`'s port via `SO_REUSEADDR` and falls back to an
-  ephemeral port when the bind fails. On real kernel WireGuard the bind *does*
-  fail: running the new container image (`--cap-add NET_ADMIN`, module present)
-  logs `probe socket bind failed, falling back to ephemeral port: bind
-  EADDRINUSE 0.0.0.0:51820`. So `SO_REUSEADDR` does not let userspace share the
-  port with the kernel-side wg socket, and the mapping the reflector observes
-  belongs to the ephemeral port — it points nowhere for the real tunnel. Hole
-  punching therefore cannot work as written; every session would fall back to
-  the relay. Fixing it means changing how the endpoint is learned (e.g. have the
-  reflector observe the wg handshake itself), which is a **protocol change shared
-  with `coord-server`** — do not patch one side alone.
 - **`WG_RELAY_PUBKEY`** must be set on the coordination server (from
   `/etc/wireguard/server_public.key`) or relay fallback returns a clear
   `connect-failed` instead of relaying.
@@ -493,6 +524,7 @@ tests/native/install-verify.sh        # native channel E2E (disposable Debian co
 tests/native/control-deps.sh         # inter-package dependency ordering check
 tests/native/verify-debconf-bridge.sh # preseed → debconf → DRUMEE_* env, in a real .deb install
 tests/native/make-seed.sh            # generate bootstrap seeds.tgz for schemas build
+tests/wireguard/probe-port.sh        # endpoint probe against real kernel WireGuard
 ```
 
 `run-all.sh` runs: shell syntax (`bash -n`, over `git ls-files '*.sh' 'bin/*'`
@@ -502,8 +534,9 @@ guards → wizard render → `native/control-deps.sh`.
 
 The heavier suites are **not** in `run-all.sh` and must be run by hand:
 `smoke-container.sh`, `e2e-local.sh`, `demo-stack.sh`, `native/install-verify.sh`,
-`native/verify-debconf-bridge.sh`. All of them self-`SKIP` (exit 0) when Docker or
-Node is unavailable — check their output, not just the exit code.
+`native/verify-debconf-bridge.sh`, `wireguard/probe-port.sh`. All of them
+self-`SKIP` (exit 0) when Docker or Node is unavailable — check their output, not
+just the exit code.
 
 ## CI/CD (GitHub Actions)
 
