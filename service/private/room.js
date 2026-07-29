@@ -121,9 +121,11 @@ class __private_room extends __public_room {
     if (title.length > 100) {
       title = title.slice(0, 100);
     }
-    let message = this.input.use(Attr.message) || this.user.locale_message(
-      '_x_invite_you_meeting'
-    ).format(name);
+    // Agenda/description is whatever the organizer typed — nothing else. It
+    // used to default to the '_x_invite_you_meeting' boilerplate, which then
+    // showed up prefilled in the scheduler's Description field and could never
+    // be cleared (an empty message just re-substituted the boilerplate).
+    let message = this.input.use(Attr.message) || '';
     // Canonical meeting time = UNIX-epoch seconds (stime/etime), the source of
     // truth used for calendar range queries (see room_list_scheduled). `date`
     // stays as a human display string for back-compat with player/schedule.
@@ -197,8 +199,13 @@ class __private_room extends __public_room {
 
     // Recurrence is flag-agnostic: update it whenever the client sends `recur`
     // (an object to set, or null to clear); preserve otherwise.
-    let _recur = this.input.use('recur', undefined);
-    if (_recur !== undefined) recur = _recur;
+    // `input.use(key, def)` collapses null INTO the default, so `recur: null` —
+    // what the scheduler sends when Repeat is switched back to None — read as
+    // "not sent" and the old rule was preserved: a series set by mistake kept
+    // repeating forever and could not be cleared from the UI. Read the raw value
+    // so an explicit null clears and a missing key still preserves.
+    const _recur = this.input.get('recur');
+    if (_recur !== undefined) recur = _recur || null;
 
     if (flag == 'title' || flag == 'all') {
       let headline = this.user.locale_message('_meeting_scheduled_by_x').format(name);
@@ -210,9 +217,9 @@ class __private_room extends __public_room {
     }
 
     if (flag == 'agenda' || flag == 'all') {
-      message = this.input.use(Attr.message) || this.user.locale_message(
-        '_x_invite_you_meeting'
-      ).format(name);
+      // Same as book(): no boilerplate fallback, or clearing the agenda would
+      // silently restore it on every save.
+      message = this.input.use(Attr.message) || '';
     }
     // Attendees are WORKSPACE MEMBERS, keyed by uid (no email/DMZ invite). We
     // store { uid, name } and notify only the newly-added members in-app.
