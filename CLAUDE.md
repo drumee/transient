@@ -448,12 +448,12 @@ Two-space indent before bullets and single-space before `--` are required by `dp
 
 ```bash
 scripts/publish-apt.sh --debs=DIR --out=REPO_DIR [--key=EMAIL_OR_KEYID]
-scripts/deploy-apt-repo.sh --host=USER@HOST [--repo-dir=DIR] [--domain=DOMAIN]
+scripts/deploy-apt-repo.sh [--host=USER@HOST] [--repo-dir=DIR] [--domain=DOMAIN]
 ```
 
 `publish-apt.sh` generates `Packages`, `Packages.gz`, `Release`, `InRelease`, `Release.gpg`, and `drumee-archive-keyring.asc` into a flat directory (no `dists/pool` tree). Requires `apt-utils` (for `apt-ftparchive`) and `gpg`.
 
-`deploy-apt-repo.sh` rsyncs that directory to the VPS document root (default `/var/www/apt.drumee.net`), installs an nginx vhost for the domain (default `apt.drumee.net`), and reloads nginx. TLS is set up separately with certbot; `APT_LOCAL_DIR` selects the local repo dir (default `apt-repo`).
+`deploy-apt-repo.sh` rsyncs that directory to the VPS document root (default `/var/www/apt.drumee.net`), installs an nginx vhost for the domain (default `apt.drumee.net`), and reloads nginx. `--host` defaults to **`debian@apt.drumee.net`** (production) — pass it to target a staging box or mirror; it prints the resolved target before doing anything. TLS is set up separately with certbot; `APT_LOCAL_DIR` selects the local repo dir (default `apt-repo`). CI does not rely on the default: `publish-site.sh` always passes `--host="$APT_SSH_HOST"` and skips the deploy entirely when that is unset.
 
 Clients configure:
 

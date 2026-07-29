@@ -25,7 +25,7 @@ sudo PRESEED=install.conf bash scripts/install-native.sh
 static/build.sh                      # build drumee-static (REPO_BASE=https://github.com/drumee)
 meta/build.sh                        # build the drumee metapackage
 scripts/publish-apt.sh --debs=./out-debs --out=/tmp/apt-flat --key=release@drumee.org
-APT_LOCAL_DIR=/tmp/apt-flat scripts/deploy-apt-repo.sh --host=USER@VPS_HOST
+APT_LOCAL_DIR=/tmp/apt-flat scripts/deploy-apt-repo.sh   # --host=debian@apt.drumee.net
 ```
 
 `publish-apt.sh` builds a signed **flat** repo (`apt-ftparchive` + `gpg`), emits

@@ -15,8 +15,11 @@
 # nothing more.
 #
 # Usage:
-#   scripts/deploy-apt-repo.sh --host=USER@HOST [--repo-dir=DIR] [--domain=DOMAIN]
+#   scripts/deploy-apt-repo.sh [--host=USER@HOST] [--repo-dir=DIR] [--domain=DOMAIN]
 #                              [--no-provision]
+#
+# --host defaults to debian@apt.drumee.net, the production repo host. Pass it
+# explicitly to publish elsewhere (a staging VPS, a mirror).
 #
 # Env:
 #   APT_LOCAL_DIR   local repo dir to upload (default: apt-repo)
@@ -24,7 +27,7 @@ set -euo pipefail
 
 DOMAIN="apt.drumee.net"
 REPO_DIR="/var/www/apt.drumee.net"
-HOST=""
+HOST="debian@apt.drumee.net"
 PROVISION=1
 APT_LOCAL_DIR="${APT_LOCAL_DIR:-apt-repo}"
 
@@ -38,7 +41,8 @@ for arg in "$@"; do
   esac
 done
 
-[ -n "$HOST" ] || { echo "error: --host=USER@HOST required" >&2; exit 2; }
+[ -n "$HOST" ] || { echo "error: --host= was given an empty value" >&2; exit 2; }
+echo "==> Target: $HOST:$REPO_DIR (domain $DOMAIN)"
 [ -d "$APT_LOCAL_DIR" ] || { echo "error: local repo dir not found: $APT_LOCAL_DIR" >&2; exit 2; }
 [ -f "$APT_LOCAL_DIR/InRelease" ] || { echo "error: $APT_LOCAL_DIR does not look like an APT repo (no InRelease)" >&2; exit 2; }
 

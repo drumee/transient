@@ -59,7 +59,8 @@ cat <<MSG
 
 Done. Deploy the repo with:
 
-  scripts/deploy-apt-repo.sh --host=USER@VPS_HOST
+  scripts/deploy-apt-repo.sh                      # defaults to debian@apt.drumee.net
+  scripts/deploy-apt-repo.sh --host=USER@VPS_HOST  # or somewhere else
 
 Or upload every file in $OUT to your web server's document root. Clients then run:
 
