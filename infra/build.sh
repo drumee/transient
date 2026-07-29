@@ -29,6 +29,10 @@ rsync -ar --exclude ".git:.npmrc" ${base}/etc $build_dir/files/
 mkdir -p $build_dir/files/$lib_dir
 mkdir -p ${build_dir}/files${DRUMEE_SERVER_HOME}/main
 rsync -ar --exclude ".git:.npmrc" ${base}/$lib_dir/utils $build_dir/files/$lib_dir/
+# WireGuard peer coordination: bootstrap script + agent. No node_modules — the
+# agent uses the global WebSocket API from Node >= 22, so nothing to install.
+rsync -ar --exclude ".git:.npmrc" ${base}/$lib_dir/wireguard $build_dir/files/$lib_dir/
+chmod 0755 $build_dir/files/$lib_dir/wireguard/bootstrap.sh
 
 cd $build_dir
 packagename=drumee-infra

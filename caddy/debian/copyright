@@ -1,0 +1,14 @@
+Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
+Upstream-Name: drumee-caddy
+Source: https://drumee.com
+
+Files: *
+Copyright: 2026 Drumee
+License: AGPL-3.0+
+
+Files: files/usr/sbin/drumee-caddy
+Copyright: 2015 Matthew Holt and The Caddy Authors
+License: Apache-2.0
+Comment: Built from upstream Caddy sources with xcaddy at package build time,
+ including the caddy-dns provider modules listed in
+ /usr/share/drumee-caddy/dns-modules.

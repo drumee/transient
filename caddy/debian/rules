@@ -1,0 +1,16 @@
+#!/usr/bin/make -f
+# See debhelper(7)
+export DEB_BUILD_MAINT_OPTIONS = hardening=+all
+
+%:
+	dh $@
+
+# The payload is a statically linked Go binary produced by xcaddy (see
+# ../build.sh), not something dh built. Stripping it breaks Go's build info and
+# pprof symbols, and there are no shared libraries to compute dependencies from,
+# so both steps are disabled deliberately rather than left to fail.
+override_dh_strip:
+
+override_dh_shlibdeps:
+
+override_dh_dwz:

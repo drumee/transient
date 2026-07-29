@@ -33,7 +33,11 @@
       "properties": {
         "mode": { "enum": ["acme", "own", "self-signed"], "default": "acme", "description": "acme = auto-issue via ZeroSSL/Let's Encrypt; own = bring your own wildcard certs; self-signed = local dev." },
         "acme_email": { "type": "string", "format": "email", "description": "Required when mode=acme. Account email for the ACME provider." },
-        "own_cert_path": { "type": "string", "description": "Required when mode=own. Path to wildcard certs for the domain." }
+        "own_cert_path": { "type": "string", "description": "Required when mode=own. Path to wildcard certs for the domain." },
+        "dns_challenge": { "enum": ["nsupdate", "api"], "default": "nsupdate", "description": "Native channel only. How the DNS-01 challenge is answered when mode=acme (the certificate is a wildcard, so DNS-01 is the only possibility). nsupdate = this host runs BIND9 as the zone master, needing inbound udp/53 plus NS delegation; api = the record is created through the DNS provider's API, which needs outbound access only and therefore works behind NAT." },
+        "acme_env_file": { "type": "string", "description": "Required when dns_challenge=api. Path ON THE TARGET HOST to a shell file exporting ACME_PROVIDER (an acme.sh dnsapi name without the dns_ prefix) plus that provider's credentials. Never generated from this config: it holds secrets and is created out of band with mode 0600." },
+        "terminator": { "enum": ["nginx", "caddy"], "default": "nginx", "description": "Native channel only. Which server terminates TLS. nginx (default) serves 80/443 itself and certificates come from acme.sh. caddy puts the drumee-caddy binary in front on 80/443 \u2014 it obtains and renews certificates over DNS-01 using the caddy-dns module it was compiled with, exports them into the acme.sh layout nginx already reads, and proxies to nginx on internal ports." },
+        "dns_provider": { "type": "string", "description": "Required when terminator=caddy. Name of the caddy-dns provider module (e.g. ovh, cloudflare, gandi). The API token is NOT part of this config: it is asked by debconf and stored in /etc/drumee/credential/caddy-dns.env at 0600." }
       }
     },
     "storage": {
@@ -87,6 +91,17 @@
         "jitsi": { "type": "boolean", "default": false },
         "prosody": { "type": "boolean", "default": false },
         "coturn": { "type": "boolean", "default": false }
+      }
+    },
+    "wireguard": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "WireGuard peer coordination (native channel). Lets the node be reached without opening a router port; ignored by the container channel.",
+      "properties": {
+        "enabled": { "type": "boolean", "default": false },
+        "coordinator": { "type": "string", "default": "coord.drumee.tech", "description": "Coordination server host (signaling only; never sees traffic content)." },
+        "listen_port": { "type": "integer", "minimum": 1, "maximum": 65535, "default": 51820, "description": "Fixed local UDP port. Must not change: the NAT mapping is probed from it." },
+        "reflector_port": { "type": "integer", "minimum": 1, "maximum": 65535, "default": 51821, "description": "UDP port of the endpoint reflector on the coordination server." }
       }
     },
     "ports": {

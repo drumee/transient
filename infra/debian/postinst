@@ -54,12 +54,196 @@ bridge_debconf_env() {
     db_get drumee-infra/ip6 || true; PUBLIC_IP6="$RET"
     if [ "$PUBLIC_IP6" = "other" ]; then db_get drumee-infra/public_ip6 || true; PUBLIC_IP6="$RET"; fi
     export PUBLIC_IP6
+    # TLS. setup-infra never uses an HTTP-01 challenge: bin/init-acme always
+    # issues a wildcard (-d $dom -d *.$dom --dns <method>), which DNS-01 alone
+    # can satisfy. Two variables select between the three paths, and one of them
+    # also decides whether a local DNS server is installed at all
+    # (setup-infra/bin/install: init-named runs only when ACME_ENV_FILE is unset
+    # or points at a missing file):
+    #   OWN_SSL       set -> skip ACME entirely, use the operator's certs
+    #   ACME_ENV_FILE set -> skip BIND9, issue via dns_$ACME_PROVIDER (outbound
+    #                        only, so this is the variant that works behind NAT)
+    #   neither       -> install BIND9 and issue via dns_nsupdate against it
     OWN_SSL=""
+    ACME_ENV_FILE=""
+    db_get drumee-infra/tls_method || true; TLS_METHOD="${RET:-acme-dns-server}"
+    # An old preseed may only carry own_ssl; honour it whatever tls_method says.
     db_get drumee-infra/own_ssl || true
-    if [ "$RET" = "true" ]; then db_get drumee-infra/own_ssl_path || true; OWN_SSL="$RET"; fi
-    export OWN_SSL
+    [ "$RET" = "true" ] && TLS_METHOD=own
+    case "$TLS_METHOD" in
+        own)
+            db_get drumee-infra/own_ssl_path || true; OWN_SSL="$RET"
+            if [ -z "$OWN_SSL" ]; then
+                echo "drumee-infra: tls_method=own but own_ssl_path is empty." >&2
+                echo "  Set it (dpkg-reconfigure drumee-infra) or nginx will have no certificate." >&2
+            fi
+            ;;
+        caddy)
+            # Caddy terminates TLS itself and therefore must own 80/443, so nginx
+            # moves to internal ports. It obtains certificates over DNS-01 with
+            # the provider module the drumee-caddy binary was compiled with —
+            # which is also why a wildcard is possible here.
+            db_get drumee-infra/caddy_domain       || true; CADDY_DOMAIN="${RET:-$DRUMEE_DOMAIN_NAME}"
+            db_get drumee-infra/caddy_dns_provider || true; CADDY_DNS_PROVIDER="$RET"
+            db_get drumee-infra/caddy_dns_api_key  || true; CADDY_DNS_API_KEY="$RET"
+            if [ ! -x /usr/sbin/drumee-caddy ] && ! command -v caddy >/dev/null 2>&1; then
+                # Refuse rather than hand nginx's ports to something absent: the
+                # box would end up with nothing listening on 443 at all.
+                echo "drumee-infra: tls_method=caddy but no Caddy binary found." >&2
+                echo "  Install the drumee-caddy package, then: dpkg-reconfigure drumee-infra" >&2
+                echo "  Keeping nginx on 80/443 and skipping certificate setup for now." >&2
+                TLS_METHOD=caddy-unavailable
+            elif [ -z "$CADDY_DNS_PROVIDER" ]; then
+                echo "drumee-infra: tls_method=caddy needs a DNS provider module." >&2
+                echo "  Set drumee-infra/caddy_dns_provider (dpkg-reconfigure drumee-infra)." >&2
+                TLS_METHOD=caddy-unavailable
+            else
+                # nginx keeps serving the app, behind Caddy. One variable moves
+                # every nginx listener: infra.js derives both http_port and
+                # public_http_port from DRUMEE_HTTP_PORT. Resolve the ports BEFORE
+                # writing caddy.json so both sides name the same upstream.
+                DRUMEE_HTTP_PORT="${DRUMEE_HTTP_PORT:-8080}"
+                DRUMEE_HTTPS_PORT="${DRUMEE_HTTPS_PORT:-8443}"
+                export DRUMEE_HTTP_PORT DRUMEE_HTTPS_PORT
+                setup_caddy
+                # Certificates belong to Caddy; keep acme.sh and BIND9 out of it.
+                OWN_SSL="$CADDY_CERTS_DIR"
+                echo "Caddy will terminate TLS for $CADDY_DOMAIN via dns/$CADDY_DNS_PROVIDER"
+                echo "  nginx moved to http/$DRUMEE_HTTP_PORT https/$DRUMEE_HTTPS_PORT"
+            fi
+            ;;
+        self-signed)
+            # setup-infra derives a private domain and always self-signs it, but
+            # it has no "public domain without ACME" mode: infra.js sets
+            # PUBLIC_DOMAIN from DRUMEE_DOMAIN_NAME and bin/install then runs
+            # init-acme whenever OWN_CERTS_DIR is empty. Say so instead of
+            # implying the answer suppressed issuance.
+            if [ "$LOCAL_MODE" != "true" ]; then
+                echo "drumee-infra: tls_method=self-signed on a public domain ($DRUMEE_DOMAIN_NAME)." >&2
+                echo "  A certificate will still be requested for it. Use tls_method=own to supply" >&2
+                echo "  your own, or install with domain=local for a LAN-only instance." >&2
+            fi
+            ;;
+        acme-dns-api)
+            db_get drumee-infra/acme_env_file || true; ACME_ENV_FILE="$RET"
+            # setup-infra tests for the file's existence, and silently installs a
+            # local DNS server instead when it is absent — which cannot validate
+            # from behind a router. Say so now rather than let it fail at issuance.
+            if [ ! -f "$ACME_ENV_FILE" ]; then
+                echo "drumee-infra: DNS-API credentials file not found: $ACME_ENV_FILE" >&2
+                echo "  Falling back to a local DNS server (needs inbound udp/53 + NS delegation)." >&2
+                echo "  Create the file (export ACME_PROVIDER=... plus its credentials, mode 0600)," >&2
+                echo "  then: dpkg-reconfigure drumee-infra" >&2
+                ACME_ENV_FILE=""
+            fi
+            ;;
+    esac
+    export OWN_SSL ACME_ENV_FILE
+    echo "TLS method: $TLS_METHOD"
+    # WireGuard peer coordination. Defaults mirror debian/templates so an
+    # instance preseeded without the wireguard/* keys stays disabled rather
+    # than half-configured.
+    db_get drumee-infra/wireguard_enabled        || true; export WIREGUARD_ENABLED="${RET:-false}"
+    db_get drumee-infra/wireguard_coordinator    || true; export WIREGUARD_COORDINATOR="${RET:-coord.drumee.tech}"
+    db_get drumee-infra/wireguard_listen_port    || true; export WIREGUARD_LISTEN_PORT="${RET:-51820}"
+    db_get drumee-infra/wireguard_reflector_port || true; export WIREGUARD_REFLECTOR_PORT="${RET:-51821}"
     # Release the debconf channel before the long-running installer.
     db_stop
+}
+
+# nginx reads certificates from $CERTS_DIR/<domain>_ecc/<domain>.{cer,key} (the
+# acme.sh layout). Caddy exports into that same layout, so nginx needs no change:
+# the only thing to suppress is acme.sh also trying to issue.
+CADDY_CERTS_DIR=/etc/drumee/certs
+
+# Hand the Caddy half of the configuration to the drumee-caddy package. Written
+# here rather than shipped for the same reason as wireguard.json — dpkg would
+# treat a shipped file as a conffile and prompt on every upgrade.
+#
+# CONTRACT with drumee-caddy (keep both sides in sync):
+#   reads  /etc/drumee/conf.d/caddy.json        what to serve and how
+#          /etc/drumee/credential/caddy-dns.env provider credentials (0600)
+#   writes $certs_dir/<domain>_ecc/<domain>.cer and .key after each issuance
+#          and renewal, so nginx and prosody/jitsi keep working unchanged
+#   owns   ports 80 and 443; proxies to nginx on upstream_http_port
+setup_caddy() {
+    conf_dir=/etc/drumee/conf.d
+    cred_dir=/etc/drumee/credential
+    mkdir -p "$conf_dir" "$CADDY_CERTS_DIR"
+    install -d -m 0700 "$cred_dir"
+
+    cat > "$conf_dir/caddy.json" <<EOF
+{
+  "enabled": true,
+  "domain": "${CADDY_DOMAIN}",
+  "dns_provider": "${CADDY_DNS_PROVIDER}",
+  "acme_email": "${ACME_EMAIL_ACCOUNT}",
+  "certs_dir": "${CADDY_CERTS_DIR}",
+  "upstream_http_port": ${DRUMEE_HTTP_PORT:-8080},
+  "upstream_https_port": ${DRUMEE_HTTPS_PORT:-8443}
+}
+EOF
+    chmod 0644 "$conf_dir/caddy.json"
+
+    # The token is a secret: never in conf.d (0644), never echoed back.
+    umask 077
+    cat > "$cred_dir/caddy-dns.env" <<EOF
+# Generated by drumee-infra. Sourced by the drumee-caddy service.
+# Providers needing more than one value: add them here.
+export DRUMEE_CADDY_DNS_PROVIDER=${CADDY_DNS_PROVIDER}
+export DRUMEE_CADDY_DNS_TOKEN=${CADDY_DNS_API_KEY}
+EOF
+    chmod 0600 "$cred_dir/caddy-dns.env"
+    umask 022
+
+    if [ -z "$CADDY_DNS_API_KEY" ]; then
+        echo "drumee-infra: no DNS API token given — Caddy cannot issue yet." >&2
+        echo "  Add DRUMEE_CADDY_DNS_TOKEN to $cred_dir/caddy-dns.env (0600)," >&2
+        echo "  then: systemctl restart drumee-caddy" >&2
+    fi
+}
+
+# Write /etc/drumee/conf.d/wireguard.json and wire up the units. The file is
+# generated here rather than shipped in the package so dpkg never treats it as
+# a conffile and never prompts on upgrade.
+setup_wireguard() {
+    conf_dir=/etc/drumee/conf.d
+    mkdir -p "$conf_dir"
+    cat > "$conf_dir/wireguard.json" <<EOF
+{
+  "enabled": ${WIREGUARD_ENABLED},
+  "coordinator_host": "${WIREGUARD_COORDINATOR}",
+  "reflector_port": ${WIREGUARD_REFLECTOR_PORT},
+  "listen_port": ${WIREGUARD_LISTEN_PORT}
+}
+EOF
+    chmod 0644 "$conf_dir/wireguard.json"
+
+    if [ "$WIREGUARD_ENABLED" != "true" ]; then
+        echo "WireGuard coordination disabled — units left inactive."
+        deb-systemd-invoke stop drumee-wg-agent.service >/dev/null 2>&1 || true
+        systemctl disable drumee-wg-agent.service     >/dev/null 2>&1 || true
+        systemctl disable drumee-wg-bootstrap.service >/dev/null 2>&1 || true
+        return 0
+    fi
+
+    # The agent uses the global WebSocket API, stable from Node 22. The package
+    # only requires nodejs >= 20 for the rest of the stack, so check explicitly
+    # and degrade with a clear message instead of a crash loop at boot.
+    node_major=$(node -p 'process.versions.node.split(".")[0]' 2>/dev/null || echo 0)
+    if [ "$node_major" -lt 22 ]; then
+        echo "drumee-infra: WireGuard agent needs Node >= 22 (found $node_major)." >&2
+        echo "  Coordination left disabled. Upgrade Node, then: dpkg-reconfigure drumee-infra" >&2
+        sed -i 's/"enabled": true/"enabled": false/' "$conf_dir/wireguard.json"
+        return 0
+    fi
+
+    echo "Enabling WireGuard peer coordination via ${WIREGUARD_COORDINATOR}"
+    systemctl daemon-reload || true
+    systemctl enable drumee-wg-bootstrap.service >/dev/null 2>&1 || true
+    systemctl enable drumee-wg-agent.service     >/dev/null 2>&1 || true
+    deb-systemd-invoke restart drumee-wg-bootstrap.service || true
+    deb-systemd-invoke restart drumee-wg-agent.service     || true
 }
 
 case "$1" in
@@ -72,11 +256,13 @@ case "$1" in
         exit 1
     fi
     /var/lib/drumee/setup-infra/bin/install
+    setup_wireguard
     ;;
 
     reconfigure)
     bridge_debconf_env
     node /var/lib/drumee/setup-infra/infra.js --force-install=1
+    setup_wireguard
     ;;
 
     abort-upgrade|abort-remove|abort-deconfigure)

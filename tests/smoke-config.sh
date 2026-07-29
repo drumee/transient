@@ -101,6 +101,105 @@ minimal
 $R debconf --config "$tmp/c.yaml" 2>/dev/null | grep -q 'drumee-infra	drumee-infra/domain	string	example.com' \
   && ok "debconf preseed well-formed" || no "debconf preseed well-formed"
 
+# 9. TLS: DNS-01 challenge selection reaches the tls_method preseed key
+minimal
+$R debconf --config "$tmp/c.yaml" 2>/dev/null | grep -q 'tls_method	select	acme-dns-server' \
+  && ok "default TLS = acme via local DNS server" || no "default TLS = acme via local DNS server"
+cfg <<EOF
+instance:
+  description: T
+  domain: example.com
+  admin_email: a@b.co
+tls:
+  mode: acme
+  acme_email: s@b.co
+  dns_challenge: api
+  acme_env_file: /etc/drumee/credential/dns-api.env
+EOF
+dc_out="$($R debconf --config "$tmp/c.yaml" 2>/dev/null)"
+echo "$dc_out" | grep -q 'tls_method	select	acme-dns-api' \
+  && ok "dns_challenge=api selects the provider-API method" || no "dns_challenge=api selects the provider-API method"
+echo "$dc_out" | grep -q 'acme_env_file	string	/etc/drumee/credential/dns-api.env' \
+  && ok "credentials file path preseeded" || no "credentials file path preseeded"
+# api needs the file path — it is what makes setup-infra skip BIND9
+cfg <<EOF
+instance:
+  description: T
+  domain: example.com
+  admin_email: a@b.co
+tls:
+  mode: acme
+  acme_email: s@b.co
+  dns_challenge: api
+EOF
+$R validate --config "$tmp/c.yaml" >/dev/null 2>&1 \
+  && no "api without acme_env_file rejected" || ok "api without acme_env_file rejected"
+# 10. TLS terminated by Caddy: provider is preseeded, the API token never is
+cfg <<EOF
+instance:
+  description: T
+  domain: example.com
+  admin_email: a@b.co
+tls:
+  mode: acme
+  acme_email: s@b.co
+  terminator: caddy
+  dns_provider: ovh
+EOF
+dc_out="$($R debconf --config "$tmp/c.yaml" 2>/dev/null)"
+echo "$dc_out" | grep -q 'tls_method	select	caddy' \
+  && ok "terminator=caddy selects the caddy method" || no "terminator=caddy selects the caddy method"
+echo "$dc_out" | grep -q 'caddy_dns_provider	string	ovh' \
+  && ok "caddy DNS provider preseeded" || no "caddy DNS provider preseeded"
+echo "$dc_out" | grep -q 'caddy_domain	string	example.com' \
+  && ok "caddy domain defaults to the instance domain" || no "caddy domain defaults to the instance domain"
+# The token is a secret: debconf asks for it, the renderer must never emit it.
+echo "$dc_out" | grep -qi 'api_key\|token\|password' \
+  && no "no DNS token in the rendered preseed" || ok "no DNS token in the rendered preseed"
+# caddy needs the provider module name
+cfg <<EOF
+instance:
+  description: T
+  domain: example.com
+  admin_email: a@b.co
+tls:
+  mode: acme
+  acme_email: s@b.co
+  terminator: caddy
+EOF
+$R validate --config "$tmp/c.yaml" >/dev/null 2>&1 \
+  && no "caddy without dns_provider rejected" || ok "caddy without dns_provider rejected"
+# caddy replaces acme.sh, so the acme.sh knobs must not be mixed in
+cfg <<EOF
+instance:
+  description: T
+  domain: example.com
+  admin_email: a@b.co
+tls:
+  mode: acme
+  acme_email: s@b.co
+  terminator: caddy
+  dns_provider: ovh
+  dns_challenge: api
+  acme_env_file: /etc/drumee/credential/dns-api.env
+EOF
+$R validate --config "$tmp/c.yaml" >/dev/null 2>&1 \
+  && no "caddy mixed with acme.sh knobs rejected" || ok "caddy mixed with acme.sh knobs rejected"
+
+# own certs still map to the own path (and keep the legacy own_ssl flag true)
+cfg <<EOF
+instance:
+  description: T
+  domain: example.com
+  admin_email: a@b.co
+tls:
+  mode: own
+  own_cert_path: /etc/drumee/ssl
+EOF
+dc_out="$($R debconf --config "$tmp/c.yaml" 2>/dev/null)"
+echo "$dc_out" | grep -q 'tls_method	select	own' && echo "$dc_out" | grep -q 'own_ssl	boolean	true' \
+  && ok "mode=own maps to own + legacy own_ssl" || no "mode=own maps to own + legacy own_ssl"
+
 echo
 echo "config smoke: $pass passed, $fail failed"
 [ "$fail" = 0 ]

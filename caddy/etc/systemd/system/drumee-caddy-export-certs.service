@@ -1,0 +1,10 @@
+[Unit]
+Description=Publish Caddy's certificate into Drumee's certs directory
+Documentation=file:///usr/share/doc/drumee-caddy/README.md
+After=drumee-caddy.service
+
+[Service]
+Type=oneshot
+# Runs as root, unlike the proxy: it writes into /etc/drumee/certs and reloads
+# nginx. Keeping this split is why drumee-caddy.service itself needs no root.
+ExecStart=/usr/sbin/drumee-caddy-export-certs

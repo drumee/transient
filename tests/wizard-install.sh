@@ -39,6 +39,23 @@ run_wizard ip ACCESS_MODE=ip PUBIP=203.0.113.10 ADMIN_EMAIL=me@acme.com ADMIN_PA
 chk "sslip.io domain from IP" "grep -q 'domain: 203-0-113-10.sslip.io' $W/ip/drumee.yaml"
 chk "tls mode acme"           "grep -q 'mode: acme'                    $W/ip/drumee.yaml"
 
+printf '\033[1;36m── installer: WireGuard mode (no router port)\033[0m\n'
+run_wizard wg ACCESS_MODE=wireguard DRUMEE_DOMAIN=box.acme.org ADMIN_EMAIL=me@acme.com ADMIN_PASSWORD=x
+chk "wireguard enabled"        "grep -q 'enabled: true'        $W/wg/drumee.yaml"
+chk "coordinator default"      "grep -q 'coordinator: coord.drumee.tech' $W/wg/drumee.yaml"
+chk "not local_mode"           "grep -q 'local_mode: false'    $W/wg/drumee.yaml"
+# No inbound port means ACME's HTTP-01 challenge can never be answered.
+chk "tls falls back to local CA" "grep -q 'mode: self-signed'  $W/wg/drumee.yaml"
+chk "env WIREGUARD_ENABLED"     "grep -q '^WIREGUARD_ENABLED=true' $W/wg/.env"
+chk "wireguard profile on"      "grep -q '^COMPOSE_PROFILES=.*wireguard' $W/wg/.env"
+chk "compose has the service"   "grep -q '^  wireguard:'       $W/wg/docker-compose.yml"
+# Opt-in on a normal domain install, and refused on a LAN-only one (render.mjs
+# rejects wireguard.enabled together with instance.local_mode).
+run_wizard wgdom ACCESS_MODE=domain DRUMEE_DOMAIN=cloud.acme.com ADMIN_EMAIL=me@acme.com ADMIN_PASSWORD=x WIREGUARD_ENABLED=true
+chk "opt-in on domain mode"    "grep -q '^WIREGUARD_ENABLED=true' $W/wgdom/.env"
+run_wizard wgloc ACCESS_MODE=local ADMIN_EMAIL=me@acme.com ADMIN_PASSWORD=x WIREGUARD_ENABLED=true
+chk "forced off in local mode" "grep -q '^WIREGUARD_ENABLED=false' $W/wgloc/.env"
+
 printf '\033[1;36m── installer: published-registry pull path\033[0m\n'
 # Forcing SERVER_TAG selects the pull path; DRUMEE_NO_START keeps it from actually
 # pulling/building, so we just assert the generated config is consistent.
@@ -64,7 +81,7 @@ chk "domain preserved on reuse" "grep -q 'domain: localhost' $W/reuse/drumee.yam
 
 if docker compose version >/dev/null 2>&1; then
   printf '\033[1;36m── installer: generated compose is valid\033[0m\n'
-  for d in local dom ip; do
+  for d in local dom ip wg; do
     chk "compose config -q ($d)" "docker compose -f $W/$d/docker-compose.yml --env-file $W/$d/.env config -q"
   done
 fi

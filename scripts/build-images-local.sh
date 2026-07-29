@@ -62,6 +62,12 @@ docker buildx build \
   --build-arg "SERVER_IMAGE=drumee/server-pod:$TAG" \
   -t "drumee/schemas-populate:$TAG" --load "$root/deploy/docker"
 
+say "Building drumee/wireguard:$TAG (coordination agent, from the infra/ package tree)"
+docker buildx build \
+  -f "$root/deploy/docker/Dockerfile.wireguard" \
+  --build-context "wg=$root/infra/var/lib/drumee/wireguard" \
+  -t "drumee/wireguard:$TAG" --load "$root/deploy/docker"
+
 if [ -d "$SETUP_INFRA_SRC" ]; then
   say "Building drumee/infra-init:$TAG (FROM server-pod + setup-infra + opendkim-tools)"
   docker buildx build -f "$root/deploy/docker/Dockerfile.infra-init" \

@@ -21,22 +21,75 @@ db_go || true
 
 db_input high drumee-infra/admin_email || true
 db_go || true
-# default the ACME account to the admin email
-db_get drumee-infra/admin_email || true
-[ -n "$RET" ] && db_set drumee-infra/acme_email "$RET" || true
-db_input high drumee-infra/acme_email || true
 
 db_input medium drumee-infra/db_dir || true
 db_input medium drumee-infra/data_dir || true
 db_input medium drumee-infra/backup_location || true
 db_input medium drumee-infra/exchange_location || true
-db_input low drumee-infra/own_ssl || true
 db_go || true
 
-db_get drumee-infra/own_ssl || true
-if [ "$RET" = "true" ]; then
-  db_input high drumee-infra/own_ssl_path || true
+# TLS. Only asked for a public instance: a local_mode box has no domain to
+# certify and takes the self-signed path.
+tls_method=self-signed
+db_get drumee-infra/local_mode || true
+if [ "$RET" != "true" ]; then
+  db_input high drumee-infra/tls_method || true
   db_go || true
+  db_get drumee-infra/tls_method || true; tls_method="$RET"
+fi
+
+# An old preseed that only knows own_ssl still selects the "own" path.
+db_get drumee-infra/own_ssl || true
+[ "$RET" = "true" ] && tls_method=own
+
+case "$tls_method" in
+  own)
+    db_input high drumee-infra/own_ssl_path || true
+    db_go || true
+    ;;
+  acme-dns-api)
+    db_input high drumee-infra/acme_env_file || true
+    db_go || true
+    ;;
+  caddy)
+    # Caddy issues over DNS-01 with its compiled-in provider module, so it needs
+    # the zone and the provider's credentials. Default the zone to this instance.
+    db_get drumee-infra/caddy_domain || true
+    if [ -z "$RET" ]; then
+      db_get drumee-infra/domain || true
+      [ -n "$RET" ] && db_set drumee-infra/caddy_domain "$RET" || true
+    fi
+    db_input high drumee-infra/caddy_domain || true
+    db_input high drumee-infra/caddy_dns_provider || true
+    db_input high drumee-infra/caddy_dns_api_key || true
+    db_go || true
+    ;;
+esac
+
+# ACME account email — only meaningful when a certificate is actually issued.
+case "$tls_method" in
+  acme-*|caddy)
+    # default the ACME account to the admin email
+    db_get drumee-infra/admin_email || true
+    [ -n "$RET" ] && db_set drumee-infra/acme_email "$RET" || true
+    db_input high drumee-infra/acme_email || true
+    db_go || true
+    ;;
+esac
+
+# WireGuard peer coordination. Only asked for non-local instances: in local
+# mode the node is reachable on the LAN and NAT traversal is pointless.
+db_get drumee-infra/local_mode || true
+if [ "$RET" != "true" ]; then
+  db_input medium drumee-infra/wireguard_enabled || true
+  db_go || true
+  db_get drumee-infra/wireguard_enabled || true
+  if [ "$RET" = "true" ]; then
+    db_input medium drumee-infra/wireguard_coordinator || true
+    db_input low drumee-infra/wireguard_listen_port || true
+    db_input low drumee-infra/wireguard_reflector_port || true
+    db_go || true
+  fi
 fi
 
 exit 0
