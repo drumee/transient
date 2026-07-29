@@ -389,6 +389,26 @@ class __public_stripe_webhook extends Entity {
     return included + extra_seats;
   }
 
+  // Fresh quota for a payment.plan_updated notify. Without it the client's
+  // Visitor.respawn keeps its cached quota (ui-core skips absent keys), so
+  // every surface reading Visitor.quota() — Settings→Storage, the disk toast
+  // — showed the OLD capacity until a full reload re-ran get_env. For an org
+  // the tenant-first cascade gives every member the same org quota, so the
+  // payer's view is correct for all recipients.
+  //
+  // Best-effort: the entitlement is already applied and the FE re-reads it on
+  // reload, so a failed lookup just means the payload goes out without quota.
+  async _freshQuota(payer_id, entity_id, entity_type) {
+    const uid = payer_id || (entity_type !== 'org' ? entity_id : '');
+    if (!uid) return undefined;
+    try {
+      let q = await this.yp.await_func('get_quota', uid);
+      // await_func returns SQL-function JSON as a string.
+      if (typeof q === 'string') { try { q = JSON.parse(q); } catch (e) { q = null; } }
+      return q && typeof q === 'object' ? q : undefined;
+    } catch (e) { return undefined; }
+  }
+
   async receive() {
     let stripe, secret;
     try { stripe = stripeClient(); secret = endpointSecret(); }
@@ -580,7 +600,10 @@ class __public_stripe_webhook extends Entity {
             // hardcoded 'active' — a pending cancel must reach the client so the
             // billing screen flips to "ends on {period_end}" in realtime. Carry
             // period_end so the FE can render the date without a refetch.
-            await this.notify_user(entity_id, { service: 'payment.plan_updated', plan: eff_plan, status, period_end });
+            await this.notify_user(entity_id, {
+              service: 'payment.plan_updated', plan: eff_plan, status, period_end,
+              quota: await this._freshQuota(md.payer_id, entity_id, eff_entity),
+            });
             // Resume confirmation email (Figma 3050-96856): a pending cancel
             // flipping back to renewing. previous_attributes carries only the
             // changed fields, so cancel_at_period_end true→false IS the resume
@@ -690,7 +713,10 @@ class __public_stripe_webhook extends Entity {
             } else {
               await this.yp.await_proc('payment_apply_entitlement', entity_id, 'free', 0, 'user', 0, 0);
             }
-            await this.notify_user(entity_id, { service: 'payment.plan_updated', plan: 'free', status: 'canceled' });
+            await this.notify_user(entity_id, {
+              service: 'payment.plan_updated', plan: 'free', status: 'canceled',
+              quota: await this._freshQuota(md.payer_id, entity_id, etype),
+            });
           }
           break;
         }
@@ -730,7 +756,10 @@ class __public_stripe_webhook extends Entity {
               const { seats, extra_disk, extra_seats } = await this._itemsEntitlement(items);
               const seat_total = await this._seatTotal(eff_entity, eff_plan, eff_period, seats, extra_seats);
               await this.yp.await_proc('payment_apply_entitlement', eid, eff_plan, pend, eff_entity, seat_total, extra_disk);
-              await this.notify_user(eid, { service: 'payment.plan_updated', plan: eff_plan, status: 'active' });
+              await this.notify_user(eid, {
+                service: 'payment.plan_updated', plan: eff_plan, status: 'active',
+                quota: await this._freshQuota(md.payer_id, eid, eff_entity),
+              });
               // Payment-receipt email (initial payment AND every renewal both
               // arrive as invoice.paid). A mail failure must never fail the
               // webhook — the entitlement above is already applied and Stripe
