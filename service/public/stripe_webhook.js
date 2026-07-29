@@ -427,6 +427,37 @@ class __public_stripe_webhook extends Entity {
             && md.payer_id && stripe) {
             await this._cancelSupersededOrgSubscription(md.payer_id, stripe);
           }
+          // A subscription.updated event about a subscription that has already
+          // been REPLACED must not touch the mirror. The deferred cycle switch
+          // marks the old subscription cancel_at_period_end, and that very
+          // update lands here carrying status 'canceled' — written as-is it
+          // flips the mirror back to the dying subscription and the UI reports
+          // the plan the user just replaced as "will be canceled", hiding the
+          // one they bought. Newer-for-the-same-entity on the same customer =
+          // this event is the tail of a replacement: skip it. (created /
+          // checkout.completed are always about the newest subscription, and
+          // the deleted handler has its own copy of this guard.)
+          if (event.type === 'customer.subscription.updated'
+            && entity_id && stripe && obj.customer && obj.id) {
+            try {
+              const held = await stripe.subscriptions.list({
+                customer: obj.customer, status: 'all', limit: 20,
+              });
+              const newer = (held.data || []).some(
+                (s) => s.id !== obj.id
+                  && /^(active|trialing|past_due)$/.test(s.status)
+                  && s.metadata && s.metadata.entity_id === entity_id
+                  && ~~s.created >= ~~obj.created,
+              );
+              if (newer) {
+                this.debug(`ignoring update of superseded subscription ${obj.id} for ${entity_id}`);
+                break;
+              }
+            } catch (e8) {
+              // Unreachable Stripe: process the event as before the guard.
+              this.warn(`supersede check failed for ${entity_id}: ${e8.message}`);
+            }
+          }
           if (entity_id) {
             // Mirror the live subscription for the status panel + Billing Portal.
             const customer_id = obj.customer || null;
@@ -494,16 +525,33 @@ class __public_stripe_webhook extends Entity {
                 // Scoped to this entity: one customer can carry both a personal
                 // and an org subscription (see the personal supersede helper
                 // above), and those must survive.
+                // status 'all', then filter: a DEFERRED replacement (below)
+                // leaves the new subscription 'trialing' until the old one
+                // expires, and a later switch must be able to displace that
+                // pending one too — listing only 'active' would miss it.
                 const live = await stripe.subscriptions.list({
-                  customer: customer_id, status: 'active', limit: 20,
+                  customer: customer_id, status: 'all', limit: 20,
                 });
                 const stale = (live.data || []).filter(
                   (s) => s.id !== subscription_id
+                    && /^(active|trialing|past_due)$/.test(s.status)
                     && s.metadata && s.metadata.entity_id === entity_id,
                 );
                 for (const s of stale) {
-                  await stripe.subscriptions.cancel(s.id);
-                  this.debug(`superseded subscription ${s.id} cancelled for ${entity_id}`);
+                  if (md.defer) {
+                    // Deferred cycle switch: the replaced subscription runs to
+                    // the end the customer already paid for, then stops; the
+                    // new one (created with trial_end = that same moment)
+                    // starts charging right as it lapses. A pending
+                    // replacement caught in `stale` is 'trialing' and has paid
+                    // for nothing yet — cancel_at_period_end ends it at its
+                    // trial end without ever charging.
+                    await stripe.subscriptions.update(s.id, { cancel_at_period_end: true });
+                    this.debug(`superseded subscription ${s.id} left to expire for ${entity_id}`);
+                  } else {
+                    await stripe.subscriptions.cancel(s.id);
+                    this.debug(`superseded subscription ${s.id} cancelled for ${entity_id}`);
+                  }
                 }
               } catch (e6) {
                 // Never fail the webhook over this — the new subscription is
@@ -605,8 +653,13 @@ class __public_stripe_webhook extends Entity {
             let superseded = false;
             if (stripe && obj.customer && obj.id) {
               try {
+                // status 'all', then filter: on a deferred cycle switch the
+                // replacement is still 'trialing' at the exact moment the old
+                // subscription expires and this event fires — listing only
+                // 'active' would miss it and clear the entitlement the
+                // customer has already committed to.
                 const live = await stripe.subscriptions.list({
-                  customer: obj.customer, status: 'active', limit: 20,
+                  customer: obj.customer, status: 'all', limit: 20,
                 });
                 // Scoped to this entity, like the cancel above: one customer
                 // can carry both a personal and an org subscription, and a
@@ -614,6 +667,7 @@ class __public_stripe_webhook extends Entity {
                 // the other is still running.
                 superseded = (live.data || []).some(
                   (x) => x.id !== obj.id
+                    && /^(active|trialing|past_due)$/.test(x.status)
                     && x.metadata && x.metadata.entity_id === entity_id,
                 );
               } catch (e7) {
