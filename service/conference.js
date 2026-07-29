@@ -113,9 +113,28 @@ class conference extends __yp {
     })
   }
   /**
-   * 
-   * @param {*} user 
-   * @param {*} attendees 
+   * The workspace's display name, for the "started a meeting in <name>" push.
+   *
+   * get_hub's `name` column is the hub id for a workspace, not a label — the
+   * friendly name lives in the profile JSON (yp.hub.profile.name), which
+   * _initHub has already parsed onto this.hub. Returns '' rather than falling
+   * back to the id, so the client can drop the "in <name>" clause instead of
+   * naming a hex string at the user.
+   *
+   * @returns {string}
+   */
+  hubDisplayName() {
+    const profile = this.hub.get(Attr.profile) || {};
+    const name = profile.name;
+    if (!name) return '';
+    // Defensive: a hub whose profile name was never set can hold the id.
+    return String(name) === String(this.hub.get(Attr.id)) ? '' : String(name);
+  }
+
+  /**
+   *
+   * @param {*} user
+   * @param {*} attendees
    */
   async sendRoomInfo(args) {
     //this.debug("AAA:112", { args });
@@ -140,10 +159,15 @@ class conference extends __yp {
           const hub_id = this.hub.get(Attr.id);
           const hubMembers = await this.yp.await_proc('entity_sockets', { hub_id, exclude: [socket_id] });
           if (hubMembers && toArray(hubMembers).length) {
-            // Include the workspace name so the recipients' meeting notification
-            // ("started a meeting in <name>") isn't left blank — details (the
-            // room node attrs) often carries no filename for a synthetic room_id.
-            const startPayload = { ...user, details, room_type, hub_id, hub_name: this.hub.get(Attr.name) };
+            // `details` is mfs_node_attr(room_id) against THIS hub's db, but a
+            // hub node lives in its owner's db — so for a meeting (room_id ==
+            // hub_id) it comes back empty and details.filename, which the
+            // notification used to render, is undefined. Carry the workspace
+            // name explicitly.
+            const startPayload = {
+              ...user, details, room_type, hub_id,
+              hub_name: this.hubDisplayName(),
+            };
             await RedisStore.sendData(this.payload(startPayload, { service: 'conference.start' }), toArray(hubMembers));
           }
         } catch (e) {
@@ -159,6 +183,10 @@ class conference extends __yp {
           );
         }
         payload.details = details;
+        // Same empty-details problem as conference.start above: the join
+        // notification ("X has just joined the meeting <name>") reads the
+        // workspace name too.
+        payload.hub_name = this.hubDisplayName();
         await this.inform({ recipients, payload }, "conference.join");
       } else if (room_type == Attr.connect) {
         let model = {
@@ -484,6 +512,12 @@ class conference extends __yp {
       hub_id,
       caller_id: socket_id,
       uid: this.uid,
+      // This — not conference.start — is what raises the callee's "X started a
+      // meeting in <workspace>" popup (push.js routes conference.invite to
+      // dispatchRoom). The payload is built from the caller's profile blob and
+      // carries no node attrs, so the workspace name has to come along
+      // explicitly or the popup has nothing to name.
+      hub_name: this.hubDisplayName(),
     };
     if (!payload.name) payload.name = payload.firstname;
     let opt = { recipients: clients, payload };
