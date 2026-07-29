@@ -293,6 +293,18 @@ class __private_payment extends Entity {
       // Deferred cycle switch: tell the webhook to let the replaced
       // subscription run out instead of cancelling it now.
       if (trial_end) metadata.defer = '1';
+      // Name the subscription being replaced EXPLICITLY. The webhook's stale
+      // scan lists the session's customer, but the replaced subscription can
+      // live on a DIFFERENT customer: a TEAM bootstrap subscribes on a
+      // payer-keyed customer (the org doesn't exist yet), while the org's
+      // next checkout uses the org-keyed customer — the scan never saw the
+      // old subscription and it kept charging (live case: CS Team, Team
+      // bootstrap sub still active after the Business upgrade was paid).
+      // Resolved here, before Stripe, from the mirror the caller is looking
+      // at — no webhook-ordering race can stale it.
+      if (current && current.subscription_id) {
+        metadata.supersede_target = current.subscription_id;
+      }
     }
     if (org_bootstrap) {
       metadata.org_ident = org_bootstrap.ident;

@@ -557,6 +557,21 @@ class __public_stripe_webhook extends Entity {
                     && /^(active|trialing|past_due)$/.test(s.status)
                     && s.metadata && s.metadata.entity_id === entity_id,
                 );
+                // The customer scan cannot see a replaced subscription living
+                // on a DIFFERENT customer — a TEAM bootstrap subscribes on a
+                // payer-keyed customer (no org yet), the org's next checkout
+                // on the org-keyed one. payment.checkout therefore names the
+                // subscription it is replacing (metadata.supersede_target,
+                // resolved from the mirror BEFORE the session was created, so
+                // no webhook ordering can stale it). Add it if the scan
+                // missed it and it is still alive.
+                if (md.supersede_target && md.supersede_target !== subscription_id
+                  && !stale.some((s) => s.id === md.supersede_target)) {
+                  try {
+                    const t = await stripe.subscriptions.retrieve(md.supersede_target);
+                    if (t && /^(active|trialing|past_due)$/.test(t.status)) stale.push(t);
+                  } catch (e9) { /* already gone — nothing to cancel */ }
+                }
                 for (const s of stale) {
                   if (md.defer) {
                     // Deferred cycle switch: the replaced subscription runs to
@@ -699,8 +714,24 @@ class __public_stripe_webhook extends Entity {
                 this.warn(`supersede check failed for ${entity_id}: ${e7.message}`);
               }
             }
+            // Second signal: the entity's mirror. The customer scan cannot see
+            // a replacement on a DIFFERENT customer (TEAM bootstrap subs live
+            // on a payer-keyed customer, the org's later checkouts on the
+            // org-keyed one) — live case: cancelling the leftover bootstrap
+            // sub cleared the Business entitlement the org had just paid for.
+            // By the time WE cancel a superseded subscription its replacement
+            // is paid and mirrored, so a mirror naming another id is a
+            // replacement; the Stripe scan still covers the same-customer
+            // race where the mirror write hasn't landed yet.
+            if (!superseded) {
+              try {
+                const held = await this.yp.await_proc('payment_get_subscription', entity_id);
+                const heldId = held && held.subscription_id;
+                if (heldId && obj.id && heldId !== obj.id) superseded = true;
+              } catch (e10) { /* keep the scan's verdict */ }
+            }
             if (superseded) {
-              this.debug(`ignoring deletion of superseded subscription ${obj.id}; customer ${obj.customer} still holds a live one`);
+              this.debug(`ignoring deletion of superseded subscription ${obj.id}; ${entity_id} holds a newer one`);
               break;
             }
             await this.yp.await_proc('subscription_remove', entity_id, obj.id || '');
