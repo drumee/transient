@@ -228,12 +228,31 @@ the interface and both sides must stay in sync:
 | `/etc/drumee/credential/caddy-dns.env` | **0600**, generated | `DRUMEE_CADDY_DNS_PROVIDER`, `DRUMEE_CADDY_DNS_TOKEN` |
 
 What the package does in return: **exports each issued and renewed certificate
-into `<certs_dir>/<domain>_ecc/<domain>.cer` and `.key`** — the acme.sh layout
-nginx, prosody and jitsi already read, so nothing else in the stack changes. One
+into the acme.sh layout** — `<certs_dir>/<name>_ecc/` holding `fullchain.cer`
+(leaf + intermediates), `ca.cer` (intermediates only), `<name>.key` and
+`<name>.cer`. The file names are what setup-infra's nginx includes
+(`templates/etc/drumee/ssl/*.conf.tpl`) actually read; publishing only
+`<name>.cer` leaves nginx unable to start. One
 certificate covers every name, because the generated Caddyfile lists them in a
-single site block (`<domain>, *.<domain>, jit.<domain>, *.jit.<domain>`) and Caddy
-issues one cert with all of them as SANs. `drumee-caddy-export-certs.timer` polls
-every 12h since Caddy offers no renewal hook that is stable across versions.
+single site block and Caddy issues one cert with all of them as SANs.
+`drumee-caddy-export-certs.timer` polls every 12h since Caddy offers no renewal
+hook that is stable across versions.
+
+**The names Drumee requires** are the apex plus one entry per service subdomain,
+each needing its own wildcard — **a wildcard matches exactly one label**, in both
+TLS and DNS, so `*.example.com` does *not* cover `x.vendors.example.com`:
+
+```
+example.com  *.example.com
+jit.example.com      *.jit.example.com          (conferencing)
+vendors.example.com  *.vendors.example.com
+```
+
+The set lives in one place per script — `SUBDOMAINS="jit vendors"` in
+`drumee-caddy-config` and `drumee-caddy-export-certs` (override with
+`DRUMEE_SUBDOMAINS`) — and must stay in step with setup-infra's nginx vhosts and
+BIND zone. Adding a subdomain means touching both, plus the `own_ssl_path`
+debconf text that tells operators what their own certs must cover.
 
 `postinst` also moves nginx to `DRUMEE_HTTP_PORT`/`DRUMEE_HTTPS_PORT` (8080/8443
 by default) because Caddy has to own 80/443, and sets `OWN_SSL` so acme.sh does

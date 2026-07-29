@@ -40,9 +40,20 @@ steps, including uncommenting the port-80 → 443 redirect once the cert exists.
 
 ## Certificates: DNS-01, and what works behind a router
 
-Drumee needs a **wildcard** certificate (`example.com` *and* `*.example.com`), so
-the ACME challenge is always DNS-01 — opening port 80 does nothing for issuance.
-`apt install drumee-infra` asks how to answer it:
+Drumee needs a **wildcard** certificate, so the ACME challenge is always DNS-01 —
+opening port 80 does nothing for issuance. The names it must cover:
+
+```
+example.com          *.example.com
+jit.example.com      *.jit.example.com          (conferencing)
+vendors.example.com  *.vendors.example.com
+```
+
+Every subdomain needs its own wildcard entry, because **a wildcard matches exactly
+one label** — `*.example.com` does not cover `x.vendors.example.com`. The same
+applies to the DNS zone: a `*` record does not answer for `*.vendors`.
+
+`apt install drumee-infra` asks how to answer the challenge:
 
 | Choice | Requirements |
 |---|---|

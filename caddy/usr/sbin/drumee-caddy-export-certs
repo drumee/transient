@@ -1,12 +1,17 @@
 #!/bin/bash
 # Export the certificate Caddy obtained into the layout the rest of Drumee reads.
 #
-# THIS IS THE CONTRACT with drumee-infra: nginx, prosody and jitsi all read
-#   <certs_dir>/<domain>_ecc/<domain>.cer
-#   <certs_dir>/<domain>_ecc/<domain>.key
-# (the acme.sh layout). Caddy keeps its own store instead, so after every
-# issuance and renewal the files are copied across and nginx is reloaded. Run by
-# drumee-caddy-export-certs.timer, and once after the service starts.
+# THIS IS THE CONTRACT with drumee-infra. setup-infra's nginx includes
+# (templates/etc/drumee/ssl/*.conf.tpl) read the acme.sh file names, NOT
+# <domain>.cer — getting this wrong leaves nginx unable to start:
+#   <certs_dir>/<domain>_ecc/fullchain.cer   leaf + intermediates  (ssl_certificate)
+#   <certs_dir>/<domain>_ecc/ca.cer          intermediates only    (ssl_trusted_certificate)
+#   <certs_dir>/<domain>_ecc/<domain>.key    private key           (ssl_certificate_key)
+# <domain>.cer (leaf alone) is written too, since init-acme publishes it.
+#
+# Caddy keeps its own store instead, so after every issuance and renewal the files
+# are copied across and nginx is reloaded. Run by drumee-caddy-export-certs.timer,
+# and once after the service starts.
 #
 # Idempotent: it does nothing when the destination already matches.
 set -euo pipefail
@@ -49,25 +54,40 @@ cert=$(find_cert) || {
 key="${cert%.crt}.key"
 [ -f "$key" ] || die "found $cert but no matching key"
 
-# The single certificate carries the jitsi names as SANs too, so both consumers
-# are served from it.
+# The single certificate carries every subdomain as a SAN, so all the consumers
+# are served from the one file. Must match the list drumee-caddy-config requests.
+SUBDOMAINS="${DRUMEE_SUBDOMAINS:-jit vendors}"
+names="$domain"
+for sub in $SUBDOMAINS; do
+  names="$names ${sub}.${domain}"
+done
+
 group="$(stat -c %G "$certs_dir" 2>/dev/null || echo root)"
 [ "$group" = "root" ] && group=www-data
 changed=0
 
-for name in "$domain" "jit.${domain}"; do
+# Caddy's .crt is already leaf + intermediates, i.e. what acme.sh calls
+# fullchain.cer. ca.cer is the same file minus the first certificate.
+tmp_ca="$(mktemp)"; trap 'rm -f "$tmp_ca"' EXIT
+awk 'BEGIN{n=0} /-----BEGIN CERTIFICATE-----/{n++} n>1' "$cert" > "$tmp_ca"
+[ -s "$tmp_ca" ] || log "warning: no intermediate in $cert — ca.cer will be empty"
+
+publish() { # publish <src> <dest>   (only when the content differs)
+  cmp -s "$1" "$2" && return 0
+  install -m "$3" "$1" "$2"
+  changed=1
+}
+
+for name in $names; do
   dest="${certs_dir}/${name}_ecc"
   install -d -m 0755 "$dest"
-  if ! cmp -s "$cert" "${dest}/${name}.cer"; then
-    install -m 0644 "$cert" "${dest}/${name}.cer"
-    changed=1
-  fi
-  if ! cmp -s "$key" "${dest}/${name}.key"; then
-    install -m 0640 "$key" "${dest}/${name}.key"
-    changed=1
-  fi
+  publish "$cert"   "${dest}/fullchain.cer"   0644
+  publish "$tmp_ca" "${dest}/ca.cer"          0644
+  publish "$cert"   "${dest}/${name}.cer"     0644
+  publish "$key"    "${dest}/${name}.key"     0640
   # nginx runs as the Drumee system group and must be able to read the key.
-  chgrp "$group" "${dest}/${name}.cer" "${dest}/${name}.key" 2>/dev/null || true
+  chgrp "$group" "${dest}"/fullchain.cer "${dest}/ca.cer" \
+                 "${dest}/${name}.cer" "${dest}/${name}.key" 2>/dev/null || true
   chmod g+r "${dest}/${name}.key" 2>/dev/null || true
 done
 

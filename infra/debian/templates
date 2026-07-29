@@ -170,8 +170,12 @@ Description: Do you have your own SSL certificates?
 Template: drumee-infra/own_ssl_path
 Type: string
 Description: Please enter the location of your SSL certificates
- Certificates must be wildcard and issued to example.com, *.example.com,
- jit.example.com and *.jit.example.com.
+ Certificates must be wildcard and cover every name Drumee serves:
+ example.com, *.example.com, jit.example.com, *.jit.example.com,
+ vendors.example.com and *.vendors.example.com.
+ .
+ Each subdomain needs its own wildcard entry: a wildcard matches a single label,
+ so *.example.com does NOT cover anything below vendors.example.com.
 
 Template: drumee-infra/wireguard_enabled
 Type: boolean

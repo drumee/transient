@@ -5,11 +5,25 @@ Drumee's native channel.
 
 ## Why it is built rather than installed from Debian
 
-Drumee needs a **wildcard** certificate (`example.com` *and* `*.example.com`,
-plus the jitsi names). Wildcards can only be validated by the ACME **DNS-01**
-challenge, and Caddy can only answer DNS-01 if the provider module is *compiled
-into the binary*. Debian's `caddy` has none, so it is limited to HTTP-01 — which
-cannot issue a wildcard and needs inbound port 80.
+Drumee needs a **wildcard** certificate covering the apex and every service
+subdomain. Wildcards can only be validated by the ACME **DNS-01** challenge, and
+Caddy can only answer DNS-01 if the provider module is *compiled into the binary*.
+Debian's `caddy` has none, so it is limited to HTTP-01 — which cannot issue a
+wildcard and needs inbound port 80.
+
+The names requested:
+
+```
+example.com          *.example.com
+jit.example.com      *.jit.example.com          (conferencing)
+vendors.example.com  *.vendors.example.com
+```
+
+Each subdomain carries its own wildcard because **a wildcard matches exactly one
+label**: `*.example.com` does not cover `x.vendors.example.com`. The list is
+`SUBDOMAINS` in `drumee-caddy-config` and `drumee-caddy-export-certs` (override
+with `DRUMEE_SUBDOMAINS`); keep the two in step with each other and with
+setup-infra's nginx vhosts and BIND zone.
 
 Building it here also makes it work **behind NAT**: the DNS API is reached
 outbound, so no port forwarding is needed at all.
@@ -79,11 +93,23 @@ is reported at install time instead of failing obscurely when Caddy starts.
 - `/etc/drumee/credential/caddy-dns.env` (**0600**) —
   `DRUMEE_CADDY_DNS_PROVIDER` and `DRUMEE_CADDY_DNS_TOKEN`.
 
-In return this package **publishes every issued and renewed certificate** to
-`<certs_dir>/<domain>_ecc/<domain>.cer` and `.key` — the acme.sh layout nginx,
-prosody and jitsi already read — so nothing else in the stack changes. One
-certificate covers all the names, since the Caddyfile lists them in a single site
-block and Caddy issues one cert with all of them as SANs.
+In return this package **publishes every issued and renewed certificate** into the
+acme.sh layout that setup-infra's nginx includes read — the file *names* matter,
+not just the directory:
+
+| File | Content | nginx directive |
+|---|---|---|
+| `fullchain.cer` | leaf + intermediates | `ssl_certificate` |
+| `ca.cer` | intermediates only | `ssl_trusted_certificate` |
+| `<name>.key` | private key | `ssl_certificate_key` |
+| `<name>.cer` | leaf alone | (what `init-acme` also publishes) |
+
+Caddy's `.crt` is already leaf + intermediates, so it becomes `fullchain.cer`
+directly and `ca.cer` is the same file minus its first certificate.
+
+One certificate covers all the names (the Caddyfile lists them in a single site
+block, so Caddy issues one cert with all of them as SANs) and it is published once
+per name: `example.com_ecc`, `jit.example.com_ecc`, `vendors.example.com_ecc`.
 
 `drumee-infra` also moves nginx to `8080`/`8443` when this method is selected,
 because Caddy has to own 80/443, and sets `OWN_SSL` so acme.sh does not race
@@ -113,6 +139,11 @@ export DRUMEE_CADDY_DNS_BLOCK='dns ovh {
 ```
 
 Then `systemctl restart drumee-caddy`.
+
+`drumee-caddy-config` **adapts the generated Caddyfile with the real binary before
+exiting**, so a provider/credential mismatch is reported there and then instead of
+crash-looping the service. That is how the single-token form above is known to be
+wrong for OVH: `caddy adapt` rejects it with "wrong argument count".
 
 ## Operating
 
