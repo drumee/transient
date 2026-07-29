@@ -177,11 +177,88 @@ drumee-infra
 
 ## Post-Install Behavior
 
-- **drumee-infra**: runs `setup-infra/bin/install` (root) — renders 88 lodash templates into `/etc/drumee/`, `/etc/nginx/`, `/etc/bind/`, `/etc/prosody/`, `/etc/jitsi/`, `/etc/postfix/`, MariaDB, Coturn. Sets up SSL (ACME/self-signed/own certs), DNS (BIND9), DKIM, Prosody XMPP, PM2 ecosystem, and crontab (cert renewal, tmp cleanup, watchdog, DB/storage backups).
+- **drumee-infra**: runs `setup-infra/bin/install` (root) — renders 88 lodash templates into `/etc/drumee/`, `/etc/nginx/`, `/etc/bind/`, `/etc/prosody/`, `/etc/jitsi/`, `/etc/postfix/`, MariaDB, Coturn. Sets up SSL (ACME/self-signed/own certs), DNS (BIND9), DKIM, Prosody XMPP, PM2 ecosystem, and crontab (cert renewal, tmp cleanup, watchdog, DB/storage backups). Whether BIND9 is installed at all depends on the TLS method — see the DNS-01 section below.
 - **drumee-schemas**: runs `setup-schemas/bin/install` (root) — restores MariaDB from seeds via `mariabackup`, creates system accounts (nobody, guest, system, admin), provisions initial hubs, imports wallpapers/tutorials, generates RSA key pair, sends welcome email with password-reset link.
 - **drumee-server-pod**: sources `/etc/drumee/drumee.sh`, applies pending patches from `/var/lib/drumee/postinstall/patch.sh`.
 - **drumee-patch**: stages patch files; applied at next server startup (not immediately).
 - **drumee-static**, **drumee-ui-pod**: no special post-install.
+
+## TLS on the Native Channel is DNS-01 Only
+
+Worth knowing before touching anything TLS-related: `setup-infra/bin/init-acme`
+issues a **wildcard** (`--issue -d $dom -d "*.$dom" --dns <method>`), and a
+wildcard can only be validated by DNS-01. There is **no HTTP-01 path** natively,
+so inbound `:80` is irrelevant to certificates here. Three paths, selected by two
+env vars that `postinst` bridges from the `drumee-infra/tls_method` debconf menu:
+
+| `tls_method` | env | What happens |
+|---|---|---|
+| `acme-dns-server` (default) | neither set | `bin/init-named` installs **BIND9 as zone master** (`tsig-keygen` → `/etc/bind/keys/update.key`), ACME uses `dns_nsupdate` against `ns1.<domain>`. Needs NS delegation **and inbound udp/53** — so it cannot work behind a home router |
+| `acme-dns-api` | `ACME_ENV_FILE` | acme.sh uses `dns_$ACME_PROVIDER` (any dnsapi; OVH credential templates ship in setup-infra). **Outbound only → works behind NAT.** BIND9 is not installed at all |
+| `caddy` | `OWN_SSL` + internal nginx ports | **drumee-caddy** (a Caddy built with `caddy-dns` modules) owns 80/443, issues over DNS-01 itself, and proxies to nginx. Outbound-only, and it *can* do wildcards — unlike stock Caddy, which is why the module build matters |
+| `own` | `OWN_SSL` | ACME skipped, operator's wildcard certs used |
+
+`ACME_ENV_FILE` is the switch for *both* decisions — `setup-infra/bin/install`
+runs `init-named` only when that variable is unset **or points at a missing
+file**, and `init-acme` sources the file to read `ACME_PROVIDER`. So the file must
+exist *before* the package is configured, and it must export the provider name
+itself; `postinst` checks and warns rather than letting issuance fail later.
+
+The file holds DNS API secrets and is therefore **never rendered** from
+`drumee.yaml` — the config only carries its path (`tls.acme_env_file`), and the
+operator creates it 0600 out of band.
+
+Container channel for contrast: the stock `caddy:2` image has no DNS-provider
+modules compiled in, so it does HTTP-01/TLS-ALPN and needs 80/443 inbound.
+DNS-01 there would require a custom Caddy build (`xcaddy` + `caddy-dns/*`).
+
+### The drumee-caddy contract (package not in this repo yet)
+
+`tls_method=caddy` configures a Caddy that **this repo does not build** — a
+separate package compiles the binary with the `caddy-dns` provider modules (that
+build is what lets it answer DNS-01, and therefore issue wildcards). `postinst`
+writes the two halves of the interface and both sides must stay in sync:
+
+| Path | Mode | Contents |
+|---|---|---|
+| `/etc/drumee/conf.d/caddy.json` | 0644, generated | `domain`, `dns_provider`, `acme_email`, `certs_dir`, `upstream_http_port`, `upstream_https_port` |
+| `/etc/drumee/credential/caddy-dns.env` | **0600**, generated | `DRUMEE_CADDY_DNS_PROVIDER`, `DRUMEE_CADDY_DNS_TOKEN` |
+
+What the package must do in return: **export each issued and renewed certificate
+into `<certs_dir>/<domain>_ecc/<domain>.cer` and `.key`** — the acme.sh layout
+nginx, prosody and jitsi already read, so nothing else in the stack changes.
+
+`postinst` also moves nginx to `DRUMEE_HTTP_PORT`/`DRUMEE_HTTPS_PORT` (8080/8443
+by default) because Caddy has to own 80/443, and sets `OWN_SSL` so acme.sh does
+not race Caddy for the same certificates. Both `caddy.json` and `wireguard.json`
+are **generated rather than shipped**, for the same reason: dpkg would treat a
+shipped file as a conffile and prompt on every upgrade.
+
+Two guards worth keeping: if no Caddy binary is found (`/usr/sbin/drumee-caddy`
+or `caddy` on PATH) or no provider module was named, the choice is **refused** —
+nginx keeps 80/443 and no `caddy.json` is written, because moving nginx off those
+ports when nothing is there to take them leaves the box serving nothing at all.
+
+The DNS API token is a secret, so `render.mjs` never emits it. Interactive
+installs are asked (debconf `password` type); unattended installs add the one
+line themselves:
+
+```bash
+printf 'drumee-infra\tdrumee-infra/caddy_dns_api_key\tpassword\t%s\n' "$TOKEN" \
+  | debconf-set-selections
+```
+
+This pairs with WireGuard coordination: a **native** box on a home LAN can have
+`acme-dns-api` (real wildcard certs, no open port) *and* `wireguard.enabled`
+(reachable, no open port) — nothing about it needs port forwarding. The container
+wizard's "Behind a home router" mode still falls back to `self-signed` purely
+because of the Caddy limitation above, not because DNS-01 is impossible there.
+
+`self-signed` is only meaningful with a local domain: setup-infra has no
+"public domain, no ACME" mode (`infra.js:42` sets `PUBLIC_DOMAIN` from any
+non-empty `DRUMEE_DOMAIN_NAME`, and `bin/install` then runs `init-acme` unless
+`OWN_CERTS_DIR` is set), so `postinst` warns when the two are combined. Note
+`LOCAL_MODE` is bridged but setup-infra never reads it.
 
 ## Config System (Single Source of Truth)
 
@@ -194,6 +271,11 @@ node config/render.mjs all --config config/drumee.yaml --out-dir out
 ```
 
 Outputs: `.env`, `docker-compose.yml`, `install.conf` (debconf preseed), `Caddyfile`. Null passwords in `database.password`/`redis.password` trigger automatic strong-random generation.
+
+`tls.dns_challenge` (`nsupdate` | `api`) and `tls.acme_env_file` are native-only and
+render into the `tls_method` / `acme_env_file` debconf keys — see the DNS-01
+section above. The preseed still carries `own_ssl` so a package built before
+`tls_method` existed selects the same path.
 
 `config/drumee.schema.json` is the JSON Schema (draft 2020-12) defining the config contract. `config/drumee.example.yaml` is the annotated template.
 

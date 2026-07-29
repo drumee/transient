@@ -88,11 +88,84 @@ Description: Please enter the location of your exchange area
  A directory to transfer files between the host filesystem and the Drumee
  filesystem. It must not be shared with a native system path such as /usr, /sys, ...
 
+Template: drumee-infra/tls_method
+Type: select
+Choices: acme-dns-server, acme-dns-api, caddy, own, self-signed
+Default: acme-dns-server
+Description: How should TLS certificates be obtained?
+ Drumee needs a WILDCARD certificate (example.com plus *.example.com), which
+ can only be issued through a DNS-01 challenge — never over HTTP. There are
+ two ways to answer that challenge:
+ .
+ acme-dns-server: this machine runs its own authoritative DNS server (BIND9)
+ and answers the challenge locally. Requires that the domain's NS records are
+ delegated here and that inbound UDP port 53 reaches this machine — so it does
+ NOT work behind a home router.
+ .
+ acme-dns-api: the challenge record is created through your DNS provider's API
+ (any provider supported by acme.sh). This needs only outbound access, so it
+ works behind NAT with no port forwarding at all. No local DNS server is set
+ up in this mode.
+ .
+ caddy: Caddy obtains and renews the certificates itself, using the DNS
+ provider module it was built with, and terminates TLS on ports 80/443 in front
+ of nginx (nginx moves to internal ports). Also outbound-only, so it works
+ behind NAT. Requires the drumee-caddy package; without it this choice is
+ refused and nginx keeps ports 80/443.
+ .
+ own: you already have wildcard certificates and will point Drumee at them.
+ .
+ self-signed: no public certificate — for a LAN-only or test instance. Only
+ meaningful together with a local domain; on a public domain a certificate is
+ still requested (use "own" to supply your own instead).
+
+Template: drumee-infra/acme_env_file
+Type: string
+Default: /etc/drumee/credential/dns-api.env
+Description: Please enter the path to the DNS provider credentials file
+ A shell file that will be sourced before the certificate is requested. It must
+ export ACME_PROVIDER (an acme.sh dnsapi name, without the "dns_" prefix, e.g.
+ ovh, cloudflare, gandi_livedns) plus the variables that provider needs.
+ .
+ For example, for OVH:
+ .
+   export ACME_PROVIDER=ovh
+   export OVH_AK=... OVH_AS=... OVH_CK=...
+ .
+ Create the file with mode 0600 before this package is configured. If it is
+ missing, Drumee falls back to running a local DNS server instead.
+
+Template: drumee-infra/caddy_domain
+Type: string
+Description: Please enter the domain to certify with Caddy
+ The certificate covers this domain and its subdomains (a wildcard is possible
+ because Caddy validates over DNS). Defaults to this instance's domain; change
+ it only if the certificate should be issued for a different zone.
+
+Template: drumee-infra/caddy_dns_provider
+Type: string
+Description: Please enter the Caddy DNS provider module
+ The name of the caddy-dns module the drumee-caddy binary was built with, for
+ example ovh, cloudflare, gandi, desec or route53. It must match a module that
+ is actually compiled in; see the drumee-caddy package documentation for the
+ list it ships with.
+
+Template: drumee-infra/caddy_dns_api_key
+Type: password
+Description: Please enter the DNS provider API key or token
+ Used by Caddy to create the DNS challenge record. It is written to
+ /etc/drumee/credential/caddy-dns.env with mode 0600 and is never echoed back.
+ .
+ Providers needing more than one value (an application key plus a secret, for
+ instance) take the extra values in that file; enter the primary token here and
+ complete the file afterwards.
+
 Template: drumee-infra/own_ssl
 Type: boolean
 Default: false
 Description: Do you have your own SSL certificates?
- If not, Drumee uses ZeroSSL to automatically issue your SSL certificates.
+ Superseded by drumee-infra/tls_method; kept so existing preseeds keep working.
+ Setting it true is equivalent to choosing "own".
 
 Template: drumee-infra/own_ssl_path
 Type: string

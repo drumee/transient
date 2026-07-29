@@ -27,6 +27,32 @@ tls:
   mode: acme               # acme | own | self-signed
   acme_email: ssl@example.com
   # own_cert_path: /etc/drumee/ssl   # required only when mode: own
+  #
+  # Native channel only. The certificate issued is a WILDCARD (example.com plus
+  # *.example.com), so the challenge is always DNS-01 — there is no HTTP-01 path.
+  # Pick how the challenge record is written:
+  #   nsupdate (default) this host runs BIND9 as the zone master. Needs the NS
+  #                      records delegated here AND inbound udp/53, so it does
+  #                      not work behind a home router.
+  #   api                the record is created through your DNS provider's API.
+  #                      Outbound only, so it works behind NAT with no port
+  #                      forwarding; no local DNS server is installed.
+  # dns_challenge: nsupdate
+  #
+  # Required with dns_challenge: api. Path ON THE TARGET HOST to a shell file
+  # exporting ACME_PROVIDER (an acme.sh dnsapi name minus the "dns_" prefix)
+  # plus that provider's credentials. Holds secrets: create it yourself, 0600.
+  #   export ACME_PROVIDER=ovh
+  #   export OVH_AK=... OVH_AS=... OVH_CK=...
+  # acme_env_file: /etc/drumee/credential/dns-api.env
+  #
+  # Or let Caddy do it instead of nginx+acme.sh. Needs the drumee-caddy package
+  # (a Caddy compiled with the caddy-dns modules); it takes 80/443, issues over
+  # DNS-01 itself — wildcards included — and nginx moves to 8080/8443 behind it.
+  # dns_provider names a module the binary was built with. The API token is NOT
+  # configured here: debconf asks for it (see docs/native-channel.md).
+  # terminator: caddy
+  # dns_provider: ovh
 
 storage:
   data_dir: /data

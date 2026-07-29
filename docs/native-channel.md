@@ -38,6 +38,80 @@ reloads nginx. Override with `--repo-dir=` / `--domain=`. TLS is provisioned
 separately (`certbot --nginx -d apt.drumee.net`); the script prints the follow-up
 steps, including uncommenting the port-80 → 443 redirect once the cert exists.
 
+## Certificates: DNS-01, and what works behind a router
+
+Drumee needs a **wildcard** certificate (`example.com` *and* `*.example.com`), so
+the ACME challenge is always DNS-01 — opening port 80 does nothing for issuance.
+`apt install drumee-infra` asks how to answer it:
+
+| Choice | Requirements |
+|---|---|
+| **acme-dns-server** (default) | This host becomes the authoritative DNS server (BIND9, TSIG-signed dynamic updates). The domain's NS records must be delegated here and **inbound udp/53 must reach it** — not possible behind a typical home router. |
+| **acme-dns-api** | The TXT record is created through your DNS provider's API. **Outbound only, so no port forwarding at all** — the right choice for a box on a home LAN. No local DNS server is installed. |
+| **caddy** | The `drumee-caddy` package (a Caddy compiled with `caddy-dns` provider modules) takes 80/443, obtains and renews the certificates itself over DNS-01, and proxies to nginx on internal ports. **Outbound only**, and it can issue wildcards. Asks for the domain, the provider module and the API token. |
+| **own** | You supply wildcard certs and give their path. |
+| **self-signed** | LAN-only/test instance, no public certificate. |
+
+For `acme-dns-api`, create the credentials file on the host **before** installing,
+mode `0600`, exporting an [acme.sh dnsapi](https://github.com/acmesh-official/acme.sh/wiki/dnsapi)
+name plus its variables:
+
+```bash
+sudo install -d -m 0700 /etc/drumee/credential
+sudo tee /etc/drumee/credential/dns-api.env >/dev/null <<'ENV'
+export ACME_PROVIDER=ovh
+export OVH_AK=...  OVH_AS=...  OVH_CK=...
+ENV
+sudo chmod 0600 /etc/drumee/credential/dns-api.env
+```
+
+Declaratively, the same thing in `drumee.yaml` (the path only — never the
+secrets), which `render.mjs debconf` turns into the preseed:
+
+```yaml
+tls:
+  mode: acme
+  acme_email: ssl@example.com
+  dns_challenge: api
+  acme_env_file: /etc/drumee/credential/dns-api.env
+```
+
+If that file is missing when the package configures, installation does **not**
+fail: it falls back to setting up the local DNS server, and `postinst` prints
+what to fix followed by `dpkg-reconfigure drumee-infra`.
+
+### Letting Caddy handle certificates
+
+`tls_method=caddy` hands certificate management to the `drumee-caddy` package,
+which ships a Caddy built with the DNS provider modules. Install that package
+first — without it the choice is refused and nginx keeps ports 80/443, so you
+cannot end up with nothing listening on 443.
+
+Interactively you are asked for the domain, the provider module (`ovh`,
+`cloudflare`, `gandi`, … — it must be one the binary was built with) and the API
+token. Declaratively:
+
+```yaml
+tls:
+  mode: acme
+  acme_email: ssl@example.com
+  terminator: caddy
+  dns_provider: ovh
+```
+
+The token is **never** written into `drumee.yaml` or the rendered preseed. For an
+unattended install, add it yourself before `apt install`:
+
+```bash
+printf 'drumee-infra\tdrumee-infra/caddy_dns_api_key\tpassword\t%s\n' "$TOKEN" \
+  | sudo debconf-set-selections
+```
+
+Configuring this way moves nginx to `8080`/`8443` (Caddy needs 80/443) and writes
+`/etc/drumee/conf.d/caddy.json` plus `/etc/drumee/credential/caddy-dns.env`
+(mode `0600`). Providers that need more than one credential — an application key
+*and* a secret, say — take the extra values in that env file.
+
 The packages are **self-hosted on `apt.drumee.net`** — the `drumee-static` deb alone
 is ~175 MB, over GitHub's 100 MB git-file limit, so they cannot live in a Pages git
 repo. Clients use a flat repo:
