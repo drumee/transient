@@ -169,6 +169,24 @@ class __private_payment extends Entity {
     // as soon as the new one is paid, so the two never bill in parallel. Do not
     // relax this guard without that half in place.
     const supersede = !!this.input.use('supersede', '');
+    // `defer` refines supersede for a same-plan cycle switch (month <-> year):
+    // instead of killing the current subscription the moment the new one is
+    // paid, the new one starts only when the current one expires — Stripe's
+    // trial_end carries the start date, and the webhook downgrades its cancel
+    // of the replaced subscription to cancel_at_period_end. The user keeps
+    // every day already paid for and is charged nothing today.
+    //
+    // trial_end must be at least 48h out (Stripe rejects less); a switch
+    // requested closer to renewal than that falls back to the immediate
+    // replacement — the remaining time is too short to be worth a second
+    // subscription's bookkeeping, and the FE copy for that path says the
+    // current plan ends now.
+    const defer = supersede && !!this.input.use('defer', '');
+    let trial_end = 0;
+    if (defer && live) {
+      const pe = ~~(current && current.period_end);
+      if (pe >= now + 48 * 3600 + 300) trial_end = pe;
+    }
     if (current && current.subscription_id && live && holder === entity_type && !supersede) {
       const same_plan = String(current.plan || '') === String(this.input.use('plan', 'team'));
       let refusal;
@@ -272,6 +290,9 @@ class __private_payment extends Entity {
       // Same-entity replacement (Team <-> Business). The webhook reads this to
       // cancel the subscription being replaced once this one is paid.
       metadata.supersede = '1';
+      // Deferred cycle switch: tell the webhook to let the replaced
+      // subscription run out instead of cancelling it now.
+      if (trial_end) metadata.defer = '1';
     }
     if (org_bootstrap) {
       metadata.org_ident = org_bootstrap.ident;
@@ -281,7 +302,10 @@ class __private_payment extends Entity {
       mode: 'subscription',
       customer: cust,
       line_items,
-      subscription_data: { metadata },
+      // trial_end (deferred cycle switch) makes the new subscription free
+      // until the replaced one expires — the customer sees "$0 due today,
+      // then {price} from {date}" on the hosted page.
+      subscription_data: trial_end ? { metadata, trial_end } : { metadata },
       metadata,
       success_url,
       cancel_url,
