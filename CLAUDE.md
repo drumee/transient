@@ -81,6 +81,7 @@ schemas/build.sh
 server/build.sh
 ui/build.sh
 static/build.sh
+caddy/build.sh                             # drumee-caddy (needs Go >= 1.21 or Docker)
 meta/build.sh                              # drumee metapackage (pure deps)
 schemas-patch/build.sh --manifest=auto     # incremental schema patch
 
@@ -212,21 +213,27 @@ Container channel for contrast: the stock `caddy:2` image has no DNS-provider
 modules compiled in, so it does HTTP-01/TLS-ALPN and needs 80/443 inbound.
 DNS-01 there would require a custom Caddy build (`xcaddy` + `caddy-dns/*`).
 
-### The drumee-caddy contract (package not in this repo yet)
+### The drumee-caddy contract
 
-`tls_method=caddy` configures a Caddy that **this repo does not build** — a
-separate package compiles the binary with the `caddy-dns` provider modules (that
-build is what lets it answer DNS-01, and therefore issue wildcards). `postinst`
-writes the two halves of the interface and both sides must stay in sync:
+`tls_method=caddy` configures the package built by **`caddy/`** in this repo: a
+Caddy compiled with the `caddy-dns` provider modules, which is what lets it answer
+DNS-01 and therefore issue wildcards (see `caddy/README.md`). It is the only
+`Architecture: any` package here, and it is **optional** — not in the metapackage,
+since it is only needed for this TLS method. `postinst` writes the two halves of
+the interface and both sides must stay in sync:
 
 | Path | Mode | Contents |
 |---|---|---|
 | `/etc/drumee/conf.d/caddy.json` | 0644, generated | `domain`, `dns_provider`, `acme_email`, `certs_dir`, `upstream_http_port`, `upstream_https_port` |
 | `/etc/drumee/credential/caddy-dns.env` | **0600**, generated | `DRUMEE_CADDY_DNS_PROVIDER`, `DRUMEE_CADDY_DNS_TOKEN` |
 
-What the package must do in return: **export each issued and renewed certificate
+What the package does in return: **exports each issued and renewed certificate
 into `<certs_dir>/<domain>_ecc/<domain>.cer` and `.key`** — the acme.sh layout
-nginx, prosody and jitsi already read, so nothing else in the stack changes.
+nginx, prosody and jitsi already read, so nothing else in the stack changes. One
+certificate covers every name, because the generated Caddyfile lists them in a
+single site block (`<domain>, *.<domain>, jit.<domain>, *.jit.<domain>`) and Caddy
+issues one cert with all of them as SANs. `drumee-caddy-export-certs.timer` polls
+every 12h since Caddy offers no renewal hook that is stable across versions.
 
 `postinst` also moves nginx to `DRUMEE_HTTP_PORT`/`DRUMEE_HTTPS_PORT` (8080/8443
 by default) because Caddy has to own 80/443, and sets `OWN_SSL` so acme.sh does
@@ -680,6 +687,7 @@ Source can be git URL (`#ref`), local dir, or archive. Installs to `$PLUGIN_DIR/
 | `server/` | `drumee-server-pod` | `server-team` | Post-install applies pending patches |
 | `ui/` | `drumee-ui-pod` | `ui-team` | Webpack build during package build |
 | `static/` | `drumee-static` | `static` | No deps, served by nginx |
+| `caddy/` | `drumee-caddy` | upstream Caddy + `caddy-dns/*` | **Only `Architecture: any` package.** Compiles the binary with `xcaddy` (local Go ≥ 1.21 or Docker); optional, install it before choosing `tls_method=caddy` |
 | `schemas-patch/` | `drumee-patch` | `schemas` | Requires `--manifest` |
 | `builder/` | `drumee-bootstrap` | `setup` | Interactive installer, builds unsigned, GitLab fallback |
 | `meta/` | `drumee` | — | Metapackage, deps pinned via `make-control.sh` |

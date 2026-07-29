@@ -1,0 +1,82 @@
+#!/bin/bash
+# Export the certificate Caddy obtained into the layout the rest of Drumee reads.
+#
+# THIS IS THE CONTRACT with drumee-infra: nginx, prosody and jitsi all read
+#   <certs_dir>/<domain>_ecc/<domain>.cer
+#   <certs_dir>/<domain>_ecc/<domain>.key
+# (the acme.sh layout). Caddy keeps its own store instead, so after every
+# issuance and renewal the files are copied across and nginx is reloaded. Run by
+# drumee-caddy-export-certs.timer, and once after the service starts.
+#
+# Idempotent: it does nothing when the destination already matches.
+set -euo pipefail
+
+CONF="${DRUMEE_CADDY_CONF:-/etc/drumee/conf.d/caddy.json}"
+STORE="${DRUMEE_CADDY_STORE:-/var/lib/caddy/.local/share/caddy}"
+
+log() { printf '[drumee-caddy-export] %s\n' "$*"; }
+die() { printf '[drumee-caddy-export] ERROR: %s\n' "$*" >&2; exit 1; }
+
+[ -f "$CONF" ] || die "missing $CONF"
+jget() { node -e "const c=require('$CONF');process.stdout.write(String(c.$1 ?? ''))"; }
+
+domain=$(jget domain)
+certs_dir=$(jget certs_dir)
+[ -n "$domain" ] || die "no domain in $CONF"
+[ -n "$certs_dir" ] || certs_dir=/etc/drumee/certs
+
+# Caddy names each folder after the identifier it issued for. Prefer the exact
+# domain; fall back to scanning SANs, which also catches the wildcard folder
+# (stored as wildcard_.example.com).
+find_cert() {
+  local exact
+  exact=$(find "$STORE/certificates" -type f -name "${domain}.crt" 2>/dev/null | head -1)
+  if [ -n "$exact" ]; then echo "$exact"; return 0; fi
+  local c
+  while IFS= read -r c; do
+    if openssl x509 -in "$c" -noout -text 2>/dev/null \
+       | grep -q -e "DNS:${domain}\b" -e "DNS:\*\.${domain}\b"; then
+      echo "$c"; return 0
+    fi
+  done < <(find "$STORE/certificates" -type f -name '*.crt' 2>/dev/null)
+  return 1
+}
+
+cert=$(find_cert) || {
+  log "no certificate for ${domain} in ${STORE} yet — Caddy may still be issuing"
+  exit 0
+}
+key="${cert%.crt}.key"
+[ -f "$key" ] || die "found $cert but no matching key"
+
+# The single certificate carries the jitsi names as SANs too, so both consumers
+# are served from it.
+group="$(stat -c %G "$certs_dir" 2>/dev/null || echo root)"
+[ "$group" = "root" ] && group=www-data
+changed=0
+
+for name in "$domain" "jit.${domain}"; do
+  dest="${certs_dir}/${name}_ecc"
+  install -d -m 0755 "$dest"
+  if ! cmp -s "$cert" "${dest}/${name}.cer"; then
+    install -m 0644 "$cert" "${dest}/${name}.cer"
+    changed=1
+  fi
+  if ! cmp -s "$key" "${dest}/${name}.key"; then
+    install -m 0640 "$key" "${dest}/${name}.key"
+    changed=1
+  fi
+  # nginx runs as the Drumee system group and must be able to read the key.
+  chgrp "$group" "${dest}/${name}.cer" "${dest}/${name}.key" 2>/dev/null || true
+  chmod g+r "${dest}/${name}.key" 2>/dev/null || true
+done
+
+if [ "$changed" = 0 ]; then
+  log "certificates already up to date for ${domain}"
+  exit 0
+fi
+
+log "exported ${domain} certificate to ${certs_dir}"
+# Reload the consumers so they pick up the new files. Absent services are fine.
+systemctl reload nginx 2>/dev/null || systemctl restart nginx 2>/dev/null || true
+systemctl restart prosody 2>/dev/null || true

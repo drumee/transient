@@ -1,0 +1,26 @@
+#!/bin/sh
+# prerm for drumee-caddy
+set -e
+
+case "$1" in
+    remove|deconfigure)
+    # Stop before the binary goes away. nginx is NOT moved back to 80/443 here:
+    # that is drumee-infra's decision, taken by re-running dpkg-reconfigure with
+    # a different TLS method — doing it from this package would fight it.
+    deb-systemd-invoke stop drumee-caddy.service >/dev/null 2>&1 || true
+    deb-systemd-invoke stop drumee-caddy-export-certs.timer >/dev/null 2>&1 || true
+    echo "drumee-caddy: stopped. Nothing is listening on 443 until you run:"
+    echo "  dpkg-reconfigure drumee-infra   (choose another TLS method)"
+    ;;
+
+    upgrade|failed-upgrade)
+    ;;
+    *)
+        echo "prerm called with unknown argument \`$1'" >&2
+        exit 1
+    ;;
+esac
+
+#DEBHELPER#
+
+exit 0

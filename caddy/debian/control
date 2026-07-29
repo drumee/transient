@@ -1,0 +1,24 @@
+Source: drumee-caddy
+Section: web
+Priority: optional
+Maintainer: Somanos Sar <somanos.sar@drumee.com>
+Build-Depends: debhelper (>= 11)
+Standards-Version: 1.0.1
+Homepage: https://drumee.com
+
+Package: drumee-caddy
+Architecture: any
+Depends: ${misc:Depends}, adduser, drumee-infra
+Description: Caddy TLS terminator for Drumee, built with DNS-01 providers
+ Ships a Caddy binary compiled with the caddy-dns provider modules, so it can
+ answer the ACME DNS-01 challenge itself and therefore issue WILDCARD
+ certificates — which Drumee needs and which stock Caddy cannot do over HTTP.
+ .
+ Selected by choosing tls_method=caddy in drumee-infra. Caddy then owns ports
+ 80 and 443, obtains and renews the certificate through the DNS provider's API
+ (outbound only, so it works behind NAT with no port forwarding), and proxies to
+ nginx on an internal port. Each issued certificate is published into
+ /etc/drumee/certs in the layout nginx, prosody and jitsi already read.
+ .
+ Install this package BEFORE selecting the method: without the binary present
+ drumee-infra refuses the choice and leaves nginx on 80/443.

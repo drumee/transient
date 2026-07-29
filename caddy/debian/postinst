@@ -1,0 +1,72 @@
+#!/bin/sh
+# postinst for drumee-caddy
+set -e
+
+CONF=/etc/drumee/conf.d/caddy.json
+CREDS=/etc/drumee/credential/caddy-dns.env
+MODULES=/usr/share/drumee-caddy/dns-modules
+
+case "$1" in
+    configure)
+    # Unprivileged service account. The proxy needs no root: it binds 80/443 via
+    # AmbientCapabilities, and the root work (publishing certs into
+    # /etc/drumee/certs, reloading nginx) is a separate oneshot unit.
+    if ! getent passwd caddy >/dev/null; then
+        adduser --system --group --home /var/lib/caddy \
+                --gecos "Drumee Caddy" --disabled-login caddy >/dev/null
+    fi
+    install -d -m 0750 -o caddy -g caddy /var/lib/caddy
+    install -d -m 0755 /etc/drumee/caddy
+    chown caddy:caddy /etc/drumee/caddy
+
+    systemctl daemon-reload || true
+
+    # drumee-infra writes conf.d/caddy.json only when tls_method=caddy. Until it
+    # does, this package is installed but idle — that is the expected order,
+    # since infra refuses the method while the binary is missing.
+    if [ ! -f "$CONF" ]; then
+        echo "drumee-caddy: installed. Select it with:"
+        echo "  dpkg-reconfigure drumee-infra   (TLS method -> caddy)"
+        exit 0
+    fi
+
+    enabled=$(node -e "process.stdout.write(String(require('$CONF').enabled))" 2>/dev/null || echo false)
+    if [ "$enabled" != "true" ]; then
+        echo "drumee-caddy: not the selected TLS method — leaving units inactive."
+        systemctl disable --now drumee-caddy.service >/dev/null 2>&1 || true
+        systemctl disable --now drumee-caddy-export-certs.timer >/dev/null 2>&1 || true
+        exit 0
+    fi
+
+    # Warn early when the configured provider was not compiled in: Caddy would
+    # otherwise fail to load the tls directive at start with a less obvious error.
+    provider=$(node -e "process.stdout.write(String(require('$CONF').dns_provider ?? ''))" 2>/dev/null || echo '')
+    if [ -n "$provider" ] && [ -f "$MODULES" ] && ! grep -qx "$provider" "$MODULES"; then
+        echo "drumee-caddy: DNS provider '$provider' is NOT among the modules this" >&2
+        echo "  binary was built with. Available:" >&2
+        sed 's/^/    /' "$MODULES" >&2
+        echo "  Rebuild with CADDY_DNS_MODULES including it, or pick another provider." >&2
+    fi
+    if [ ! -f "$CREDS" ]; then
+        echo "drumee-caddy: $CREDS is missing — dpkg-reconfigure drumee-infra to write it." >&2
+        exit 0
+    fi
+
+    systemctl enable drumee-caddy.service >/dev/null 2>&1 || true
+    systemctl enable drumee-caddy-export-certs.timer >/dev/null 2>&1 || true
+    deb-systemd-invoke restart drumee-caddy.service || true
+    deb-systemd-invoke start drumee-caddy-export-certs.timer || true
+    echo "drumee-caddy: serving TLS on 80/443. Logs: journalctl -u drumee-caddy -f"
+    ;;
+
+    abort-upgrade|abort-remove|abort-deconfigure)
+    ;;
+    *)
+        echo "postinst called with unknown argument \`$1'" >&2
+        exit 1
+    ;;
+esac
+
+#DEBHELPER#
+
+exit 0

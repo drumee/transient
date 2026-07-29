@@ -17,6 +17,7 @@ schemas: 2.6.99
 server: 2.9.73
 ui: 3.3.50
 static: 1.0.4
+caddy: 1.0.0
 schemas-patch: 1.1.6
 builder: 1.2.6
 meta: 1.0.0
