@@ -1839,6 +1839,18 @@ class __private_hub extends Hub {
       let sockets = await this.yp.await_proc("user_sockets", uid);
       let payload = this.payload(node, { service });
       await RedisStore.sendData(payload, sockets);
+      // media.remove above only tidies the removed member's own sidebar. Any
+      // window they still have open on this workspace stays live, and their
+      // next action there fails the ACL with a bare 403 that the UI reports as
+      // a network error. This dedicated push lets the desk lock the workspace
+      // out at once and name who removed them.
+      await RedisStore.sendData(
+        this.payload(
+          { hub_id, name: hub_name, removed_by: this._actor_name() },
+          { service: "hub.member_removed" }
+        ),
+        sockets
+      );
       await writeAudit(this, {
         db: hub_db,
         uid: this.uid,
@@ -1849,8 +1861,97 @@ class __private_hub extends Hub {
         log: `Member removed from workspace '${hub_name}'`,
       });
     }
+    if (members.length) {
+      // Losing membership also drops them off this workspace's tasks. Runs after
+      // the per-member work — including the audit rows — because any SQL error
+      // ends this request's DB connection (mariadb _handleError), and losing the
+      // audit trail would be a worse trade than a lingering assignee row.
+      await this._unassign_tasks(members);
+      // Remaining members may have a task board open showing the ex-member as an
+      // assignee. task.update_assignee is what the task panel already listens to
+      // for a live reload, so reuse it rather than inventing a new signal.
+      await this._broadcast_task_unassign(hub_id);
+    }
     users = await this._members_by_type("not_owner", 1);
     this.output.list(users);
+  }
+
+  /**
+   * Display name of the member performing the current request, for messages
+   * shown to somebody else ("removed by ..."). Falls back through the same
+   * chain the member list uses so it is never empty.
+   *
+   * @returns {string}
+   */
+  _actor_name() {
+    const u = this.user;
+    if (!u) return "";
+    const fullname = `${u.get("fullname") || ""}`.trim();
+    if (fullname) return fullname;
+    const name = [u.get(Attr.firstname), u.get(Attr.lastname)]
+      .filter((p) => `${p || ""}`.trim())
+      .join(" ")
+      .trim();
+    return name || `${u.get(Attr.email) || ""}`.trim();
+  }
+
+  /**
+   * Clear users' task assignments in THIS workspace.
+   *
+   * The task panel resolves an assignee uid against the workspace member list
+   * (hub.get_members_by_type). Once the user is no longer a member the uid
+   * resolves to nothing, and the assignee chip fell back to rendering the raw
+   * uid — a name-shaped string of random characters. Dropping the rows leaves
+   * those tasks plainly unassigned instead.
+   *
+   * The table is probed first rather than letting a DELETE fail: workspaces
+   * created before the task tables shipped have no task_assignee, and this DB
+   * layer answers ER_NO_SUCH_TABLE by rolling back and ENDING the connection
+   * (mariadb _handleError default branch) — which would take the rest of the
+   * request down with it. information_schema is always readable.
+   *
+   * @param {Array} uids members being removed
+   */
+  async _unassign_tasks(uids) {
+    const list = toArray(uids).filter(Boolean);
+    if (!list.length) return;
+    try {
+      const probe = await this.db.await_run(
+        "SELECT COUNT(*) AS n FROM information_schema.tables" +
+        " WHERE table_schema = DATABASE() AND table_name = 'task_assignee'"
+      );
+      const row = toArray(probe)[0] || {};
+      if (!Number(row.n)) return;
+      const holes = list.map(() => "?").join(",");
+      await this.db.await_run(
+        `DELETE FROM task_assignee WHERE uid IN (${holes})`,
+        list
+      );
+    } catch (e) {
+      this.warn(
+        "[hub.delete_contributor] failed to unassign tasks",
+        list,
+        e && e.message
+      );
+    }
+  }
+
+  /**
+   * Tell the workspace's remaining members that assignees changed, so open
+   * task boards reload instead of keeping the ex-member's avatar on the cards.
+   * The removed member is already out of entity_sockets by this point, so this
+   * never reaches them.
+   *
+   * @param {string} hub_id
+   */
+  async _broadcast_task_unassign(hub_id) {
+    if (!hub_id) return;
+    let dest = toArray(await this.yp.await_proc("entity_sockets", hub_id));
+    if (isEmpty(dest)) return;
+    await RedisStore.sendData(
+      this.payload({ hub_id }, { service: "task.update_assignee" }),
+      dest
+    );
   }
 
   /**
