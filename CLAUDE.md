@@ -34,13 +34,11 @@ To exercise a change for real, run it from a consuming service (`server-team`) r
 
 ## The self-dependency gotcha (read this first)
 
-`package.json` lists `@drumee/server-core` as its own dependency, and several internal modules require themselves through the package name rather than a relative path:
+`package.json` still lists `@drumee/server-core` as its own dependency, and `node_modules/@drumee/server-core/` holds a **published copy** (v1.1.57, versus v1.1.80 in the working tree). Any internal module that requires itself through the package name rather than a relative path therefore loads that stale copy, not the local file — so editing `lib/acl.js` would not change the `Acl` that `Entity` extends.
 
-- `lib/entity.js:14` → `require('@drumee/server-core/lib/acl')`
-- `lib/mfs.js:39,42` → `require("@drumee/server-core/lib/file-io")`, `.../lib/entity`
-- `lib/utils/generator.js:23` → `require("@drumee/server-core/lib/utils/mfs")`
+All four known cases are now relative requires (`lib/entity.js` → `./acl`, `lib/mfs.js` → `./file-io` + `./entity`, `lib/utils/generator.js` → `./mfs`), which is what made the local `file-io.js` CORS headers, the `application/octet-stream` mimetype fallback, and `utils/mfs.js`'s `cleanSeen()` reachable at all. Never reintroduce a `require("@drumee/server-core/...")` inside `lib/`; keep the internal graph relative. Dropping the self-dependency from `package.json` is the real fix and is still pending.
 
-These resolve to **`node_modules/@drumee/server-core/`** — the published copy, currently v1.1.57 while the working tree is v1.1.80 — not to the local files. So editing `lib/acl.js` does **not** change the `Acl` that `Entity` extends locally. When touching `acl.js`, `file-io.js`, `entity.js`, or `utils/mfs.js`, either convert the require to a relative path or symlink `node_modules/@drumee/server-core` to the repo root, otherwise you will debug the wrong code.
+The internal require graph is acyclic and must stay that way: `mfs.js → file-io.js → utils/generator.js → utils/mfs.js` and `mfs.js → entity.js → acl.js`. `acl.js` and `utils/mfs.js` are the leaves — they require nothing else in `lib/`.
 
 ## Architecture
 
