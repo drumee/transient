@@ -34,9 +34,25 @@ To exercise a change for real, run it from a consuming service (`server-team`) r
 
 ## The self-dependency gotcha (read this first)
 
-`package.json` still lists `@drumee/server-core` as its own dependency, and `node_modules/@drumee/server-core/` holds a **published copy** (v1.1.57, versus v1.1.80 in the working tree). Any internal module that requires itself through the package name rather than a relative path therefore loads that stale copy, not the local file — so editing `lib/acl.js` would not change the `Acl` that `Entity` extends.
+**This is fixed — the section is kept so the failure mode stays recognizable.** `package.json` used to list `@drumee/server-core` as its own dependency, so npm installed a published copy at `node_modules/@drumee/server-core/` (v1.1.57 against a v1.1.80 tree). Any module that required itself by package name loaded that stale copy instead of the local file, which meant editing `lib/acl.js` did not change the `Acl` that `Entity` extended.
 
-All four known cases are now relative requires (`lib/entity.js` → `./acl`, `lib/mfs.js` → `./file-io` + `./entity`, `lib/utils/generator.js` → `./mfs`), which is what made the local `file-io.js` CORS headers, the `application/octet-stream` mimetype fallback, and `utils/mfs.js`'s `cleanSeen()` reachable at all. Never reintroduce a `require("@drumee/server-core/...")` inside `lib/`; keep the internal graph relative. Dropping the self-dependency from `package.json` is the real fix and is still pending.
+Both halves are now gone: the self-dependency is out of `package.json` and `package-lock.json`, and all four call sites are relative (`lib/entity.js` → `./acl`, `lib/mfs.js` → `./file-io` + `./entity`, `lib/utils/generator.js` → `./mfs`). That is what made the local `file-io.js` CORS headers, the `application/octet-stream` mimetype fallback, and `utils/mfs.js`'s `cleanSeen()` reachable at all. **Never reintroduce a `require("@drumee/server-core/...")` inside `lib/`** — with the dependency gone it now fails loudly at load time rather than silently resolving to old code.
+
+The internal require graph is acyclic and must stay that way: `mfs.js → file-io.js → utils/generator.js → utils/mfs.js` and `mfs.js → entity.js → acl.js`. `acl.js` and `utils/mfs.js` are the leaves — they require nothing else in `lib/`.
+
+### Undeclared dependencies (pre-existing)
+
+`lib/` requires nine packages that `package.json` does not declare. Four resolve by hoisting from `@drumee/server-essentials` (`lodash`, `backbone`, `istextorbinary`, `jsonfile`). The other five are **absent from `node_modules` entirely** and are only reached through lazy `require()` calls inside function bodies, so they fail at call time rather than load time:
+
+| Package | Only reached from | Breaks |
+|---|---|---|
+| `geoip-lite` | `lib/session.js:549` | IP geolocation |
+| `moment` | `lib/session.js:614` | date formatting on that path |
+| `js-yaml` | `lib/utils/generator.js:538` | YAML parsing |
+| `music-metadata` | `lib/utils/generator.js:478` | audio metadata extraction |
+| `ovh` | `lib/vendor/ovh/sms.js:27` | OVH SMS sending |
+
+Declare them before relying on any of those paths.
 
 The internal require graph is acyclic and must stay that way: `mfs.js → file-io.js → utils/generator.js → utils/mfs.js` and `mfs.js → entity.js → acl.js`. `acl.js` and `utils/mfs.js` are the leaves — they require nothing else in `lib/`.
 
