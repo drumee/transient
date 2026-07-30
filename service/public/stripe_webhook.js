@@ -501,7 +501,14 @@ class __public_stripe_webhook extends Entity {
             // handler mid-flight — before its payment receipt email — which is
             // why a Pro→Team upgrade paid fine but never emailed. A completed
             // session means the subscription is live: mirror 'active'.
-            const status = obj.cancel_at_period_end ? 'canceled'
+            // For a checkout SESSION prefer the retrieved subscription's real
+            // status over a hardcoded 'active': a deferred cycle switch
+            // creates the new subscription TRIALING (it starts billing when
+            // the old cycle lapses), and stamping 'active' here erased that —
+            // the UI could not tell "running now" from "starts later"
+            // (tester 2026-07-30: banner said "renews" for a plan that had
+            // not started). `sub_status` is resolved below alongside items.
+            let status = obj.cancel_at_period_end ? 'canceled'
               : (obj.object === 'checkout.session' ? 'active' : (obj.status || 'active'));
             const entity_type = md.entity_type || 'user';
             // Line items: the subscription object carries them; a checkout.session
@@ -513,6 +520,13 @@ class __public_stripe_webhook extends Entity {
                 const s = await stripe.subscriptions.retrieve(subscription_id);
                 items = (s.items && s.items.data) || [];
                 period_end = period_end || s.current_period_end || (items[0] && items[0].current_period_end) || 0;
+                // Real subscription status for the session event (see the
+                // status declaration above). trial_end doubles as period_end
+                // for a trialing sub: it IS the date the new cycle starts.
+                if (obj.object === 'checkout.session' && s.status && !obj.cancel_at_period_end) {
+                  status = s.status;
+                  if (s.status === 'trialing' && s.trial_end) period_end = s.trial_end;
+                }
               } catch (e3) { items = []; }
             }
             // SUPERSEDE, same entity. A subscriber who deliberately changed
