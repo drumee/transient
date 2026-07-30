@@ -354,6 +354,39 @@ class GoogleDrive extends ExtImport {
       if (mode === 'all' && !(scopeRow.scope || '').includes('drive.readonly')) {
         throw new Error('SELECTED_MODE_REQUIRED');
       }
+      // Pre-flight the SOURCE with the user's own token. Until now nothing
+      // touched the Drive API before enqueueing, so a folder whose share had
+      // already been revoked on Google's side sailed straight into the worker
+      // (reported 2026-07-29: "removed access, can still migrate") — which
+      // then swallowed the per-item 403/404s and reported success. A revoked
+      // item answers 403/404 to files.get; refuse the start right here where
+      // the caller can see it.
+      const ids = mode === 'selected'
+        ? [...selections.folder_ids, ...selections.file_ids]
+        : (source_folder_id && source_folder_id !== 'root' ? [source_folder_id] : []);
+      if (ids.length) {
+        const token = await this.ensureFreshToken('google');
+        // Cap the pre-flight: a Picker multi-select can carry many file ids,
+        // and each check is a round-trip. Folders first — they are the case
+        // that walks a whole subtree unchecked.
+        for (const id of ids.slice(0, 15)) {
+          try {
+            await axios.get(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(id)}`, {
+              headers: { Authorization: `Bearer ${token}` },
+              params: { fields: 'id', supportsAllDrives: true },
+            });
+          } catch (e) {
+            const status = e && e.response && e.response.status;
+            if (status === 403 || status === 404) {
+              throw new Error('SOURCE_ACCESS_REVOKED');
+            }
+            if (status === 401) throw new Error('NEEDS_RECONNECT');
+            // Anything else (network blip, 5xx) must not block a legitimate
+            // start — the worker's own retry ladder handles transient trouble.
+            this.warn(`[start_migration] pre-flight ${id} skipped:`, e && e.message);
+          }
+        }
+      }
     }
     // (auth_kind 'sa': no oauth row needed — the SA authenticates itself and
     // _saVerifyFolder above already proved share + ownership.)
