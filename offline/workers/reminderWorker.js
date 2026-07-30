@@ -11,11 +11,18 @@
  * (the runtime ships Bull, not `cron`). Runs on a short interval rather than
  * daily because reminders are time-sensitive.
  *
+ * Each meeting produces two pushes: a heads-up REMINDER_LEAD_SEC before the
+ * start (notify only — the client shows no Join button that early) and the
+ * "starting now" announcement. They are guarded by separate flags
+ * (`early_fired` / `fired`) so one can't suppress the other.
+ *
  * Env:
  *   REMINDER_INTERVAL_SEC  poll cadence (default 60)
  *   REMINDER_GRACE_SEC     don't announce meetings that started more than this
  *                          long ago, e.g. after worker downtime (default 3600;
  *                          0 = no floor)
+ *   REMINDER_LEAD_SEC      how far ahead the heads-up fires (default 900 = 15
+ *                          min; 0 disables the heads-up entirely)
  */
 
 const { Mariadb, RedisStore } = require('@drumee/server-essentials');
@@ -25,9 +32,14 @@ const INTERVAL_MS = (parseInt(process.env.REMINDER_INTERVAL_SEC, 10) || 60) * 10
 const GRACE_SEC = Number.isInteger(parseInt(process.env.REMINDER_GRACE_SEC, 10))
   ? parseInt(process.env.REMINDER_GRACE_SEC, 10)
   : 3600;
+const LEAD_SEC = Number.isInteger(parseInt(process.env.REMINDER_LEAD_SEC, 10))
+  ? parseInt(process.env.REMINDER_LEAD_SEC, 10)
+  : 900;
 
 console.log(`[ReminderWorker] Starting worker: ${WORKER_NAME}`);
-console.log(`[ReminderWorker] Poll interval: ${INTERVAL_MS / 1000}s, grace: ${GRACE_SEC}s`);
+console.log(
+  `[ReminderWorker] Poll interval: ${INTERVAL_MS / 1000}s, grace: ${GRACE_SEC}s, lead: ${LEAD_SEC}s`,
+);
 
 let yp;
 let redisInitialized = false;
@@ -79,52 +91,141 @@ function nextOccurrence(stime, etime, recur, now) {
   return { stime: next, etime: next + dur };
 }
 
-async function fireReminder(m, now) {
+/**
+ * Roll a row past its due occurrence WITHOUT notifying: a recurring series
+ * moves to its next future occurrence (fired back to 0), a one-off is flagged
+ * fired so it stops being rescanned every minute forever.
+ */
+async function sweepOverdue(m, now) {
+  const recur = parseJSON(m.recur, null);
+  const next = nextOccurrence(Number(m.stime) || 0, Number(m.etime) || 0, recur, now);
+  await yp.await_proc('meeting_schedule_mark_fired', m.id, next ? next.stime : 0, next ? next.etime : 0);
+  return next;
+}
+
+/**
+ * Push one meeting notification to every attendee + the organizer.
+ * `lead` is 0 for the "starting now" announcement, or the number of seconds
+ * ahead for the heads-up — the client keys its wording and whether it offers a
+ * Join button off that.
+ */
+async function notify(m, lead) {
   const attendees = asArray(parseJSON(m.attendees, []))
     .map((a) => (a && (a.uid || a)))
     .filter(Boolean);
   // The organizer wants a reminder too, not just the invitees.
   const uids = [...new Set([...attendees, m.created_by].filter(Boolean))];
+  if (!uids.length) return 0;
 
-  if (uids.length) {
-    const recipients = asArray(await yp.await_proc('user_sockets', uids));
-    if (recipients.length && redisInitialized) {
-      await RedisStore.sendData(
-        {
-          service: 'room.reminder',
-          type: 'meeting_reminder',
-          hub_id: m.hub_id,
-          nid: m.nid,
-          room_id: m.nid,
-          title: m.title,
-          stime: Number(m.stime) || 0,
-          timestamp: Date.now(),
-        },
-        recipients,
-      );
-      console.log(`[ReminderWorker] reminded ${recipients.length} socket(s) for meeting ${m.nid} (hub ${m.hub_id})`);
+  const recipients = asArray(await yp.await_proc('user_sockets', uids));
+  if (!recipients.length || !redisInitialized) return 0;
+
+  // The envelope Logger.payload() builds for in-request pushes: the client
+  // reads `payload.model` as the handler's data argument and
+  // `payload.options.service` as the routing key. A worker has no session and
+  // so no this.payload(), so it is written out by hand — sending the fields
+  // flat leaves the handler with data=undefined and no matching case.
+  await RedisStore.sendData(
+    {
+      model: {
+        type: lead ? 'meeting_upcoming' : 'meeting_reminder',
+        // Minutes until the start, 0 for "now" — the client renders the
+        // wording from this and hides Join while it is non-zero.
+        lead_min: lead ? Math.round(lead / 60) : 0,
+        hub_id: m.hub_id,
+        nid: m.nid,
+        room_id: m.nid,
+        title: m.title,
+        stime: Number(m.stime) || 0,
+        timestamp: Date.now(),
+      },
+      options: {
+        service: 'room.reminder',
+        keys: '*',
+      },
+    },
+    recipients,
+  );
+  console.log(
+    `[ReminderWorker] ${lead ? `heads-up (${Math.round(lead / 60)}min)` : 'reminded'}` +
+    ` ${recipients.length} socket(s) for meeting ${m.nid} (hub ${m.hub_id})`,
+  );
+  return recipients.length;
+}
+
+async function fireReminder(m, now) {
+  await notify(m, 0);
+  // Advance recurring meetings to their next occurrence; flag one-offs fired.
+  await sweepOverdue(m, now);
+}
+
+/**
+ * Heads-up for a meeting starting shortly. Flagged even when nobody was
+ * reachable, so a user who happens to be offline at T-15 doesn't get the
+ * heads-up replayed every minute until the meeting starts.
+ */
+async function fireEarlyReminder(m, now) {
+  await notify(m, Math.max(0, (Number(m.stime) || 0) - now));
+  await yp.await_proc('meeting_schedule_mark_early', m.id);
+}
+
+/**
+ * Heads-up pass: meetings starting within the lead window that haven't had
+ * theirs yet. Runs on every poll alongside the start-time pass.
+ */
+async function runEarlyPass(now) {
+  if (LEAD_SEC <= 0) return;
+  const upcoming = asArray(await yp.await_proc('meeting_schedule_upcoming', now, LEAD_SEC));
+  if (!upcoming.length) return;
+  for (const m of upcoming) {
+    try {
+      await fireEarlyReminder(m, now);
+    } catch (e) {
+      console.error(`[ReminderWorker] heads-up failed on meeting ${m && m.nid}:`, e.message);
     }
   }
-
-  // Advance recurring meetings to their next occurrence; flag one-offs fired.
-  const recur = parseJSON(m.recur, null);
-  const next = nextOccurrence(Number(m.stime) || 0, Number(m.etime) || 0, recur, now);
-  await yp.await_proc('meeting_schedule_mark_fired', m.id, next ? next.stime : 0, next ? next.etime : 0);
 }
 
 async function runReminderJob() {
   const now = Math.floor(Date.now() / 1000);
   try {
-    const due = asArray(await yp.await_proc('meeting_schedule_due', now, GRACE_SEC));
+    await runEarlyPass(now);
+  } catch (error) {
+    console.error('[ReminderWorker] Early pass failed:', error.message);
+  }
+  try {
+    // Every unfired past-due row (grace 0 = no floor); the grace rule is
+    // applied below instead of in SQL. Filtering in the proc left an
+    // occurrence that slipped past the window invisible forever — only
+    // fireReminder() advanced a row, so a recurring series whose first
+    // occurrence was missed never fired and never rolled forward again.
+    const due = asArray(await yp.await_proc('meeting_schedule_due', now, 0));
     if (!due.length) return;
-    console.log(`[ReminderWorker] ${due.length} meeting(s) due at ${new Date().toISOString()}`);
+    let fired = 0;
+    let swept = 0;
     for (const m of due) {
       try {
-        await fireReminder(m, now);
+        const stime = Number(m.stime) || 0;
+        if (GRACE_SEC === 0 || stime >= now - GRACE_SEC) {
+          await fireReminder(m, now);
+          fired++;
+        } else {
+          // Too late to announce, but still roll it forward so a recurring
+          // series comes back to life on its next future occurrence.
+          const next = await sweepOverdue(m, now);
+          swept++;
+          console.log(
+            `[ReminderWorker] swept overdue meeting ${m.nid} (hub ${m.hub_id}, ${now - stime}s late)` +
+            (next ? ` → next occurrence ${new Date(next.stime * 1000).toISOString()}` : ' → closed'),
+          );
+        }
       } catch (e) {
         console.error(`[ReminderWorker] failed on meeting ${m && m.nid}:`, e.message);
       }
     }
+    console.log(
+      `[ReminderWorker] ${due.length} due at ${new Date().toISOString()} — ${fired} reminded, ${swept} swept`,
+    );
   } catch (error) {
     console.error('[ReminderWorker] Job failed:', error.message);
   }

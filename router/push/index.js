@@ -155,9 +155,67 @@ class __websocket_router extends Logger {
    */
   async close(socket, reasonCode, description) {
     this.silly("DELETING", reasonCode, description, socket.id);
+    await this.releaseConferences(socket.id);
     await this.yp.call_proc("socket_free", socket.id);
     await this.broadcastStatus(socket.id);
     this.clearSocket(socket);
+  }
+
+  /**
+   * Take a dropped socket out of any conference it was in, and tell the
+   * remaining peers — the same thing conference.leave does for a clean exit.
+   *
+   * A client that dies abruptly (a phone losing its radio, backgrounding, or
+   * switching network) never gets to call conference.leave. socket_free did
+   * delete the conference row, but silently: nobody was informed, so the
+   * dropped participant stayed on everyone else's roster and tile grid until
+   * Jitsi's own presence timeout eventually expired — if it ever did, since a
+   * half-open mobile connection can keep the XMPP session alive far longer
+   * than the websocket.
+   *
+   * Best-effort: a failure here must never stop the socket being freed.
+   *
+   * @param {string} socket_id
+   */
+  async releaseConferences(socket_id) {
+    try {
+      const rooms = toArray(
+        await this.yp.await_proc("conference_of_socket", socket_id)
+      );
+      for (const r of rooms) {
+        if (!r || !r.room_id) continue;
+        // conference_leave both removes the row and returns who is left.
+        const remaining = toArray(
+          await this.yp.await_proc("conference_leave", r.room_id, socket_id)
+        );
+        const recipients = remaining.filter(
+          (p) => p && p.socket_id && p.socket_id !== socket_id
+        );
+        if (!recipients.length) continue;
+        // Same person still in the room on another socket — a second device, or
+        // a reconnect that already landed. Announcing a leave here would drop a
+        // participant who is very much still present, so say nothing: the row
+        // for the dead socket is gone either way.
+        if (r.uid != null &&
+          recipients.some((p) => p.uid != null && String(p.uid) === String(r.uid))) {
+          continue;
+        }
+        await RedisStore.sendData(
+          {
+            model: {
+              uid: r.uid,
+              socket_id,
+              room_id: r.room_id,
+              reason: "disconnected",
+            },
+            options: { service: "conference.leave", keys: "*" },
+          },
+          recipients
+        );
+      }
+    } catch (e) {
+      this.warn("conference release on disconnect failed", e && e.message);
+    }
   }
 
   /**

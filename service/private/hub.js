@@ -851,8 +851,136 @@ class __private_hub extends Hub {
   }
 
   /**
+   * Resolve the context needed to write into the inviter's personal address
+   * book. The `contact` table lives in the inviter's drumate DB (`a_*`) while
+   * this service runs against the hub DB (`f_*`), so every contact proc has to
+   * be called cross-database — same pattern as add_contributors.
+   * Returns null when the DB can't be resolved; callers treat that as "skip".
+   */
+  async _contactBookContext() {
+    try {
+      const db_name = await this.yp.await_func("get_db_name", this.uid);
+      if (!db_name) {
+        this.warn("[hub] _contactBookContext: no contact db for", this.uid);
+        return null;
+      }
+      const { domain_id } = this.user.toJSON();
+      return {
+        domain_id,
+        contactDb: {
+          await_proc: (proc, ...args) =>
+            this.yp.await_proc(`${db_name}.${proc}`, ...args)
+        }
+      };
+    } catch (err) {
+      this.warn("[hub] _contactBookContext failed", err && err.message);
+      return null;
+    }
+  }
+
+  /**
+   * Derive a first/last name from an email local part, so a remembered contact
+   * renders as a name rather than a bare address. Mirrors contact.invite.
+   */
+  _nameFromEmail(email) {
+    const localPart = (String(email).split("@")[0] || "").trim();
+    if (localPart.indexOf(".") !== -1) {
+      const parts = localPart.split(".");
+      return { firstname: parts[0], lastname: parts.slice(1).join(" ") };
+    }
+    return { firstname: localPart, lastname: null };
+  }
+
+  /**
+   * Remember an invited email in the inviter's address book, so inviting the
+   * same person into a second workspace can autocomplete them.
+   *
+   * Deliberately SILENT: writes a `memory` contact and nothing else. It does
+   * NOT call contact.invite / the contact_invite proc, because both send the
+   * invitee a second email (a personal contact request) on top of the
+   * workspace invitation, and contact_invite also promotes the row to
+   * 'sent'/'informed' — i.e. it would claim the inviter asked to be their
+   * contact, which they didn't.
+   *
+   * Never throws: address-book bookkeeping must not fail a workspace invite.
+   */
+  async _rememberInvitee(email, drumate, ctx) {
+    if (!ctx || !ctx.contactDb) return;
+    if (!email || String(email).indexOf("@") === -1) return;
+    // contact.entity / contact_email.email are varchar(255). Overflowing them
+    // raises a truncation error, and the mariadb wrapper answers any SQL error
+    // by ending the shared connection — so screen it out here rather than let
+    // an absurd address take the request down.
+    if (String(email).length > 255) {
+      this.warn("[hub] _rememberInvitee: address too long, not remembered");
+      return;
+    }
+    const { contactDb, domain_id } = ctx;
+    try {
+      // Same-domain colleagues are already returned by `my_contact`'s domain
+      // UNION branch. Giving them a contact row too makes them appear twice in
+      // every picker that queries with status='paper' (sharebox invitation,
+      // schedule invitation). contact.invite refuses these with SAME_DOMAIN for
+      // the same reason — keep the policies aligned.
+      if (
+        drumate && drumate.domain_id != null &&
+        domain_id > 1 && domain_id === drumate.domain_id
+      ) return;
+
+      const entity = (drumate && drumate.id) ? drumate.id : email;
+
+      // Look under BOTH keys before inserting. A contact remembered before the
+      // invitee had an account is keyed by the raw email; once they sign up the
+      // same person resolves to a uid, and inserting again would create a
+      // second row for one human.
+      //
+      // We intentionally do NOT re-key the old row onto the uid:
+      // my_contact_update_next deletes `yp.token WHERE email = <old entity>`
+      // for the inviter, which would revoke that person's still-pending
+      // hub-invite / signup link. Leaving the row as-is costs nothing — it
+      // stays searchable through the generated `source` column.
+      let existing = await contactDb.await_proc(
+        "my_contact_exists", "entity", entity, "", ""
+      );
+      if (isEmpty(existing) && entity !== email) {
+        existing = await contactDb.await_proc(
+          "my_contact_exists", "entity", email, "", ""
+        );
+      }
+      if (!isEmpty(existing)) return;
+
+      const { firstname, lastname } = this._nameFromEmail(email);
+      // `contact.source` is a generated column over metadata.$.source, and it
+      // is the only field in contact_search_next / my_contact that matches on
+      // the email itself — without it the row is unreachable by typing an
+      // address. `is_auto` marks rows the user never created by hand.
+      const metadata = { source: email, is_auto: 1, origin: "hub_invite" };
+      const contact = await contactDb.await_proc(
+        "my_contact_add_next",
+        entity, null, firstname, lastname, "independant", null, null, metadata
+      );
+      if (isEmpty(contact) || !contact.id) {
+        this.warn("[hub] _rememberInvitee: my_contact_add_next empty for", email);
+        return;
+      }
+
+      // Required, not cosmetic: my_contact resolves the displayed address as
+      // coalesce(du.email, de.email, ce.email), and both drumate joins are NULL
+      // for an email-keyed contact. Without this row the suggestion renders
+      // with an empty address and the invite popup rejects it.
+      await contactDb.await_proc(
+        "my_contact_mail_add",
+        contact.id,
+        stringify([{ email, category: "priv", is_default: "1" }])
+      );
+    } catch (err) {
+      this.warn("[hub] _rememberInvitee failed for", email, err && err.message);
+    }
+  }
+
+  /**
    * Mời người vào workspace. Rẽ nhánh theo area của hub + drumate status.
-   * Input: { hub_id, invitees:[email], permission, message? }
+   * Input: { hub_id, invitees:[email], privilege, message? }
    */
   async invite() {
     let invitees = toArray(this.input.need("invitees"));
@@ -890,6 +1018,14 @@ class __private_hub extends Hub {
     // recipients open the workspace without signing in. Computed once (one shared
     // token per hub); guest permission follows workspace_restricted.
     const publicLink = await this._ensurePublicShareLink();
+    // Address-book context resolved once for the whole call (see
+    // _rememberInvitee). Null when the inviter has no drumate DB — the invite
+    // still goes through, it just isn't remembered.
+    const contactBook = await this._contactBookContext();
+    // The popup fires one hub.invite per selected workspace with the same email
+    // list, and a caller may repeat an address; remember each person once.
+    const remembered = new Set();
+    const toRemember = [];
     const results = [];
 
     for (const email of invitees) {
@@ -962,11 +1098,33 @@ class __private_hub extends Hub {
             { inviter_name: username, workspace_name: hubname, link: publicLink, preview_items, workspace_restricted, recent_messages });
           results.push({ email, branch: "C", status: "ok" });
         }
+        // Queue for address-book bookkeeping — only invitees whose branch
+        // actually succeeded (a failure throws above and must leave no contact).
+        // Deliberately deferred until every invite is done, see below.
+        const key = String(email).trim().toLowerCase();
+        if (!remembered.has(key)) {
+          remembered.add(key);
+          toRemember.push({ email, drumate });
+        }
       } catch (err) {
         this.warn("[hub] invite failed for", email, err && err.message);
         results.push({ email, branch: null, status: "failed", reason: err && err.message });
       }
     }
+
+    // Bookkeeping runs LAST, never interleaved with invite work. Reason: the
+    // mariadb wrapper reacts to an ordinary SQL error (e.g. an ER_DUP_ENTRY on
+    // contact.entity from a concurrent invite) by rolling back and calling
+    // end() on the shared `yp` connection — and it swallows the error instead
+    // of rejecting, so a try/catch can't see it. Every later yp call in this
+    // request would then quietly return {failed:1} while still being reported
+    // as status:"ok". Draining the queue here bounds that worst case to "the
+    // contact wasn't remembered" instead of "the remaining invites silently
+    // did nothing".
+    for (const { email, drumate } of toRemember) {
+      await this._rememberInvitee(email, drumate, contactBook);
+    }
+
     this.output.data({ results });
   }
 
@@ -1839,6 +1997,18 @@ class __private_hub extends Hub {
       let sockets = await this.yp.await_proc("user_sockets", uid);
       let payload = this.payload(node, { service });
       await RedisStore.sendData(payload, sockets);
+      // media.remove above only tidies the removed member's own sidebar. Any
+      // window they still have open on this workspace stays live, and their
+      // next action there fails the ACL with a bare 403 that the UI reports as
+      // a network error. This dedicated push lets the desk lock the workspace
+      // out at once and name who removed them.
+      await RedisStore.sendData(
+        this.payload(
+          { hub_id, name: hub_name, removed_by: this._actor_name() },
+          { service: "hub.member_removed" }
+        ),
+        sockets
+      );
       await writeAudit(this, {
         db: hub_db,
         uid: this.uid,
@@ -1849,8 +2019,97 @@ class __private_hub extends Hub {
         log: `Member removed from workspace '${hub_name}'`,
       });
     }
+    if (members.length) {
+      // Losing membership also drops them off this workspace's tasks. Runs after
+      // the per-member work — including the audit rows — because any SQL error
+      // ends this request's DB connection (mariadb _handleError), and losing the
+      // audit trail would be a worse trade than a lingering assignee row.
+      await this._unassign_tasks(members);
+      // Remaining members may have a task board open showing the ex-member as an
+      // assignee. task.update_assignee is what the task panel already listens to
+      // for a live reload, so reuse it rather than inventing a new signal.
+      await this._broadcast_task_unassign(hub_id);
+    }
     users = await this._members_by_type("not_owner", 1);
     this.output.list(users);
+  }
+
+  /**
+   * Display name of the member performing the current request, for messages
+   * shown to somebody else ("removed by ..."). Falls back through the same
+   * chain the member list uses so it is never empty.
+   *
+   * @returns {string}
+   */
+  _actor_name() {
+    const u = this.user;
+    if (!u) return "";
+    const fullname = `${u.get("fullname") || ""}`.trim();
+    if (fullname) return fullname;
+    const name = [u.get(Attr.firstname), u.get(Attr.lastname)]
+      .filter((p) => `${p || ""}`.trim())
+      .join(" ")
+      .trim();
+    return name || `${u.get(Attr.email) || ""}`.trim();
+  }
+
+  /**
+   * Clear users' task assignments in THIS workspace.
+   *
+   * The task panel resolves an assignee uid against the workspace member list
+   * (hub.get_members_by_type). Once the user is no longer a member the uid
+   * resolves to nothing, and the assignee chip fell back to rendering the raw
+   * uid — a name-shaped string of random characters. Dropping the rows leaves
+   * those tasks plainly unassigned instead.
+   *
+   * The table is probed first rather than letting a DELETE fail: workspaces
+   * created before the task tables shipped have no task_assignee, and this DB
+   * layer answers ER_NO_SUCH_TABLE by rolling back and ENDING the connection
+   * (mariadb _handleError default branch) — which would take the rest of the
+   * request down with it. information_schema is always readable.
+   *
+   * @param {Array} uids members being removed
+   */
+  async _unassign_tasks(uids) {
+    const list = toArray(uids).filter(Boolean);
+    if (!list.length) return;
+    try {
+      const probe = await this.db.await_run(
+        "SELECT COUNT(*) AS n FROM information_schema.tables" +
+        " WHERE table_schema = DATABASE() AND table_name = 'task_assignee'"
+      );
+      const row = toArray(probe)[0] || {};
+      if (!Number(row.n)) return;
+      const holes = list.map(() => "?").join(",");
+      await this.db.await_run(
+        `DELETE FROM task_assignee WHERE uid IN (${holes})`,
+        list
+      );
+    } catch (e) {
+      this.warn(
+        "[hub.delete_contributor] failed to unassign tasks",
+        list,
+        e && e.message
+      );
+    }
+  }
+
+  /**
+   * Tell the workspace's remaining members that assignees changed, so open
+   * task boards reload instead of keeping the ex-member's avatar on the cards.
+   * The removed member is already out of entity_sockets by this point, so this
+   * never reaches them.
+   *
+   * @param {string} hub_id
+   */
+  async _broadcast_task_unassign(hub_id) {
+    if (!hub_id) return;
+    let dest = toArray(await this.yp.await_proc("entity_sockets", hub_id));
+    if (isEmpty(dest)) return;
+    await RedisStore.sendData(
+      this.payload({ hub_id }, { service: "task.update_assignee" }),
+      dest
+    );
   }
 
   /**
