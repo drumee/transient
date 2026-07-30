@@ -1988,7 +1988,14 @@ class __private_hub extends Hub {
     let service = "media.remove";
     let hub_id = this.hub.get(Attr.id);
     const hub_db = this.hub.get(Attr.db_name);
-    const hub_name = this.hub.get(Attr.name) || hub_id;
+    // A workspace's display name lives in its profile (same source as
+    // conference.hubDisplayName). `Attr.name` is often unset, and falling back
+    // to the id put a raw id in front of the user — the removal notice named
+    // the workspace "5f2c…" instead of "Design team". Send nothing rather than
+    // an id; the desk phrases the notice around a missing name.
+    const hub_profile = this.hub.get(Attr.profile) || {};
+    const hub_display = hub_profile.name || this.hub.get(Attr.name) || '';
+    const hub_name = String(hub_display) === String(hub_id) ? '' : hub_display;
     for (let uid of members) {
       let { db_name } = await this.yp.await_proc("get_entity", uid);
       await this.yp.await_proc(`${db_name}.leave_hub`, hub_id);
