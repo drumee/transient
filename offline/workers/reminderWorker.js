@@ -68,6 +68,62 @@ async function initialize() {
 }
 
 /**
+ * Does the meeting this index row points at still exist?
+ *
+ * `meeting_schedule` is a global mirror kept write-through by room.book /
+ * update / remove. Anything that drops a schedule node by another route — the
+ * workspace being deleted, the node removed through MFS, an _unindex_meeting
+ * that failed — leaves the row behind, and the worker then announces a meeting
+ * that is on nobody's calendar: exactly the "I deleted it but the popup still
+ * came" report.
+ *
+ * The predicate is the one room_list_scheduled lists on, so the reminder and
+ * the calendar can never disagree about what exists. Answers false ONLY when
+ * the answer is definitive — anything unexpected (a query that throws, a
+ * connection blip) answers true, because dropping a live meeting's reminders
+ * is far worse than sending one extra.
+ */
+async function meetingStillExists(m) {
+  try {
+    const entity = asArray(
+      await yp.await_query('SELECT db_name FROM entity WHERE id=?', m.hub_id),
+    );
+    const db = entity[0] && entity[0].db_name;
+    // No entity row: the workspace itself is gone, so the meeting is too.
+    if (!db) return false;
+    const rows = asArray(
+      await yp.await_query(
+        `SELECT id FROM \`${db}\`.media
+          WHERE id=? AND category='schedule' AND status='active'`,
+        m.nid,
+      ),
+    );
+    return rows.length > 0;
+  } catch (e) {
+    console.error(
+      `[ReminderWorker] existence check failed for meeting ${m && m.nid}:`,
+      e.message,
+    );
+    return true;
+  }
+}
+
+/**
+ * Forget an index row whose meeting is gone, so it stops being rescanned (and
+ * announced) on every poll.
+ */
+async function dropStaleIndex(m) {
+  try {
+    await yp.await_proc('meeting_schedule_remove', m.hub_id, m.nid);
+    console.log(
+      `[ReminderWorker] dropped stale index row for meeting ${m.nid} (hub ${m.hub_id}) — node no longer exists`,
+    );
+  } catch (e) {
+    console.error(`[ReminderWorker] could not drop stale row ${m && m.nid}:`, e.message);
+  }
+}
+
+/**
  * First occurrence strictly after `now` for a recurring meeting, or null for a
  * one-off / an ended series. Advances past any occurrences missed while the
  * worker was down so we don't fire a burst of back-dated reminders.
@@ -179,6 +235,10 @@ async function runEarlyPass(now) {
   if (!upcoming.length) return;
   for (const m of upcoming) {
     try {
+      if (!(await meetingStillExists(m))) {
+        await dropStaleIndex(m);
+        continue;
+      }
       await fireEarlyReminder(m, now);
     } catch (e) {
       console.error(`[ReminderWorker] heads-up failed on meeting ${m && m.nid}:`, e.message);
@@ -203,8 +263,17 @@ async function runReminderJob() {
     if (!due.length) return;
     let fired = 0;
     let swept = 0;
+    let stale = 0;
     for (const m of due) {
       try {
+        // Deleted meetings must not announce themselves. Checked before the
+        // grace rule so a stale row is retired outright rather than swept
+        // forward to an occurrence that will never happen either.
+        if (!(await meetingStillExists(m))) {
+          await dropStaleIndex(m);
+          stale++;
+          continue;
+        }
         const stime = Number(m.stime) || 0;
         if (GRACE_SEC === 0 || stime >= now - GRACE_SEC) {
           await fireReminder(m, now);
@@ -224,7 +293,7 @@ async function runReminderJob() {
       }
     }
     console.log(
-      `[ReminderWorker] ${due.length} due at ${new Date().toISOString()} — ${fired} reminded, ${swept} swept`,
+      `[ReminderWorker] ${due.length} due at ${new Date().toISOString()} — ${fired} reminded, ${swept} swept, ${stale} stale`,
     );
   } catch (error) {
     console.error('[ReminderWorker] Job failed:', error.message);
