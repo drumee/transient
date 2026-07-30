@@ -501,6 +501,7 @@ class GoogleDriveImporter {
 
     for (const folderId of (selections.folder_ids || [])) {
       if (await this._checkCancelled()) return;
+      await this._checkSourceAccess();
       let meta;
       try {
         meta = await this._getMeta(folderId);
@@ -525,6 +526,7 @@ class GoogleDriveImporter {
 
     for (const fileId of (selections.file_ids || [])) {
       if (await this._checkCancelled()) return;
+      await this._checkSourceAccess();
       let meta;
       try {
         meta = await this._getMeta(fileId);
@@ -559,14 +561,81 @@ class GoogleDriveImporter {
     return classifyDriveError(e) === 'fatal_grant' ? 'NOT_GRANTED' : fallback;
   }
 
+  /** The Drive ids this job was asked to import — the "source roots". */
+  _sourceRootIds() {
+    if (this._rootIds) return this._rootIds;
+    const sel = this.data.selections || {};
+    const ids = this.data.mode === 'selected'
+      ? [...(sel.folder_ids || []), ...(sel.file_ids || [])]
+      : (this.data.source_folder_id && this.data.source_folder_id !== 'root'
+        ? [this.data.source_folder_id] : []);
+    this._rootIds = ids.filter(Boolean).slice(0, 15);
+    return this._rootIds;
+  }
+
+  /**
+   * Mid-run access sentinel (reported 2026-07-29: revoking the folder share
+   * DURING a migration didn't stop it — every 403/404 was swallowed as a
+   * per-item note and the job reported success). Polls files.get on the
+   * source roots, throttled to one sweep per 30s; when EVERY root answers
+   * 403/404 the grant is gone and the job aborts as ACCESS_REVOKED.
+   * job.discard() first — the revocation is not transient, so letting Bull
+   * burn its remaining attempts would re-import nothing three times.
+   *
+   * A single dead root among live ones stays a per-item NOT_GRANTED: partial
+   * revocation of a multi-pick is a skip, not an abort.
+   */
+  async _checkSourceAccess(force = false) {
+    const roots = this._sourceRootIds();
+    if (!roots.length) return; // legacy whole-drive job — nothing to pin on
+    const now = Date.now();
+    if (!force && this._lastAccessCheck && now - this._lastAccessCheck < 30000) return;
+    this._lastAccessCheck = now;
+    let alive = 0;
+    let revoked = 0;
+    for (const id of roots) {
+      try {
+        const token = await this._getFreshToken();
+        await axios.get(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(id)}`, {
+          headers: { Authorization: `Bearer ${token}` },
+          params: { fields: 'id', supportsAllDrives: true },
+          timeout: DRIVE_HTTP_TIMEOUT_MS,
+        });
+        alive += 1;
+        break; // one live root is enough — no need to bill the quota further
+      } catch (e) {
+        const status = e && e.response && e.response.status;
+        if (status === 403 || status === 404) { revoked += 1; continue; }
+        // Transient (network, 5xx, 429): treat as alive — never abort a job
+        // over a blip; the per-request retry ladder owns those.
+        alive += 1;
+        break;
+      }
+    }
+    if (!alive && revoked === roots.length) {
+      try { await this.job.discard(); } catch (_) {}
+      throw new Error('ACCESS_REVOKED');
+    }
+  }
+
   async _traverse(opts) {
     // Cancellation gate at the start of each folder.
     if (await this._checkCancelled()) return;
+    // Access gate: a share revoked mid-run must STOP the job, not degrade
+    // into a pile of skipped items (throttled — see _checkSourceAccess).
+    await this._checkSourceAccess();
 
     let items;
     try {
       items = await this._listFolder(opts.folderId, opts.includeSharedDrives);
     } catch (e) {
+      // A grant failure on a SOURCE ROOT is the whole job's access dying,
+      // not one bad subtree — force a full sentinel sweep, which throws
+      // ACCESS_REVOKED when every root is gone.
+      if (classifyDriveError(e) === 'fatal_grant'
+        && this._sourceRootIds().includes(opts.folderId)) {
+        await this._checkSourceAccess(true);
+      }
       this._pushError({ folder: opts.folderId, code: this._grantCode(e, 'LIST_FAILED'), reason: e.message });
       await this._pushProgress(opts);
       return;
@@ -605,6 +674,7 @@ class GoogleDriveImporter {
     const tasks = [];
     for (const file of files) {
       if (await this._checkCancelled()) break;       // stop DISPATCHING new work
+      await this._checkSourceAccess();               // throttled; throws on full revoke
       tasks.push(this._limit(() => this._importItemGuarded(file, opts)));
     }
     await Promise.allSettled(tasks);                  // keep this frame alive until all settle
