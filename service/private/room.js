@@ -335,7 +335,14 @@ class __private_room extends __public_room {
   async list() {
     const stime = this.input.use(Attr.stime, null);
     const etime = this.input.use(Attr.etime, null);
-    return this.db.call_proc('room_list_scheduled', stime, etime, this.output.data);
+    // toArray + output.list, NOT the raw call_proc handler: row unwrapping
+    // collapses a single-row result set into a bare object, so a range holding
+    // exactly one meeting answered `{...}` where every other count answers
+    // `[...]`. The calendar read that object as "no meetings" and emptied
+    // itself — deleting one of two same-time meetings made the survivor vanish
+    // as well, while its start-time reminder kept firing.
+    const rows = toArray(await this.db.await_proc('room_list_scheduled', stime, etime));
+    this.output.list(rows);
   }
 
   /**
