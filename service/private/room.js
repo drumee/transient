@@ -306,6 +306,9 @@ class __private_room extends __public_room {
         Number(content.etime) || 0,
         content.created_by || this.uid,
         (content.title || '').slice(0, 255),
+        // Agenda, for the reminder card's description line. Bounded: it is a
+        // notification subtitle, not the whole note.
+        (content.message || '').slice(0, 2000),
         JSON.stringify(attendees),
         content.recur ? JSON.stringify(content.recur) : null,
       );

@@ -192,6 +192,10 @@ async function notify(m, lead) {
         nid: m.nid,
         room_id: m.nid,
         title: m.title,
+        // Agenda + invitee list drive the reminder card's description line and
+        // its avatar row.
+        message: m.message || '',
+        attendees: asArray(parseJSON(m.attendees, [])),
         stime: Number(m.stime) || 0,
         timestamp: Date.now(),
       },
