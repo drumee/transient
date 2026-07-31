@@ -11,7 +11,7 @@
   },
   "dependencies": {
     "@drumee/schemas-utils": "^1.0.0",
-    "@drumee/server-core": "^1.1.80",
+    "@drumee/server-core": "^1.1.81",
     "@drumee/server-essentials": "^1.3.1",
     "@drumee/ui-core": "^1.1.43",
     "@hyzyla/pdfium": "^2.1.9",
@@ -27,6 +27,7 @@
     "comment-json": "^2.4.2",
     "cookie": "^1.0.2",
     "cors": "^2.8.5",
+    "cron": "^4.4.0",
     "csv-parser": "^3.2.0",
     "csvtojson": "^2.0.10",
     "dayjs": "^1.11.6",
@@ -94,5 +95,8 @@
   },
   "devDependencies": {
     "@drumee/server-dev-tools": "^1.1.37"
+  },
+  "allowScripts": {
+    "@drumee/server-dev-tools@1.1.37": true
   }
 }

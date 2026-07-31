@@ -215,12 +215,12 @@ class __private_task extends Entity {
 
   /**
    * Notify everyone watching a column (bell toggle in the column header) that a
-   * task in it changed. Mirrors _notifyAssignees: persist a deduped
+   * task is created or moved. Mirrors _notifyAssignees: persist a deduped
    * `task_column_change` row (offline-safe, coalesced per column) then live-push
    * to online watchers. The actor is always excluded. `columnKeys` may be one
    * key or several (a status move affects both the source and target columns).
    */
-  async _notifyColumnWatchers(row, columnKeys) {
+  async _notifyColumnWatchers(row, columnKeys, action) {
     const r = Array.isArray(row) ? row[0] : row;
     if (!r) return;
     const keys = toArray(columnKeys).filter(Boolean);
@@ -242,14 +242,15 @@ class __private_task extends Entity {
     const uids = Array.from(watchers);
     if (isEmpty(uids)) return;
 
-    // The persisted/click meta names the column so the notification reads
-    // "activity in <column>" and the click can open that folder's Task tab.
+    // Persist the task and folder metadata so the sidebar can render the event
+    // and open the task in the correct folder.
     const meta = {
       task_id: r.id,
       hub_id,
       nid,
       column_key: keys[0],
       title: r.title || '',
+      action,
     };
     for (const target_uid of uids) {
       try {
@@ -444,9 +445,9 @@ class __private_task extends Entity {
     await this._notifyMentions(data, this.input.use('mention_uids', null));
     // Every assignee is newly assigned on create → notify them (self excluded).
     await this._notifyAssignees(data, assignees);
-    // Notify watchers of the column the task landed in.
+    // Notify watchers of the column where the task was created.
     const created = Array.isArray(data) ? data[0] : data;
-    await this._notifyColumnWatchers(created, created && created.status);
+    await this._notifyColumnWatchers(created, created && created.status, 'created');
     this.output.data(data);
   }
 
@@ -484,8 +485,6 @@ class __private_task extends Entity {
     await this._broadcast('task.update', data);
     // Client sends only the newly-added mentions in `mention_uids`.
     await this._notifyMentions(data, this.input.use('mention_uids', null));
-    // Notify watchers of the task's current column.
-    await this._notifyColumnWatchers(row, row && row.status);
     this.output.data(data);
   }
 
@@ -530,7 +529,7 @@ class __private_task extends Entity {
     await this._broadcast('task.update_status', data);
     const cols =
       prevStatus && prevStatus !== status ? [status, prevStatus] : [status];
-    await this._notifyColumnWatchers(row, cols);
+    await this._notifyColumnWatchers(row, cols, 'moved');
     this.output.data(data);
   }
 
@@ -587,7 +586,6 @@ class __private_task extends Entity {
     const data = await this.db.await_proc('task_delete', id);
     const result = { id, ...data };
     await this._broadcast('task.delete', result);
-    if (meta) await this._notifyColumnWatchers(meta, meta.status);
     this.output.data(result);
   }
 
@@ -779,9 +777,6 @@ class __private_task extends Entity {
     if (repliers.size) {
       await this._notifyCommentMentions(task_id, [...repliers], 'reply');
     }
-    // Notify watchers of the commented task's column.
-    const tmeta = await this._taskColMeta(task_id);
-    if (tmeta) await this._notifyColumnWatchers(tmeta, tmeta.status);
     this.output.data(row);
   }
 
@@ -952,8 +947,8 @@ class __private_task extends Entity {
   }
 
   // ── Column notification subscriptions (bell toggle) ──────────────
-  // Per-user, per-column, per-folder watch. When on, the user is notified of
-  // any task change in that column (see _notifyColumnWatchers).
+  // Per-user, per-column, per-folder watch. When on, the user is notified when
+  // another member creates a task in the column or moves a task through it.
 
   async column_watch_list() {
     const nid = this.input.use('nid', '0') || '0';

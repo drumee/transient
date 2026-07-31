@@ -31,6 +31,7 @@ const {
 
 const { Entity, Generator, MfsTools } = require("@drumee/server-core");
 const { get_node_content } = MfsTools;
+const { purge_account } = require("../lib/account-purge");
 
 //########################################
 class __private_drumate extends Entity {
@@ -802,7 +803,13 @@ class __private_drumate extends Entity {
       await this.yp.await_proc("secret_clear", this.uid, "all");
     }
 
-    await this.yp.await_proc(`drumate_freeze`, this.uid);
+    // Deletion is immediate and permanent. drumate_freeze only parked the
+    // account -- it held the address hostage behind a mangled 'uid/address'
+    // value and, because it left the oauth_accounts / cookie rows in place,
+    // every later sign-in re-bound the browser to the dead account and 403'd
+    // the whole site instead of offering a fresh signup. Workspaces the account
+    // owns are handed to a remaining member before it goes; see purge_account.
+    await purge_account(this, this.uid);
     this.session.logout({ redirect: "#/welcome" });
   }
 
