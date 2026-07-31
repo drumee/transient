@@ -68,6 +68,7 @@ class __private_media extends Media {
     this.pre_transact = this.pre_transact.bind(this);
     this.copy_all = this.copy_all.bind(this);
     this.move_all = this.move_all.bind(this);
+    this.workspace_move = this.workspace_move.bind(this);
     this.pre_restore_into = this.pre_restore_into.bind(this);
     this.restore_into = this.restore_into.bind(this);
     this.restore = this.restore.bind(this);
@@ -180,7 +181,7 @@ class __private_media extends Media {
       } else {
         this.output.data({});
       }
-      return;
+      return null;
     }
     let items = [];
     data = toArray(data);
@@ -193,6 +194,7 @@ class __private_media extends Media {
     }
     let res = await this.after_transact(items);
     this.output.data(res);
+    return res;
   }
 
   /**
@@ -268,8 +270,13 @@ class __private_media extends Media {
     let node;
     const rid = this.heap.recipient_id;
     const socket_id = this.input.get(Attr.socket_id);
+    const isWorkspaceMove = this.input.get(Attr.service) === 'media.workspace_move';
+    const workspaceMoveSource = isWorkspaceMove
+      ? { ...(this.heap.oldItems[this.uid] || toArray(this.heap.srcgrantlst)[0] || {}) }
+      : null;
     data = toArray(data);
     let result = [];
+    const workspaceMoveHubNames = new Map();
     // let copied = [];
     let dest, src;
     // let notify = {};
@@ -354,12 +361,46 @@ class __private_media extends Media {
           break;
       }
     }
+    const writtenWorkspaceMoves = new Set();
     for (let r of result) {
       const dest = { ...r };
       delete dest.args;
-      const src = { ...this.heap.oldItems[this.uid] }
+      const src = isWorkspaceMove
+        ? { ...workspaceMoveSource }
+        : { ...this.heap.oldItems[this.uid] }
       delete src.args;
+      if (isWorkspaceMove) {
+        const destinationHubId = dest.actual_hub_id || dest.hub_id || rid;
+        dest.hub_id = destinationHubId;
+        if (!workspaceMoveHubNames.has(destinationHubId)) {
+          try {
+            const hub = toArray(await this.yp.await_proc('get_hub', destinationHubId))[0] || {};
+            let profile = {};
+            try {
+              profile = isString(hub.profile) ? JSON.parse(hub.profile) : (hub.profile || {});
+            } catch (_) { }
+            workspaceMoveHubNames.set(
+              destinationHubId,
+              profile.name || hub.name || hub.hubname || hub.headline || ''
+            );
+          } catch (e) {
+            this.warn('Unable to resolve workspace-move destination name', e);
+            workspaceMoveHubNames.set(destinationHubId, '');
+          }
+        }
+        dest.hub_name = workspaceMoveHubNames.get(destinationHubId);
+      }
       r.args = { tag, src, dest, changelog: this.__changelog }
+      if (isWorkspaceMove) {
+        const changelogKey = [
+          src.hub_id || this.hub.get(Attr.id),
+          src.nid || src.id,
+          dest.hub_id,
+          dest.nid,
+        ].join(':');
+        if (writtenWorkspaceMoves.has(changelogKey)) continue;
+        writtenWorkspaceMoves.add(changelogKey);
+      }
       await this.changelog_write({ src, dest });
     }
     return result;
@@ -576,6 +617,57 @@ class __private_media extends Media {
    */
   async move_all() {
     await this.transact("mfs_move_all");
+  }
+
+  /**
+   * Move one or more items to another workspace as one server-side operation.
+   *
+   * The browser previously modeled this as copy then trash. Apart from leaving
+   * a failure window between those requests, the trash operation had no trusted
+   * destination context to record in the source workspace activity feed.
+   * `mfs_move_all` already performs the cross-hub node migration; using it here
+   * lets after_transact write a media.workspace_move changelog row with both the
+   * source and destination node attributes.
+   */
+  async workspace_move() {
+    const destination = this.dest_granted() || {};
+    const destinationHubId = destination.actual_hub_id || destination.hub_id;
+    const sourceNodes = toArray(this.heap.srcgrantlst);
+    if (sourceNodes.some((node) => String(node.actual_hub_id || node.hub_id) === String(destinationHubId))) {
+      this.exception.user(INVALID_DATA);
+      return;
+    }
+
+    const result = await this.transact("mfs_move_all");
+    if (isEmpty(result)) return;
+
+    const sourceUpdates = {};
+    for (const node of sourceNodes) {
+      const nid = node.nid || node.id;
+      const hub_id = node.actual_hub_id || node.hub_id;
+      if (!nid || !hub_id) continue;
+      const snapshot = this.heap.oldItems[this.uid];
+      const isMatchingSnapshot = snapshot
+        && String(snapshot.nid || snapshot.id) === String(nid);
+      sourceUpdates[`${hub_id}:${nid}`] = {
+        ...node,
+        ...(isMatchingSnapshot ? snapshot : {}),
+        nid,
+        hub_id,
+      };
+    }
+
+    for (const source of values(sourceUpdates)) {
+      const recipients = await this.yp.await_proc("entity_sockets", source.hub_id);
+      await RedisStore.sendData(
+        this.payload(source, { keys: [Attr.nid, Attr.hub_id], service: "media.remove" }),
+        recipients
+      );
+      await RedisStore.sendData(
+        this.payload({}, { service: "notification.resync" }),
+        recipients
+      );
+    }
   }
 
   /** Allow move with low privilege, but restricted to type=hub

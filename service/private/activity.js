@@ -402,6 +402,26 @@ class MfsActivity extends Entity {
         const rollups = await this._notificationRollups();
         for (const r of rollups) {
           if (!r) continue;
+          // Shared-workspace membership is not available to every legacy MFS
+          // feed deployment. Add the dedicated workspace-move row when the
+          // base changelog feed did not return it; the id check prevents a
+          // duplicate once that feed includes it.
+          if (r.category === 'workspace_move') {
+            const exists = result.some((item) => (
+              String(item.id) === String(r.key_id)
+              && item.event === 'media.workspace_move'
+            ));
+            if (!exists) {
+              result.push({
+                ...r,
+                id: r.key_id,
+                event_type: 'mfs',
+                is_read: 0,
+                timestamp: r.ctime,
+              });
+            }
+            continue;
+          }
           if (!ALWAYS.has(r.category) && !unreadOnly) continue;
           // Item skeleton + sort read `timestamp` first, then `ctime`; rollups
           // only carry ctime, so mirror it to timestamp for correct ordering.
@@ -693,13 +713,22 @@ class MfsActivity extends Entity {
     const rows = toArray(rollups);
     const hubs = toArray(hubInvites);
     let refused = [];
+    let workspaceMoves = [];
     try {
       refused = toArray(await this._callUserProc('notification_contact_refused'));
     } catch (_) { }
+    try {
+      workspaceMoves = toArray(await this._callUserProc('notification_workspace_moves'));
+    } catch (e) {
+      // Allow the server rollout to precede the schema patch without breaking
+      // the existing notification badge.
+      this.debug('[ACTIVITY] notification_workspace_moves unavailable', e && e.message);
+    }
     return [
       ...rows.map(mapNotificationRow),
       ...hubs.map(mapHubInviteRow),
       ...refused.map(mapContactRefusedRow),
+      ...workspaceMoves,
     ];
   }
 

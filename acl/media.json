@@ -1520,6 +1520,19 @@
       },
       "method": "move_all"
     },
+    "workspace_move": {
+      "doc": "Move files or folders to another workspace and notify source workspace members",
+      "scope": "hub",
+      "permission": {
+        "src": "delete",
+        "dest": "write",
+        "preproc": {
+          "checker": "pre_transact",
+          "action": "move"
+        }
+      },
+      "method": "workspace_move"
+    },
     "node_info": {
       "scope": "hub",
       "permission": {
