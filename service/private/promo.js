@@ -68,6 +68,12 @@ class __private_promo extends Entity {
         trial_ends_at: row.trial_ends_at,
         home_seen_at: row.home_seen_at,
         billing_seen_at: row.billing_seen_at,
+        // Drives the one-shot Modal B auto-show on the new org domain's
+        // first home mount after a claim (tester feedback 2026-07-31 #2):
+        // the domain redirect happens too fast for the client to reliably
+        // show Modal B before the page navigates away, so the client no
+        // longer tries on the claiming page — it shows once here instead.
+        welcome_seen: !!row.welcome_seen_at,
       });
     }
     if (row && row.status === 'expired') {
@@ -90,11 +96,14 @@ class __private_promo extends Entity {
     });
   }
 
-  // Records that `surface` ('home' | 'billing') has shown Modal A to this
-  // account, once, forever (server flag — see promo_launch30_mark_seen).
+  // Records that `surface` ('home' | 'billing' | 'welcome') has shown its
+  // modal to this account, once, forever (server flag — see
+  // promo_launch30_mark_seen). 'welcome' is Modal B — the client marks it
+  // seen as soon as it renders, not on explicit dismissal (tester feedback
+  // 2026-07-31 #3: the full modal must show at most once per surface).
   async dismiss() {
     const surface = String(this.input.use('surface', '') || '');
-    if (surface !== 'home' && surface !== 'billing') {
+    if (surface !== 'home' && surface !== 'billing' && surface !== 'welcome') {
       return this.output.status('SURFACE_INVALID');
     }
     await this.yp.await_proc('promo_launch30_mark_seen', this.uid, surface);
