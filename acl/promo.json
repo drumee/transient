@@ -1,0 +1,50 @@
+{
+  "services": {
+    "get_state": {
+      "doc": "The caller's own LAUNCH30 promo state — eligible_unseen | eligible_seen | claimed_active | claimed_expired | ineligible. Read-only, recomputed every call.",
+      "scope": "hub",
+      "permission": {
+        "src": "owner"
+      },
+      "params": {}
+    },
+    "dismiss": {
+      "doc": "Record that Modal A was shown/dismissed on this surface, once, forever (server flag, not localStorage).",
+      "scope": "hub",
+      "permission": {
+        "src": "owner"
+      },
+      "params": {
+        "surface": {
+          "type": "string",
+          "required": true,
+          "doc": "'home' | 'billing'"
+        }
+      },
+      "errors": [
+        { "code": "SURFACE_INVALID", "description": "surface must be 'home' or 'billing'" }
+      ]
+    },
+    "claim": {
+      "doc": "Claim the 1-month free Team trial: no card, no Stripe object. Bootstraps (or reuses) the caller's organisation, then grants a Team-plan yp.quota row for 30 days.",
+      "scope": "hub",
+      "permission": {
+        "src": "owner"
+      },
+      "params": {
+        "source_surface": {
+          "type": "string",
+          "required": false,
+          "doc": "telemetry only: 'home' | 'billing_modal' | 'billing_pill'"
+        }
+      },
+      "errors": [
+        { "code": "NOT_ELIGIBLE", "description": "not on Free, or already inside another organisation" },
+        { "code": "PROVISION_FAILED", "description": "org bootstrap failed (see org_provision)" }
+      ]
+    }
+  },
+  "modules": {
+    "private": "service/private/promo"
+  }
+}
