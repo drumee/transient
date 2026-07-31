@@ -151,8 +151,8 @@ function mapContactRefusedRow(r) {
   };
 }
 
-// Same flattening for column-watch notifications, plus the affected column key
-// so the item can render "activity in <column>".
+// Flatten watched-column metadata so the activity row can render and open the
+// affected task after it was created or moved.
 function flattenTaskColumnChange(rows) {
   for (const r of rows) {
     if (!r || r.event !== 'task_column_change') continue;
@@ -166,6 +166,7 @@ function flattenTaskColumnChange(rows) {
     if (r.task_hub_id == null) r.task_hub_id = meta.hub_id || null;
     if (r.task_id == null) r.task_id = meta.task_id || null;
     if (r.column_key == null) r.column_key = meta.column_key || null;
+    if (r.task_action == null) r.task_action = meta.action || 'moved';
   }
   return rows;
 }
@@ -441,6 +442,7 @@ class MfsActivity extends Entity {
           for (const proc of [
             'contact_task_assigned_unread',
             'contact_task_mention_unread',
+            'contact_task_column_change_unread',
             'contact_storage_alert_unread',
             // Claim-reward term ending (offline/workers/rewardExpiryWorker.js).
             // Added with the event, not after it, per the note above.
@@ -469,23 +471,19 @@ class MfsActivity extends Entity {
       }
     }
 
-    // Flatten task fields onto the feed rows so the client renders "assigned you
-    // to <task>" / "mentioned you in <task>" and can open the task. Covers both
-    // the Unread-ON merged rows above and the Unread-OFF rows from
-    // activity_get_feed_all.
+    // Flatten task fields onto the feed rows so the client can render and open
+    // assignments, mentions, and watched-column create/move notifications.
     flattenTaskFields(result);
+    flattenTaskColumnChange(result);
 
     this.output.list(result);
   }
 
   /**
-   * List the caller's UNDISMISSED task-assignment notifications for the pinned
-   * activity section + bell badge (mirrors how task @-mentions are surfaced).
-   * Rows come from contact_task_assigned_unread (shaped like
-   * activity_get_feed_all's contact branch); task fields are flattened so the
-   * item renders "assigned you to <task>" and the click opens the task. The
-   * panel merges these into its unread `merged` list so an assignment shows —
-   * and bumps the badge — even while the panel is closed.
+   * List undismissed task assignments and watched-column notifications for the
+   * pinned activity section + bell badge. Rows are shaped like
+   * activity_get_feed_all's contact branch, with task metadata flattened so
+   * the client can render and open the task.
    * Endpoint: POST /activity.list_task_assignments
    */
   async list_task_assignments() {
