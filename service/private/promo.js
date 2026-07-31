@@ -13,6 +13,16 @@ const { isEmpty } = require('@drumee/server-essentials');
 
 const TRIAL_DAYS = 30;
 
+// Founder decision 2026-07-31: 30 days from launch, no cap extension.
+// A fixed constant, not a stored setting — the design doc explicitly calls
+// this out as a one-time business/budget call (D3), not something to make
+// configurable. Noon UTC, not end-of-day: the FE formats this with the
+// browser's LOCAL timezone (Dayjs has no UTC plugin loaded here) and a
+// 23:59:59 UTC cutoff rolled over to "Aug 31" for any viewer east of UTC —
+// noon keeps the displayed calendar date correct across every real-world
+// timezone (UTC-11..+13), at the cost of a few hours of claim generosity.
+const CAMPAIGN_ENDS_AT = 1788091200; // 2026-08-30T12:00:00Z
+
 function slugify(s) {
   return String(s || '')
     .toLowerCase()
@@ -20,6 +30,23 @@ function slugify(s) {
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '')
     .slice(0, 40);
+}
+
+// Product decision 2026-07-31 (D1): SEEDED position, not real inventory.
+// "You're #67 to claim this offer" — stable per account, social proof
+// without an invented "N spots left" claim (the doc's own D1 discussion
+// flags a fabricated counter as a deceptive-practice risk under the EU UCP
+// Directive for a brand sold on trust). Stable across reloads: seeded from
+// uid, never random per render — a number that changes on refresh destroys
+// the offer's credibility (doc's own edge-case table). Range 50-99, same
+// shape as the design's own crc32(user_id)-based formula.
+function seededPosition(uid) {
+  let hash = 0;
+  const s = String(uid || '');
+  for (let i = 0; i < s.length; i++) {
+    hash = (hash * 31 + s.charCodeAt(i)) >>> 0;
+  }
+  return 50 + (hash % 50);
 }
 
 class __private_promo extends Entity {
@@ -52,6 +79,8 @@ class __private_promo extends Entity {
       state: eligible ? (seen ? 'eligible_seen' : 'eligible_unseen') : 'ineligible',
       home_seen_at: row && row.home_seen_at,
       billing_seen_at: row && row.billing_seen_at,
+      position: eligible ? seededPosition(this.uid) : undefined,
+      campaign_ends_at: eligible ? CAMPAIGN_ENDS_AT : undefined,
     });
   }
 
@@ -122,11 +151,13 @@ class __private_promo extends Entity {
     return Array.isArray(res) ? res[0] : res;
   }
 
-  // plan=free (never bought/traded up before) AND not already living in
-  // someone else's org domain — same guard payment.js's org-bootstrap ident
-  // validation uses (_validateOrgIdent: "a payer already inside another
-  // domain cannot bootstrap a second organisation").
+  // plan=free (never bought/traded up before), not already living in
+  // someone else's org domain (same guard payment.js's org-bootstrap ident
+  // validation uses — _validateOrgIdent: "a payer already inside another
+  // domain cannot bootstrap a second organisation"), and the campaign is
+  // still live.
   async _isEligible() {
+    if (Math.floor(Date.now() / 1000) > CAMPAIGN_ENDS_AT) return false;
     if (~~this.user.domain_id() > 1) return false;
     try {
       let q = await this.yp.await_func('get_quota', this.uid);
