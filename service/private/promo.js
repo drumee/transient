@@ -101,6 +101,39 @@ class __private_promo extends Entity {
     this.output.json({ status: 'OK' });
   }
 
+  // End an active LAUNCH30 trial early (Billing → Cancel plan). There is no
+  // Stripe subscription to schedule cancel_at_period_end against — the same
+  // revert the expiry worker runs: payment_clear_entitlement on the org,
+  // then promo_launch30_mark_expired. Immediate: the user asked to leave
+  // Team now, and keeping access until trial_ends_at would make Cancel a
+  // no-op (the trial already ends there with nothing to renew).
+  async cancel() {
+    const row = await this._row();
+    if (!row || row.status !== 'claimed') {
+      return this.output.status('NOT_ACTIVE');
+    }
+    const orgId = row.org_id;
+    if (!orgId) {
+      return this.output.status('NOT_ACTIVE');
+    }
+    await this.yp.await_proc('payment_clear_entitlement', orgId);
+    await this.yp.await_proc('promo_launch30_mark_expired', this.uid);
+
+    let quota;
+    try {
+      quota = await this.yp.await_func('get_quota', this.uid);
+      if (typeof quota === 'string') { try { quota = JSON.parse(quota); } catch (e) { quota = undefined; } }
+      await this.notify_user(this.uid, {
+        service: 'payment.plan_updated',
+        plan: 'free',
+        status: 'canceled',
+        quota,
+      });
+    } catch (e) { /* best-effort */ }
+
+    this.output.json({ status: 'OK', plan: 'free', quota });
+  }
+
   // Claim: bootstrap (or reuse) the caller's organisation, then grant the
   // Team entitlement for TRIAL_DAYS with no Stripe object anywhere.
   // Idempotent — a retried call after a partial failure (org created, grant
@@ -132,8 +165,9 @@ class __private_promo extends Entity {
     // open session reflects Team live, no reload (mirrors the admin-access
     // grant fix 2026-07-30 — every entitlement change needs this, not just
     // the ones that happen to route through the webhook).
+    let quota;
     try {
-      let quota = await this.yp.await_func('get_quota', this.uid);
+      quota = await this.yp.await_func('get_quota', this.uid);
       if (typeof quota === 'string') { try { quota = JSON.parse(quota); } catch (e) { quota = undefined; } }
       await this.notify_user(this.uid, {
         service: 'payment.plan_updated',
@@ -144,11 +178,16 @@ class __private_promo extends Entity {
       });
     } catch (e) { /* best-effort */ }
 
+    // quota is returned so the FE can Visitor.respawn immediately — the
+    // home-surface claim path has no billing widget listening for
+    // payment.plan_updated, so without this the sidebar still gates Admin
+    // Console on plan=free until a full reload.
     this.output.json({
       status: 'OK',
       org_id: org.id,
       domain_id: org.domain_id,
       trial_ends_at: row && row.trial_ends_at,
+      quota,
     });
   }
 

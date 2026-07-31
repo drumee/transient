@@ -42,6 +42,17 @@
         { "code": "NOT_ELIGIBLE", "description": "not on Free, or already inside another organisation" },
         { "code": "PROVISION_FAILED", "description": "org bootstrap failed (see org_provision)" }
       ]
+    },
+    "cancel": {
+      "doc": "End an active LAUNCH30 trial early from Billing. No Stripe object exists — clears the org yp.quota row (same path as promoExpiryWorker) and marks the claim expired. Immediate, not cancel-at-period-end.",
+      "scope": "hub",
+      "permission": {
+        "src": "owner"
+      },
+      "params": {},
+      "errors": [
+        { "code": "NOT_ACTIVE", "description": "no claimed_active LAUNCH30 trial for this payer" }
+      ]
     }
   },
   "modules": {
