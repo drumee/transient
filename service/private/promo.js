@@ -9,19 +9,25 @@
 // render state and call claim, never to decide it (same rule as the promo
 // design doc's API contract).
 const { Entity } = require('@drumee/server-core');
-const { isEmpty } = require('@drumee/server-essentials');
+const { isEmpty } = require('lodash');
 
-const TRIAL_DAYS = 30;
+// Env-overridable, defaults are the real product/business values — same
+// pattern as the workers (reminderWorker's REMINDER_INTERVAL_SEC,
+// promoExpiryWorker's PROMO_EXPIRY_INTERVAL_SEC): no code change to test a
+// near-term expiry on stage, or to move the real date on prod, across
+// test/stage/preview/prod without touching this file.
+const TRIAL_DAYS = parseInt(process.env.PROMO_LAUNCH30_TRIAL_DAYS, 10) || 30;
 
 // Founder decision 2026-07-31: 30 days from launch, no cap extension.
-// A fixed constant, not a stored setting — the design doc explicitly calls
-// this out as a one-time business/budget call (D3), not something to make
-// configurable. Noon UTC, not end-of-day: the FE formats this with the
-// browser's LOCAL timezone (Dayjs has no UTC plugin loaded here) and a
-// 23:59:59 UTC cutoff rolled over to "Aug 31" for any viewer east of UTC —
-// noon keeps the displayed calendar date correct across every real-world
-// timezone (UTC-11..+13), at the cost of a few hours of claim generosity.
-const CAMPAIGN_ENDS_AT = 1788091200; // 2026-08-30T12:00:00Z
+// Default below is the real business date; PROMO_LAUNCH30_ENDS_AT (unix
+// seconds) overrides it per-environment. Noon UTC, not end-of-day: the FE
+// formats this in the browser's LOCAL timezone (Dayjs has no UTC plugin
+// loaded here), and a 23:59:59 UTC cutoff rolled over to "Aug 31" for any
+// viewer east of UTC — noon keeps the displayed calendar date correct
+// across every real-world timezone (UTC-11..+13), at the cost of a few
+// hours of claim generosity.
+const CAMPAIGN_ENDS_AT =
+  parseInt(process.env.PROMO_LAUNCH30_ENDS_AT, 10) || 1788091200; // 2026-08-30T12:00:00Z
 
 function slugify(s) {
   return String(s || '')
@@ -116,7 +122,7 @@ class __private_promo extends Entity {
     }
 
     const res = await this.yp.await_proc(
-      'promo_launch30_grant', this.uid, org.id, org.domain_id,
+      'promo_launch30_grant', this.uid, org.id, org.domain_id, TRIAL_DAYS,
     );
     const row = Array.isArray(res) ? res[0] : res;
 
