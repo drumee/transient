@@ -53,6 +53,43 @@ const { toArray } = utils;
 const { stringify } = JSON;
 const { writeAudit } = require("./_audit");
 
+// Workspace areas that count as EXTERNAL (shared outside the member circle).
+// Everything else in the yp.entity.area enum — private, public, personal,
+// restricted, limited, dmz-public, dmz-private, pool, pool/dmz, … — is INTERNAL.
+//
+// This is the single source of truth. The same expression used to be written out
+// four times (_publicSharePermission, invite's workspace_restricted,
+// _workspacePreviewItems' per-row flag, and the frontend's own isSharedArea),
+// and they drifted: see the note on isExternalArea below.
+const EXTERNAL_AREAS = ["share", "dmz"];
+
+// The single invite email. Every invitee gets this one, with or without a Drumee
+// account; only the body copy varies (internal vs external workspace).
+// Replaces the former hub-invite-added / hub-invite-link / hub-invite-signup trio.
+const WORKSPACE_INVITE_TPL = "workspace-invite-member";
+
+/**
+ * True when a workspace area is shared outside the member circle.
+ *
+ * The app labels area `private` as "Internal" and area `share` as "External"
+ * (ui-team window/skeleton/toolkit AREA_LABELS), and this predicate follows that
+ * split — it is what decides the invite email's body copy and whether the
+ * workspace preview is redacted.
+ *
+ * KNOWN GAP, deliberately preserved here: `public` is NOT in EXTERNAL_AREAS, so an
+ * open/public workspace is classified internal and its preview is redacted. The
+ * frontend's dmz/sharebox/area.js treats `public` as shared and notes that prod
+ * returns `area='public'` for open share links. Adding it here would change what
+ * invite emails expose, so it is left as a separate decision rather than folded
+ * into this refactor.
+ *
+ * @param {string} [area] a yp.entity.area value
+ * @returns {boolean} true = external/shared, false = internal
+ */
+function isExternalArea(area) {
+  return EXTERNAL_AREAS.includes(area);
+}
+
 const Hub = require("../hub");
 class __private_hub extends Hub {
   constructor(...args) {
@@ -286,17 +323,40 @@ class __private_hub extends Hub {
   }
 
   /**
+   * Anonymous guest landing page for an INTERNAL workspace — the signin plugin's
+   * signin_guest widget (Figma 1602:76946 "Guest Landing Page (Viral) Restricted"):
+   * the workspace shown as redacted placeholders behind a "Content Restricted"
+   * card, with Login / Join Workspace CTAs.
+   *
+   * Used instead of the #/dmz/share/<token> view because an internal workspace has
+   * nothing a guest may browse — the share view would render an empty or view-only
+   * folder. An EXTERNAL workspace keeps the share link, which is the page in Figma
+   * 1602:77081 ("Link shared") and is already implemented by ui-team's dmz_sharebox.
+   *
+   * `name` rides along so the landing page's header shows the real workspace name
+   * instead of its generic localized fallback; the page itself stays API-free.
+   *
+   * @param {string} hubname workspace display name
+   * @returns {string} absolute URL
+   */
+  _guestLandingLink(hubname) {
+    const base = this.input.homepath(this.hub.get(Attr.hostname));
+    const q = `view=guest&name=${encodeURIComponent(hubname || "")}`;
+    return `${base}#/welcome/signin?${q}`;
+  }
+
+  /**
    * Anonymous/guest permission for this hub's public share, derived from the
-   * workspace area (same rule as workspace_restricted):
-   *   - restricted workspace -> Privilege.VIEW     (browse/read only)
-   *   - shared workspace      -> Privilege.DOWNLOAD (browse + download)
+   * workspace area (see isExternalArea):
+   *   - internal workspace -> Privilege.VIEW     (browse/read only)
+   *   - external workspace -> Privilege.DOWNLOAD (browse + download)
    * This is the single source of truth for the permission granted to anyone
    * opening a public hub link (invite emails, copy_link, external-room share).
    */
   _publicSharePermission() {
-    const area = this.hub.get(Attr.area);
-    const restricted = !(area === "share" || area === "dmz");
-    return restricted ? Privilege.VIEW : Privilege.DOWNLOAD;
+    return isExternalArea(this.hub.get(Attr.area))
+      ? Privilege.DOWNLOAD
+      : Privilege.VIEW;
   }
 
   /**
@@ -979,7 +1039,18 @@ class __private_hub extends Hub {
   }
 
   /**
-   * Mời người vào workspace. Rẽ nhánh theo area của hub + drumate status.
+   * Mời người vào workspace.
+   *
+   * Every invitee gets the SAME email (WORKSPACE_INVITE_TPL) whether or not they
+   * already have a Drumee account — the body differs only by workspace scope,
+   * internal (private) vs external (shared), via isExternalArea. The CTA is the
+   * anonymous public share link, which works with or without an account.
+   *
+   * Account status still drives the non-email work below, because that part is
+   * functional rather than presentational: an existing drumate is granted
+   * membership and notified over the websocket, while a newcomer gets an invite
+   * token (+ a pending_invitation fallback) so they can join after signing up.
+   *
    * Input: { hub_id, invitees:[email], privilege, message? }
    */
   async invite() {
@@ -997,27 +1068,36 @@ class __private_hub extends Hub {
       || this.hub.get(Attr.name)
       || hubId;
     const area = this.hub.get(Attr.area);
+    // The ONE axis the email body varies on: internal (private) vs external
+    // (shared) workspace. Also decides whether the workspace preview is redacted.
+    const workspace_external = isExternalArea(area);
+    // Narrower than workspace_external (excludes `dmz`) and used ONLY to gate the
+    // pending_invitation fallback below, preserving the pre-existing behaviour.
     const isShareLink = (area === "share");
-    // Workspace-level shared/restricted flag (same rule as the app's security
-    // panel): share/dmz are "shared", everything else is restricted. Drives the
-    // preview-card header icon in the email templates.
-    const workspace_restricted = !(area === "share" || area === "dmz");
     const EXPIRY_DAYS = 7;
     const expiryTs = Math.floor(Date.now() / 1000) + EXPIRY_DAYS * 86400;
     const message = this.input.use(Attr.message)
       || Cache.message("_x_add_you_to_team", lang).format(username, hubname);
     // Top-3 workspace preview shared by all invite emails (same workspace for
     // every invitee in this call), fetched once. Each item carries a
-    // `restricted` flag so the templates dim restricted rows and leave shared
+    // `restricted` flag so the template dims internal rows and leaves external
     // ones clear.
     const preview_items = await this._workspacePreviewItems();
     // Latest 2 non-meeting messages for the "Recent Activity" preview; shown
-    // (clear) for shared workspaces, kept redacted for restricted ones.
+    // (clear) for external workspaces, kept redacted for internal ones.
     const recent_messages = await this._recentMessages();
-    // Anonymous public share link for the hub — every invite email points here so
-    // recipients open the workspace without signing in. Computed once (one shared
-    // token per hub); guest permission follows workspace_restricted.
+    // Anonymous public share link for the hub. Still resolved unconditionally —
+    // it creates the external room on first use and re-applies the area-based guest
+    // permission, both of which must happen whatever the email links to. Computed
+    // once (one shared token per hub).
     const publicLink = await this._ensurePublicShareLink();
+    // Where the email's CTA goes, per workspace scope:
+    //   external -> the share view itself (Figma 1602:77081, ui-team dmz_sharebox)
+    //   internal -> the guest landing gate (Figma 1602:76946, signin_guest)
+    // Both open with no login; neither exposes content the scope doesn't allow.
+    const ctaLink = workspace_external
+      ? publicLink
+      : this._guestLandingLink(hubname);
     // Address-book context resolved once for the whole call (see
     // _rememberInvitee). Null when the inviter has no drumate DB — the invite
     // still goes through, it just isn't remembered.
@@ -1034,19 +1114,10 @@ class __private_hub extends Hub {
         if (isArray(drumate)) drumate = drumate[0];
         const isDrumate = drumate && drumate.id;
 
-        if (isShareLink && !isDrumate) {
-          await this._inviteViaToken(email, hubId, privilege, expiryTs, username, hubname, preview_items, workspace_restricted, recent_messages, publicLink);
-          await writeAudit(this, {
-            db: this.hub.get(Attr.db_name),
-            uid: this.uid,
-            action: 'invite_sent',
-            category: 'member',
-            notify_to: 'admin',
-            entity_id: hubId,
-            log: `Invite sent to ${email} for workspace '${hubname}'`,
-          });
-          results.push({ email, branch: "A", status: "ok" });
-        } else if (isDrumate) {
+        // --- Functional work, still keyed on account status (NOT the email) ---
+        if (isDrumate) {
+          // Existing account: grant membership now and push it over the socket, so
+          // the workspace shows up in a live session without a reload.
           const r = await this._grantMembership(drumate.id, privilege, 0, message, mfs_home, hubname, username);
           if (r) {
             try {
@@ -1066,24 +1137,17 @@ class __private_hub extends Hub {
               this.warn("[hub] invite: ws notify failed for", drumate.id, err && err.message);
             }
           }
-          await this._sendInviteEmail("hub-invite-added", email,
-            `You've been added to ${hubname}`,
-            { inviter_name: username, workspace_name: hubname, link: publicLink, preview_items, workspace_restricted, recent_messages });
-          results.push({ email, branch: "B", status: "ok" });
         } else {
-          // non-drumate, restricted workspace: generate a token (so already-online
-          // users can join) and also add to pending_invitation (fallback for fresh
-          // signups in case the FE token flow doesn't complete).
-          const { randomBytes } = require("crypto");
-          const cSecret = randomBytes(24).toString("hex");
-          const cMethod = `hub_invite:${hubId}`;
-          const cMeta = JSON.stringify({ hub_id: hubId, permission: privilege });
-          await this.yp.await_proc(
-            "token_hub_invite_add", email, "", cSecret, cMethod, this.uid, cMeta, expiryTs
-          );
-          await this.yp.await_proc(
-            "yp_add_pending_invitation", hubId, 0, privilege, email
-          );
+          // No account yet: mint an invite token so the address can be redeemed
+          // after sign-up. `isShareLink` (area === "share" exactly) still gates the
+          // pending_invitation fallback — unchanged on purpose, since which rows a
+          // newcomer's invite writes is functional behaviour, not email copy.
+          await this._addInviteToken(email, hubId, privilege, expiryTs);
+          if (!isShareLink) {
+            await this.yp.await_proc(
+              "yp_add_pending_invitation", hubId, 0, privilege, email
+            );
+          }
           await writeAudit(this, {
             db: this.hub.get(Attr.db_name),
             uid: this.uid,
@@ -1093,11 +1157,25 @@ class __private_hub extends Hub {
             entity_id: hubId,
             log: `Invite sent to ${email} for workspace '${hubname}'`,
           });
-          await this._sendInviteEmail("hub-invite-signup", email,
-            `${username} invited you to join ${hubname}`,
-            { inviter_name: username, workspace_name: hubname, link: publicLink, preview_items, workspace_restricted, recent_messages });
-          results.push({ email, branch: "C", status: "ok" });
         }
+
+        // --- One email for everyone, varying only by workspace scope ---
+        await this._sendInviteEmail(
+          WORKSPACE_INVITE_TPL,
+          email,
+          workspace_external
+            ? `${username} shared ${hubname} with you`
+            : `${username} added you to ${hubname}`,
+          {
+            inviter_name: username,
+            workspace_name: hubname,
+            link: ctaLink,
+            workspace_external,
+            preview_items,
+            recent_messages,
+          },
+        );
+        results.push({ email, status: "ok" });
         // Queue for address-book bookkeeping — only invitees whose branch
         // actually succeeded (a failure throws above and must leave no contact).
         // Deliberately deferred until every invite is done, see below.
@@ -1108,7 +1186,7 @@ class __private_hub extends Hub {
         }
       } catch (err) {
         this.warn("[hub] invite failed for", email, err && err.message);
-        results.push({ email, branch: null, status: "failed", reason: err && err.message });
+        results.push({ email, status: "failed", reason: err && err.message });
       }
     }
 
@@ -1129,9 +1207,11 @@ class __private_hub extends Hub {
   }
 
   /**
-   * Nhánh A: tạo token mời share-link + gửi email kèm link.
+   * Mint a hub_invite token for an address with no Drumee account yet, so the
+   * invite can be redeemed after sign-up (accept_invite). Token only — the email
+   * is sent once by invite(), the same one every invitee gets.
    */
-  async _inviteViaToken(email, hubId, privilege, expiryTs, username, hubname, preview_items, workspace_restricted, recent_messages, publicLink) {
+  async _addInviteToken(email, hubId, privilege, expiryTs) {
     const { randomBytes } = require("crypto");
     const secret = randomBytes(24).toString("hex");
     const method = `hub_invite:${hubId}`;
@@ -1139,9 +1219,6 @@ class __private_hub extends Hub {
     await this.yp.await_proc(
       "token_hub_invite_add", email, "", secret, method, this.uid, metadata, expiryTs
     );
-    await this._sendInviteEmail("hub-invite-link", email,
-      `${username} invited you to ${hubname}`,
-      { inviter_name: username, workspace_name: hubname, link: publicLink, expiry_days: 7, preview_items, workspace_restricted, recent_messages });
   }
 
   /**
@@ -1226,9 +1303,9 @@ class __private_hub extends Hub {
         const date = ts
           ? new Date(ts).toLocaleDateString("en-US", { month: "short", day: "numeric" })
           : "";
-        // "shared" mode == area share/dmz (matches the app's security-panel
-        // rule); everything else is treated as restricted and dimmed.
-        const restricted = !(it.area === "share" || it.area === "dmz");
+        // Per-row scope, same rule as the workspace itself (isExternalArea):
+        // internal rows are dimmed/redacted, external ones render clear.
+        const restricted = !isExternalArea(it.area);
         // Icon by type: folders reflect shared/restricted state; files and
         // images use their own glyphs.
         let icon;
