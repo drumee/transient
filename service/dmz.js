@@ -21,8 +21,12 @@ const {
   ID_NOBODY
 } = Constants;
 const { verifyPassword: verifySecureSharePassword } = require('./lib/secure-share-password');
+const { secureShareCapPrivilege } = require('./lib/secure-share-write-guard');
 const Jwt = require('jsonwebtoken');
 const { resolve: _resolvePath } = require('path');
+const { existsSync, readFileSync, statSync } = require('fs');
+const { get_node_content } = require('@drumee/server-core/lib/utils/mfs');
+const { PERM_READ } = Constants;
 // Shared `drumee` secret, loaded ONCE at module load, used to sign a short-lived
 // owner-edit assertion (see _loginSecureShare). The euroffice editor verifies it with
 // the same secret. Best-effort: if the secret file is unavailable the feature is simply
@@ -89,6 +93,54 @@ function _emailMatchesAllowed(email, info) {
     return (email.split('@')[1] || '') === info.domain_restriction.toLowerCase().trim();
   }
   return false;
+}
+
+
+// Office extensions whose first page the server rasterizes into thumb.png.
+// Mirrors the client's builtins/player/document/editable.js — keep in step.
+const DOC_EDITABLE = new Set([
+  'doc', 'docx', 'docm', 'dotx', 'dotm', 'odt', 'ott',
+  'xlsx', 'xls', 'xlsm', 'xltx', 'xltm', 'xlsb', 'ods', 'ots',
+  'pptx', 'ppt', 'pptm', 'potx', 'potm', 'ppsx', 'ppsm', 'odp', 'otp',
+  'rtf',
+]);
+
+// A poster is never worth more than this many bytes on the wire. Sized so that
+// video vignettes clear it — a 720p poster frame runs to ~120KB and is the most
+// useful preview of the lot — while a pathologically large rendering does not.
+const POSTER_MAX_BYTES = 192 * 1024;
+// Nor is a whole listing's worth of them. A folder of videos spends this on the
+// first few tiles; the rest fall back to icons rather than inflating the reply.
+const POSTER_BUDGET_BYTES = 768 * 1024;
+
+/**
+ * Which already-rendered preview a row could show, in the order the desk grid
+ * would prefer them. Mirrors media/core.js initURL(): a vector shows its own
+ * source, a PDF or office document shows the rasterized first page (thumb),
+ * everything else shows the vignette.
+ *
+ * The client picks exactly one format; this returns a short preference list
+ * instead, because here the file must actually exist on disk and falling back
+ * to the other rendering beats showing no poster at all.
+ *
+ * @returns {Array<[string, string, string]>} [format, extension, mime]
+ */
+function _posterCandidates(row) {
+  const ext = String(row.ext || '').toLowerCase();
+  const ftype = String(row.filetype || row.ftype || '').toLowerCase();
+
+  // Containers have no content of their own; text-ish files are the two
+  // negative gates in the client's imgCapable() and would only ever produce a
+  // thumbnail of a wall of text.
+  if (['folder', 'hub', 'root'].includes(ftype)) return [];
+  if (/shell|script|text/.test(ftype)) return [];
+  if (/^text/.test(String(row.mimetype || ''))) return [];
+
+  if (ftype === 'vector' || ext === 'svg') return [['orig', 'svg', 'image/svg+xml']];
+  if (ext === 'pdf' || DOC_EDITABLE.has(ext)) {
+    return [['thumb', 'png', 'image/png'], ['vignette', 'png', 'image/png']];
+  }
+  return [['vignette', 'png', 'image/png'], ['thumb', 'png', 'image/png']];
 }
 
 
@@ -1187,6 +1239,224 @@ class __dmz extends Mfs {
    */
   notification_list() {
     this.output.data([]);
+  }
+
+  /**
+   * The row's already-rendered preview, as a data URI, or null.
+   *
+   * Why inline rather than a URL: the desk grid points `background-image` at
+   * file/<format>/<nid>/<hub_id>, which is media.<format>, whose ACL resolves
+   * an acl_check grant against the CALLER'S session — the very grant a
+   * main-domain anonymous visitor cannot hold (see list_by_token's preamble).
+   * Handing out a URL would therefore mean opening a second anonymous route
+   * with its own authorisation story. Returning the bytes through the call
+   * that is already token-gated adds no new surface at all: there is nothing
+   * to guess, nothing to share on, and nothing reachable without the token.
+   *
+   * Deliberately serves ONLY what is already on disk and NEVER generates.
+   * media._send_thumb() rasterizes on demand, which is fine behind a login but
+   * would let an anonymous caller spend server CPU by the folder-full. A file
+   * nobody has viewed yet simply shows its filetype icon.
+   *
+   * @param {object} row     listing row (nid, ext, filetype, mimetype, privilege)
+   * @param {string} mfsRoot storage root of the share's hub
+   * @param {{left: number}} budget mutable byte budget for the whole response
+   * @returns {string|null} "data:image/png;base64,…"
+   */
+  _posterFor(row, mfsRoot, budget) {
+    // nid indexes a directory name; it comes from the DB, but validate anyway
+    // so a malformed row can never escape the storage root.
+    const nid = String(row.nid || '');
+    if (!mfsRoot || !/^[0-9a-f]{16}$/.test(nid)) return null;
+    // A share that does not grant read does not get to show content either.
+    if (!((row.privilege || 0) & PERM_READ)) return null;
+    if (budget.left <= 0) return null;
+
+    for (const [format, ext, mime] of _posterCandidates(row)) {
+      let path;
+      try {
+        path = get_node_content({ ...row, id: nid, mfs_root: mfsRoot }, format, ext);
+      } catch (e) {
+        continue;
+      }
+      if (!path || !existsSync(path)) continue;
+      let size;
+      try {
+        size = statSync(path).size;
+      } catch (e) {
+        continue;
+      }
+      // Video vignettes in particular can run to six figures. Over the cap the
+      // icon is the better answer — do not spend the whole budget on one tile.
+      if (!size || size > POSTER_MAX_BYTES || size > budget.left) return null;
+      try {
+        const b64 = readFileSync(path).toString('base64');
+        budget.left -= size;
+        return `data:${mime};base64,${b64}`;
+      } catch (e) {
+        this.debug(`[dmz.list_by_token] poster unreadable nid=${nid}:`, e.message);
+        return null;
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Read-only listing of a share's contents, authorised BY THE TOKEN ALONE.
+   *
+   * Why this exists: dmz.login refuses to bind a share identity onto a
+   * main-domain session (see the regsid guard in login/_loginSecureShare — it
+   * would hijack or clamp the caller's auth session). So a page served from the
+   * main domain, such as the signin plugin's guest landing page, can never
+   * obtain the grant that media.show_node_by requires, and every listing there
+   * comes back 403. This answers from the token instead and NEVER touches the
+   * caller's session: no cookie_touch, no grant, no identity change.
+   *
+   * It is deliberately narrow — it lists, and nothing else:
+   *
+   *   - the target is derived from the token, never from client input. A client
+   *     cannot name a nid, so it cannot walk out of the share.
+   *   - a share that is not plainly open is refused: revoked, expired, invalid,
+   *     locked, password-gated or email-gated all return a status and NO items.
+   *     This endpoint performs no gate, so it must not serve gated content.
+   *   - a FILE share lists the parent folder hard-filtered to that one file, so
+   *     siblings are never exposed (same remap as _loginSecureShare).
+   *   - displayed privilege is the anonymous guest's, then clamped again by the
+   *     share's own capability set.
+   *   - the reply carries only what a viewer needs. secure_share_info also
+   *     returns sender-only data (password_hash, allowed_emails, denied_emails,
+   *     recipient_email, creator ids); none of it is echoed.
+   *
+   * Input:  token {String} required, page {Number} optional
+   * Output: { status, title, nid, hub_id, items[] }
+   */
+  async list_by_token() {
+    const token = this.input.need(Attr.token);
+    const page = parseInt(this.input.use(Attr.page, 1), 10) || 1;
+    const deny = (status) => this.output.data({ status, items: [] });
+
+    // Two kinds of share token exist and the caller cannot be expected to know
+    // which it holds, so resolve exactly as dmz.login does: secure share first,
+    // legacy dmz token second. Both are normalised to one shape.
+    let info = null;
+    let viewerUid = null;
+    let legacyPrivilege = null;
+    try {
+      const secure = toArray(await this.yp.await_proc('secure_share_info', token))[0];
+      if (secure && !secure.failed && secure.creator_id) info = secure;
+    } catch (e) {
+      this.warn('[dmz.list_by_token] secure_share_info failed:', e && e.message);
+    }
+    if (!info) {
+      try {
+        const legacy = await this.yp.await_proc('dmz_info_next', token);
+        if (legacy && !legacy.failed && legacy.hub_id) {
+          info = legacy;
+          // A legacy share owns a guest user; view as that identity and cap by
+          // the privilege the share itself grants.
+          viewerUid = legacy.uid || legacy.guest_id || null;
+          legacyPrivilege = legacy.privilege == null ? null : Number(legacy.privilege);
+        }
+      } catch (e) {
+        this.warn('[dmz.list_by_token] dmz_info_next failed:', e && e.message);
+      }
+    }
+    if (!info || !info.hub_id || !(info.node_id || info.nid)) {
+      return deny('TICKET_INVALID');
+    }
+    if (info.validity && info.validity !== 'TICKET_OK') {
+      return deny(info.validity);
+    }
+    // Gated shares are the gate's business, not this endpoint's.
+    if (info.is_locked) return deny('TICKET_LOCKED');
+    if (info.require_password) return deny('REQUIRED_PASSWORD');
+    if (info.require_email) return deny('REQUIRED_EMAIL');
+
+    // Listing target from the token. A real file → list its parent, filtered to
+    // the file itself; a folder / hub / root → list it directly.
+    let nid = info.node_id || info.nid;
+    let file_nid = null;
+    // Doubles as the storage-root lookup: every node physically in this hub
+    // lives under the same mfs_root, so one probe covers the whole listing.
+    // A row that is actually a cross-hub mount resolves to a path that does not
+    // exist, which costs it its poster and nothing else.
+    let mfs_root = null;
+    try {
+      const attr = toArray(
+        await this.yp.await_proc('forward_proc', info.hub_id, 'mfs_node_attr', `'${nid}'`)
+      )[0] || {};
+      mfs_root = attr.mfs_root || null;
+      if (attr.filetype && !['folder', 'hub', 'root'].includes(attr.filetype) && attr.pid) {
+        file_nid = nid;
+        nid = attr.pid;
+      }
+    } catch (e) {
+      // Probe failed → treat the shared node as a container, and show no posters.
+    }
+
+    // The anonymous guest is the viewing identity: mfs_show_node_by uses the uid
+    // for the per-row privilege/ownership columns, so this keeps the reply from
+    // ever describing the creator's own access.
+    const guest_id = viewerUid || Cache.getSysConf('guest_id');
+    const params = JSON.stringify({ sort_by: 'rank', order: 'asc', page, type: 'all' });
+    let rows;
+    try {
+      rows = toArray(await this.yp.await_proc(
+        'forward_proc', info.hub_id, 'mfs_show_node_by',
+        `'${nid}', '${guest_id}', '${params}'`
+      ));
+    } catch (e) {
+      this.warn('[dmz.list_by_token] listing failed:', e && e.message);
+      return deny('TICKET_INVALID');
+    }
+
+    if (file_nid) rows = rows.filter((r) => r && r.nid === file_nid);
+
+    // Clamp each row's displayed privilege to the share's caps, as
+    // media.show_node_by does. Anonymous caller → no recipient email.
+    let capPriv = legacyPrivilege;
+    if (capPriv == null) {
+      try {
+        capPriv = await secureShareCapPrivilege(this.yp, token, '');
+      } catch (e) {
+        capPriv = 0; // unknown caps → advertise none rather than the node's own
+      }
+    }
+
+    // Whitelist the columns that leave the server. Everything the viewer does
+    // not need — owner ids, db names, vhosts, metadata — stays here.
+    // Posters are opt-in and cost far more than the rest of the reply put
+    // together (a single video frame outweighs a whole folder of metadata), so
+    // the default answer stays small and the caller asks for them on a second
+    // pass once it has something on screen. Same endpoint, same token gate.
+    const wantPosters = /^(1|true|yes)$/i.test(String(this.input.use('with_posters', '')));
+    const budget = { left: wantPosters ? POSTER_BUDGET_BYTES : 0 };
+    const items = rows.map((r) => {
+      const privilege = capPriv == null ? r.privilege : (r.privilege || 0) & capPriv;
+      const item = {
+        nid: r.nid,
+        filename: r.filename,
+        ext: r.ext,
+        ftype: r.ftype || r.filetype,
+        filetype: r.filetype || r.ftype,
+        mimetype: r.mimetype,
+        filesize: r.filesize,
+        ctime: r.ctime,
+        mtime: r.mtime,
+        privilege,
+      };
+      const poster = this._posterFor({ ...r, privilege }, mfs_root, budget);
+      if (poster) item.poster = poster;
+      return item;
+    });
+
+    this.output.data({
+      status: 'TICKET_OK',
+      title: info.title || '',
+      nid,
+      hub_id: info.hub_id,
+      items,
+    });
   }
 
 }
