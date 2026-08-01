@@ -21,6 +21,7 @@ const {
 const { platform } = require('./lib/env');
 const { resolve } = require('path');
 const { isEmpty, isString } = require("lodash");
+const { notifyMemberJoined } = require("./lib/notify-member-joined");
 const {
   PASS_CHECKER,
   ID_NOBODY,
@@ -764,6 +765,11 @@ class __butler extends Mfs {
         } catch (err) {
           this.warn(`[_resolve_pending_invitation] WS notify failed for hub ${hub_id}:`, err && err.message);
         }
+
+        // Tell online members a member joined so an open permission matrix
+        // refreshes. (butler.js has no direct service boundary with hub.js, so
+        // the shared helper is used instead of an inherited method.)
+        await notifyMemberJoined(this, hub_id, newUser.id);
 
         this.debug(`[_resolve_pending_invitation] Added user ${newUser.id} to hub ${hub_id}`);
       } catch (err) {

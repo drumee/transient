@@ -28,6 +28,7 @@ const {
   ID_NOT_FOUND,
 } = Constants;
 const { resolve } = require("path");
+const { notifyMemberJoined } = require("../lib/notify-member-joined");
 
 /**
  * Configured envelope sender (email.json -> auth.user), resolved once. Used to
@@ -907,6 +908,11 @@ class __private_hub extends Hub {
         err && err.message
       );
     }
+    // Notify online members (admins with the Folder settings permission matrix
+    // open) so the new member appears immediately without a manual reload.
+    // Covers both callers of _grantMembership: invite() branch B (drumate
+    // already exists) and add_contributors().
+    await notifyMemberJoined(this, this.hub.get(Attr.id), uid);
     return r;
   }
 
@@ -1275,6 +1281,10 @@ class __private_hub extends Hub {
       entity_id: hub_id,
       log: `Invite accepted — ${this.user.get(Attr.email) || this.uid} joined the workspace`,
     });
+    // Notify the workspace's online members that a member just joined via
+    // token redemption — accept_invite pushed nothing before, so admins with
+    // the Folder settings matrix open were stuck with a stale member list.
+    await notifyMemberJoined(this, hub_id, this.uid);
     this.output.data({ hub_id });
   }
 
@@ -1606,6 +1616,11 @@ class __private_hub extends Hub {
         const sockets = await this.yp.await_proc('user_sockets', recipient.id);
         await RedisStore.sendData(this.payload(hub), sockets);
       }
+
+      // One broadcast per hub is enough — the matrix refetches the whole
+      // member list. uid is left null: this is an admin-driven multi-add, so
+      // every online member (including the acting admin) should refresh.
+      await notifyMemberJoined(this, hub_id, null);
 
       results.push({ hub_id, added: members.length });
     }
