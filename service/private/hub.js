@@ -353,13 +353,23 @@ class __private_hub extends Hub {
    * @param {string} [token] anonymous share token, external only
    * @returns {string} absolute URL
    */
-  _guestLandingLink(hubname, external, token) {
+  _guestLandingLink(hubname, external, token, hub_id) {
     const q = [
       "view=guest",
       `scope=${external ? "external" : "internal"}`,
       `name=${encodeURIComponent(hubname || "")}`,
     ];
     if (external && token) q.push(`token=${encodeURIComponent(token)}`);
+    // Which workspace this invite is for. Carried on BOTH scopes so the landing
+    // page can remember it across sign-in and offer to open it afterwards.
+    //
+    // External could infer it from the token (dmz.list_by_token returns hub_id),
+    // internal has no token and could not — so the id travels on the link and
+    // both scopes work the same way.
+    //
+    // It grants nothing on its own: every service behind it still authorises the
+    // caller's session, and the recipient is being invited to this workspace.
+    if (hub_id) q.push(`hub=${encodeURIComponent(hub_id)}`);
     return `${this._endpointBase()}/#/welcome/signin?${q.join("&")}`;
   }
 
@@ -1120,9 +1130,6 @@ class __private_hub extends Hub {
     // The ONE axis the email body varies on: internal (private) vs external
     // (shared) workspace. Also decides whether the workspace preview is redacted.
     const workspace_external = isExternalArea(area);
-    // Narrower than workspace_external (excludes `dmz`) and used ONLY to gate the
-    // pending_invitation fallback below, preserving the pre-existing behaviour.
-    const isShareLink = (area === "share");
     const EXPIRY_DAYS = 7;
     const expiryTs = Math.floor(Date.now() / 1000) + EXPIRY_DAYS * 86400;
     const message = this.input.use(Attr.message)
@@ -1144,7 +1151,9 @@ class __private_hub extends Hub {
     // external => Figma 1602:77081 (shared contents), internal => 1602:76946
     // (redacted behind the Content Restricted gate). The token travels only on the
     // external link, which is the one whose page reads real content.
-    const ctaLink = this._guestLandingLink(hubname, workspace_external, shareToken);
+    const ctaLink = this._guestLandingLink(
+      hubname, workspace_external, shareToken, this.hub.get(Attr.id)
+    );
     // Address-book context resolved once for the whole call (see
     // _rememberInvitee). Null when the inviter has no drumate DB — the invite
     // still goes through, it just isn't remembered.
@@ -1186,15 +1195,29 @@ class __private_hub extends Hub {
           }
         } else {
           // No account yet: mint an invite token so the address can be redeemed
-          // after sign-up. `isShareLink` (area === "share" exactly) still gates the
-          // pending_invitation fallback — unchanged on purpose, since which rows a
-          // newcomer's invite writes is functional behaviour, not email copy.
+          // after sign-up, AND record a pending invitation so the membership is
+          // actually granted when the account appears.
+          //
+          // The pending row is what does the granting: signup's create_account
+          // calls _resolve_pending_invitation(email), which reads
+          // pending_invitation_get_by_email and adds the new user to each hub.
+          // Nothing anywhere redeems the invite TOKEN during sign-up — it is for
+          // the link flow — so an invite that writes only a token leaves the
+          // person with no membership at all.
+          //
+          // This used to be gated on `!isShareLink`, which excluded exactly the
+          // external (area === "share") workspaces: an invitee with no account
+          // signed up, was never added, and landed on a desk showing only the
+          // three default workspaces. Opening the workspace they were invited to
+          // then failed with "the file you requested does not exist", which is
+          // what a hub with no grant looks like from the client.
+          //
+          // Internal is unaffected: it already took the branch that writes this
+          // row, and it still writes exactly the same row.
           await this._addInviteToken(email, hubId, privilege, expiryTs);
-          if (!isShareLink) {
-            await this.yp.await_proc(
-              "yp_add_pending_invitation", hubId, 0, privilege, email
-            );
-          }
+          await this.yp.await_proc(
+            "yp_add_pending_invitation", hubId, 0, privilege, email
+          );
           await writeAudit(this, {
             db: this.hub.get(Attr.db_name),
             uid: this.uid,
