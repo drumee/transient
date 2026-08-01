@@ -59,6 +59,27 @@ const JSON_OPT = { spaces: 2, EOL: "\r\n" };
 const { emptyTrash } = require('../../offline/queues/trashQueue');
 const indexQueue = require('../../offline/queues/indexQueue');
 
+const FILE_MOVE_TTL_SECONDS = 15 * 60;
+
+function firstRow(data) {
+  return toArray(data)[0] || null;
+}
+
+function samePhysicalNode(source, destination) {
+  if (!source || !destination || !existsSync(source) || !existsSync(destination)) return false;
+  const sourceStat = statSync(source);
+  const destinationStat = statSync(destination);
+  if (sourceStat.isDirectory() !== destinationStat.isDirectory()) return false;
+  if (!sourceStat.isDirectory()) return sourceStat.size === destinationStat.size;
+  const sourceEntries = readdirSync(source).sort();
+  const destinationEntries = readdirSync(destination).sort();
+  if (sourceEntries.length !== destinationEntries.length) return false;
+  return sourceEntries.every((entry, index) =>
+    entry === destinationEntries[index]
+      && samePhysicalNode(join(source, entry), join(destination, entry))
+  );
+}
+
 //########################################
 class __private_media extends Media {
   constructor(...args) {
@@ -67,6 +88,7 @@ class __private_media extends Media {
     this.chk_pre_transact = this.chk_pre_transact.bind(this);
     this.pre_transact = this.pre_transact.bind(this);
     this.copy_all = this.copy_all.bind(this);
+    this.move_cross_hub = this.move_cross_hub.bind(this);
     this.move_all = this.move_all.bind(this);
     this.workspace_move = this.workspace_move.bind(this);
     this.pre_restore_into = this.pre_restore_into.bind(this);
@@ -613,6 +635,562 @@ class __private_media extends Media {
   }
 
   /**
+   * Server-owned, single-file cross-hub move. Ordinary media.copy remains
+   * copy-only; this coordinator never consumes client moved_in/lineage data.
+   */
+  async move_cross_hub() {
+    const requestedOperationId = this.input.get("operation_id");
+    let saga;
+
+    if (requestedOperationId) {
+      saga = firstRow(await this.yp.await_proc("file_move_saga_get", requestedOperationId));
+      if (!saga || saga.actor_id !== this.uid) {
+        return this.exception.user("FILE_MOVE_OPERATION_NOT_FOUND");
+      }
+      if (["committed", "compensated", "failed", "expired", "compensation_failed"].includes(saga.state)) {
+        return this.output.data(this._fileMoveResult(saga));
+      }
+    } else {
+      saga = await this._beginCrossHubMove();
+      if (!saga) return;
+    }
+
+    const result = await this._runCrossHubMove(saga);
+    this.output.data(result);
+  }
+
+  async _beginCrossHubMove() {
+    const sourceHubId = this.input.get(Attr.hub_id) || this.hub.get(Attr.id);
+    const sourceFileNid = this.input.need(Attr.nid);
+    const destinationHubId = this.input.need(RECIPIENT_ID);
+    const destinationParentNid = this.input.need(PID);
+
+    if (!isString(sourceFileNid) || sourceHubId === destinationHubId) {
+      this.exception.user("CROSS_HUB_SINGLE_FILE_REQUIRED");
+      return null;
+    }
+
+    const sourceStorage = firstRow(await this.yp.await_proc("file_move_entity_storage", sourceHubId));
+    const destinationStorage = firstRow(await this.yp.await_proc("file_move_entity_storage", destinationHubId));
+    if (!sourceStorage || !destinationStorage) {
+      this.exception.user("FILE_MOVE_HUB_NOT_FOUND");
+      return null;
+    }
+
+    const source = firstRow(await this.yp.await_proc(
+      `${sourceStorage.db_name}.file_move_source_snapshot`, this.uid, sourceFileNid
+    ));
+    const destination = firstRow(await this.yp.await_proc(
+      `${destinationStorage.db_name}.file_move_destination_snapshot`, this.uid, destinationParentNid
+    ));
+    if (!source || source.category === FOLDER || source.category === HUB || !source.file_thread_id) {
+      this.exception.user("FILE_THREAD_MOVE_REQUIRED");
+      return null;
+    }
+    if (!(source.permission & Permission.DELETE) || !destination
+      || !(destination.permission & Permission.WRITE)) {
+      this.exception.forbiden("FILE_MOVE_PERMISSION_DENIED");
+      return null;
+    }
+
+    const lineage = firstRow(await this.yp.await_proc(
+      "file_thread_lineage_resolve", sourceHubId, sourceFileNid
+    ));
+    if (lineage && (lineage.state !== "active" || lineage.current_thread_id !== source.file_thread_id)) {
+      this.exception.user("FILE_MOVE_LINEAGE_CONFLICT");
+      return null;
+    }
+
+    if (lineage && lineage.original_hub_id === destinationHubId) {
+      const precheck = firstRow(await this.yp.await_proc(
+        `${destinationStorage.db_name}.file_move_return_precheck`, lineage.original_file_nid
+      ));
+      if (!precheck || precheck.old_node_available) {
+        this.exception.user("FILE_MOVE_OLD_NODE_AVAILABLE");
+        return null;
+      }
+    }
+
+    const operationId = this.randomString().slice(0, 16);
+    const lineageId = (lineage && lineage.lineage_id) || this.randomString().slice(0, 16);
+    const begun = firstRow(await this.yp.await_proc(
+      "file_move_saga_begin",
+      operationId,
+      lineageId,
+      this.uid,
+      sourceHubId,
+      sourceFileNid,
+      source.parent_nid,
+      source.file_thread_id,
+      destinationHubId,
+      destinationParentNid,
+      Math.floor(Date.now() / 1000) + FILE_MOVE_TTL_SECONDS
+    ));
+    if (!begun || begun.failed) {
+      this.exception.user((begun && begun.status) || "FILE_MOVE_SAGA_FAILED");
+      return null;
+    }
+    if (begun.actor_id !== this.uid) {
+      this.exception.user("FILE_MOVE_OPERATION_IN_PROGRESS");
+      return null;
+    }
+    return begun;
+  }
+
+  async _runCrossHubMove(saga) {
+    const sourceStorage = firstRow(await this.yp.await_proc(
+      "file_move_entity_storage", saga.source_hub_id
+    ));
+    const destinationStorage = firstRow(await this.yp.await_proc(
+      "file_move_entity_storage", saga.destination_hub_id
+    ));
+    if (!sourceStorage || !destinationStorage) {
+      return this._failCrossHubMove(saga, "FILE_MOVE_STORAGE_NOT_FOUND", true);
+    }
+
+    const sourceNode = { nid: saga.source_file_nid, mfs_root: sourceStorage.mfs_root };
+    const stagingNode = {
+      nid: saga.operation_id,
+      mfs_root: join(destinationStorage.home_dir, "__storage__", ".file-move-staging"),
+    };
+
+    if (["copy_pending", "copy_verified"].includes(saga.state)) {
+      const source = firstRow(await this.yp.await_proc(
+        `${sourceStorage.db_name}.file_move_source_snapshot`, this.uid, saga.source_file_nid
+      ));
+      const destination = firstRow(await this.yp.await_proc(
+        `${destinationStorage.db_name}.file_move_destination_snapshot`,
+        this.uid,
+        saga.destination_parent_nid
+      ));
+      if (!source || source.file_thread_id !== saga.source_thread_id
+        || !(source.permission & Permission.DELETE) || !destination
+        || !(destination.permission & Permission.WRITE)) {
+        return this._failCrossHubMove(saga, "FILE_MOVE_PERMISSION_OR_POSITION_CHANGED");
+      }
+
+      if (Math.floor(Date.now() / 1000) >= saga.expires_at) {
+        this._removePhysicalNode(stagingNode);
+        return this._transitionCrossHubMove(saga, saga.state, "expired", {
+          failure_code: "FILE_MOVE_EXPIRED",
+        });
+      }
+
+      if (saga.state === "copy_pending" || !check_base(stagingNode)) {
+        this._removePhysicalNode(stagingNode);
+        copy_node(sourceNode, stagingNode, 0);
+        const sourcePath = check_base(sourceNode);
+        const stagingPath = check_base(stagingNode);
+        if (!samePhysicalNode(sourcePath, stagingPath)) {
+          this._removePhysicalNode(stagingNode);
+          return this._failCrossHubMove(saga, "FILE_MOVE_COPY_VERIFY_FAILED");
+        }
+        if (saga.state === "copy_pending") {
+          saga = await this._transitionCrossHubMove(saga, "copy_pending", "copy_verified");
+          if (saga.failed) return this._fileMoveResult(saga);
+        }
+      }
+
+      let movePlan;
+      try {
+        movePlan = toArray(await this.yp.await_proc(
+          `${sourceStorage.db_name}.mfs_move_all`,
+          [{ nid: saga.source_file_nid, hub_id: saga.source_hub_id }],
+          this.uid,
+          saga.destination_parent_nid,
+          saga.destination_hub_id
+        ));
+      } catch (error) {
+        return this._failCrossHubMove(saga, "FILE_MOVE_DATABASE_STEP_FAILED", true);
+      }
+
+      const physicalMove = movePlan.find((row) => row.action === "move" && row.nid === saga.source_file_nid);
+      const destinationFileNid = physicalMove && physicalMove.des_id;
+      const sourcePosition = firstRow(await this.yp.await_proc(
+        `${sourceStorage.db_name}.file_move_thread_position`, null, saga.source_thread_id
+      ));
+      const destinationPosition = destinationFileNid && firstRow(await this.yp.await_proc(
+        `${destinationStorage.db_name}.file_move_thread_position`, destinationFileNid, null
+      ));
+
+      if (!destinationFileNid || sourcePosition || !destinationPosition
+        || Number(destinationPosition.root_identity_count) !== 1
+        || Number(destinationPosition.stale_child_identity_count) !== 0) {
+        saga.destination_file_nid = destinationFileNid;
+        saga.destination_thread_id = destinationPosition && destinationPosition.file_thread_id;
+        return this._compensateCrossHubMove(saga, sourceStorage, destinationStorage, stagingNode);
+      }
+
+      saga = await this._transitionCrossHubMove(saga, "copy_verified", "source_removed", {
+        destination_file_nid: destinationFileNid,
+        destination_thread_id: destinationPosition.file_thread_id,
+      });
+      if (saga.failed) return this._fileMoveResult(saga);
+      saga._movePlan = movePlan;
+    }
+
+    if (saga.state === "source_removed") {
+      const destinationNode = {
+        nid: saga.destination_file_nid,
+        mfs_root: destinationStorage.mfs_root,
+      };
+      const sourcePath = check_base(sourceNode);
+      let stagingPath = check_base(stagingNode);
+      let destinationPath = check_base(destinationNode);
+
+      if (!destinationPath && stagingPath) {
+        move_node(stagingNode, destinationNode, 0);
+        stagingPath = check_base(stagingNode);
+        destinationPath = check_base(destinationNode);
+      }
+      if (!sourcePath || !destinationPath || !samePhysicalNode(sourcePath, destinationPath)) {
+        return this._compensateCrossHubMove(saga, sourceStorage, destinationStorage, stagingNode);
+      }
+      this._removePhysicalNode(sourceNode);
+      if (stagingPath) this._removePhysicalNode(stagingNode);
+
+      const lineage = firstRow(await this.yp.await_proc(
+        "file_thread_lineage_resolve", saga.source_hub_id, saga.source_file_nid
+      ));
+      if (lineage && lineage.original_hub_id === saga.destination_hub_id) {
+        const rebound = firstRow(await this.yp.await_proc(
+          `${destinationStorage.db_name}.channel_file_thread_rebind_returned_file`,
+          lineage.original_file_nid,
+          saga.destination_file_nid,
+          saga.source_thread_id
+        ));
+        if (!rebound || rebound.failed) {
+          return this._compensateCrossHubMove(saga, sourceStorage, destinationStorage, stagingNode);
+        }
+        saga.destination_thread_id = rebound.file_thread_id;
+      }
+
+      saga = await this._transitionCrossHubMove(saga, "source_removed", "committed", {
+        destination_file_nid: saga.destination_file_nid,
+        destination_thread_id: saga.destination_thread_id,
+      });
+      if (!saga.failed) {
+        await this._emitCrossHubMoveEvents(saga, sourceStorage, destinationStorage);
+      }
+    }
+
+    return this._fileMoveResult(saga);
+  }
+
+  async _compensateCrossHubMove(saga, sourceStorage, destinationStorage, stagingNode) {
+    const expected = saga.state;
+    if (!saga.destination_file_nid) {
+      saga = await this._transitionCrossHubMove(saga, expected, "compensation_failed", {
+        failure_code: "COMPENSATION_CANONICAL_TARGET_MISSING",
+      });
+      return this._fileMoveResult(saga);
+    }
+    saga = await this._transitionCrossHubMove(saga, expected, "compensating", {
+      destination_file_nid: saga.destination_file_nid,
+      destination_thread_id: saga.destination_thread_id,
+      failure_code: "FILE_MOVE_DESTINATION_THREAD_OR_COPY_CONFLICT",
+    });
+    if (saga.failed) {
+      return this._fileMoveResult(saga);
+    }
+
+    try {
+      const compensationPlan = toArray(await this.yp.await_proc(
+        `${destinationStorage.db_name}.mfs_move_all`,
+        [{ nid: saga.destination_file_nid, hub_id: saga.destination_hub_id }],
+        this.uid,
+        saga.source_parent_nid,
+        saga.source_hub_id
+      ));
+      const physicalMove = compensationPlan.find((row) =>
+        row.action === "move" && row.nid === saga.destination_file_nid
+      );
+      const compensationFileNid = physicalMove && physicalMove.des_id;
+      if (!compensationFileNid) throw new Error("COMPENSATION_DESTINATION_MISSING");
+
+      const originalNode = { nid: saga.source_file_nid, mfs_root: sourceStorage.mfs_root };
+      const destinationNode = { nid: saga.destination_file_nid, mfs_root: destinationStorage.mfs_root };
+      const compensatedNode = { nid: compensationFileNid, mfs_root: sourceStorage.mfs_root };
+      const physicalSource = check_base(originalNode) ? originalNode
+        : (check_base(destinationNode) ? destinationNode : stagingNode);
+      copy_node(physicalSource, compensatedNode, 0);
+      if (!samePhysicalNode(check_base(physicalSource), check_base(compensatedNode))) {
+        throw new Error("COMPENSATION_COPY_VERIFY_FAILED");
+      }
+
+      const rebound = firstRow(await this.yp.await_proc(
+        `${sourceStorage.db_name}.channel_file_thread_rebind_returned_file`,
+        saga.source_file_nid,
+        compensationFileNid,
+        saga.source_thread_id
+      ));
+      if (!rebound || rebound.failed) throw new Error("COMPENSATION_THREAD_REBIND_FAILED");
+
+      if (physicalSource !== originalNode) this._removePhysicalNode(physicalSource);
+      if (saga.source_file_nid !== compensationFileNid) this._removePhysicalNode(originalNode);
+      this._removePhysicalNode(destinationNode);
+      this._removePhysicalNode(stagingNode);
+
+      saga = await this._transitionCrossHubMove(saga, "compensating", "compensated", {
+        compensation_file_nid: compensationFileNid,
+        compensation_thread_id: rebound.file_thread_id,
+      });
+    } catch (error) {
+      saga = await this._transitionCrossHubMove(saga, "compensating", "compensation_failed", {
+        failure_code: (error && error.message) || "FILE_MOVE_COMPENSATION_FAILED",
+      });
+    }
+    if (!saga.failed && saga.state === "compensated") {
+      try {
+        await this._emitCrossHubCompensationEvents(saga, sourceStorage);
+      } catch (error) {
+        this.warn("Cross-hub compensation event delivery failed", error);
+      }
+    }
+    return this._fileMoveResult(saga);
+  }
+
+  async _failCrossHubMove(saga, failureCode, uncertain = false) {
+    const nextState = uncertain ? "compensation_failed" : "failed";
+    const failedSaga = await this._transitionCrossHubMove(
+      saga, saga.state, nextState, { failure_code: failureCode }
+    );
+    return this._fileMoveResult(failedSaga);
+  }
+
+  async _transitionCrossHubMove(saga, expectedState, nextState, extra = {}) {
+    const transitioned = firstRow(await this.yp.await_proc("file_move_saga_transition", {
+      operation_id: saga.operation_id,
+      actor_id: this.uid,
+      expected_state: expectedState,
+      next_state: nextState,
+      ...extra,
+    }));
+    return transitioned || { ...saga, failed: 1, status: "SAGA_TRANSITION_EMPTY" };
+  }
+
+  _removePhysicalNode(node) {
+    if (!node || !check_base(node)) return;
+    remove_node(node, 0);
+  }
+
+  _fileMoveActor() {
+    const firstname = this.user.get(Attr.firstname) || "";
+    const lastname = this.user.get(Attr.lastname) || "";
+    return {
+      id: this.uid,
+      firstname,
+      lastname,
+      fullname: `${firstname} ${lastname}`.trim() || this.uid,
+    };
+  }
+
+  async _directFileThreadSnapshot(hubId, fileNid, dbName) {
+    try {
+      if (!dbName) {
+        const storage = firstRow(await this.yp.await_proc("file_move_entity_storage", hubId));
+        dbName = storage && storage.db_name;
+      }
+      if (!dbName) return null;
+      const snapshot = firstRow(await this.yp.await_proc(
+        `${dbName}.file_move_source_snapshot`, this.uid, fileNid
+      ));
+      if (!snapshot || !snapshot.file_thread_id
+        || snapshot.category === FOLDER || snapshot.category === HUB) return null;
+      return {
+        hub_id: hubId,
+        file_nid: fileNid,
+        file_thread_id: snapshot.file_thread_id,
+        filename: snapshot.user_filename || fileNid,
+      };
+    } catch (error) {
+      this.warn("Direct file-thread snapshot failed", error);
+      return null;
+    }
+  }
+
+  async _reserveDirectFileThreadTrash(target) {
+    if (!target) return { failed: 1, reserved: 0, status: "DIRECT_TARGET_REQUIRED" };
+    target.transition_id = target.transition_id || this.randomString().slice(0, 16);
+    target.lineage_id = target.lineage_id || this.randomString().slice(0, 16);
+    try {
+      const reservation = firstRow(await this.yp.await_proc(
+        "file_thread_access_reserve_direct",
+        target.transition_id,
+        target.lineage_id,
+        this.uid,
+        target.hub_id,
+        target.file_nid,
+        target.file_thread_id
+      ));
+      if (reservation && reservation.lineage_id) {
+        target.lineage_id = reservation.lineage_id;
+      }
+      return reservation || { failed: 1, reserved: 0, status: "DIRECT_RESERVATION_EMPTY" };
+    } catch (error) {
+      this.warn("Direct file-thread trash reservation failed", error);
+      return { failed: 1, reserved: 0, status: "DIRECT_RESERVATION_FAILED" };
+    }
+  }
+
+  async _releaseDirectFileThreadTrash(target) {
+    if (!target || !target.transition_id) return null;
+    try {
+      return firstRow(await this.yp.await_proc(
+        "file_thread_access_release_direct",
+        target.transition_id,
+        target.hub_id,
+        target.file_nid,
+        target.file_thread_id
+      ));
+    } catch (error) {
+      this.warn("Direct file-thread trash reservation release failed", error);
+      return null;
+    }
+  }
+
+  async _releaseDirectFileThreadTrashBatch(targets) {
+    for (const target of targets) {
+      await this._releaseDirectFileThreadTrash(target);
+    }
+  }
+
+  async _transitionDirectFileThreadAccess(target, targetState, reason) {
+    if (!target) return null;
+    try {
+      const transition = firstRow(await this.yp.await_proc(
+        "file_thread_access_transition_direct",
+        target.transition_id || this.randomString().slice(0, 16),
+        target.lineage_id || this.randomString().slice(0, 16),
+        this.uid,
+        target.hub_id,
+        target.file_nid,
+        target.file_thread_id,
+        targetState,
+        reason
+      ));
+      if (!transition || transition.failed || Number(transition.transitioned) !== 1) {
+        return transition;
+      }
+      const recipients = await this.yp.await_proc("entity_sockets", target.hub_id);
+      await RedisStore.sendData(this.payload({
+        operation_id: transition.transition_id,
+        lineage_id: transition.lineage_id,
+        access_revision: transition.access_revision,
+        actor: this._fileMoveActor(),
+        reason,
+        state: targetState === "active" ? "restored" : "revoked",
+        hub_id: target.hub_id,
+        file_nid: target.file_nid,
+        file_thread_id: target.file_thread_id,
+        filename: target.filename,
+      }, { service: "channel.file_thread_access_changed" }), recipients);
+      return transition;
+    } catch (error) {
+      this.warn("Direct file-thread access transition failed", error);
+      return null;
+    }
+  }
+
+  async _emitCrossHubMoveEvents(saga, sourceStorage, destinationStorage) {
+    const actor = this._fileMoveActor();
+    const common = {
+      operation_id: saga.operation_id,
+      lineage_id: saga.lineage_id,
+      access_revision: saga.access_revision,
+      actor,
+      reason: "cross_hub_move",
+    };
+    const sourceSockets = await this.yp.await_proc("entity_sockets", saga.source_hub_id);
+    const destinationSockets = await this.yp.await_proc("entity_sockets", saga.destination_hub_id);
+    await RedisStore.sendData(this.payload({
+      ...common,
+      state: "revoked",
+      hub_id: saga.source_hub_id,
+      file_nid: saga.source_file_nid,
+      file_thread_id: saga.source_thread_id,
+    }, { service: "channel.file_thread_access_changed" }), sourceSockets);
+    await RedisStore.sendData(this.payload({
+      ...common,
+      state: "restored",
+      hub_id: saga.destination_hub_id,
+      file_nid: saga.destination_file_nid,
+      file_thread_id: saga.destination_thread_id,
+    }, { service: "channel.file_thread_access_changed" }), destinationSockets);
+
+    const destinationNode = firstRow(await this.yp.await_proc(
+      `${destinationStorage.db_name}.mfs_access_node`, this.uid, saga.destination_file_nid
+    ));
+    if (destinationNode) {
+      destinationNode.args = {
+        src: { nid: saga.source_file_nid, hub_id: saga.source_hub_id },
+        dest: { ...destinationNode },
+        operation_id: saga.operation_id,
+      };
+      await RedisStore.sendData(
+        this.payload(destinationNode, { service: "media.move" }),
+        destinationSockets
+      );
+    }
+  }
+
+  async _emitCrossHubCompensationEvents(saga, sourceStorage) {
+    const actor = this._fileMoveActor();
+    const recipients = await this.yp.await_proc("entity_sockets", saga.source_hub_id);
+    const compensatedNode = firstRow(await this.yp.await_proc(
+      `${sourceStorage.db_name}.mfs_access_node`, this.uid, saga.compensation_file_nid
+    ));
+    const common = {
+      operation_id: saga.operation_id,
+      lineage_id: saga.lineage_id,
+      access_revision: saga.access_revision,
+      actor,
+      reason: "cross_hub_move_compensated",
+      hub_id: saga.source_hub_id,
+      filename: compensatedNode && (compensatedNode.filename || compensatedNode.user_filename),
+    };
+    await RedisStore.sendData(this.payload({
+      ...common,
+      state: "restored",
+      file_nid: saga.compensation_file_nid,
+      file_thread_id: saga.compensation_thread_id,
+      previous_file_nid: saga.source_file_nid,
+      previous_file_thread_id: saga.source_thread_id,
+    }, { service: "channel.file_thread_access_changed" }), recipients);
+
+    if (compensatedNode) {
+      compensatedNode.args = {
+        src: { nid: saga.source_file_nid, hub_id: saga.source_hub_id },
+        dest: { ...compensatedNode },
+        operation_id: saga.operation_id,
+      };
+      await RedisStore.sendData(
+        this.payload(compensatedNode, { service: "media.move" }),
+        recipients
+      );
+    }
+  }
+
+  _fileMoveResult(saga) {
+    return {
+      operation_id: saga.operation_id,
+      lineage_id: saga.lineage_id,
+      state: saga.state,
+      source_hub_id: saga.source_hub_id,
+      source_file_nid: saga.source_file_nid,
+      source_thread_id: saga.source_thread_id,
+      destination_hub_id: saga.destination_hub_id,
+      destination_file_nid: saga.destination_file_nid,
+      destination_thread_id: saga.destination_thread_id,
+      compensation_file_nid: saga.compensation_file_nid,
+      compensation_thread_id: saga.compensation_thread_id,
+      access_revision: saga.access_revision,
+      failure_code: saga.failure_code,
+      expires_at: saga.expires_at,
+    };
+  }
+
+  /**
    * 
    */
   async move_all() {
@@ -1011,6 +1589,9 @@ class __private_media extends Media {
       return this.output.data(data);
     }
 
+    const restoredThread = await this._directFileThreadSnapshot(restored.hub_id, nid);
+    await this._transitionDirectFileThreadAccess(restoredThread, "active", "direct_restore");
+
     let changelog = await this.changelog_write({ src: restored, event: 'media.new' });
     let sockets = await this.yp.await_proc('entity_sockets', restored.hub_id);
     await RedisStore.sendData(
@@ -1116,6 +1697,12 @@ class __private_media extends Media {
     let sockets = [];
 
     for (var m of show_node) {
+      const restoredThread = await this._directFileThreadSnapshot(
+        m.hub_id,
+        m.nid || m.id,
+        m.db_name || m.actual_db
+      );
+      await this._transitionDirectFileThreadAccess(restoredThread, "active", "direct_restore");
       let changelog = await this.changelog_write({ src: m, event: "media.new" });
       let dest = await this.yp.await_proc("entity_sockets", m.hub_id);
       sockets = sockets.concat(dest);
@@ -1404,12 +1991,20 @@ class __private_media extends Media {
     // Snapshot filename/filetype before mfs_pre_trash_next moves rows
     // to trash_media — needed for human-readable audit log lines.
     const auditTargets = [];
+    const directAccessTargets = [];
+    const directAccessKeys = new Set();
     for (const g of granted) {
       try {
         const hub_db = await this.yp.await_func('get_db_name', g.hub_id);
         if (!hub_db) continue;
         const attr = await this.yp.await_proc(`${hub_db}.mfs_node_attr`, g.nid);
         if (!attr) continue;
+        const directTarget = await this._directFileThreadSnapshot(g.hub_id, g.nid, hub_db);
+        const directKey = directTarget && `${directTarget.hub_id}:${directTarget.file_nid}`;
+        if (directTarget && !directAccessKeys.has(directKey)) {
+          directAccessKeys.add(directKey);
+          directAccessTargets.push(directTarget);
+        }
         auditTargets.push({
           hub_db,
           nid: g.nid,
@@ -1418,12 +2013,37 @@ class __private_media extends Media {
         });
       } catch (e) { /* best-effort */ }
     }
-    let data = await this.db.await_proc(
-      "mfs_pre_trash_next",
-      granted,
-      this.uid,
-      Permission.MODIFY
-    );
+    const reservedTargets = [];
+    for (const target of directAccessTargets) {
+      const reservation = await this._reserveDirectFileThreadTrash(target);
+      if (!reservation || reservation.failed || Number(reservation.reserved) !== 1) {
+        await this._releaseDirectFileThreadTrashBatch(reservedTargets);
+        this.exception.user((reservation && reservation.status) || "FILE_THREAD_TRASH_CONFLICT");
+        return;
+      }
+      reservedTargets.push(target);
+    }
+
+    let data;
+    try {
+      data = await this.db.await_proc(
+        "mfs_pre_trash_next",
+        granted,
+        this.uid,
+        Permission.MODIFY
+      );
+    } catch (error) {
+      await this._releaseDirectFileThreadTrashBatch(reservedTargets);
+      throw error;
+    }
+    for (const target of directAccessTargets) {
+      const transition = await this._transitionDirectFileThreadAccess(
+        target, "unavailable", "direct_trash"
+      );
+      if (!transition || transition.failed || Number(transition.transitioned) !== 1) {
+        await this._releaseDirectFileThreadTrash(target);
+      }
+    }
     let keys = [Attr.nid, Attr.hub_id];
     let service = "media.remove";
     let recipients;

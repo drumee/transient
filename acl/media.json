@@ -1533,6 +1533,26 @@
       },
       "method": "workspace_move"
     },
+    "move_cross_hub": {
+      "scope": "hub",
+      "permission": {
+        "src": "write"
+      },
+      "log": true,
+      "doc": "Server-owned single-file cross-hub move with durable lineage and retry state; client moved_in and lineage metadata are ignored.",
+      "params": {
+        "nid": "Source file id for a new move; optional when resuming by operation_id",
+        "recipient_id": "Single destination hub id",
+        "pid": "Destination folder id",
+        "operation_id": "Opaque server-issued id used only to resume or replay an existing move"
+      },
+      "returns": {
+        "operation_id": "Server-issued operation id",
+        "lineage_id": "Server-issued file-thread lineage id",
+        "state": "Durable saga state",
+        "access_revision": "Monotonic lineage access revision"
+      }
+    },
     "node_info": {
       "scope": "hub",
       "permission": {
