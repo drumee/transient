@@ -229,7 +229,10 @@ class __private_media extends Media {
    *
    */
   async transact_show(node) {
-    const { des_db, nid } = node;
+    // `nid` is reassigned to actual_home_id for a hub node below, so it cannot
+    // be destructured as const — that threw on the first hub row it met.
+    const { des_db } = node;
+    let { nid } = node;
     //const exclude = [this.input.get(Attr.socket_id)];
     let oldItems = {};
     let recipients = await this.yp.await_proc("entity_sockets", {
@@ -2093,7 +2096,10 @@ class __private_media extends Media {
    * Show trsh content
    */
   show_bin() {
-    const page = this.input.get(Attr.page);
+    // `let`, not `const`: the default below reassigns it. As a const this threw
+    // "Assignment to constant variable" on every call that omitted `page` or
+    // sent 0 — i.e. the default was unreachable, not merely unused.
+    let page = this.input.get(Attr.page);
     if (page == null || page == undefined || page == 0) page = 1;
     this.db.call_proc("mfs_show_bin", page, this.output.list);
   }
