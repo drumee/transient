@@ -625,6 +625,27 @@ class __public_stripe_webhook extends Entity {
               await this.yp.await_proc('subscription_update', entity_id, customer_id, subscription_id, eff_plan, eff_period, 1, price, 0, status);
             }
             await this.yp.await_proc('payment_apply_entitlement', entity_id, eff_plan, period_end, eff_entity, seat_total, extra_disk);
+            // MKT outreach coupon: confirm the pending redemption once Checkout
+            // completes so analytics can attribute email ↔ partner code. Only
+            // on the session event (created/updated also land here).
+            if (event.type === 'checkout.session.completed') {
+              try {
+                const session_id = obj.object === 'checkout.session' ? (obj.id || '') : '';
+                const cust_email = (obj.customer_details && obj.customer_details.email)
+                  || (obj.customer_email) || '';
+                if (session_id || md.mkt_code || md.mkt_redemption_id) {
+                  await this.yp.await_proc(
+                    'mkt_coupon_confirm',
+                    session_id,
+                    subscription_id || '',
+                    md.payer_id || '',
+                    cust_email || '',
+                  );
+                }
+              } catch (eMkt) {
+                this.warn && this.warn(`mkt_coupon_confirm failed: ${eMkt.message}`);
+              }
+            }
             // Push the REAL status (canceled when cancel_at_period_end), not a
             // hardcoded 'active' — a pending cancel must reach the client so the
             // billing screen flips to "ends on {period_end}" in realtime. Carry

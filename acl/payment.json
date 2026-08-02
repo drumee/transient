@@ -53,6 +53,11 @@
           "type": "string",
           "required": false,
           "doc": "With supersede, for a same-plan cycle switch: the new subscription starts (trial_end) when the current one expires instead of replacing it immediately; the webhook lets the old one run out (cancel_at_period_end)."
+        },
+        "promo_code": {
+          "type": "string",
+          "required": false,
+          "doc": "MKT outreach partner code (Iris/Theo/…). Reserved in YP before Stripe Checkout; applies trial_days + percent_off coupon."
         }
       }
     },

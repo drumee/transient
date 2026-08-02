@@ -17,6 +17,68 @@ class __private_payment extends Entity {
     return this.__stripe;
   }
 
+  _row(res) {
+    return Array.isArray(res) ? res[0] : res;
+  }
+
+  // Lazily create (or reuse) the Stripe Coupon for an MKT outreach code.
+  // percent_off=0 → no Stripe coupon (free-months / warm_trial use trial_end only).
+  // trial_days is applied separately via subscription_data.trial_end.
+  async _ensureStripeCoupon(row) {
+    const percent = parseInt(row && row.percent_off, 10) || 0;
+    if (percent <= 0) return null;
+    if (row && row.stripe_coupon_id) return row.stripe_coupon_id;
+    const stripe = this._stripe();
+    const code = String((row && row.code) || '').toUpperCase();
+    const months = parseInt(row && row.duration_months, 10) || 0;
+    const id = `mkt_${code.toLowerCase().replace(/[^a-z0-9_]/g, '_')}`.slice(0, 40);
+    const payload = {
+      id,
+      percent_off: percent,
+      name: `MKT ${code}`,
+      metadata: {
+        mkt_code: code,
+        partner: (row && row.partner) || '',
+        kind: (row && row.kind) || '',
+      },
+    };
+    // duration_months=0 → one-shot invoice discount; else repeating N cycles.
+    if (months > 0) {
+      payload.duration = 'repeating';
+      payload.duration_in_months = months;
+    } else {
+      payload.duration = 'once';
+    }
+    let created;
+    try {
+      created = await stripe.coupons.create(payload);
+    } catch (e) {
+      // Idempotent: a previous checkout may have created the Stripe coupon
+      // before YP got the id written (or the write failed).
+      if (/already exists/i.test((e && e.message) || '')) {
+        created = await stripe.coupons.retrieve(id);
+      } else {
+        throw e;
+      }
+    }
+    if (row && row.coupon_id && created && created.id) {
+      await this.yp.await_proc('mkt_coupon_set_stripe_id', row.coupon_id, created.id);
+    }
+    return created.id;
+  }
+
+  // Resolve free period length from coupon kind.
+  // warm_trial / free_months: prefer trial_days; else duration_months × 30.
+  _promoTrialDays(row) {
+    const kind = String((row && row.kind) || '');
+    let td = parseInt(row && row.trial_days, 10) || 0;
+    const months = parseInt(row && row.duration_months, 10) || 0;
+    if (td <= 0 && (kind === 'warm_trial' || kind === 'free_months') && months > 0) {
+      td = months * 30;
+    }
+    return td;
+  }
+
   // Priced catalog from yp.plan. Enriched with the live Stripe unit amount when
   // a price id + key exist, so the FE can display the authoritative price.
   // Returns every active row so the billing UI stays catalog-driven rather
@@ -236,6 +298,13 @@ class __private_payment extends Entity {
       const payer = await this.yp.await_proc('payment_get_payer', this.uid);
       email = payer && payer.email; name = payer && payer.fullname; existing_customer = payer && payer.customer_id;
     }
+    // Org checkout with an existing organisation never set email above —
+    // MKT coupon reserve is keyed by email, so always resolve the payer.
+    if (!email) {
+      const payer = await this.yp.await_proc('payment_get_payer', this.uid);
+      email = payer && payer.email;
+      if (!name) name = (payer && payer.fullname) || name;
+    }
 
     const plan_row = await this.yp.await_proc('payment_get_plan', plan, period, CURRENCY);
     if (!plan_row || !plan_row.stripe_price_id) {
@@ -310,18 +379,96 @@ class __private_payment extends Entity {
       metadata.org_ident = org_bootstrap.ident;
       metadata.org_name = org_bootstrap.org_name;
     }
-    const create = (cust) => stripe.checkout.sessions.create({
-      mode: 'subscription',
-      customer: cust,
-      line_items,
-      // trial_end (deferred cycle switch) makes the new subscription free
-      // until the replaced one expires — the customer sees "$0 due today,
-      // then {price} from {date}" on the hosted page.
-      subscription_data: trial_end ? { metadata, trial_end } : { metadata },
-      metadata,
-      success_url,
-      cancel_url,
-    });
+
+    // ── MKT outreach promo code (KOL / partners) ──────────────────────
+    // First-party code in YP → reserve (anti-cheat) → Stripe Coupon +
+    // trial_end on the Checkout session. Not Stripe Promotion Codes.
+    const promo_code = String(
+      this.input.use('promo_code', '') || this.input.use('coupon_code', '') || '',
+    ).trim();
+    let promo = null;
+    let stripe_discount_coupon = null;
+    let promo_trial_end = 0;
+    if (promo_code) {
+      if (trial_end) {
+        // Deferred cycle switch already owns trial_end; stacking a promo
+        // trial would silently change when billing starts.
+        return this.output.data({ status: 'PROMO_WITH_DEFER' });
+      }
+      if (live && current && current.subscription_id) {
+        // Already on a Stripe subscription — coupon is for first paid buy
+        // (incl. LAUNCH30 → paid). Deliberate supersede is the only exception.
+        if (!supersede) {
+          return this.output.data({ status: 'COUPON_WITH_ACTIVE_SUB' });
+        }
+      }
+      if (!/^(team|business)$/.test(String(plan))) {
+        return this.output.data({ status: 'COUPON_PLAN_UNSUPPORTED', plan });
+      }
+      if (!email) {
+        return this.output.data({ status: 'COUPON_EMAIL_REQUIRED' });
+      }
+      const reserved = this._row(await this.yp.await_proc(
+        'mkt_coupon_reserve',
+        promo_code, email, this.uid, plan, period, entity_type, '', 86400,
+      ));
+      if (!reserved || reserved.error) {
+        return this.output.data({
+          status: (reserved && reserved.error) || 'COUPON_INVALID',
+          code: reserved && reserved.code,
+          email: reserved && reserved.email,
+          // COUPON_PLAN_MISMATCH: the code is locked to one plan and this
+          // is not it. Both sides travel so the client can name the plan
+          // ("this code is for Team") instead of a bare "invalid code".
+          plan_scope: reserved && reserved.plan_scope,
+          requested_plan: reserved && reserved.requested_plan,
+        });
+      }
+      promo = reserved;
+      try {
+        // percent_off=0 (free months) → no Stripe discount object.
+        stripe_discount_coupon = await this._ensureStripeCoupon(reserved);
+      } catch (e) {
+        this.warn && this.warn('mkt stripe coupon failed', e && e.message);
+        return this.output.data({
+          status: 'COUPON_STRIPE_FAILED',
+          reason: (e && e.message) || '',
+        });
+      }
+      const td = this._promoTrialDays(reserved);
+      if (td > 0) promo_trial_end = Math.floor(Date.now() / 1000) + (td * 86400);
+      // A free-months code with no trial and no % would create a bare checkout
+      // — refuse rather than silently charging full price.
+      if (!stripe_discount_coupon && !promo_trial_end) {
+        return this.output.data({ status: 'OFFER_INVALID', code: reserved.code });
+      }
+      metadata.mkt_code = reserved.code;
+      metadata.mkt_kind = reserved.kind || '';
+      metadata.mkt_redemption_id = String(reserved.id);
+      if (reserved.partner) metadata.mkt_partner = reserved.partner;
+    }
+    const eff_trial_end = promo_trial_end || trial_end || 0;
+
+    const create = (cust) => {
+      const opts = {
+        mode: 'subscription',
+        customer: cust,
+        line_items,
+        // trial_end: deferred cycle switch OR MKT promo free days — the
+        // customer sees "$0 due today, then {price} from {date}".
+        subscription_data: eff_trial_end
+          ? { metadata, trial_end: eff_trial_end }
+          : { metadata },
+        metadata,
+        success_url,
+        cancel_url,
+      };
+      // discounts and allow_promotion_codes are mutually exclusive on Stripe.
+      if (stripe_discount_coupon) {
+        opts.discounts = [{ coupon: stripe_discount_coupon }];
+      }
+      return stripe.checkout.sessions.create(opts);
+    };
 
     let session;
     try {
@@ -347,6 +494,13 @@ class __private_payment extends Entity {
       });
       customer_id = fresh.id;
       session = await create(customer_id);
+    }
+    if (promo && promo.id && session && session.id) {
+      try {
+        await this.yp.await_proc('mkt_coupon_bind_session', promo.id, session.id);
+      } catch (e) {
+        this.warn && this.warn('mkt_coupon_bind_session failed', e && e.message);
+      }
     }
     this.output.data({ url: session.url, id: session.id });
   }
