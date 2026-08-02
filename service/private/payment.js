@@ -8,6 +8,13 @@ const { stripeClient } = require('../lib/stripe');
 // rows). Lookups pass this explicitly, so it must match the active rows.
 const CURRENCY = 'usd';
 
+// How long an unpaid coupon hold survives before it is treated as abandoned.
+// Shared by mkt_coupon_reserve (which RELEASES holds older than this) and
+// mkt_coupon_validate (which IGNORES them when counting). One constant on
+// purpose: if the preview aged holds out on a different clock than the
+// reserve, Apply and Proceed would disagree about whether a code is spent.
+const COUPON_HOLD_TTL_SEC = 86400;
+
 class __private_payment extends Entity {
   // Lazy Stripe client. catalog()/subscription_status() are DB-only and MUST
   // work even when Stripe isn't configured yet (no stripe_skey in sys_conf).
@@ -187,7 +194,9 @@ class __private_payment extends Entity {
     if (!email) return this.output.data({ status: 'COUPON_EMAIL_REQUIRED' });
 
     const row = this._row(
-      await this.yp.await_proc('mkt_coupon_validate', code, email, plan),
+      await this.yp.await_proc(
+        'mkt_coupon_validate', code, email, plan, COUPON_HOLD_TTL_SEC,
+      ),
     );
     if (!row || row.error) {
       return this.output.data({
@@ -475,7 +484,8 @@ class __private_payment extends Entity {
       }
       const reserved = this._row(await this.yp.await_proc(
         'mkt_coupon_reserve',
-        promo_code, email, this.uid, plan, period, entity_type, '', 86400,
+        promo_code, email, this.uid, plan, period, entity_type, '',
+        COUPON_HOLD_TTL_SEC,
       ));
       if (!reserved || reserved.error) {
         return this.output.data({
