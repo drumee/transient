@@ -75,6 +75,24 @@
         }
       }
     },
+    "preview_coupon": {
+      "scope": "hub",
+      "permission": {
+        "src": "owner"
+      },
+      "params": {
+        "promo_code": {
+          "type": "string",
+          "required": true,
+          "doc": "MKT outreach partner code to preview (read-only: no redemption is reserved)."
+        },
+        "plan": {
+          "type": "string",
+          "required": false,
+          "doc": "Plan the shopper is buying — the code may be locked to one plan."
+        }
+      }
+    },
     "subscription_status": {
       "scope": "hub",
       "permission": {

@@ -155,6 +155,71 @@ class __private_payment extends Entity {
     this.output.data(res);
   }
 
+  /**
+   * Price an "Apply" click on the checkout promo field, without spending
+   * the code. mkt_coupon_validate runs the same checks as
+   * mkt_coupon_reserve but writes nothing, so a shopper can try a code,
+   * see the discounted total, and change their mind — reserving here
+   * would burn a redemption (and, with max_redemptions, someone else's
+   * slot) for a purchase that may never happen.
+   *
+   * Returns the offer's shape, NOT a price: the amount is the catalog's
+   * and the client already renders it, so the discount is applied there
+   * against the same figures the summary is built from. The authoritative
+   * application still happens in checkout(); this is a preview only.
+   */
+  async preview_coupon() {
+    const code = String(
+      this.input.use('promo_code', '') || this.input.use('coupon_code', '') || '',
+    ).trim();
+    if (!code) return this.output.data({ status: 'COUPON_INVALID' });
+
+    const plan = String(this.input.use('plan', 'team')).trim().toLowerCase();
+    // Same outer gate as checkout: coupons exist for the paid org tiers.
+    if (!/^(team|business)$/.test(plan)) {
+      return this.output.data({ status: 'COUPON_PLAN_UNSUPPORTED', plan });
+    }
+
+    // Keyed by email exactly like reserve, or the "1 email = 1 live deal"
+    // rule would pass here and fail at purchase.
+    const payer = await this.yp.await_proc('payment_get_payer', this.uid);
+    const email = (payer && payer.email) || '';
+    if (!email) return this.output.data({ status: 'COUPON_EMAIL_REQUIRED' });
+
+    const row = this._row(
+      await this.yp.await_proc('mkt_coupon_validate', code, email, plan),
+    );
+    if (!row || row.error) {
+      return this.output.data({
+        status: (row && row.error) || 'COUPON_INVALID',
+        code: row && row.code,
+        email: row && row.email,
+        plan_scope: row && row.plan_scope,
+        requested_plan: row && row.requested_plan,
+      });
+    }
+
+    const percent_off = parseInt(row.percent_off, 10) || 0;
+    const trial_days = this._promoTrialDays(row);
+    // Mirrors checkout's own refusal: a code with neither a discount nor a
+    // free period would render as "applied" and change nothing.
+    if (!percent_off && !trial_days) {
+      return this.output.data({ status: 'OFFER_INVALID', code: row.code });
+    }
+
+    this.output.data({
+      status: 'OK',
+      code: row.code,
+      partner: row.partner || '',
+      kind: row.kind || '',
+      plan_scope: row.plan_scope || 'all',
+      percent_off,
+      trial_days,
+      // 0 = Stripe duration 'once' (single invoice), else N billing cycles.
+      duration_months: parseInt(row.duration_months, 10) || 0,
+    });
+  }
+
   // Hosted Checkout. entity_type 'user' (individual Free->Pro) or 'org' (team,
   // flat: Stripe quantity is always 1, customer = the org the caller owns).
   async checkout() {
