@@ -27,7 +27,7 @@ const { isEmpty } = require("lodash");
 const Crypto = require("crypto");
 const { resolve: pathResolve, join: pathJoin } = require("path");
 const {
-  mkdirSync, writeFileSync, existsSync, symlinkSync, rmSync
+  mkdirSync, writeFileSync, readFileSync, existsSync, symlinkSync, rmSync
 } = require("fs");
 const Spawn = require("child_process").spawn;
 
@@ -38,6 +38,10 @@ const SPAWN_OPT = { detached: true, stdio: ["ignore", "ignore", "ignore"] };
 const OFFLINE_DIR = pathResolve(__dirname, "..", "..", "offline", "media");
 const EXPORT_CAP = 10000;
 const EXPORT_MIME = { json: "application/json", pdf: "application/pdf" };
+const MFS_PERMISSION_READ =
+  (Constants.permission && Constants.permission.read) || 0b0000010;
+const FILE_THREAD_SELECTOR_RE = /^[0-9a-zA-Z_-]{1,64}$/;
+const EXPORT_ACCESS_MANIFEST = ".file-thread-access.json";
 
 // Meeting system messages are stored as a body sentinel `[[MEETING:start|end:
 // {json}]]` (no message_type) — the live chat renders them as "X started/ended
@@ -144,6 +148,19 @@ class __private_channel extends Entity {
     let cache = {};
     let hub_id = this.hub.get(Attr.id);
     for (let message of data) {
+      if (`${message.message_type || ""}` === "file.thread") {
+        const access = await this._resolveFileThreadAccess(
+          { message_id: message.message_id },
+          { require_thread: true },
+        );
+        // Keep the card, flagged unavailable, rather than dropping it: the
+        // thread marker belongs to the folder's history and vanishing on
+        // reload looked like the conversation had been deleted. The flag makes
+        // the client render it inert, so the thread itself stays unreachable.
+        if (!access.ok) {
+          await this._markRootCardUnavailable(message, access, hub_id);
+        }
+      }
       // Own-authored rows keep the viewer as the entity id, but also carry the
       // SP-resolved display fields (incl. email) so a viewer who renders this
       // author as NOT "me" on their side — e.g. a creator-bound secure-share
@@ -194,10 +211,48 @@ class __private_channel extends Entity {
     dest = toArray(dest).filter((e) => {
       return e.uid != this.uid;
     });
-    await RedisStore.sendData(
-      this.payload(messages, { service: "channel.acknowledge" }),
-      dest,
-    );
+    for (const recipient of dest) {
+      const visible = [];
+      for (const message of messages) {
+        if (`${message.message_type || ""}` !== "file.thread") {
+          visible.push(message);
+          continue;
+        }
+        if (isEmpty(recipient.uid)) continue;
+        try {
+          const access = await this._resolveFileThreadAccess(
+            { message_id: message.message_id },
+            { hub_id, uid: recipient.uid, require_thread: true },
+          );
+          if (access.ok) {
+            visible.push(message);
+          } else {
+            // Same rule as the list above: keep the marker, flagged for THIS
+            // recipient. Clone first — `messages` is the caller's own output
+            // and is shared across every iteration of this loop, so marking in
+            // place would leak one recipient's verdict into another's payload
+            // and into the caller's response.
+            visible.push(
+              await this._markRootCardUnavailable(
+                { ...message },
+                access,
+                hub_id,
+              ),
+            );
+          }
+        } catch (e) {
+          this.warn(
+            "channel.messages: recipient root-card access check failed",
+            recipient.uid,
+            e && e.message,
+          );
+        }
+      }
+      await RedisStore.sendData(
+        this.payload(visible, { service: "channel.acknowledge" }),
+        recipient,
+      );
+    }
 
     // Why do we need to inform the reader ?
     // dest = await this.yp.await_proc('user_sockets', this.uid);
@@ -510,6 +565,286 @@ class __private_channel extends Entity {
   }
 
   /**
+   * Run a stored procedure in the current hub or another hub selected by id.
+   * Remote calls use forward_proc, whose argument list is SQL text, so only
+   * already-validated scalar ids may pass through this helper.
+   */
+  async _fileThreadHubProc(hub_id, proc, args) {
+    const current_hub_id = `${this.hub.get(Attr.id)}`;
+    if (`${hub_id}` === current_hub_id) {
+      return this.db.await_proc(proc, ...args);
+    }
+    const sql_args = args
+      .map((value) => `'${`${value == null ? "" : value}`.replace(/'/g, "''")}'`)
+      .join(",");
+    return this.yp.await_proc("forward_proc", `${hub_id}`, proc, sql_args);
+  }
+
+  /**
+   * Canonical file-thread authorization boundary. The resolver proves that all
+   * supplied selectors agree and that the backing media row is live; this
+   * helper then requires the caller's current mfs_access_node read privilege.
+   */
+  async _resolveFileThreadAccess(selectors = {}, options = {}) {
+    const hub_id = `${options.hub_id || this.hub.get(Attr.id)}`;
+    const uid = `${options.uid || this.uid}`;
+    const file_nid = selectors.file_nid ? `${selectors.file_nid}` : "";
+    const file_thread_id = selectors.file_thread_id
+      ? `${selectors.file_thread_id}`
+      : "";
+    const message_id = selectors.message_id ? `${selectors.message_id}` : "";
+    const supplied = [file_nid, file_thread_id, message_id].filter(Boolean);
+
+    if (
+      !FILE_THREAD_SELECTOR_RE.test(hub_id)
+      || !FILE_THREAD_SELECTOR_RE.test(uid)
+      || supplied.some((value) => !FILE_THREAD_SELECTOR_RE.test(value))
+    ) {
+      return { ok: false, status: "INVALID_SELECTOR", is_file_thread: 1 };
+    }
+
+    const rows = await this._fileThreadHubProc(
+      hub_id,
+      "channel_file_thread_resolve_access",
+      [uid, file_nid, file_thread_id, message_id],
+    );
+    const resolved = toArray(rows)[0] || {};
+    const is_file_thread = Number(resolved.is_file_thread) === 1;
+    const resolution_status = `${resolved.resolution_status || "NOT_FOUND"}`;
+
+    if (resolution_status === "GENERAL") {
+      if (options.allow_general) {
+        return { ok: true, status: "OK", is_file_thread: false, hub_id };
+      }
+      return { ...resolved, ok: false, status: "INVALID_REPLY_SCOPE", hub_id };
+    }
+    if (resolution_status !== "OK") {
+      return {
+        ...resolved,
+        ok: false,
+        status: resolution_status === "SELECTOR_CONFLICT"
+          ? "INVALID_SELECTOR"
+          : resolution_status,
+        is_file_thread,
+        hub_id,
+      };
+    }
+    if (options.require_thread && isEmpty(resolved.file_thread_id)) {
+      return { ...resolved, ok: false, status: "NOT_FOUND", hub_id };
+    }
+
+    const node_rows = await this._fileThreadHubProc(
+      hub_id,
+      "mfs_access_node",
+      [uid, `${resolved.file_nid}`],
+    );
+    const node = toArray(node_rows)[0] || {};
+    const privilege = Number(node.privilege || node.permission || 0);
+    if (
+      isEmpty(node)
+      || `${node.nid || node.id || ""}` !== `${resolved.file_nid}`
+      || `${node.status || ""}` !== "active"
+    ) {
+      return { ...resolved, ok: false, status: "SCOPE_GONE", hub_id };
+    }
+    if ((privilege & MFS_PERMISSION_READ) !== MFS_PERMISSION_READ) {
+      return { ...resolved, ok: false, status: "NO_PERMISSION", hub_id };
+    }
+
+    return {
+      ...resolved,
+      ok: true,
+      status: "OK",
+      is_file_thread,
+      hub_id,
+      node,
+    };
+  }
+
+  _fileThreadFailure(access, extra = {}) {
+    return {
+      status: access.status || "NO_PERMISSION",
+      file_thread_id: access.file_thread_id || undefined,
+      file_nid: access.file_nid || undefined,
+      ...extra,
+    };
+  }
+
+  /**
+   * Mark a General-chat "file.thread" root card as unavailable instead of
+   * dropping it from the conversation. The card is part of the folder's
+   * history — silently removing it on reload made an entire thread vanish for
+   * everyone once its file was trashed, which reads as data loss.
+   *
+   * The card is rendered inert client-side (data-ft_available="0"), so the
+   * thread behind it stays unreachable; this only preserves the marker.
+   *
+   * No content is added that the viewer could not already see: the filename is
+   * read from `trash_media`, which only holds files that were trashed out of a
+   * folder this viewer was reading. A NO_PERMISSION card (file still live,
+   * viewer never had read access) has no trash row, so it carries no name and
+   * the client falls back to a generic label.
+   */
+  async _markRootCardUnavailable(message, access, hub_id) {
+    let meta = {};
+    try {
+      meta =
+        typeof message.metadata === "string"
+          ? jsonParse(message.metadata)
+          : message.metadata || {};
+    } catch (e) {
+      meta = {};
+    }
+    const file_nid = `${access.file_nid || meta._file_nid || ""}`;
+    meta._file_thread_unavailable = 1;
+    meta._file_thread_unavailable_reason = access.status || "SCOPE_GONE";
+    const filename = await this._trashedFilename(file_nid, hub_id);
+    if (filename) meta._file_thread_last_filename = filename;
+    message.metadata = meta;
+    return message;
+  }
+
+  /**
+   * Last known filename of a file that is no longer live, read from the hub's
+   * trash. Returns "" when the node was purged, moved to another hub, or never
+   * trashed (a still-live file the caller simply cannot read).
+   */
+  async _trashedFilename(file_nid, hub_id) {
+    if (isEmpty(file_nid)) return "";
+    try {
+      const rows = await this._fileThreadHubProc(
+        `${hub_id || this.hub.get(Attr.id)}`,
+        "channel_file_thread_trashed_filename",
+        [`${file_nid}`],
+      );
+      const row = toArray(rows)[0] || {};
+      return `${row.user_filename || ""}`;
+    } catch (e) {
+      // Best effort: a missing name only costs the card its label.
+      return "";
+    }
+  }
+
+  async _filterAccessibleFileThreads(rows, hub_id = this.hub.get(Attr.id)) {
+    const allowed = [];
+    const denied = [];
+    for (const row of toArray(rows)) {
+      const access = await this._resolveFileThreadAccess(
+        {
+          file_nid: row.file_nid,
+          file_thread_id: row.file_thread_id,
+        },
+        { hub_id, require_thread: true },
+      );
+      if (access.ok) {
+        allowed.push({
+          ...row,
+          file_nid: access.file_nid,
+          file_thread_id: access.file_thread_id,
+        });
+      } else {
+        denied.push({ row, access });
+      }
+    }
+    return { allowed, denied };
+  }
+
+  /**
+   * Restrict live recipients to users who can still read the backing file.
+   * A socket without a resolvable uid is excluded because its authorization
+   * cannot be proven at send time.
+   */
+  async _filterFileThreadRecipients(
+    recipients,
+    file_nid,
+    hub_id = this.hub.get(Attr.id),
+  ) {
+    const allowed = [];
+    for (const recipient of toArray(recipients)) {
+      if (!recipient || isEmpty(recipient.uid)) continue;
+      try {
+        const access = await this._resolveFileThreadAccess(
+          { file_nid },
+          { hub_id, uid: recipient.uid },
+        );
+        if (access.ok) allowed.push(recipient);
+      } catch (e) {
+        this.warn(
+          "channel._filterFileThreadRecipients: access check failed",
+          recipient.uid,
+          e && e.message,
+        );
+      }
+    }
+    return allowed;
+  }
+
+  async _acknowledgeResolvedFileThread(access, message_id, exclude) {
+    let row;
+    if (`${message_id}` === `${access.file_thread_id}`) {
+      await this.db.await_proc("channel_read_messages", message_id, this.uid);
+      row = { message_id, is_readed: 1, is_seen: 0 };
+    } else {
+      const res = await this.db.await_proc(
+        "channel_file_thread_read_messages",
+        `${message_id}`,
+        this.uid,
+        `${access.file_thread_id}`,
+      );
+      row = toArray(res)[0];
+    }
+    if (!row || `${row.message_id}` !== `${message_id}`) {
+      return {
+        ok: false,
+        failure: {
+          status: "INVALID_SELECTOR",
+          message_id,
+          file_thread_id: access.file_thread_id,
+        },
+      };
+    }
+
+    const hub_id = this.hub.get(Attr.id);
+    const acknowledgement = {
+      message_id: `${message_id}`,
+      file_thread_id: `${access.file_thread_id}`,
+      reader_id: this.uid,
+      is_readed: Number(row.is_readed) || 0,
+      is_seen: Number(row.is_seen) || 0,
+      key_id: hub_id,
+    };
+    let recipients = await this.yp.await_proc("entity_sockets", {
+      hub_id,
+      exclude,
+    });
+    recipients = await this._filterFileThreadRecipients(
+      recipients,
+      access.file_nid,
+      hub_id,
+    );
+    await RedisStore.sendData(
+      this.payload(acknowledgement, {
+        service: "channel.file_thread_acknowledge",
+      }),
+      recipients,
+    );
+    return { ok: true, result: acknowledgement };
+  }
+
+  async _validateGeneralReplyTarget(thread_id, hub_id) {
+    if (isEmpty(thread_id)) return { ok: true };
+    const access = await this._resolveFileThreadAccess(
+      { message_id: thread_id },
+      { hub_id, allow_general: true },
+    );
+    if (!access.ok) return access;
+    if (access.is_file_thread) {
+      return { ...access, ok: false, status: "INVALID_REPLY_SCOPE" };
+    }
+    return access;
+  }
+
+  /**
    * Folder windows live-append nodes from "media.new" payloads
    * (window/utils handleWsEvent) — the chat broadcast alone never reaches
    * the Files tab. Mirrors media.sendNodeAttributes.
@@ -552,8 +887,26 @@ class __private_channel extends Entity {
    * @param {*} uid
    * @returns
    */
-  async threadInfo(thread_id, uid) {
+  async threadInfo(thread_id, uid, expected_file_thread_id = null) {
     let thread = {};
+    const access = await this._resolveFileThreadAccess(
+      {
+        message_id: thread_id,
+        file_thread_id: expected_file_thread_id,
+      },
+      {
+        hub_id: uid,
+        allow_general: isEmpty(expected_file_thread_id),
+        require_thread: !isEmpty(expected_file_thread_id),
+      },
+    );
+    if (!access.ok) {
+      return {
+        message: "DELETED",
+        message_id: thread_id,
+        status: access.status,
+      };
+    }
     let data = await this.yp.await_proc(
       "forward_proc",
       uid,
@@ -1086,6 +1439,14 @@ class __private_channel extends Entity {
       return this.output.data({ status: "SCOPE_GONE", nid });
     }
 
+    const reply_access = await this._validateGeneralReplyTarget(
+      thread_id,
+      this.hub.get(Attr.id),
+    );
+    if (!reply_access.ok) {
+      return this.output.data(this._fileThreadFailure(reply_access));
+    }
+
     let message_id = await this.db.await_proc("message_id");
     let sbox;
     message_id = message_id.id;
@@ -1269,26 +1630,29 @@ class __private_channel extends Entity {
     if (isEmpty(file_nid) && isEmpty(file_thread_id)) {
       return this.output.data({ status: "INVALID_FILE" });
     }
+    const access = await this._resolveFileThreadAccess({
+      file_nid,
+      file_thread_id,
+    });
+    if (!access.ok) {
+      return this.output.data({
+        exists_thread: 0,
+        ...this._fileThreadFailure(access),
+      });
+    }
     let info = toArray(
       await this.db.await_proc(
         "channel_file_thread_info",
         this.uid,
-        `${file_nid || ""}`,
-        `${file_thread_id || ""}`,
+        `${access.file_nid}`,
+        "",
       ),
     )[0];
     if (isEmpty(info) || isEmpty(info.file_nid)) {
       return this.output.data({ exists_thread: 0, status: "NOT_FOUND" });
     }
-    // Validate the caller can read the file itself (hydrates rename/delete state).
-    const node = await this.db.await_proc(
-      "mfs_access_node",
-      this.uid,
-      `${info.file_nid}`,
-    );
-    if (isEmpty(node)) {
-      return this.output.data({ exists_thread: 0, status: "NO_PERMISSION" });
-    }
+    info.file_nid = access.file_nid;
+    if (access.file_thread_id) info.file_thread_id = access.file_thread_id;
     this.output.data(info);
   }
 
@@ -1303,42 +1667,21 @@ class __private_channel extends Entity {
     const file_nid = this.input.use("file_nid");
     const hub_id = this.hub.get(Attr.id);
 
-    if (isEmpty(file_thread_id)) {
-      if (isEmpty(file_nid)) return this.output.list([]);
-      const byFile = toArray(
-        await this.db.await_proc(
-          "channel_file_thread_info",
-          this.uid,
-          `${file_nid}`,
-          "",
-        ),
-      )[0];
-      if (isEmpty(byFile) || !Number(byFile.exists_thread)) {
-        return this.output.list([]);
-      }
-      file_thread_id = byFile.file_thread_id;
-    }
-
-    // Access check via the thread's file.
-    const info = toArray(
-      await this.db.await_proc(
-        "channel_file_thread_info",
-        this.uid,
-        "",
-        `${file_thread_id}`,
-      ),
-    )[0];
-    // Fail closed: if the thread's file cannot be resolved or the caller
-    // cannot read it, return no messages rather than leaking thread content.
-    if (isEmpty(info) || isEmpty(info.file_nid)) {
+    if (isEmpty(file_thread_id) && isEmpty(file_nid)) {
       return this.output.list([]);
     }
-    const node = await this.db.await_proc(
-      "mfs_access_node",
-      this.uid,
-      `${info.file_nid}`,
+
+    const access = await this._resolveFileThreadAccess(
+      { file_nid, file_thread_id },
+      { require_thread: true },
     );
-    if (isEmpty(node)) return this.output.list([]);
+    if (!access.ok) {
+      if (access.status === "NOT_FOUND" && isEmpty(file_thread_id)) {
+        return this.output.list([]);
+      }
+      return this.output.data(this._fileThreadFailure(access));
+    }
+    file_thread_id = access.file_thread_id;
 
     let data = toArray(
       await this.db.await_proc(
@@ -1367,7 +1710,11 @@ class __private_channel extends Entity {
         }
       }
       if (!isEmpty(message.thread_id)) {
-        message.thread = await this.threadInfo(message.thread_id, hub_id);
+        message.thread = await this.threadInfo(
+          message.thread_id,
+          hub_id,
+          file_thread_id,
+        );
       }
     }
     this.output.list(data);
@@ -1385,7 +1732,14 @@ class __private_channel extends Entity {
       this.uid,
       `${folder_nid}`,
     );
-    if (isEmpty(folder)) return this.output.list([]);
+    const folder_privilege = Number(
+      folder && (folder.privilege || folder.permission) || 0,
+    );
+    if (
+      isEmpty(folder)
+      || `${folder.status || ""}` !== "active"
+      || (folder_privilege & MFS_PERMISSION_READ) !== MFS_PERMISSION_READ
+    ) return this.output.list([]);
     const order = this.input.use(Attr.order, "desc");
     const page = this.input.use(Attr.page) || 1;
     let data = await this.db.await_proc(
@@ -1395,7 +1749,8 @@ class __private_channel extends Entity {
       order,
       page,
     );
-    this.output.list(toArray(data));
+    const { allowed } = await this._filterAccessibleFileThreads(data);
+    this.output.list(allowed);
   }
 
   /**
@@ -1407,31 +1762,23 @@ class __private_channel extends Entity {
     const message_id = this.input.use(Attr.message_id);
     let exclude = this.input.need(Attr.socket_id);
     if (exclude) exclude = [exclude];
-    let res = {};
-    // Nothing to acknowledge without a message_id; skip the channel_get('')
-    // lookup and the broadcast entirely.
-    if (message_id) {
-      res = await this.db.await_proc(
-        "channel_file_thread_read_messages",
-        `${message_id}`,
-        this.uid,
-        `${file_thread_id}`,
-      );
-      const message = await this.db.await_proc("channel_get", `${message_id}`);
-      if (!isEmpty(message)) {
-        message.key_id = this.hub.get(Attr.id);
-        message.file_thread_id = file_thread_id;
-        const recipients = await this.yp.await_proc("entity_sockets", {
-          hub_id: message.key_id,
-          exclude,
-        });
-        await RedisStore.sendData(
-          this.payload(message, { service: "channel.file_thread_acknowledge" }),
-          recipients,
-        );
-      }
+    const access = await this._resolveFileThreadAccess(
+      { file_thread_id, message_id },
+      { require_thread: true },
+    );
+    if (!access.ok) {
+      return this.output.data(this._fileThreadFailure(access, { message_id }));
     }
-    this.output.data(res);
+    if (!message_id) return this.output.data({});
+    const acknowledgement = await this._acknowledgeResolvedFileThread(
+      access,
+      message_id,
+      exclude,
+    );
+    if (!acknowledgement.ok) {
+      return this.output.data(acknowledgement.failure);
+    }
+    this.output.data(acknowledgement.result);
   }
 
   /**
@@ -1443,7 +1790,7 @@ class __private_channel extends Entity {
    * trusted from the client) and the original file is never auto-attached.
    */
   async file_thread_post() {
-    const file_nid = this.input.use("file_nid");
+    let file_nid = this.input.use("file_nid");
     if (isEmpty(file_nid)) {
       return this.output.data({ status: "INVALID_FILE" });
     }
@@ -1455,23 +1802,12 @@ class __private_channel extends Entity {
     let exclude = this.input.need(Attr.socket_id);
     if (exclude) exclude = [exclude];
 
-    // Validate the target file: exists, is a file (not folder/hub), readable.
-    const file_node = await this.db.await_proc(
-      "mfs_access_node",
-      this.uid,
-      `${file_nid}`,
-    );
-    if (isEmpty(file_node)) {
-      // mfs_access_node swallows SQLEXCEPTION and returns nothing for BOTH
-      // "no such node" and "caller denied" (F7/F4) — an empty result alone
-      // cannot tell gone from denied. Disambiguate with the dedicated
-      // existence check so a moved/purged file reports SCOPE_GONE instead
-      // of the misleading NO_PERMISSION.
-      if (!(await this._scopeExists(file_nid))) {
-        return this.output.data({ status: "SCOPE_GONE", nid: file_nid });
-      }
-      return this.output.data({ status: "NO_PERMISSION" });
+    const target_access = await this._resolveFileThreadAccess({ file_nid });
+    if (!target_access.ok) {
+      return this.output.data(this._fileThreadFailure(target_access, { nid: file_nid }));
     }
+    file_nid = `${target_access.file_nid}`;
+    const file_node = target_access.node;
     // mfs_access_node returns the node's media category as `filetype` and
     // UNIONs trash_media. Reject containers (folder/hub/root) — a file chat
     // only attaches to a real file; active files carry specific categories
@@ -1479,12 +1815,6 @@ class __private_channel extends Entity {
     const cat = `${file_node.filetype || ""}`;
     if (["folder", "hub", "root"].includes(cat)) {
       return this.output.data({ status: "INVALID_FILE" });
-    }
-    // Trashed/deleted nodes (trash_media rows surface as status 'deleted';
-    // 'orphaned' is a transient pre-purge state) are a gone-scope, not a
-    // malformed request — the file existed, it just moved into trash.
-    if (["deleted", "orphaned"].includes(`${file_node.status || ""}`)) {
-      return this.output.data({ status: "SCOPE_GONE", nid: file_nid });
     }
     const folder_nid = `${file_node.parent_id}`;
     if (isEmpty(folder_nid)) {
@@ -1496,6 +1826,32 @@ class __private_channel extends Entity {
     // client, per the same invariant as channel.post's folder-scope guard.
     if (!(await this._scopeExists(folder_nid))) {
       return this.output.data({ status: "SCOPE_GONE", nid: folder_nid });
+    }
+
+    if (!isEmpty(thread_id)) {
+      if (isEmpty(target_access.file_thread_id)) {
+        return this.output.data({
+          status: "INVALID_REPLY_SCOPE",
+          file_nid,
+        });
+      }
+      const reply_access = await this._resolveFileThreadAccess(
+        {
+          message_id: thread_id,
+          file_thread_id: target_access.file_thread_id,
+          file_nid,
+        },
+        { require_thread: true },
+      );
+      if (!reply_access.ok) {
+        const status = reply_access.status === "INVALID_SELECTOR"
+          ? "INVALID_REPLY_SCOPE"
+          : reply_access.status;
+        return this.output.data(this._fileThreadFailure(
+          { ...reply_access, status },
+          { file_nid },
+        ));
+      }
     }
 
     attachment = toArray(attachment).map(String);
@@ -1674,7 +2030,7 @@ class __private_channel extends Entity {
     );
 
     if (!isEmpty(thread_id)) {
-      data.thread = await this.threadInfo(thread_id, hub_id);
+      data.thread = await this.threadInfo(thread_id, hub_id, file_thread_id);
     }
     stampAuthorIdentity(this.user, data);
     data.hub_id = hub_id;
@@ -1688,10 +2044,15 @@ class __private_channel extends Entity {
       is_new,
     };
 
-    const recipients = await this.yp.await_proc("entity_sockets", {
+    let recipients = await this.yp.await_proc("entity_sockets", {
       exclude,
       hub_id,
     });
+    recipients = await this._filterFileThreadRecipients(
+      recipients,
+      file_nid,
+      hub_id,
+    );
 
     // On new thread, broadcast the folder-visible root card as a normal
     // channel.post so folder chat renders the "file thread started" card.
@@ -1736,9 +2097,14 @@ class __private_channel extends Entity {
           (id) => id !== this.uid && !hubRecipientUids.includes(id),
         );
         if (extraMentionIds.length) {
-          const mentionRecipients = await this.yp.await_proc(
+          let mentionRecipients = await this.yp.await_proc(
             "user_sockets",
             extraMentionIds,
+          );
+          mentionRecipients = await this._filterFileThreadRecipients(
+            mentionRecipients,
+            file_nid,
+            hub_id,
           );
           if (!isEmpty(mentionRecipients)) {
             await RedisStore.sendData(
@@ -1799,6 +2165,14 @@ class __private_channel extends Entity {
     const mention_ids = this.input.use("mention_ids", null);
     let exclude = this.input.need(Attr.socket_id);
     if (exclude) exclude = [exclude];
+
+    const reply_access = await this._validateGeneralReplyTarget(
+      thread_id,
+      this.hub.get(Attr.id),
+    );
+    if (!reply_access.ok) {
+      return this.output.data(this._fileThreadFailure(reply_access));
+    }
 
     let message_id = await this.db.await_proc("message_id");
     message_id = message_id.id;
@@ -2096,6 +2470,28 @@ class __private_channel extends Entity {
     let exclude = this.input.need(Attr.socket_id);
     if (exclude) exclude = [exclude];
 
+    if (message_id) {
+      const access = await this._resolveFileThreadAccess(
+        { message_id },
+        { allow_general: true },
+      );
+      if (!access.ok) {
+        return this.output.data(this._fileThreadFailure(access, { message_id }));
+      }
+      if (access.is_file_thread) {
+        const acknowledgement = await this._acknowledgeResolvedFileThread(
+          access,
+          message_id,
+          exclude,
+        );
+        return this.output.data(
+          acknowledgement.ok
+            ? acknowledgement.result
+            : acknowledgement.failure,
+        );
+      }
+    }
+
     let res = {};
     res = await this.db.await_proc("acknowledge_message", message_id, this.uid);
     // Persist the reader into metadata._seen_ for every message up to message_id
@@ -2130,6 +2526,13 @@ class __private_channel extends Entity {
     if (!glyphs.length || glyphs.length > 8 || /['"\\\s]/.test(emoji)) {
       return this.output.data({ status: "INVALID_EMOJI" });
     }
+    const access = await this._resolveFileThreadAccess(
+      { message_id },
+      { allow_general: true },
+    );
+    if (!access.ok) {
+      return this.output.data(this._fileThreadFailure(access, { message_id }));
+    }
     const res = await this.db.await_proc(
       "message_reaction_toggle",
       message_id,
@@ -2140,7 +2543,14 @@ class __private_channel extends Entity {
     const reactions = row && row.reactions ? this.parseJSON(row.reactions) : {};
     const hub_id = this.hub.get(Attr.id);
     const data = { message_id, reactions, key_id: hub_id };
-    const recipients = await this.yp.await_proc("entity_sockets", { hub_id, exclude });
+    let recipients = await this.yp.await_proc("entity_sockets", { hub_id, exclude });
+    if (access.is_file_thread) {
+      recipients = await this._filterFileThreadRecipients(
+        recipients,
+        access.file_nid,
+        hub_id,
+      );
+    }
     await RedisStore.sendData(
       this.payload(data, { service: "channel.react" }),
       recipients
@@ -2159,6 +2569,13 @@ class __private_channel extends Entity {
   async meeting_end() {
     const message_id = this.input.need(Attr.message_id);
     if (!message_id) return this.output.data({ found: 0 });
+    const access = await this._resolveFileThreadAccess(
+      { message_id },
+      { allow_general: true },
+    );
+    if (!access.ok) {
+      return this.output.data(this._fileThreadFailure(access, { message_id }));
+    }
     const res = await this.db.await_proc("channel_meeting_end", message_id);
     const row = Array.isArray(res) ? res[0] : res;
     if (!row || !row.found) return this.output.data({ found: 0 });
@@ -2167,6 +2584,13 @@ class __private_channel extends Entity {
     let recipients = await this.yp.await_proc("entity_sockets", {
       hub_id: message.key_id,
     });
+    if (access.is_file_thread) {
+      recipients = await this._filterFileThreadRecipients(
+        recipients,
+        access.file_nid,
+        message.key_id,
+      );
+    }
     await RedisStore.sendData(this.payload(message), recipients);
     this.output.data(message);
   }
@@ -2270,14 +2694,24 @@ class __private_channel extends Entity {
     let res = {};
     let data = {};
     let temp_result = [];
+    const accessByMessage = new Map();
 
     if (option != "me" && option != "all") {
       res.status = "INVALID_OPTION";
       return this.output.data(res);
     }
+    messages = toArray(messages).map(String);
     let invalid_messageid = 0;
     let invalid_option = 0;
     for (let message_id of messages) {
+      const access = await this._resolveFileThreadAccess(
+        { message_id },
+        { allow_general: true },
+      );
+      if (!access.ok) {
+        return this.output.data(this._fileThreadFailure(access, { message_id }));
+      }
+      accessByMessage.set(`${message_id}`, access);
       data = await this.db.await_proc("channel_get", message_id);
       if (isEmpty(data)) {
         invalid_messageid = invalid_messageid + 1;
@@ -2340,6 +2774,14 @@ class __private_channel extends Entity {
           "entity_sockets",
           this.hub.get(Attr.id),
         );
+        const access = accessByMessage.get(`${message.message_id}`);
+        if (access && access.is_file_thread) {
+          recipients = await this._filterFileThreadRecipients(
+            recipients,
+            access.file_nid,
+            this.hub.get(Attr.id),
+          );
+        }
         await RedisStore.sendData(this.payload(message), recipients);
       }
     }
@@ -2360,6 +2802,14 @@ class __private_channel extends Entity {
   async bookmark_add() {
     const message_id = this.input.need("message_id");
     const hub_id = this.input.need("hub_id");
+
+    const access = await this._resolveFileThreadAccess(
+      { message_id },
+      { hub_id, allow_general: true },
+    );
+    if (!access.ok) {
+      return this.output.data(this._fileThreadFailure(access, { message_id }));
+    }
 
     const user_db = await this.yp.await_func("get_db_name", this.uid);
     if (!user_db) return this.exception.server("USER_DB_NOT_FOUND");
@@ -2397,11 +2847,19 @@ class __private_channel extends Entity {
     const user_db = await this.yp.await_func("get_db_name", this.uid);
     if (!user_db) return this.exception.server("USER_DB_NOT_FOUND");
 
-    const data = await this.yp.await_proc(
+    const data = toArray(await this.yp.await_proc(
       `${user_db}.notification_bookmark_list`,
       page,
-    );
-    this.output.list(data);
+    ));
+    const allowed = [];
+    for (const bookmark of data) {
+      const access = await this._resolveFileThreadAccess(
+        { message_id: bookmark.message_id },
+        { hub_id: bookmark.hub_id, allow_general: true },
+      );
+      if (access.ok) allowed.push(bookmark);
+    }
+    this.output.list(allowed);
   }
 
   /**
@@ -2651,7 +3109,14 @@ class __private_channel extends Entity {
    */
   async list_by_file() {
     const file_nid = this.input.need("file_nid");
-    const data = await this.db.await_proc("channel_list_by_file", file_nid);
+    const access = await this._resolveFileThreadAccess({ file_nid });
+    if (!access.ok) {
+      return this.output.data(this._fileThreadFailure(access));
+    }
+    const data = await this.db.await_proc(
+      "channel_list_by_file",
+      access.file_nid,
+    );
     this.output.list(data);
   }
 
@@ -2663,12 +3128,16 @@ class __private_channel extends Entity {
    */
   async list_thread_by_file() {
     const file_nid = this.input.need("file_nid");
+    const access = await this._resolveFileThreadAccess({ file_nid });
+    if (!access.ok) {
+      return this.output.data(this._fileThreadFailure(access));
+    }
     const hub_id = this.hub.get(Attr.id);
-    const pattern = `mention:${hub_id}:${file_nid}`;
+    const pattern = `mention:${hub_id}:${access.file_nid}`;
 
     const attachHits = await this.db.await_proc(
       "channel_list_by_file",
-      file_nid,
+      access.file_nid,
     );
     let mentionHits = [];
     try {
@@ -2840,23 +3309,18 @@ class __private_channel extends Entity {
       return this.output.list([]);
     }
 
-    // Resolve the file thread from file_nid when the client knows only the file
-    // (in-place file-thread scope before its thread id resolved client-side). A
-    // file with no thread yet has no messages, so return [] rather than falling
-    // back to the team chat (which would show the wrong conversation).
-    if (isEmpty(file_thread_id) && !isEmpty(file_nid)) {
-      const byFile = toArray(
-        await this.db.await_proc(
-          "channel_file_thread_info",
-          this.uid,
-          `${file_nid}`,
-          "",
-        ),
-      )[0];
-      if (isEmpty(byFile) || !Number(byFile.exists_thread)) {
-        return this.output.list([]);
+    if (!isEmpty(file_thread_id) || !isEmpty(file_nid)) {
+      const access = await this._resolveFileThreadAccess(
+        { file_thread_id, file_nid },
+        { require_thread: true },
+      );
+      if (!access.ok) {
+        if (access.status === "NOT_FOUND" && isEmpty(file_thread_id)) {
+          return this.output.list([]);
+        }
+        return this.output.data(this._fileThreadFailure(access));
       }
-      file_thread_id = byFile.file_thread_id;
+      file_thread_id = access.file_thread_id;
     }
 
     const hub_id = this.hub.get(Attr.id);
@@ -3001,7 +3465,7 @@ class __private_channel extends Entity {
         );
         if (!rows.length) break;
         for (const row of rows) {
-          const msg = this._normalizeMessage(row);
+          let rootThread = null;
           // Root cards are folder-visible "thread started" markers, not chat.
           if (row.message_type === "file.thread") {
             let meta = {};
@@ -3009,9 +3473,15 @@ class __private_channel extends Entity {
               meta = typeof row.metadata === "string"
                 ? jsonParse(row.metadata) : row.metadata || {};
             } catch (_) {}
-            const ft = ftByFileNid.get(`${meta._file_nid}`);
+            rootThread = ftByFileNid.get(`${meta._file_nid}`);
+            // A root card is file-thread-derived. If its canonical file was
+            // filtered by current access or is no longer live, omit the card.
+            if (!rootThread) continue;
+          }
+          const msg = this._normalizeMessage(row);
+          if (rootThread) {
             msg.type = "event";
-            msg.text = `Chat thread started for "${(ft && ft.filename) || meta._file_nid || "a file"}"`;
+            msg.text = `Chat thread started for "${rootThread.filename || "a file"}"`;
           }
           // Legacy rows (no _scope_nid) surface in every folder in the live
           // UI — group them into the export root section.
@@ -3195,8 +3665,12 @@ class __private_channel extends Entity {
     const message_count = countRow ? Number(countRow.message_count) : 0;
 
     // List active file threads inside the subtree
-    const file_threads = toArray(
+    const raw_file_threads = toArray(
       await this.db.await_proc("channel_export_file_thread_list", this.uid, root_nid),
+    );
+    const { allowed: file_threads } = await this._filterAccessibleFileThreads(
+      raw_file_threads,
+      hub_id,
     );
 
     const folder_tree = toArray(
@@ -3297,7 +3771,7 @@ class __private_channel extends Entity {
     // to include, thread_sel picks which file threads. Each is 'all' | array |
     // 'none'. When absent, fall back from the legacy scope_sel/include_folders
     // contract so older clients keep working (see _legacyScope).
-    const { folder_sel, thread_sel } = this._resolveScope();
+    let { folder_sel, thread_sel } = this._resolveScope();
 
     const date_start = this.input.use("start_date") || null;
     const date_end = this.input.use("end_date") || null;
@@ -3311,9 +3785,34 @@ class __private_channel extends Entity {
     }
 
     // Resolve the subtree's active file threads once (needed for scope + count)
-    const file_threads = toArray(
+    const raw_file_threads = toArray(
       await this.db.await_proc("channel_export_file_thread_list", this.uid, root_nid),
     );
+    const { allowed: file_threads } = await this._filterAccessibleFileThreads(
+      raw_file_threads,
+    );
+
+    if (Array.isArray(thread_sel)) {
+      for (const requested_thread_id of thread_sel) {
+        const access = await this._resolveFileThreadAccess(
+          { file_thread_id: requested_thread_id },
+          { require_thread: true },
+        );
+        if (!access.ok) {
+          return this.output.data(this._fileThreadFailure(access));
+        }
+      }
+    }
+    if (thread_sel === "all") {
+      thread_sel = file_threads.map((ft) => `${ft.file_thread_id}`);
+    } else if (Array.isArray(thread_sel)) {
+      const allowed_ids = new Set(
+        file_threads.map((ft) => `${ft.file_thread_id}`),
+      );
+      thread_sel = thread_sel
+        .map(String)
+        .filter((id) => allowed_ids.has(id));
+    }
 
     // ── 10k guard ────────────────────────────────────────────────────────────
     // Folder chat: counted via channel_export_count (date-aware, whole subtree).
@@ -3392,6 +3891,40 @@ class __private_channel extends Entity {
     const stageDir = pathResolve(tmp_dir, DOWNLOAD_FOLDER, this.uid, zipid);
     mkdirSync(stageDir, { recursive: true });
 
+    // Bind the staged artifact to every file thread whose content or root-card
+    // metadata may appear in it. export_fetch revalidates this manifest so a
+    // later ACL revocation also invalidates an already-generated download.
+    const artifactThreads = new Map();
+    for (const ft of selectedFts) {
+      artifactThreads.set(`${ft.file_thread_id}`, ft);
+    }
+    if (includeHub) {
+      for (const ft of file_threads) {
+        artifactThreads.set(`${ft.file_thread_id}`, ft);
+      }
+    }
+    const authorized_file_threads = Array.from(artifactThreads.values()).map(
+      (ft) => ({
+        file_thread_id: `${ft.file_thread_id}`,
+        file_nid: `${ft.file_nid}`,
+        filename: ft.filename || "",
+        folder_nid: ft.folder_nid || null,
+        folder_name: ft.folder_name || null,
+      }),
+    );
+    writeFileSync(
+      pathJoin(stageDir, EXPORT_ACCESS_MANIFEST),
+      stringify({
+        schema_version: 1,
+        hub_id: `${this.hub.get(Attr.id)}`,
+        file_threads: authorized_file_threads.map((ft) => ({
+          file_thread_id: ft.file_thread_id,
+          file_nid: ft.file_nid,
+        })),
+      }),
+      "utf8",
+    );
+
     // ── JSON (synchronous) ────────────────────────────────────────────────────
     if (format === "json") {
       const sections = await this._gatherSections({
@@ -3445,6 +3978,7 @@ class __private_channel extends Entity {
       zipname,
       socket_id,
       lang,
+      authorized_file_threads,
     };
 
     const cmd = pathResolve(OFFLINE_DIR, "chat-export.js");
@@ -3466,24 +4000,71 @@ class __private_channel extends Entity {
    * Creates a symlink under mfs_dir so nginx can serve the file.
    */
   async export_fetch() {
-    const zipid = this.input.need("zipid");
-    const zipname = this.input.need("zipname") || "export";
+    const zipid = `${this.input.need("zipid") || ""}`;
+    const zipname = `${this.input.need("zipname") || "export"}`;
 
-    const src = pathJoin(tmp_dir, DOWNLOAD_FOLDER, this.uid, zipid, zipname);
+    if (
+      !FILE_THREAD_SELECTOR_RE.test(zipid)
+      || !/^[0-9a-zA-Z_.-]{1,255}\.(json|pdf)$/.test(zipname)
+    ) {
+      return this.output.data({ status: "INVALID_SELECTOR" });
+    }
+
+    const stageDir = pathJoin(tmp_dir, DOWNLOAD_FOLDER, this.uid, zipid);
+    const src = pathJoin(stageDir, zipname);
+    const ext = zipname.split(".").pop().toLowerCase();
+    const target = pathJoin(mfs_dir, DOWNLOAD_FOLDER, this.uid, zipid);
+    const file = pathJoin(target, `${zipid}.${ext}`);
+    // Remove any link issued by an earlier fetch before current ACL checks.
+    // A denied retry therefore cannot keep using the prior service path.
+    if (existsSync(file)) rmSync(file);
     const fileio = new FileIo(this);
     if (!existsSync(src)) {
       return fileio.not_found();
     }
 
+    let manifest;
+    try {
+      manifest = jsonParse(
+        readFileSync(pathJoin(stageDir, EXPORT_ACCESS_MANIFEST), "utf8"),
+      );
+    } catch (_) {
+      return fileio.not_found();
+    }
+    const hub_id = `${manifest && manifest.hub_id || ""}`;
+    const manifestThreads = manifest && manifest.file_threads;
+    if (
+      Number(manifest && manifest.schema_version) !== 1
+      || hub_id !== `${this.hub.get(Attr.id)}`
+      || !Array.isArray(manifestThreads)
+    ) {
+      return fileio.not_found();
+    }
+    for (const ft of manifestThreads) {
+      if (
+        !ft
+        || !FILE_THREAD_SELECTOR_RE.test(`${ft.file_thread_id || ""}`)
+        || !FILE_THREAD_SELECTOR_RE.test(`${ft.file_nid || ""}`)
+      ) {
+        return fileio.not_found();
+      }
+      const access = await this._resolveFileThreadAccess(
+        {
+          file_thread_id: `${ft.file_thread_id}`,
+          file_nid: `${ft.file_nid}`,
+        },
+        { hub_id, require_thread: true },
+      );
+      if (!access.ok) {
+        return this.output.data(this._fileThreadFailure(access));
+      }
+    }
+
     // Stable, space-free symlink under mfs_dir; FileIo.static() builds the
     // correct X-Accel-Redirect path (mirrors media.zip() — manual header
     // stripping produced an nginx path that 404'd: "File wasn't available").
-    const ext = zipname.split(".").pop().toLowerCase();
     const mimetype = EXPORT_MIME[ext] || "application/octet-stream";
-    const target = pathJoin(mfs_dir, DOWNLOAD_FOLDER, this.uid, zipid);
     mkdirSync(target, { recursive: true });
-    const file = pathJoin(target, `${zipid}.${ext}`);
-    if (existsSync(file)) rmSync(file);
     symlinkSync(src, file);
 
     fileio.static({ path: file, name: zipname, mimetype, code: 200 });

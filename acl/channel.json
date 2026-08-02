@@ -960,7 +960,7 @@
       }
     },
     "file_thread_info": {
-      "doc": "Lookup the per-file chat thread for a file. Accepts file_nid or file_thread_id. Returns current file metadata plus, when a thread exists, its summary (reply_count, last_message_id, mtime). Does NOT create a thread — opening a file chat is side-effect free. File read permission is validated in service code via mfs_access_node.",
+      "doc": "Lookup a file chat through the canonical file-thread resolver. Dual selectors must agree; the backing media must be active and currently readable through mfs_access_node.",
       "scope": "hub",
       "permission": { "src": "read" },
       "params": {
@@ -969,7 +969,10 @@
       },
       "returns": { "type": "object", "doc": "File metadata and, if present, thread summary with exists_thread flag" },
       "errors": [
-        { "code": "NOT_FOUND", "message": "File not found or not accessible", "http_status": 404 }
+        { "code": "INVALID_SELECTOR", "message": "Supplied file and thread selectors conflict", "http_status": 400 },
+        { "code": "NOT_FOUND", "message": "File thread was not found", "http_status": 404 },
+        { "code": "SCOPE_GONE", "message": "Backing file is no longer live in this hub", "http_status": 410 },
+        { "code": "NO_PERMISSION", "message": "Caller lacks current read permission on the file", "http_status": 403 }
       ]
     },
     "file_thread_messages": {
@@ -983,7 +986,11 @@
         "page": { "type": "number", "required": false, "doc": "Page number for pagination (default 1)" }
       },
       "returns": { "type": "array", "doc": "Enriched file-thread child messages" },
-      "errors": []
+      "errors": [
+        { "code": "INVALID_SELECTOR", "message": "Supplied file and thread selectors conflict", "http_status": 400 },
+        { "code": "SCOPE_GONE", "message": "Backing file is no longer live in this hub", "http_status": 410 },
+        { "code": "NO_PERMISSION", "message": "Caller lacks current read permission on the file", "http_status": 403 }
+      ]
     },
     "file_thread_post": {
       "doc": "Post a message into a file chat thread. Creates the thread and the folder-visible file.thread root card atomically on the first message; later sends reuse the same thread. Validates the file exists, is not a folder/hub, is active, and the caller has chat permission. Derives the folder from the file current parent, not from the client. Supports attachments, folder_attachment promotion, mentions, and reply-to thread_id. Broadcasts the child message and, when new, the root card.",
@@ -1002,11 +1009,13 @@
       "returns": { "type": "object", "doc": "Posted child message plus file_thread summary (file_thread_id, root_message_id, is_new)" },
       "errors": [
         { "code": "INVALID_FILE", "message": "file_nid is missing, not a file, is a folder/hub, or deleted", "http_status": 400 },
+        { "code": "INVALID_REPLY_SCOPE", "message": "Reply target is not in the canonical file thread", "http_status": 400 },
+        { "code": "SCOPE_GONE", "message": "Backing file is no longer live in this hub", "http_status": 410 },
         { "code": "NO_PERMISSION", "message": "Caller lacks read/chat permission on the file or its folder", "http_status": 403 }
       ]
     },
     "file_thread_list_by_folder": {
-      "doc": "List existing file-thread chats for files that are current direct children of a folder. Follows media.parent_id, so a moved file surfaces only under its current parent. Files without a thread never appear.",
+      "doc": "List existing file-thread chats for current direct children of a folder. Each row is independently filtered by live media state and the caller current file permission.",
       "scope": "hub",
       "permission": { "src": "read" },
       "params": {
@@ -1018,7 +1027,7 @@
       "errors": []
     },
     "file_thread_acknowledge": {
-      "doc": "Mark a single file thread seen up to a message for the caller, scoped to that thread. Does not affect sibling folder/workspace read state. Broadcasts the acknowledgement to other participants.",
+      "doc": "Mark a canonical file thread seen up to a message after validating the message/thread pair and current file access. Broadcasts an acknowledgement DTO without message content.",
       "scope": "hub",
       "permission": { "src": "read" },
       "params": {
@@ -1026,8 +1035,12 @@
         "message_id": { "type": "string", "required": false, "doc": "Message ID up to which the thread is marked seen" },
         "socket_id": { "type": "string", "required": true, "doc": "Caller WebSocket socket ID, used to exclude the caller from broadcast recipients" }
       },
-      "returns": { "type": "object", "doc": "Acknowledgement result from channel_file_thread_read_messages" },
-      "errors": []
+      "returns": { "type": "object", "doc": "Acknowledgement DTO with message_id, canonical file_thread_id, reader_id, is_readed, and is_seen" },
+      "errors": [
+        { "code": "INVALID_SELECTOR", "message": "Message and thread selectors do not identify the same file thread", "http_status": 400 },
+        { "code": "SCOPE_GONE", "message": "Backing file is no longer live in this hub", "http_status": 410 },
+        { "code": "NO_PERMISSION", "message": "Caller lacks current read permission on the file", "http_status": 403 }
+      ]
     },
     "export_scope": {
       "doc": "Get the export scope for a folder subtree: message count + active file threads (with filename and containing folder) under the given folder. Defaults to the whole hub when nid is omitted.",

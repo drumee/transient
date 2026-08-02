@@ -21,8 +21,12 @@ const {
   ID_NOBODY
 } = Constants;
 const { verifyPassword: verifySecureSharePassword } = require('./lib/secure-share-password');
+const { secureShareCapPrivilege } = require('./lib/secure-share-write-guard');
 const Jwt = require('jsonwebtoken');
 const { resolve: _resolvePath } = require('path');
+const { existsSync, readFileSync, statSync } = require('fs');
+const { get_node_content } = require('@drumee/server-core/lib/utils/mfs');
+const { PERM_READ } = Constants;
 // Shared `drumee` secret, loaded ONCE at module load, used to sign a short-lived
 // owner-edit assertion (see _loginSecureShare). The euroffice editor verifies it with
 // the same secret. Best-effort: if the secret file is unavailable the feature is simply
@@ -89,6 +93,54 @@ function _emailMatchesAllowed(email, info) {
     return (email.split('@')[1] || '') === info.domain_restriction.toLowerCase().trim();
   }
   return false;
+}
+
+
+// Office extensions whose first page the server rasterizes into thumb.png.
+// Mirrors the client's builtins/player/document/editable.js — keep in step.
+const DOC_EDITABLE = new Set([
+  'doc', 'docx', 'docm', 'dotx', 'dotm', 'odt', 'ott',
+  'xlsx', 'xls', 'xlsm', 'xltx', 'xltm', 'xlsb', 'ods', 'ots',
+  'pptx', 'ppt', 'pptm', 'potx', 'potm', 'ppsx', 'ppsm', 'odp', 'otp',
+  'rtf',
+]);
+
+// A poster is never worth more than this many bytes on the wire. Sized so that
+// video vignettes clear it — a 720p poster frame runs to ~120KB and is the most
+// useful preview of the lot — while a pathologically large rendering does not.
+const POSTER_MAX_BYTES = 192 * 1024;
+// Nor is a whole listing's worth of them. A folder of videos spends this on the
+// first few tiles; the rest fall back to icons rather than inflating the reply.
+const POSTER_BUDGET_BYTES = 768 * 1024;
+
+/**
+ * Which already-rendered preview a row could show, in the order the desk grid
+ * would prefer them. Mirrors media/core.js initURL(): a vector shows its own
+ * source, a PDF or office document shows the rasterized first page (thumb),
+ * everything else shows the vignette.
+ *
+ * The client picks exactly one format; this returns a short preference list
+ * instead, because here the file must actually exist on disk and falling back
+ * to the other rendering beats showing no poster at all.
+ *
+ * @returns {Array<[string, string, string]>} [format, extension, mime]
+ */
+function _posterCandidates(row) {
+  const ext = String(row.ext || '').toLowerCase();
+  const ftype = String(row.filetype || row.ftype || '').toLowerCase();
+
+  // Containers have no content of their own; text-ish files are the two
+  // negative gates in the client's imgCapable() and would only ever produce a
+  // thumbnail of a wall of text.
+  if (['folder', 'hub', 'root'].includes(ftype)) return [];
+  if (/shell|script|text/.test(ftype)) return [];
+  if (/^text/.test(String(row.mimetype || ''))) return [];
+
+  if (ftype === 'vector' || ext === 'svg') return [['orig', 'svg', 'image/svg+xml']];
+  if (ext === 'pdf' || DOC_EDITABLE.has(ext)) {
+    return [['thumb', 'png', 'image/png'], ['vignette', 'png', 'image/png']];
+  }
+  return [['vignette', 'png', 'image/png'], ['thumb', 'png', 'image/png']];
 }
 
 
@@ -1187,6 +1239,359 @@ class __dmz extends Mfs {
    */
   notification_list() {
     this.output.data([]);
+  }
+
+  /**
+   * The row's already-rendered preview, as a data URI, or null.
+   *
+   * Why inline rather than a URL: the desk grid points `background-image` at
+   * file/<format>/<nid>/<hub_id>, which is media.<format>, whose ACL resolves
+   * an acl_check grant against the CALLER'S session — the very grant a
+   * main-domain anonymous visitor cannot hold (see list_by_token's preamble).
+   * Handing out a URL would therefore mean opening a second anonymous route
+   * with its own authorisation story. Returning the bytes through the call
+   * that is already token-gated adds no new surface at all: there is nothing
+   * to guess, nothing to share on, and nothing reachable without the token.
+   *
+   * Deliberately serves ONLY what is already on disk and NEVER generates.
+   * media._send_thumb() rasterizes on demand, which is fine behind a login but
+   * would let an anonymous caller spend server CPU by the folder-full. A file
+   * nobody has viewed yet simply shows its filetype icon.
+   *
+   * @param {object} row     listing row (nid, ext, filetype, mimetype, privilege)
+   * @param {string} mfsRoot storage root of the share's hub
+   * @param {{left: number}} budget mutable byte budget for the whole response
+   * @returns {string|null} "data:image/png;base64,…"
+   */
+  _posterFor(row, mfsRoot, budget) {
+    // nid indexes a directory name; it comes from the DB, but validate anyway
+    // so a malformed row can never escape the storage root.
+    const nid = String(row.nid || '');
+    if (!mfsRoot || !/^[0-9a-f]{16}$/.test(nid)) return null;
+    // A share that does not grant read does not get to show content either.
+    if (!((row.privilege || 0) & PERM_READ)) return null;
+    if (budget.left <= 0) return null;
+
+    for (const [format, ext, mime] of _posterCandidates(row)) {
+      let path;
+      try {
+        path = get_node_content({ ...row, id: nid, mfs_root: mfsRoot }, format, ext);
+      } catch (e) {
+        continue;
+      }
+      if (!path || !existsSync(path)) continue;
+      let size;
+      try {
+        size = statSync(path).size;
+      } catch (e) {
+        continue;
+      }
+      // Video vignettes in particular can run to six figures. Over the cap the
+      // icon is the better answer — do not spend the whole budget on one tile.
+      if (!size || size > POSTER_MAX_BYTES || size > budget.left) return null;
+      try {
+        const b64 = readFileSync(path).toString('base64');
+        budget.left -= size;
+        return `data:${mime};base64,${b64}`;
+      } catch (e) {
+        this.debug(`[dmz.list_by_token] poster unreadable nid=${nid}:`, e.message);
+        return null;
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Read-only listing of a share's contents, authorised BY THE TOKEN ALONE.
+   *
+   * Why this exists: dmz.login refuses to bind a share identity onto a
+   * main-domain session (see the regsid guard in login/_loginSecureShare — it
+   * would hijack or clamp the caller's auth session). So a page served from the
+   * main domain, such as the signin plugin's guest landing page, can never
+   * obtain the grant that media.show_node_by requires, and every listing there
+   * comes back 403. This answers from the token instead and NEVER touches the
+   * caller's session: no cookie_touch, no grant, no identity change.
+   *
+   * It is deliberately narrow — it lists, and nothing else:
+   *
+   *   - the target is derived from the token, never from client input. A client
+   *     cannot name a nid, so it cannot walk out of the share.
+   *   - a share that is not plainly open is refused: revoked, expired, invalid,
+   *     locked, password-gated or email-gated all return a status and NO items.
+   *     This endpoint performs no gate, so it must not serve gated content.
+   *   - a FILE share lists the parent folder hard-filtered to that one file, so
+   *     siblings are never exposed (same remap as _loginSecureShare).
+   *   - displayed privilege is the anonymous guest's, then clamped again by the
+   *     share's own capability set.
+   *   - the reply carries only what a viewer needs. secure_share_info also
+   *     returns sender-only data (password_hash, allowed_emails, denied_emails,
+   *     recipient_email, creator ids); none of it is echoed.
+   *
+   * Input:  token {String} required, page {Number} optional
+   * Output: { status, title, nid, hub_id, items[] }
+   */
+  /**
+   * Resolve a share from its token alone, refusing anything not plainly open.
+   *
+   * Shared by every *_by_token endpoint so they can never drift apart on what
+   * counts as an acceptable share — a gate relaxed in one place but not the
+   * other is exactly the bug this prevents.
+   *
+   * Two kinds of token exist and the caller cannot be expected to know which it
+   * holds, so it resolves as dmz.login does: secure share first, legacy dmz
+   * token second, both normalised to one shape.
+   *
+   * @param {string} token
+   * @param {string} tag caller name, for log lines
+   * @returns {Promise<{info: object, viewerUid: ?string, legacyPrivilege: ?number}
+   *                  |{status: string}>} `status` set means REFUSED, no data.
+   */
+  async _shareByToken(token, tag) {
+    let info = null;
+    let viewerUid = null;
+    let legacyPrivilege = null;
+    try {
+      const secure = toArray(await this.yp.await_proc('secure_share_info', token))[0];
+      if (secure && !secure.failed && secure.creator_id) info = secure;
+    } catch (e) {
+      this.warn(`[${tag}] secure_share_info failed:`, e && e.message);
+    }
+    if (!info) {
+      try {
+        const legacy = await this.yp.await_proc('dmz_info_next', token);
+        if (legacy && !legacy.failed && legacy.hub_id) {
+          info = legacy;
+          // A legacy share owns a guest user; view as that identity and cap by
+          // the privilege the share itself grants.
+          viewerUid = legacy.uid || legacy.guest_id || null;
+          legacyPrivilege = legacy.privilege == null ? null : Number(legacy.privilege);
+        }
+      } catch (e) {
+        this.warn(`[${tag}] dmz_info_next failed:`, e && e.message);
+      }
+    }
+    if (!info || !info.hub_id || !(info.node_id || info.nid)) {
+      return { status: 'TICKET_INVALID' };
+    }
+    if (info.validity && info.validity !== 'TICKET_OK') {
+      return { status: info.validity };
+    }
+    // Gated shares are the gate's business, not these endpoints'.
+    if (info.is_locked) return { status: 'TICKET_LOCKED' };
+    if (info.require_password) return { status: 'REQUIRED_PASSWORD' };
+    if (info.require_email) return { status: 'REQUIRED_EMAIL' };
+    return { info, viewerUid, legacyPrivilege };
+  }
+
+  async list_by_token() {
+    const token = this.input.need(Attr.token);
+    const page = parseInt(this.input.use(Attr.page, 1), 10) || 1;
+    const deny = (status) => this.output.data({ status, items: [] });
+
+    const share = await this._shareByToken(token, 'dmz.list_by_token');
+    if (share.status) return deny(share.status);
+    const { info, viewerUid, legacyPrivilege } = share;
+
+    // Listing target from the token. A real file → list its parent, filtered to
+    // the file itself; a folder / hub / root → list it directly.
+    let nid = info.node_id || info.nid;
+    let file_nid = null;
+    // Doubles as the storage-root lookup: every node physically in this hub
+    // lives under the same mfs_root, so one probe covers the whole listing.
+    // A row that is actually a cross-hub mount resolves to a path that does not
+    // exist, which costs it its poster and nothing else.
+    let mfs_root = null;
+    try {
+      const attr = toArray(
+        await this.yp.await_proc('forward_proc', info.hub_id, 'mfs_node_attr', `'${nid}'`)
+      )[0] || {};
+      mfs_root = attr.mfs_root || null;
+      if (attr.filetype && !['folder', 'hub', 'root'].includes(attr.filetype) && attr.pid) {
+        file_nid = nid;
+        nid = attr.pid;
+      }
+    } catch (e) {
+      // Probe failed → treat the shared node as a container, and show no posters.
+    }
+
+    // The anonymous guest is the viewing identity: mfs_show_node_by uses the uid
+    // for the per-row privilege/ownership columns, so this keeps the reply from
+    // ever describing the creator's own access.
+    const guest_id = viewerUid || Cache.getSysConf('guest_id');
+    const params = JSON.stringify({ sort_by: 'rank', order: 'asc', page, type: 'all' });
+    let rows;
+    try {
+      rows = toArray(await this.yp.await_proc(
+        'forward_proc', info.hub_id, 'mfs_show_node_by',
+        `'${nid}', '${guest_id}', '${params}'`
+      ));
+    } catch (e) {
+      this.warn('[dmz.list_by_token] listing failed:', e && e.message);
+      return deny('TICKET_INVALID');
+    }
+
+    if (file_nid) rows = rows.filter((r) => r && r.nid === file_nid);
+
+    // Clamp each row's displayed privilege to the share's caps, as
+    // media.show_node_by does. Anonymous caller → no recipient email.
+    let capPriv = legacyPrivilege;
+    if (capPriv == null) {
+      try {
+        capPriv = await secureShareCapPrivilege(this.yp, token, '');
+      } catch (e) {
+        capPriv = 0; // unknown caps → advertise none rather than the node's own
+      }
+    }
+
+    // Whitelist the columns that leave the server. Everything the viewer does
+    // not need — owner ids, db names, vhosts, metadata — stays here.
+    // Posters are opt-in and cost far more than the rest of the reply put
+    // together (a single video frame outweighs a whole folder of metadata), so
+    // the default answer stays small and the caller asks for them on a second
+    // pass once it has something on screen. Same endpoint, same token gate.
+    const wantPosters = /^(1|true|yes)$/i.test(String(this.input.use('with_posters', '')));
+    const budget = { left: wantPosters ? POSTER_BUDGET_BYTES : 0 };
+    const items = rows.map((r) => {
+      const privilege = capPriv == null ? r.privilege : (r.privilege || 0) & capPriv;
+      const item = {
+        nid: r.nid,
+        filename: r.filename,
+        ext: r.ext,
+        ftype: r.ftype || r.filetype,
+        filetype: r.filetype || r.ftype,
+        mimetype: r.mimetype,
+        filesize: r.filesize,
+        ctime: r.ctime,
+        mtime: r.mtime,
+        privilege,
+      };
+      const poster = this._posterFor({ ...r, privilege }, mfs_root, budget);
+      if (poster) item.poster = poster;
+      return item;
+    });
+
+    this.output.data({
+      status: 'TICKET_OK',
+      title: info.title || '',
+      nid,
+      hub_id: info.hub_id,
+      items,
+    });
+  }
+
+  /**
+   * Read-only workspace chat for a share, authorised BY THE TOKEN ALONE.
+   *
+   * The companion to list_by_token, and it exists for the same reason:
+   * channel.messages is scope hub / src read, so its ACL resolves an acl_check
+   * grant against the caller's session, which a main-domain anonymous visitor
+   * cannot hold. This answers from the token and never touches the session.
+   *
+   * Scoped the same way the folder window scopes its team chat: messages carry
+   * a metadata._scope_nid, and only those matching the SHARED node are
+   * returned. That matters — a hub's channel table holds every folder's
+   * conversation, so without the filter a share of one folder would leak the
+   * chat of all the others.
+   *
+   * Legacy rows (written before _scope_nid existed) appear in every folder
+   * context in the app. Here they are DROPPED instead: in-app that fallback
+   * shows an old message to someone who already has hub access, whereas here it
+   * would hand an unscoped message to an anonymous visitor.
+   *
+   * The reply carries what it takes to render a bubble — author display name,
+   * text, time — and deliberately not the author's email or the delivery and
+   * seen maps in metadata.
+   *
+   * Input:  token {String} required, page {Number} optional
+   * Output: { status, nid, messages[] }
+   */
+  async chat_by_token() {
+    const token = this.input.need(Attr.token);
+    const page = parseInt(this.input.use(Attr.page, 1), 10) || 1;
+    const deny = (status) => this.output.data({ status, messages: [] });
+
+    const share = await this._shareByToken(token, 'dmz.chat_by_token');
+    if (share.status) return deny(share.status);
+    const { info, viewerUid } = share;
+
+    // Chat belongs to the shared container. A file share shows the chat of the
+    // folder it sits in, which is the same conversation the app shows there.
+    let nid = info.node_id || info.nid;
+    try {
+      const attr = toArray(
+        await this.yp.await_proc('forward_proc', info.hub_id, 'mfs_node_attr', `'${nid}'`)
+      )[0] || {};
+      if (attr.filetype && !['folder', 'hub', 'root'].includes(attr.filetype) && attr.pid) {
+        nid = attr.pid;
+      }
+    } catch (e) {
+      // Probe failed → treat the shared node as the container.
+    }
+
+    const guest_id = viewerUid || Cache.getSysConf('guest_id');
+    let rows;
+    try {
+      rows = toArray(await this.yp.await_proc(
+        'forward_proc', info.hub_id, 'channel_list_messages',
+        `'${guest_id}', 'date', 'asc', ${page}`
+      ));
+    } catch (e) {
+      this.warn('[dmz.chat_by_token] channel_list_messages failed:', e && e.message);
+      return deny('TICKET_INVALID');
+    }
+
+    // Scope filter — see above on why an absent _scope_nid is dropped here.
+    rows = rows.filter((r) => {
+      if (!r || r.status !== 'active') return false;
+      let meta = r.metadata;
+      try {
+        if (typeof meta === 'string') meta = JSON.parse(meta);
+      } catch (e) {
+        return false;
+      }
+      return meta && `${meta._scope_nid}` === `${nid}`;
+    });
+
+    // One contact lookup per distinct author, not per message.
+    //
+    // channel.messages forwards this proc to the VIEWER's own db, resolving the
+    // author out of the viewer's contacts. A guest has no db, so it runs in the
+    // AUTHOR's db instead — every drumate has the proc, and asked about itself
+    // it returns that person's own profile.
+    const authors = {};
+    for (const r of rows) {
+      const id = r.author_id;
+      if (!id || authors[id] !== undefined) continue;
+      authors[id] = '';
+      try {
+        const row = toArray(await this.yp.await_proc(
+          'forward_proc', id, 'shareroom_contact_get', `'${id}'`
+        ))[0] || {};
+        // A real name when the account has one. Otherwise the LOCAL PART of
+        // the address the proc returns in `surname` — enough to tell two
+        // participants apart, which a conversation needs, without handing an
+        // anonymous visitor a working address. The domain is never sent.
+        const name = [row.firstname, row.lastname].filter(Boolean).join(' ').trim();
+        authors[id] = name || String(row.surname || '').split('@')[0].trim();
+      } catch (e) {
+        this.debug('[dmz.chat_by_token] contact lookup failed for', id, e && e.message);
+      }
+    }
+
+    // channel_list_messages answers newest-first whatever order is asked for,
+    // and a conversation reads oldest-first.
+    rows.sort((a, b) => Number(a.ctime || 0) - Number(b.ctime || 0));
+
+    const messages = rows.map((r) => ({
+      message_id: r.message_id,
+      author_id: r.author_id,
+      author: authors[r.author_id] || '',
+      message: r.message,
+      ctime: r.ctime,
+      is_reply: r.thread_id ? 1 : 0,
+    }));
+
+    this.output.data({ status: 'TICKET_OK', nid, messages });
   }
 
 }

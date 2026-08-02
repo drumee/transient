@@ -114,18 +114,25 @@ class Otp extends Entity {
     // matching the other butler emails. Falls back to default sender if unset.
     const sender = butlerSender();
     const from = sender ? `"Drumee" <${sender}>` : undefined;
-    let sent = 0;
-    try {
-      const result = await msg.send(from ? { html, from } : { html });
-      if (result && result.error) {
-        this.warn(`OTP email delivery failed: ${result.error}`);
-      } else {
-        sent = 1;
-      }
-    } catch (e) {
-      this.warn(e);
-    }
-    this.output.data({ status: 'ok', sent, ...user, secret, email });
+    const payload = from ? { html, from } : { html };
+
+    // Answer with the secret the moment it's minted — the SMTP round-trip is the
+    // slow part (seconds) and the client only needs the secret to open the
+    // code-entry modal. Blocking the response on delivery made the "Delete my
+    // account" button look frozen, so users clicked again and minted extra codes.
+    // `sent` is optimistic: the email is dispatched below without awaiting, and a
+    // genuine delivery failure is recovered via the modal's Resend action.
+    this.output.data({ status: 'ok', sent: 1, ...user, secret, email });
+
+    // Fire-and-forget: the request is already answered, so a delivery error is
+    // only logged here, never surfaced to the (already-served) caller.
+    Promise.resolve(msg.send(payload))
+      .then((result) => {
+        if (result && result.error) {
+          this.warn(`OTP email delivery failed: ${result.error}`);
+        }
+      })
+      .catch((e) => this.warn(e));
   }
 
   /**

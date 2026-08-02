@@ -20,6 +20,7 @@ const {
 } = require("@drumee/server-essentials");
 const { resolve } = require('path');
 const { isEmpty } = require("lodash");
+const { notifyMemberJoined } = require("./lib/notify-member-joined");
 const { Mfs } = require("@drumee/server-core");
 
 class __signup extends Mfs {
@@ -195,6 +196,10 @@ class __signup extends Mfs {
         } catch (err) {
           this.warn(`[signup._resolve_pending_invitation] WS notify failed for hub ${hub_id}:`, err && err.message);
         }
+
+        // Tell online members a member joined so an open permission matrix
+        // refreshes (mirrors butler.js _resolve_pending_invitation).
+        await notifyMemberJoined(this, hub_id, newUser.id);
       } catch (err) {
         this.warn(`[signup._resolve_pending_invitation] Failed for hub ${hub_id}:`, err && err.message);
       }

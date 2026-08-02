@@ -796,20 +796,27 @@ class __private_task extends Entity {
   }
 
   /**
-   * Delete one's own comment. Params: id (required), task_id (required — so the
-   * broadcast can target the right task's feed).
+   * Delete one's own comment. Deleting a root also deletes the replies under it
+   * (the proc cascades — a reply with no question above it is not a comment),
+   * so `removed_replies` travels with the answer and the broadcast: a client
+   * holding the feed can drop the whole thread instead of just the root.
+   * Params: id (required), task_id (required — so the broadcast can target the
+   * right task's feed).
    */
   async comment_delete() {
     const id = this.input.need('id');
     const task_id = this.input.need('task_id');
     const data = await this.db.await_proc('task_comment_delete', id, this.uid);
     const row = Array.isArray(data) ? data[0] : data;
-    await this._broadcast('task.comment_delete', {
+    const result = {
       id,
       task_id,
       affected: row && row.affected,
-    });
-    this.output.data({ id, task_id, affected: row && row.affected });
+      // Older procs (pre-cascade) return no such column — 0, not undefined.
+      removed_replies: (row && row.removed_replies) || 0,
+    };
+    await this._broadcast('task.comment_delete', result);
+    this.output.data(result);
   }
 
   /**
