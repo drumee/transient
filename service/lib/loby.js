@@ -21,7 +21,10 @@ const {
 const { Entity } = require("@drumee/server-core");
 const { readFileSync } = require("fs");
 const { resolve } = require("path");
-const { template } = require("lodash");
+// isEmpty/isArray are used by _resolve_pending_invitation, which moved here
+// from signup.js — where they were imported. Moving the method without them
+// left it throwing ReferenceError at its first guard.
+const { template, isEmpty, isArray } = require("lodash");
 
 // Configured envelope sender (email.json -> auth.user), resolved once. Used to
 // build a display-name From ("Drumee" <sender>) for outbound mail, matching the
@@ -43,6 +46,89 @@ class Account extends Entity {
   /**
    * The account schema is picked from the pool of hubs that are already created by offline process 
    */
+  /**
+   * Moved up from Signup so BOTH sign-up paths share it: email-and-password
+   * (signup.create_account) and OAuth (addUser below). It used to live
+   * only on Signup, which is why an OAuth sign-up created the account, linked
+   * the provider and seeded the default folders but never granted the
+   * workspaces the person had been invited to.
+   *
+   * Resolve pending hub invitations từ hub.add_contributors (email được invite trước khi đăng ký).
+   * Add user vào các hub và xóa khỏi pending_invitation.
+   * Logic tham khảo adminpanel.js: join_hub + permission_grant (user db) + permission_grant (hub db).
+   * @param {string} email - email user vừa đăng ký
+   */
+  async _resolve_pending_invitation(email, knownUid, knownDbName) {
+    // The OAuth path already holds the id of the account it just created, so it
+    // passes it in. Re-deriving it from the address there is an extra failure
+    // mode for no gain: drumate_exists has to see a row that was written
+    // moments earlier, and when it does not this returns quietly and the
+    // invitation stays unresolved with only a log line to show for it.
+    let uid = knownUid || null;
+    if (!uid) {
+      let newUser = await this.yp.await_proc("drumate_exists", email);
+      if (isArray(newUser)) newUser = newUser[0];
+      if (isEmpty(newUser) || !newUser.id) {
+        this.warn("[_resolve_pending_invitation] Cannot find user for", email);
+        return;
+      }
+      uid = newUser.id;
+    }
+    const newUser = { id: uid };
+
+    // The caller may already hold the account's db. That matters because this
+    // lookup is one of three early returns that land before the delete (the
+    // others: no user, and no pending rows), and the delete is otherwise
+    // unconditional — even failed grants consume the rows.
+    // get_entity needs drumate JOIN entity JOIN domain on dom_id,
+    // all of which have to be in place; asking it about an account created
+    // moments ago is the one call here that can come back empty on a brand-new
+    // row and abandon the invitation with a single log line.
+    let userDbName = knownDbName || null;
+    if (!userDbName) {
+      const userEntity = await this.yp.await_proc("get_entity", newUser.id);
+      userDbName = userEntity && userEntity.db_name;
+    }
+    if (!userDbName) {
+      this.warn("[_resolve_pending_invitation] Cannot find db_name for user", newUser.id);
+      return;
+    }
+
+    const pending = await this.yp.await_proc("pending_invitation_get_by_email", email);
+    const rows = toArray(pending);
+    if (isEmpty(rows)) {
+      this.debug("[_resolve_pending_invitation] No pending invitations for", email);
+      return;
+    }
+
+    this.debug("[_resolve_pending_invitation] Resolving", rows.length, "pending invitations for", email);
+    for (const row of rows) {
+      const { hub_id, permission, expiry_time } = row;
+      try {
+        const hubDbName = await this.yp.await_func("get_db_name", hub_id);
+        if (!hubDbName) {
+          this.warn('[_resolve_pending_invitation] Cannot find db_name for hub', hub_id);
+          continue;
+        }
+
+        await this.yp.await_proc(`${userDbName}.join_hub`, hub_id);
+        await this.yp.await_proc(
+          `${userDbName}.permission_grant`,
+          hub_id, newUser.id, expiry_time, permission, 'system', 'Resolved from pending_invitation on signup'
+        );
+        await this.yp.await_proc(
+          `${hubDbName}.permission_grant`,
+          '*', newUser.id, expiry_time, permission, 'system', 'Resolved from pending_invitation on signup'
+        );
+        this.debug("[_resolve_pending_invitation] Added user", newUser.id, "to hub", hub_id);
+      } catch (err) {
+        this.warn(`[_resolve_pending_invitation] Failed for hub ${hub_id}:`, err && err.message);
+      }
+    }
+
+    await this.yp.await_proc("pending_invitation_delete_by_email", email);
+  }
+
   async create_account(data, autosignin = 1) {
     const { main_domain: domain } = sysEnv();
     let {
@@ -214,6 +300,26 @@ class Account extends Entity {
       await this.make_default_folers(creationResult);
     } catch (e) {
       this.warn(`[Auth] Failed to create default folders for ${email}:`, e && e.message);
+    }
+
+    // Grant the workspaces this address was invited to before it had an
+    // account — the same step signup.create_account performs for the
+    // email-and-password path. Without it an OAuth sign-up lands on a desk
+    // holding only the three default workspaces, and opening the one they were
+    // invited to fails with "the file you requested does not exist".
+    //
+    // Scope-agnostic: it resolves whatever pending_invitation rows exist for
+    // the address, so internal and external are handled identically.
+    //
+    // Best-effort, exactly as on the email path: a failure here must not undo
+    // an account that has already been created and linked.
+    try {
+      // uid and db come from the account this method just created — both are
+      // already validated above (creationResult.db_name gate) — so resolution
+      // never has to re-derive them from a row it is racing.
+      await this._resolve_pending_invitation(email, newUserId, creationResult.db_name);
+    } catch (e) {
+      this.warn(`[Auth] Failed to resolve pending invitations for ${email}:`, e && e.message);
     }
 
     // Get full session data
@@ -600,9 +706,50 @@ class Account extends Entity {
    * @returns
    */
   async make_default_folers(opt) {
-    const { db_name, home_id } = opt;
-    for (let dirname of ["Photos", "Documents", "Videos"]) {
-      await this.make_dir(db_name, home_id, dirname)
+    // Seed the new account's desk with the three workspace types the desk
+    // create-workspace form offers (ui-team media/form), using the SAME
+    // area conventions so a seeded workspace behaves identically to one the
+    // user creates later:
+    //   Internal Workspace → hub, area 'private' (team/membership space)
+    //   External Workspace → hub, area 'share'   (link-shared, no public grant)
+    //   Personal Workspace → plain folder at home root (NOT a hub) — mirrors
+    //                        the form's "personal" branch, avoiding hub
+    //                        membership/sidebar semantics and private_hub quota.
+    // The account object returned by drumate_create (create_account with
+    // autosignin=0) carries everything we need: uid (owner), db_name (user_db),
+    // home_id (desk root = parent), domain_name.
+    const owner_id = opt.uid || opt.id;
+    const user_db = opt.db_name;
+    const pid = opt.home_id;
+    const { main_domain } = sysEnv();
+    const domain = opt.domain_name || main_domain;
+
+    if (!owner_id || !user_db || !pid) {
+      this.warn("[make_default_folers] Missing account context; skipping", opt);
+      return;
+    }
+
+    const hubs = [
+      { filename: "Internal Workspace", area: "private" },
+      { filename: "External Workspace", area: "share" },
+    ];
+
+    for (const { filename, area } of hubs) {
+      try {
+        const res = await this.createHub({ owner_id, domain, area, filename, pid, user_db });
+        if (!res || !res.hub_id) {
+          this.warn(`[make_default_folers] Failed to create ${area} workspace "${filename}"`, res);
+        }
+      } catch (e) {
+        this.warn(`[make_default_folers] Error creating ${area} workspace "${filename}":`, e && e.message);
+      }
+    }
+
+    // Personal Workspace is a plain private folder at the desk root, not a hub.
+    try {
+      await this.make_dir(user_db, pid, "Personal Workspace");
+    } catch (e) {
+      this.warn(`[make_default_folers] Error creating Personal Workspace folder:`, e && e.message);
     }
   }
 
