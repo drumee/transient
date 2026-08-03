@@ -922,6 +922,21 @@ class __private_payment extends Entity {
         if (pm && pm.card) { card_brand = pm.card.brand; card_last4 = pm.card.last4; }
       }
     } catch (e) { /* card details are cosmetic — leave unset */ }
+    // A DEFERRED cycle switch (month <-> year, `defer` on checkout) charges
+    // nothing today: the new cycle idles on a Stripe trial until the paid
+    // period lapses, so session.amount_total is 0 and Stripe issues a $0
+    // invoice. The client had no way to tell that apart from a genuinely free
+    // purchase and rendered "Total Payment $0.00" over a $290 switch. Say so
+    // here — the banner on the billing page already branches on the same
+    // condition (settings/account/billing skeleton, 'trialing').
+    const subObj = (session.subscription && typeof session.subscription === 'object') ? session.subscription : null;
+    const defer = md.defer === '1' || !!(subObj && subObj.status === 'trialing' && subObj.trial_end);
+    // When the real billing starts, and what it will cost then. unit_amount
+    // comes off the subscription item (subscriptions carry `items` without an
+    // extra expand); the stored row is the fallback for the window before the
+    // webhook has refreshed it.
+    const item = subObj && subObj.items && subObj.items.data && subObj.items.data[0];
+    const unit = item && item.price && item.price.unit_amount;
     this.output.data({
       status: session.status,                          // complete | open | expired
       payment_status: session.payment_status,          // paid | unpaid | no_payment_required
@@ -934,6 +949,11 @@ class __private_payment extends Entity {
       paid_at: (inv && inv.status_transitions && inv.status_transitions.paid_at) || session.created,
       card_brand,
       card_last4,
+      defer,
+      starts_at: (subObj && subObj.trial_end) || null, // epoch seconds
+      upcoming_amount: unit != null
+        ? unit
+        : (sub && sub.price != null ? Math.round(Number(sub.price)) : null),
     });
   }
 }
