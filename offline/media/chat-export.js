@@ -14,7 +14,8 @@
  *
  * Args (argv[0] JSON):
  *   { uid, hub_id, hub_name, root_nid, root_name, folder_sel, thread_sel,
- *     start_date, end_date, format:'pdf', zipid, zipname, socket_id, lang }
+ *     start_date, end_date, format:'pdf', zipid, zipname, socket_id, lang,
+ *     authorized_file_threads }
  *
  * Progress events sent via RedisStore.sendData:
  *   { phase:'prepare'|'gather'|'build'|'convert'|'exit', progress:0-100,
@@ -42,6 +43,10 @@ const { spawn } = require("child_process");
 const { DOWNLOAD_FOLDER } = Constants;
 const { tmp_dir } = sysEnv();
 const { buildOdt } = require("./chat-export-odt");
+const MFS_PERMISSION_READ =
+  (Constants.permission && Constants.permission.read) || 0b0000010;
+const FILE_THREAD_SELECTOR_RE = /^[0-9a-zA-Z_-]{1,64}$/;
+const EXPORT_ACCESS_MANIFEST = ".file-thread-access.json";
 
 // ─── Lock-file guard (mirrors to-pdf.js pattern) ─────────────────────────────
 // Only one soffice conversion at a time per process; track PID to detect stale.
@@ -153,6 +158,63 @@ function normalizeRow(row, hub_id) {
 }
 
 /**
+ * Revalidate the server-authorized candidates in the hub DB immediately before
+ * gathering. The worker never broadens scope by discovering file threads on
+ * its own, and canonical selector agreement prevents stale/id-swapped rows.
+ */
+async function revalidateAuthorizedFileThreads(db, uid, candidates) {
+  const allowed = [];
+  for (const candidate of toArray(candidates)) {
+    const file_nid = `${candidate && candidate.file_nid || ""}`;
+    const file_thread_id = `${candidate && candidate.file_thread_id || ""}`;
+    if (
+      !FILE_THREAD_SELECTOR_RE.test(file_nid)
+      || !FILE_THREAD_SELECTOR_RE.test(file_thread_id)
+    ) {
+      continue;
+    }
+
+    const resolved = toArray(
+      await db.await_proc(
+        "channel_file_thread_resolve_access",
+        uid,
+        file_nid,
+        file_thread_id,
+        "",
+      ),
+    )[0] || {};
+    if (
+      `${resolved.resolution_status || ""}` !== "OK"
+      || `${resolved.file_nid || ""}` !== file_nid
+      || `${resolved.file_thread_id || ""}` !== file_thread_id
+    ) {
+      continue;
+    }
+
+    const node = toArray(
+      await db.await_proc("mfs_access_node", uid, file_nid),
+    )[0] || {};
+    const privilege = Number(node.privilege || node.permission || 0);
+    if (
+      `${node.nid || node.id || ""}` !== file_nid
+      || `${node.status || ""}` !== "active"
+      || (privilege & MFS_PERMISSION_READ) !== MFS_PERMISSION_READ
+    ) {
+      continue;
+    }
+
+    allowed.push({
+      file_thread_id,
+      file_nid,
+      filename: candidate.filename || "",
+      folder_nid: candidate.folder_nid || null,
+      folder_name: candidate.folder_name || null,
+    });
+  }
+  return allowed;
+}
+
+/**
  * Order channel_export_folder_tree rows depth-first (parent before children,
  * siblings by name — the proc pre-sorts by depth/name) and attach a display
  * `path` string to each row.
@@ -189,7 +251,7 @@ function orderFolderTree(folders) {
  * @param {string|string[]} thread_sel  'all' | [file_thread_ids] | 'none'
  * @param {number|null} date_start
  * @param {number|null} date_end
- * @param {Array}   file_threads  from channel_export_file_thread_list
+ * @param {Array}   file_threads  server-authorized and worker-revalidated rows
  * @param {Array}   folder_tree   from channel_export_folder_tree
  * @returns {Promise<Array>}
  */
@@ -232,16 +294,20 @@ async function gatherSections(db, uid, hub_id, root_nid, folder_sel, thread_sel,
       );
       if (!rows.length) break;
       for (const row of rows) {
-        const msg = normalizeRow(row, hub_id);
+        let rootThread = null;
         if (row.message_type === "file.thread") {
           let meta = {};
           try {
             meta = typeof row.metadata === "string"
               ? jsonParse(row.metadata) : row.metadata || {};
           } catch (_) {}
-          const ft = ftByFileNid.get(`${meta._file_nid}`);
+          rootThread = ftByFileNid.get(`${meta._file_nid}`);
+          if (!rootThread) continue;
+        }
+        const msg = normalizeRow(row, hub_id);
+        if (rootThread) {
           msg.type = "event";
-          msg.text = `Chat thread started for "${(ft && ft.filename) || meta._file_nid || "a file"}"`;
+          msg.text = `Chat thread started for "${rootThread.filename || "a file"}"`;
         }
         const key = row.scope_nid || (rootFolder ? `${rootFolder.id}` : "");
         if (!byFolder.has(key)) byFolder.set(key, []);
@@ -337,10 +403,11 @@ class __chat_export_job extends Offline {
     this.hub_name   = data.hub_name || data.hub_id;
     this.root_nid   = data.root_nid || null;
     this.root_name  = data.root_name || this.hub_name;
-    // Scope axes come pre-resolved from channel.export() as 'all' | array |
-    // 'none' (see _resolveScope). Default to 'all' for safety.
+    // channel.export() resolves "all" to an explicit authorized id list before
+    // spawning. Fail closed rather than letting a malformed job broaden scope.
     this.folder_sel = data.folder_sel === undefined ? "all" : data.folder_sel;
-    this.thread_sel = data.thread_sel === undefined ? "all" : data.thread_sel;
+    this.thread_sel = data.thread_sel === "none" ? [] : data.thread_sel;
+    this.authorized_file_threads = data.authorized_file_threads;
     this.date_start = data.start_date || null;
     this.date_end   = data.end_date   || null;
     this.zipid      = data.zipid;
@@ -353,6 +420,13 @@ class __chat_export_job extends Offline {
         console.error(`chat-export: required arg '${name}' is missing`);
         exit(1);
       }
+    }
+    if (
+      !Array.isArray(this.thread_sel)
+      || !Array.isArray(this.authorized_file_threads)
+    ) {
+      console.error("chat-export: explicit authorized thread scope is required");
+      exit(1);
     }
 
     global.verbosity = 2;
@@ -427,8 +501,22 @@ class __chat_export_job extends Offline {
       zipid: this.zipid, message: "GATHERING_MESSAGES",
     });
 
-    const file_threads = toArray(
-      await db.await_proc("channel_export_file_thread_list", this.uid, this.root_nid),
+    const file_threads = await revalidateAuthorizedFileThreads(
+      db,
+      this.uid,
+      this.authorized_file_threads,
+    );
+    writeFileSync(
+      pathJoin(stageDir, EXPORT_ACCESS_MANIFEST),
+      stringify({
+        schema_version: 1,
+        hub_id: `${this.hub_id}`,
+        file_threads: file_threads.map((ft) => ({
+          file_thread_id: ft.file_thread_id,
+          file_nid: ft.file_nid,
+        })),
+      }),
+      "utf8",
     );
     const folder_tree = toArray(
       await db.await_proc("channel_export_folder_tree", this.hub_id, this.root_nid),

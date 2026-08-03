@@ -28,6 +28,7 @@ const {
   ID_NOT_FOUND,
 } = Constants;
 const { resolve } = require("path");
+const { notifyMemberJoined } = require("../lib/notify-member-joined");
 
 /**
  * Configured envelope sender (email.json -> auth.user), resolved once. Used to
@@ -323,26 +324,60 @@ class __private_hub extends Hub {
   }
 
   /**
-   * Anonymous guest landing page for an INTERNAL workspace — the signin plugin's
-   * signin_guest widget (Figma 1602:76946 "Guest Landing Page (Viral) Restricted"):
-   * the workspace shown as redacted placeholders behind a "Content Restricted"
-   * card, with Login / Join Workspace CTAs.
+   * The invite CTA: the sign-in form, with the invited workspace named on the URL.
    *
-   * Used instead of the #/dmz/share/<token> view because an internal workspace has
-   * nothing a guest may browse — the share view would render an empty or view-only
-   * folder. An EXTERNAL workspace keeps the share link, which is the page in Figma
-   * 1602:77081 ("Link shared") and is already implemented by ui-team's dmz_sharebox.
+   *   <endpoint>/#/welcome/signin?hub_id=<hub_id>&name=<workspace>
    *
-   * `name` rides along so the landing page's header shows the real workspace name
-   * instead of its generic localized fallback; the page itself stays API-free.
+   * The frontend does the rest. welcome/index.js reads both params and arms them
+   * (libs/hub-deep-link); once the recipient is authenticated — however they got
+   * there, by sign-in, sign-up, or an already-live session — the desk offers to
+   * open the workspace ("Open Workspace" / "Cancel"), and confirming opens it
+   * through the app's own #/desk/wm/open/ deep link.
    *
-   * @param {string} hubname workspace display name
+   * `name` is display copy for that prompt, nothing more: it names the workspace in
+   * the message instead of the generic fallback. It is never trusted as an
+   * identity — `hub_id` alone selects the workspace, and the services behind it
+   * authorise the caller's own session.
+   *
+   * Replaces the former guest landing page (?view=guest&scope=…&token=…&hub=…),
+   * which cost two extra clicks — one to leave the landing page, one on the desk's
+   * "Open Workspace" prompt — to show a preview this email already contains. See
+   * docs/superpowers/specs/2026-08-02-invite-cta-skip-guest-landing-design.md.
+   * Links already sitting in inboxes still carry the old query and still work:
+   * nothing on the guest path has been removed.
+   *
+   * `hub_id` grants nothing on its own — every service behind it still authorises
+   * the caller's session, and the recipient is being invited to this workspace.
+   *
+   * @param {string|number} hub_id the workspace being invited to
+   * @param {string} [hubname] workspace display name, for the prompt's copy
    * @returns {string} absolute URL
    */
-  _guestLandingLink(hubname) {
-    const base = this.input.homepath(this.hub.get(Attr.hostname));
-    const q = `view=guest&name=${encodeURIComponent(hubname || "")}`;
-    return `${base}#/welcome/signin?${q}`;
+  _inviteCtaLink(hub_id, hubname) {
+    const base = `${this._endpointBase()}/#/welcome/signin`;
+    if (!hub_id) return base;
+    const q = [`hub_id=${encodeURIComponent(hub_id)}`];
+    if (hubname) q.push(`name=${encodeURIComponent(hubname)}`);
+    return `${base}?${q.join("&")}`;
+  }
+
+  /**
+   * Canonical app base for links mailed to people who are NOT yet in a workspace:
+   * `https://<main_domain><endpoint_path>`, the same shape analytics-server's
+   * _endpointBase() uses for the reward campaign's desk link.
+   *
+   * Deliberately NOT input.homepath(hub.hostname), which the share links use. That
+   * builds a per-hub host from the request's own path, which is right for opening a
+   * specific workspace but wrong for a generic app route: the guest landing page is
+   * served by the app at its endpoint, not per workspace. `endpoint_path` already
+   * carries the endpoint name on a non-main install (sysEnv joins it onto
+   * app_routing_mark), so this stays correct on multi-endpoint deployments.
+   *
+   * @returns {string} e.g. "https://drumee.com/-"
+   */
+  _endpointBase() {
+    const { main_domain, endpoint_path } = sysEnv();
+    return `https://${main_domain}${endpoint_path || "/-"}`;
   }
 
   /**
@@ -360,16 +395,20 @@ class __private_hub extends Hub {
   }
 
   /**
-   * Return the hub's anonymous public share link (#/dmz/share/<token>), creating
-   * the external room on first use. Invite emails point here so recipients can
-   * open the workspace with no login (the dmz module + dmz.login + show_node_by
-   * are all anonymous-scoped), instead of the private #/desk/wm/hub/ route.
+   * Ensure the hub HAS an anonymous public share room, and return its token.
    *
    * On an existing room the area-based permission is re-applied via
    * dmz_update_permission_next so the share token is preserved (not regenerated)
    * for previously-sent links.
+   *
+   * invite() calls this for the SIDE EFFECTS alone and drops the token: the CTA is
+   * now the sign-in form (_inviteCtaLink), not a share link. The room still has to
+   * exist and still has to carry the right guest permission, because copy_link and
+   * the share panel both hand that same room out.
+   *
+   * @returns {string} the share token, or "" when the room has none
    */
-  async _ensurePublicShareLink() {
+  async _ensurePublicShareToken() {
     const nid = this.home_id;
     const hub_id = this.hub.get(Attr.id);
     let rows = await this.db.await_proc("dmz_settings") || [];
@@ -381,7 +420,7 @@ class __private_hub extends Hub {
     } else {
       await this.yp.await_proc("dmz_update_permission_next", hub_id, nid, this._publicSharePermission());
     }
-    return this._getShareLink(res && res.link);
+    return (res && res.link) || "";
   }
 
   /**
@@ -907,6 +946,11 @@ class __private_hub extends Hub {
         err && err.message
       );
     }
+    // Notify online members (admins with the Folder settings permission matrix
+    // open) so the new member appears immediately without a manual reload.
+    // Covers both callers of _grantMembership: invite() branch B (drumate
+    // already exists) and add_contributors().
+    await notifyMemberJoined(this, this.hub.get(Attr.id), uid);
     return r;
   }
 
@@ -1071,9 +1115,6 @@ class __private_hub extends Hub {
     // The ONE axis the email body varies on: internal (private) vs external
     // (shared) workspace. Also decides whether the workspace preview is redacted.
     const workspace_external = isExternalArea(area);
-    // Narrower than workspace_external (excludes `dmz`) and used ONLY to gate the
-    // pending_invitation fallback below, preserving the pre-existing behaviour.
-    const isShareLink = (area === "share");
     const EXPIRY_DAYS = 7;
     const expiryTs = Math.floor(Date.now() / 1000) + EXPIRY_DAYS * 86400;
     const message = this.input.use(Attr.message)
@@ -1086,18 +1127,15 @@ class __private_hub extends Hub {
     // Latest 2 non-meeting messages for the "Recent Activity" preview; shown
     // (clear) for external workspaces, kept redacted for internal ones.
     const recent_messages = await this._recentMessages();
-    // Anonymous public share link for the hub. Still resolved unconditionally —
-    // it creates the external room on first use and re-applies the area-based guest
-    // permission, both of which must happen whatever the email links to. Computed
-    // once (one shared token per hub).
-    const publicLink = await this._ensurePublicShareLink();
-    // Where the email's CTA goes, per workspace scope:
-    //   external -> the share view itself (Figma 1602:77081, ui-team dmz_sharebox)
-    //   internal -> the guest landing gate (Figma 1602:76946, signin_guest)
-    // Both open with no login; neither exposes content the scope doesn't allow.
-    const ctaLink = workspace_external
-      ? publicLink
-      : this._guestLandingLink(hubname);
+    // Called for its SIDE EFFECTS only, which is why the token it returns is
+    // discarded: it creates the external room on first use and re-applies the
+    // area-based guest permission, and copy_link plus the share panel both depend
+    // on that room existing. The CTA itself no longer carries a share token —
+    // see _inviteCtaLink.
+    await this._ensurePublicShareToken();
+    // One CTA for everyone: the sign-in form, carrying the workspace so the desk
+    // can offer to open it once the recipient is authenticated.
+    const ctaLink = this._inviteCtaLink(hubId, hubname);
     // Address-book context resolved once for the whole call (see
     // _rememberInvitee). Null when the inviter has no drumate DB — the invite
     // still goes through, it just isn't remembered.
@@ -1139,15 +1177,29 @@ class __private_hub extends Hub {
           }
         } else {
           // No account yet: mint an invite token so the address can be redeemed
-          // after sign-up. `isShareLink` (area === "share" exactly) still gates the
-          // pending_invitation fallback — unchanged on purpose, since which rows a
-          // newcomer's invite writes is functional behaviour, not email copy.
+          // after sign-up, AND record a pending invitation so the membership is
+          // actually granted when the account appears.
+          //
+          // The pending row is what does the granting: signup's create_account
+          // calls _resolve_pending_invitation(email), which reads
+          // pending_invitation_get_by_email and adds the new user to each hub.
+          // Nothing anywhere redeems the invite TOKEN during sign-up — it is for
+          // the link flow — so an invite that writes only a token leaves the
+          // person with no membership at all.
+          //
+          // This used to be gated on `!isShareLink`, which excluded exactly the
+          // external (area === "share") workspaces: an invitee with no account
+          // signed up, was never added, and landed on a desk showing only the
+          // three default workspaces. Opening the workspace they were invited to
+          // then failed with "the file you requested does not exist", which is
+          // what a hub with no grant looks like from the client.
+          //
+          // Internal is unaffected: it already took the branch that writes this
+          // row, and it still writes exactly the same row.
           await this._addInviteToken(email, hubId, privilege, expiryTs);
-          if (!isShareLink) {
-            await this.yp.await_proc(
-              "yp_add_pending_invitation", hubId, 0, privilege, email
-            );
-          }
+          await this.yp.await_proc(
+            "yp_add_pending_invitation", hubId, 0, privilege, email
+          );
           await writeAudit(this, {
             db: this.hub.get(Attr.db_name),
             uid: this.uid,
@@ -1275,6 +1327,10 @@ class __private_hub extends Hub {
       entity_id: hub_id,
       log: `Invite accepted — ${this.user.get(Attr.email) || this.uid} joined the workspace`,
     });
+    // Notify the workspace's online members that a member just joined via
+    // token redemption — accept_invite pushed nothing before, so admins with
+    // the Folder settings matrix open were stuck with a stale member list.
+    await notifyMemberJoined(this, hub_id, this.uid);
     this.output.data({ hub_id });
   }
 
@@ -1606,6 +1662,11 @@ class __private_hub extends Hub {
         const sockets = await this.yp.await_proc('user_sockets', recipient.id);
         await RedisStore.sendData(this.payload(hub), sockets);
       }
+
+      // One broadcast per hub is enough — the matrix refetches the whole
+      // member list. uid is left null: this is an admin-driven multi-add, so
+      // every online member (including the acting admin) should refresh.
+      await notifyMemberJoined(this, hub_id, null);
 
       results.push({ hub_id, added: members.length });
     }

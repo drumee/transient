@@ -332,6 +332,70 @@ const invariants = [
     // than the apex) — the property that makes it un-usable as the apex auth session.
     assert.ok(/host\s*=\s*this\.input\.host\(\)/.test(page), 'host-scoping of the isolated cookie missing');
   }],
+
+  ['set_notify_on_open is creator-scoped and never takes an owner id from the client', async () => {
+    const ss = src('service/private/secure_share.js');
+    const idx = ss.indexOf('async set_notify_on_open()');
+    assert.ok(idx > 0, 'set_notify_on_open method not found');
+    const body = ss.slice(idx, idx + 1200);
+    // The ONLY thing standing between this setter and "edit anyone's link" is that
+    // the creator scope comes from the session (this.uid), never from the request.
+    assert.ok(
+      /await_proc\(\s*'secure_share_set_notify_on_open'\s*,\s*token\s*,\s*this\.uid\s*,/.test(body),
+      'creator scope must be this.uid, passed as the 2nd arg of the SP'
+    );
+    assert.ok(
+      !/creator_id/.test(body),
+      'must never read a creator/owner id from the request'
+    );
+    // An unknown token and someone else's token must be indistinguishable, else the
+    // endpoint becomes a probe for other people's tokens.
+    assert.ok(
+      /isEmpty\(row\)\)\s*\{?\s*\n?\s*return this\.output\.data\(\{\s*status:\s*'NOT_FOUND'/.test(body),
+      'empty SP result must answer NOT_FOUND'
+    );
+    // Explicit setter: only a recognised truthy form may turn notifications ON.
+    assert.ok(
+      /raw === 1 \|\| raw === '1' \|\| raw === true\) \? 1 : 0/.test(body),
+      'notify_on_open must be coerced strictly from an explicit value'
+    );
+    // Echo the STORED value so the panel can revert a toggle that did not persist.
+    assert.ok(
+      /notify_on_open:\s*Number\(row\.notify_on_open\)/.test(body),
+      'response must echo the stored value, not the requested one'
+    );
+  }],
+
+  ['secure_share_opened is a panel refresh, NOT a notification, so it is never gated', async () => {
+    // Corrected invariant. This push has exactly one consumer: the sender's own
+    // sharing panel, which refreshes its links list and access list on any
+    // 'share.track_event'. The activity panel narrows that same service down to
+    // 'secure_share_access_requested', so this event notifies nobody.
+    //
+    // Notification suppression belongs to the two feed procedures, which carry
+    // `AND t.notify_on_open != 0` (secure_share_open_feed and
+    // secure_share_list_open_notifications). Gating HERE as well meant turning
+    // the toggle off also killed the live refresh, so the access list only
+    // caught up on a reload -- the opposite of the requirement, which is no
+    // notification but an access list that keeps updating normally.
+    const dmz = src('service/dmz.js');
+    const pushIdx = dmz.indexOf("event           : 'secure_share_opened'");
+    assert.ok(pushIdx > 0, 'secure_share_opened push not found');
+
+    // Isolate the guard that wraps the push and assert notify_on_open is not in it.
+    const guardIdx = dmz.lastIndexOf('if (row.hub_id', pushIdx);
+    assert.ok(guardIdx > 0, 'the push guard was not found');
+    const guard = dmz.slice(guardIdx, pushIdx);
+    assert.ok(
+      !/notify_on_open/.test(guard),
+      'the secure_share_opened push must NOT be gated on notify_on_open -- that kills the live access-list refresh'
+    );
+
+    // The access-event write must still happen before the push, and outside any gate.
+    const logIdx = dmz.indexOf("'secure_share_log_access_event'");
+    assert.ok(logIdx > 0, 'access-event log not found');
+    assert.ok(logIdx < guardIdx, 'the access list must be recorded before the push guard');
+  }],
 ];
 
 // Behavioural tests only when their (private) dep loaded; canaries always.
