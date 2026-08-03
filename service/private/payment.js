@@ -178,8 +178,10 @@ class __private_payment extends Entity {
     if (!code) return this.output.data({ status: 'COUPON_INVALID' });
 
     const plan = String(this.input.use('plan', 'team')).trim().toLowerCase();
-    // Same outer gate as checkout: coupons exist for the paid org tiers.
-    if (!/^(team|business)$/.test(plan)) {
+    // Same outer gate as checkout: any self-serve paid tier. Pro (personal,
+    // 2026-08-03 revival) is couponable like the org tiers — the discount is
+    // applied to the Stripe subscription the same way regardless of holder.
+    if (!/^(pro|team|business)$/.test(plan)) {
       return this.output.data({ status: 'COUPON_PLAN_UNSUPPORTED', plan });
     }
 
@@ -472,7 +474,7 @@ class __private_payment extends Entity {
           return this.output.data({ status: 'COUPON_WITH_ACTIVE_SUB' });
         }
       }
-      if (!/^(team|business)$/.test(String(plan))) {
+      if (!/^(pro|team|business)$/.test(String(plan))) {
         return this.output.data({ status: 'COUPON_PLAN_UNSUPPORTED', plan });
       }
       if (!email) {
