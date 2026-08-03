@@ -1,19 +1,15 @@
 // service/private/payment.js
 const { Entity } = require('@drumee/server-core');
 const { stripeClient } = require('../lib/stripe');
+// Shared with promo.js's direct redeem — see lib/mkt-coupon for why the
+// hold TTL must be one value across both.
+const { COUPON_HOLD_TTL_SEC } = require('../lib/mkt-coupon');
 
 // Billing currency for every catalog / plan lookup. The 2026-07 pricing
 // rebuild moved the catalog to USD; the old EUR rows are deactivated in
 // yp.plan (a Stripe price's currency cannot be changed, so they are separate
 // rows). Lookups pass this explicitly, so it must match the active rows.
 const CURRENCY = 'usd';
-
-// How long an unpaid coupon hold survives before it is treated as abandoned.
-// Shared by mkt_coupon_reserve (which RELEASES holds older than this) and
-// mkt_coupon_validate (which IGNORES them when counting). One constant on
-// purpose: if the preview aged holds out on a different clock than the
-// reserve, Apply and Proceed would disagree about whether a code is spent.
-const COUPON_HOLD_TTL_SEC = 86400;
 
 class __private_payment extends Entity {
   // Lazy Stripe client. catalog()/subscription_status() are DB-only and MUST

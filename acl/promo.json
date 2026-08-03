@@ -43,6 +43,23 @@
         { "code": "PROVISION_FAILED", "description": "org bootstrap failed (see org_provision)" }
       ]
     },
+    "redeem": {
+      "doc": "Redeem a free-period MKT partner code straight into a plan — no Stripe Checkout, no card. Only codes with percent_off=0 and trial_days>0 qualify; a discount code has money to collect and must go through checkout. Grants a yp.quota row the expiry worker later reverts (same shape as claim).",
+      "scope": "hub",
+      "permission": {
+        "src": "owner"
+      },
+      "params": {
+        "promo_code": { "type": "string", "required": true, "doc": "Partner code to redeem" },
+        "plan": { "type": "string", "required": true, "doc": "Plan to grant (team|business); constrained by the coupon's plan_scope" }
+      },
+      "errors": [
+        { "code": "COUPON_NOT_REDEEMABLE", "description": "code carries a discount — redeem at checkout, not here" },
+        { "code": "COUPON_PLAN_MISMATCH", "description": "code is locked to a different plan" },
+        { "code": "ALREADY_IN_OTHER_DOMAIN", "description": "payer already belongs to another organisation" },
+        { "code": "PROVISION_FAILED", "description": "org bootstrap failed (see org_provision)" }
+      ]
+    },
     "cancel": {
       "doc": "End an active LAUNCH30 trial early from Billing. No Stripe object exists — clears the org yp.quota row (same path as promoExpiryWorker) and marks the claim expired. Immediate, not cancel-at-period-end.",
       "scope": "hub",
