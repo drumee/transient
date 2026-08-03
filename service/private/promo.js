@@ -10,6 +10,7 @@
 // design doc's API contract).
 const { Entity } = require('@drumee/server-core');
 const { isEmpty } = require('lodash');
+const { COUPON_HOLD_TTL_SEC } = require('../lib/mkt-coupon');
 
 // Env-overridable, defaults are the real product/business values — same
 // pattern as the workers (reminderWorker's REMINDER_INTERVAL_SEC,
@@ -198,6 +199,150 @@ class __private_promo extends Entity {
       trial_ends_at: row && row.trial_ends_at,
       quota,
     });
+  }
+
+  /**
+   * Redeem an MKT partner code straight into a plan — no Stripe Checkout,
+   * no card. Lives here rather than in payment.js because it is the
+   * LAUNCH30 shape, not the Stripe one: provision the org, write a
+   * yp.quota row, let the expiry worker revert it. _provisionOrg and the
+   * no-Stripe grant already exist here; duplicating them next to
+   * payment.checkout would give the same feature two implementations.
+   *
+   * ONLY free-period codes qualify (percent_off = 0, trial_days > 0). A
+   * percent-off code discounts a subscription that still charges money —
+   * handing the plan over for free here would give away the product. The
+   * proc enforces this too; the check is repeated so the client gets a
+   * useful answer without a round trip through a grant that would fail.
+   *
+   * The caller CHOOSES the plan (a coupon says where it may be spent via
+   * plan_scope, never which plan to hand out). plan_scope still gates it.
+   */
+  async redeem() {
+    const code = String(
+      this.input.use('promo_code', '') || this.input.use('code', '') || '',
+    ).trim();
+    if (!code) return this.output.data({ status: 'COUPON_INVALID' });
+
+    const plan = String(this.input.use('plan', '') || '').trim().toLowerCase();
+    if (!/^(team|business)$/.test(plan)) {
+      return this.output.data({ status: 'COUPON_PLAN_UNSUPPORTED', plan });
+    }
+    // Same move-semantics guard as the LAUNCH30 claim and the checkout org
+    // bootstrap: someone already inside another org's domain cannot be
+    // handed a second organisation.
+    //
+    // "Another org's" is load-bearing. A successful redeem moves the caller
+    // into the domain of the org it just created for them, so a plain
+    // domain_id > 1 test would reject their own retry — exactly the case
+    // mkt_coupon_redeem's idempotency exists to serve (client never saw the
+    // OK, user presses Redeem again). Let an owner through: org_provision
+    // returns their existing org rather than a second one, and the grant
+    // proc answers already=1 without re-granting.
+    if (~~this.user.domain_id() > 1) {
+      const own = this._row2(await this.yp.await_proc(
+        'organisation_get', String(this.user.domain_id()),
+      ));
+      if (!own || own.owner_id !== this.uid) {
+        return this.output.data({ status: 'ALREADY_IN_OTHER_DOMAIN' });
+      }
+    }
+
+    const payer = await this.yp.await_proc('payment_get_payer', this.uid);
+    const email = (payer && payer.email) || this.user.get('email') || '';
+    if (!email) return this.output.data({ status: 'COUPON_EMAIL_REQUIRED' });
+
+    // Validate BEFORE provisioning. _provisionOrg is irreversible — it
+    // creates an organisation, a domain and a vhost, and moves the payer
+    // into that domain. Doing it first meant a rejected code (a typo, a
+    // discount code, an exhausted one) still left a junk org behind AND
+    // pushed domain_id above 1, which the guard above then reads as
+    // "already belongs to an organisation" — permanently locking the user
+    // out of redeeming anything. Observed on stage: one refused
+    // COUPON_NOT_REDEEMABLE moved a Free payer from domain 1 to 43.
+    //
+    // mkt_coupon_validate writes nothing and runs the same checks the grant
+    // will, so an invalid code now costs a lookup and nothing else. The
+    // grant re-checks everything anyway (defense in depth against a race
+    // between these two calls).
+    const check = this._row2(await this.yp.await_proc(
+      'mkt_coupon_validate', code, email, plan, COUPON_HOLD_TTL_SEC,
+    ));
+    if (!check || check.error) {
+      return this.output.data({
+        status: (check && check.error) || 'COUPON_INVALID',
+        code: check && check.code,
+        email: check && check.email,
+        plan_scope: check && check.plan_scope,
+        requested_plan: check && check.requested_plan,
+      });
+    }
+    // The free-period rule, checked here too so a discount code is refused
+    // before it can cost the caller an organisation.
+    if ((parseInt(check.percent_off, 10) || 0) !== 0
+        || (parseInt(check.trial_days, 10) || 0) <= 0) {
+      return this.output.data({
+        status: 'COUPON_NOT_REDEEMABLE',
+        code: check.code,
+        kind: check.kind,
+        percent_off: check.percent_off,
+        trial_days: check.trial_days,
+      });
+    }
+
+    const org = await this._provisionOrg();
+    if (!org || org.error) {
+      return this.output.data({
+        status: (org && org.error) || 'PROVISION_FAILED',
+      });
+    }
+
+    const row = this._row2(await this.yp.await_proc(
+      'mkt_coupon_redeem',
+      code, email, this.uid, plan, org.id, org.domain_id, COUPON_HOLD_TTL_SEC,
+    ));
+    if (!row || row.error) {
+      return this.output.data({
+        status: (row && row.error) || 'COUPON_INVALID',
+        code: row && row.code,
+        email: row && row.email,
+        plan_scope: row && row.plan_scope,
+        requested_plan: row && row.requested_plan,
+        kind: row && row.kind,
+      });
+    }
+
+    // Same event the Stripe webhook emits on a real plan change, so an
+    // already-open billing tab reflects the new plan without a reload.
+    let quota;
+    try {
+      quota = await this.yp.await_func('get_quota', this.uid);
+      if (typeof quota === 'string') {
+        try { quota = JSON.parse(quota); } catch (e) { quota = undefined; }
+      }
+      await this.notify_user(this.uid, {
+        service: 'payment.plan_updated',
+        plan,
+        status: 'trialing',
+        period_end: row.trial_ends_at,
+        quota,
+      });
+    } catch (e) { /* best-effort */ }
+
+    this.output.data({
+      status: 'OK',
+      already: ~~row.already === 1 ? 1 : 0,
+      code: row.code,
+      plan: row.plan,
+      org_id: row.org_id,
+      domain_id: row.domain_id,
+      trial_ends_at: row.trial_ends_at,
+      quota,
+    });
+  }
+
+  _row2(res) {
+    return Array.isArray(res) ? res[0] : res;
   }
 
   async _row() {

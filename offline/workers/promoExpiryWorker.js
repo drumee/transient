@@ -1,14 +1,23 @@
 /**
- * LAUNCH30 Promo Expiry Worker
+ * Promo Expiry Worker
  *
- * Reverts a claimed LAUNCH30 trial (yp.quota source='promo-launch30') once
- * its 30 days pass. Mirrors the exact fall-back an org's Stripe cancellation
- * already produces: payment_clear_entitlement DELETEs the org-keyed quota
- * row, so every member falls to their own per-user free tier (tier-4) rather
- * than a locked-out ('free','org') row. reward_grant_storage re-materialising
- * inside that same proc does not fire here — the claimant has no
- * yp.reward_claim completion — so the net effect for a LAUNCH30 org is
- * exactly "back to Free".
+ * Reverts the two kinds of entitlement that were granted WITHOUT a Stripe
+ * subscription, and therefore have nothing else to end them:
+ *
+ *   1. LAUNCH30 claims        yp.quota source='promo-launch30'  (30 days)
+ *   2. Direct coupon redeems  yp.quota source='mkt-coupon'      (the code's
+ *      free period) — promo.redeem, no Checkout, no card
+ *
+ * Anything that DID go through Stripe Checkout is deliberately out of scope:
+ * Stripe owns its end date, and reverting it here would cancel a plan the
+ * customer is still paying for. mkt_coupon_redeem_due encodes that exclusion.
+ *
+ * Both revert the same way an org's Stripe cancellation already does:
+ * payment_clear_entitlement DELETEs the org-keyed quota row, so every member
+ * falls to their own per-user free tier (tier-4) rather than a locked-out
+ * ('free','org') row. reward_grant_storage re-materialising inside that same
+ * proc does not fire here — these payers have no yp.reward_claim completion —
+ * so the net effect is exactly "back to Free".
  *
  * Model: mirrors reminderWorker.js — plain setTimeout self-rescheduler (the
  * runtime ships Bull, not `cron`), short interval since trials expire at an
@@ -52,18 +61,59 @@ async function expireOne(row) {
   }
 }
 
+/**
+ * Same revert, different bookkeeping: an MKT partner code redeemed
+ * DIRECTLY (promo.redeem — no Stripe Checkout, no card) also leaves a
+ * yp.quota row with nothing to end it. mkt_coupon_redeem_due deliberately
+ * excludes redemptions that DID go through Checkout, so a paying
+ * customer's subscription is never touched here.
+ *
+ * Clear first, mark second: if the process dies between the two the row
+ * stays 'confirmed' and the next run simply retries, rather than being
+ * recorded as expired while the entitlement is still live.
+ */
+async function expireOneRedemption(row) {
+  const { id, code, org_id, email } = row;
+  try {
+    await yp.await_proc('payment_clear_entitlement', org_id);
+    await yp.await_proc('mkt_coupon_redeem_mark_expired', id);
+    console.log(`[PromoExpiryWorker] expired coupon redemption id=${id} code=${code} org=${org_id} email=${email}`);
+    return true;
+  } catch (error) {
+    console.error(`[PromoExpiryWorker] failed to expire redemption id=${id} org=${org_id}:`, error.message);
+    return false;
+  }
+}
+
 async function runExpiryJob() {
+  // The two campaigns are independent: a failure to read one must not stop
+  // the other from being reverted.
   try {
     const due = asArray(await yp.await_proc('promo_launch30_due'));
-    if (!due.length) return;
-    console.log(`[PromoExpiryWorker] ${due.length} trial(s) due for expiry`);
-    let expired = 0;
-    for (const row of due) {
-      if (await expireOne(row)) expired++;
+    if (due.length) {
+      console.log(`[PromoExpiryWorker] ${due.length} LAUNCH30 trial(s) due for expiry`);
+      let expired = 0;
+      for (const row of due) {
+        if (await expireOne(row)) expired++;
+      }
+      console.log(`[PromoExpiryWorker] LAUNCH30 done — ${expired}/${due.length} expired`);
     }
-    console.log(`[PromoExpiryWorker] done — ${expired}/${due.length} expired`);
   } catch (error) {
-    console.error('[PromoExpiryWorker] Job failed:', error);
+    console.error('[PromoExpiryWorker] LAUNCH30 job failed:', error);
+  }
+
+  try {
+    const dueCodes = asArray(await yp.await_proc('mkt_coupon_redeem_due'));
+    if (dueCodes.length) {
+      console.log(`[PromoExpiryWorker] ${dueCodes.length} coupon redemption(s) due for expiry`);
+      let expired = 0;
+      for (const row of dueCodes) {
+        if (await expireOneRedemption(row)) expired++;
+      }
+      console.log(`[PromoExpiryWorker] coupons done — ${expired}/${dueCodes.length} expired`);
+    }
+  } catch (error) {
+    console.error('[PromoExpiryWorker] coupon redemption job failed:', error);
   }
 }
 
