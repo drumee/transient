@@ -225,9 +225,13 @@ class __private_promo extends Entity {
     if (!code) return this.output.data({ status: 'COUPON_INVALID' });
 
     const plan = String(this.input.use('plan', '') || '').trim().toLowerCase();
-    if (!/^(team|business)$/.test(plan)) {
+    if (!/^(pro|team|business)$/.test(plan)) {
       return this.output.data({ status: 'COUPON_PLAN_UNSUPPORTED', plan });
     }
+    // Pro is PERSONAL (entity_type 'user', organization 0). It grants to the
+    // redeemer themselves, so none of the organisation machinery below —
+    // the move-semantics guard, the provisioning — applies to it.
+    const needsOrg = /^(team|business)$/.test(plan);
     // Same move-semantics guard as the LAUNCH30 claim and the checkout org
     // bootstrap: someone already inside another org's domain cannot be
     // handed a second organisation.
@@ -239,7 +243,7 @@ class __private_promo extends Entity {
     // OK, user presses Redeem again). Let an owner through: org_provision
     // returns their existing org rather than a second one, and the grant
     // proc answers already=1 without re-granting.
-    if (~~this.user.domain_id() > 1) {
+    if (needsOrg && ~~this.user.domain_id() > 1) {
       const own = this._row2(await this.yp.await_proc(
         'organisation_get', String(this.user.domain_id()),
       ));
@@ -290,16 +294,28 @@ class __private_promo extends Entity {
       });
     }
 
-    const org = await this._provisionOrg();
-    if (!org || org.error) {
-      return this.output.data({
-        status: (org && org.error) || 'PROVISION_FAILED',
-      });
+    // Personal plans provision nothing: the grant lands on the redeemer,
+    // on whatever domain they already live on. Creating an organisation for
+    // a Pro redemption would hand them a tenant the plan does not include
+    // (organization 0) and move their domain_id, which is exactly the
+    // irreversible side effect the ordering fix above exists to avoid.
+    let org = null;
+    if (needsOrg) {
+      org = await this._provisionOrg();
+      if (!org || org.error) {
+        return this.output.data({
+          status: (org && org.error) || 'PROVISION_FAILED',
+        });
+      }
     }
 
+    // The proc reads entity_type from the catalog and picks the quota holder
+    // itself; for a personal plan these two arguments are simply unused.
     const row = this._row2(await this.yp.await_proc(
       'mkt_coupon_redeem',
-      code, email, this.uid, plan, org.id, org.domain_id, COUPON_HOLD_TTL_SEC,
+      code, email, this.uid, plan,
+      org ? org.id : '', org ? org.domain_id : 0,
+      COUPON_HOLD_TTL_SEC,
     ));
     if (!row || row.error) {
       return this.output.data({
