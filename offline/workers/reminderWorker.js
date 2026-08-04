@@ -304,14 +304,34 @@ async function runReminderJob() {
   }
 }
 
+/**
+ * Poll ON the wall-clock boundary, not `INTERVAL_MS` after the previous run.
+ *
+ * Meetings are scheduled to the minute and announced only once `stime <= now`,
+ * so where the tick falls inside the minute IS the delay the user sees. A
+ * chained `setTimeout(INTERVAL_MS)` puts it at whatever second the process
+ * happened to start on — measured at :30 past every minute on stage, i.e. a
+ * meeting set for 19:54 popped up at 19:54:30 — and it creeps further out over
+ * time, because the next timer is only armed once the current run has
+ * finished. Aligning removes both: the announcement now lands within a
+ * fraction of a second of the scheduled minute, at the same one-query-per-poll
+ * cost, and the accumulated drift is re-zeroed on every tick.
+ *
+ * TICK_SKEW_MS keeps `now` on the far side of the boundary if the timer fires
+ * a hair early; landing at 19:53:59.999 would read as "not due yet" and cost a
+ * whole extra period.
+ */
+const TICK_SKEW_MS = 250;
+
 function scheduleNext() {
+  const delay = INTERVAL_MS - (Date.now() % INTERVAL_MS) + TICK_SKEW_MS;
   setTimeout(async () => {
     try {
       await runReminderJob();
     } finally {
       scheduleNext();
     }
-  }, INTERVAL_MS);
+  }, delay);
 }
 
 async function startWorker() {

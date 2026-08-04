@@ -1097,8 +1097,115 @@ class __private_hub extends Hub {
    *
    * Input: { hub_id, invitees:[email], privilege, message? }
    */
+  /**
+   * Seat budget of the organisation that owns `domainId`, or null when no cap
+   * applies (no organisation, Free — refused elsewhere — or an unlimited tier).
+   *
+   * `used` counts members AND invitations still outstanding: a pending invite
+   * holds a seat, because it can be redeemed at any moment. Same arithmetic as
+   * admin-api's `_orgSeatsUsed`, deliberately — invite, accept and member_add
+   * must not disagree about how full a plan is, or the one with the loosest
+   * sum becomes the way around the other two.
+   *
+   * Every failure returns null (no cap) rather than throwing: a stats query
+   * that times out must not make a workspace uninvitable. The accept guard is
+   * the backstop that keeps occupancy correct either way.
+   */
+  async _seatBudget(domainId) {
+    try {
+      const dom = ~~domainId;
+      if (dom <= 1) return null;
+      const org = await this.yp.await_proc('organisation_get', String(dom));
+      if (isEmpty(org) || !org.id) return null;
+      const raw = await this.yp.await_func('get_quota', org.owner_id || this.uid);
+      const quota = typeof raw === 'string' ? JSON.parse(raw || '{}') : (raw || {});
+      const seat = parseInt(quota && quota.seat, 10) || 0;
+      // 0 = Free (org creation is blocked upstream); the huge sentinel is the
+      // unlimited tier. Neither is a finite budget to spend here.
+      if (seat <= 0 || seat >= 100000) return null;
+      let stats = await this.yp.await_proc('member_list_stats', org.id);
+      if (isArray(stats)) stats = stats[0];
+      const members = parseInt(stats && stats.total_members, 10) || 0;
+      const pending = parseInt(stats && stats.pending_invites, 10) || 0;
+      return {
+        seat, members, pending,
+        used: members + pending,
+        free: Math.max(0, seat - members - pending),
+      };
+    } catch (e) {
+      this.warn('[hub] seat budget lookup failed:', e && e.message);
+      return null;
+    }
+  }
+
+  /**
+   * Domain that owns a hub — the invitee's own domain is not it.
+   *
+   * No `type='hub'` filter: a personal workspace is the drumate's own entity
+   * (type 'drumate') and its id is used as a hub id throughout. Filtering on
+   * 'hub' silently returned nothing for exactly those, which made the accept
+   * guard below no-op on the most common workspace there is.
+   */
+  async _hubDomainId(hubId) {
+    try {
+      const row = await this.yp.await_query(
+        "SELECT dom_id FROM entity WHERE id=? LIMIT 1", hubId
+      );
+      const r = isArray(row) ? row[0] : row;
+      return ~~(r && r.dom_id);
+    } catch (e) {
+      return 0;
+    }
+  }
+
+  /**
+   * Wildcard permission this user already holds on a workspace, 0 when none.
+   *
+   * The '*' row is the workspace-wide grant — the same row permission_grant
+   * writes — so it is the figure an invitation would overwrite.
+   *
+   * db_name comes from get_db_name (derived from the token's own hub id), but
+   * it is interpolated rather than bound, so it is checked against the
+   * identifier charset before use. Any failure reads as 0: the caller then
+   * treats them as a new member, which grants rather than withholds access —
+   * the safe direction for a lookup that could not answer.
+   */
+  async _hubPermission(db_name, uid) {
+    try {
+      if (!/^[A-Za-z0-9_]+$/.test(String(db_name || ''))) return 0;
+      let row = await this.yp.await_query(
+        `SELECT permission FROM \`${db_name}\`.permission
+          WHERE resource_id='*' AND entity_id=? LIMIT 1`,
+        uid
+      );
+      if (isArray(row)) row = row[0];
+      return ~~(row && row.permission);
+    } catch (e) {
+      return 0;
+    }
+  }
+
   async invite() {
     let invitees = toArray(this.input.need("invitees"));
+    // Seats are spent HERE, not at redemption: an existing drumate is granted
+    // membership immediately below, and a newcomer gets a token that reserves
+    // one. Until 2026-08 this path had no cap at all — a Team org with one
+    // member could send fifteen invitations, every one accepted, and land at
+    // sixteen members on ten seats once they were redeemed.
+    //
+    // Refuse the whole call rather than filling the remaining seats and
+    // dropping the rest: a partial invite silently loses people, and the
+    // caller cannot tell which of the addresses they typed actually went out.
+    const budget = await this._seatBudget(this.user.domain_id());
+    if (budget && invitees.length > budget.free) {
+      return this.output.data({
+        status: 'SEAT_LIMIT_REACHED',
+        seat: budget.seat,
+        used: budget.used,
+        free: budget.free,
+        requested: invitees.length,
+      });
+    }
     const privilege = this.input.use(Attr.privilege)
       || this.hub.get(Attr.settings).default_privilege;
     const lang = this.user.language() || this.input.app_language();
@@ -1305,6 +1412,9 @@ class __private_hub extends Hub {
     if (!db_name) {
       return this.output.data({ status: 'hub_not_found' });
     }
+    // What this person already holds on the workspace, before anything is
+    // written. Two different decisions below depend on it.
+    const held = await this._hubPermission(db_name, this.uid);
     let meta = {};
     try {
       meta = typeof tokenRow.metadata === 'string'
@@ -1312,12 +1422,67 @@ class __private_hub extends Hub {
         : (tokenRow.metadata || {});
     } catch (e) { }
     const permission = meta.permission || 7;
+    // The proc's third argument is JSON and means "keep what is there" when
+    // empty — but await_proc turns null into '', and '' is not valid JSON, so
+    // the call errored and the driver swallowed it. Silently: every redemption
+    // logged "Origin of error: call yp.token_hub_invite_set_status(…, '')" and
+    // carried on, leaving the token 'active'. An invite link is single-use by
+    // design (the status check above answers 'already_used'), and it never
+    // became one — any copy of the link stayed redeemable until it expired.
+    // Hand back the metadata it already holds: valid JSON, same value.
+    const keep_meta = typeof tokenRow.metadata === 'string'
+      ? tokenRow.metadata
+      : JSON.stringify(tokenRow.metadata || {});
+
+    // Already in, with at least what the invitation offers: redeem the token
+    // and touch nothing else.
+    //
+    // permission_grant is a REPLACE, so it overwrites whatever the person had
+    // — it cannot tell a new member from an existing one. An invitation
+    // carrying the default 7 sent to a workspace admin, or to its owner, took
+    // their access AWAY. Seen for real: an owner on 63 dropped to 7 by
+    // redeeming a link to their own workspace, which then failed every
+    // owner-scoped service on it (all of payment.*, since its ACL is
+    // scope:hub/src:owner).
+    if (held >= permission) {
+      await this.yp.await_proc('token_hub_invite_set_status', secret, 'accepted', keep_meta);
+      return this.output.data({ hub_id, already_member: 1 });
+    }
+
+    // Occupancy guard. Invitations sent before the cap existed — or sent by a
+    // path that never checked — must not be able to seat more people than the
+    // plan sells. This is the backstop: the invite side reserves, this side is
+    // what actually fills a seat.
+    //
+    // Skipped for someone already on the workspace (held > 0): they are being
+    // raised from one access level to another, not taking a new seat, and a
+    // full plan must not block that.
+    //
+    // Measured against MEMBERS, not members+pending: the person accepting is
+    // themselves one of the pending, so comparing the combined figure would
+    // refuse the very invitations the org legitimately reserved room for.
+    // Members-only lets every reserved seat be taken and stops exactly at the
+    // cap — nine pending on a ten-seat plan with one member all get in; a
+    // twelfth, over-issued before the cap landed, does not.
+    //
+    // Scoped to the HUB's organisation: the person accepting is typically
+    // still on their personal domain, so their own domain says nothing.
+    const hubDom = held > 0 ? 0 : await this._hubDomainId(hub_id);
+    const budget = await this._seatBudget(hubDom);
+    if (budget && budget.members >= budget.seat) {
+      return this.output.data({
+        status: 'SEAT_LIMIT_REACHED',
+        hub_id,
+        seat: budget.seat,
+        members: budget.members,
+      });
+    }
     await this.yp.await_proc(`${db_name}.add_member`, this.uid, permission, 0);
     await this.yp.await_proc(
       `${db_name}.permission_grant`,
       '*', this.uid, 0, permission, 'system', 'Redeemed hub invite token'
     );
-    await this.yp.await_proc('token_hub_invite_set_status', secret, 'accepted', null);
+    await this.yp.await_proc('token_hub_invite_set_status', secret, 'accepted', keep_meta);
     await writeAudit(this, {
       db: db_name,
       uid: this.uid,
@@ -1473,6 +1638,20 @@ class __private_hub extends Hub {
     if (isEmpty(users) || isEmpty(assignments)) {
       this.output.data({ success: false, results: [] });
       return;
+    }
+
+    // Same seat rule as `invite` — this is the multi-workspace variant of the
+    // same act, so it cannot be the way around the cap.
+    const budget = await this._seatBudget(this.user.domain_id());
+    if (budget && users.length > budget.free) {
+      return this.output.data({
+        success: false,
+        status: 'SEAT_LIMIT_REACHED',
+        seat: budget.seat,
+        used: budget.used,
+        free: budget.free,
+        requested: users.length,
+      });
     }
 
     const username = this.user.get('fullname');

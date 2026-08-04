@@ -1,6 +1,9 @@
 // service/private/payment.js
 const { Entity } = require('@drumee/server-core');
 const { stripeClient } = require('../lib/stripe');
+// Shared with promo.js's direct redeem — see lib/mkt-coupon for why the
+// hold TTL must be one value across both.
+const { COUPON_HOLD_TTL_SEC } = require('../lib/mkt-coupon');
 
 // Billing currency for every catalog / plan lookup. The 2026-07 pricing
 // rebuild moved the catalog to USD; the old EUR rows are deactivated in
@@ -15,6 +18,68 @@ class __private_payment extends Entity {
     if (this.__stripe) return this.__stripe;
     this.__stripe = stripeClient(); // throws STRIPE_KEY_MISSING if unconfigured
     return this.__stripe;
+  }
+
+  _row(res) {
+    return Array.isArray(res) ? res[0] : res;
+  }
+
+  // Lazily create (or reuse) the Stripe Coupon for an MKT outreach code.
+  // percent_off=0 → no Stripe coupon (free-months / warm_trial use trial_end only).
+  // trial_days is applied separately via subscription_data.trial_end.
+  async _ensureStripeCoupon(row) {
+    const percent = parseInt(row && row.percent_off, 10) || 0;
+    if (percent <= 0) return null;
+    if (row && row.stripe_coupon_id) return row.stripe_coupon_id;
+    const stripe = this._stripe();
+    const code = String((row && row.code) || '').toUpperCase();
+    const months = parseInt(row && row.duration_months, 10) || 0;
+    const id = `mkt_${code.toLowerCase().replace(/[^a-z0-9_]/g, '_')}`.slice(0, 40);
+    const payload = {
+      id,
+      percent_off: percent,
+      name: `MKT ${code}`,
+      metadata: {
+        mkt_code: code,
+        partner: (row && row.partner) || '',
+        kind: (row && row.kind) || '',
+      },
+    };
+    // duration_months=0 → one-shot invoice discount; else repeating N cycles.
+    if (months > 0) {
+      payload.duration = 'repeating';
+      payload.duration_in_months = months;
+    } else {
+      payload.duration = 'once';
+    }
+    let created;
+    try {
+      created = await stripe.coupons.create(payload);
+    } catch (e) {
+      // Idempotent: a previous checkout may have created the Stripe coupon
+      // before YP got the id written (or the write failed).
+      if (/already exists/i.test((e && e.message) || '')) {
+        created = await stripe.coupons.retrieve(id);
+      } else {
+        throw e;
+      }
+    }
+    if (row && row.coupon_id && created && created.id) {
+      await this.yp.await_proc('mkt_coupon_set_stripe_id', row.coupon_id, created.id);
+    }
+    return created.id;
+  }
+
+  // Resolve free period length from coupon kind.
+  // warm_trial / free_months: prefer trial_days; else duration_months × 30.
+  _promoTrialDays(row) {
+    const kind = String((row && row.kind) || '');
+    let td = parseInt(row && row.trial_days, 10) || 0;
+    const months = parseInt(row && row.duration_months, 10) || 0;
+    if (td <= 0 && (kind === 'warm_trial' || kind === 'free_months') && months > 0) {
+      td = months * 30;
+    }
+    return td;
   }
 
   // Priced catalog from yp.plan. Enriched with the live Stripe unit amount when
@@ -93,6 +158,75 @@ class __private_payment extends Entity {
     this.output.data(res);
   }
 
+  /**
+   * Price an "Apply" click on the checkout promo field, without spending
+   * the code. mkt_coupon_validate runs the same checks as
+   * mkt_coupon_reserve but writes nothing, so a shopper can try a code,
+   * see the discounted total, and change their mind — reserving here
+   * would burn a redemption (and, with max_redemptions, someone else's
+   * slot) for a purchase that may never happen.
+   *
+   * Returns the offer's shape, NOT a price: the amount is the catalog's
+   * and the client already renders it, so the discount is applied there
+   * against the same figures the summary is built from. The authoritative
+   * application still happens in checkout(); this is a preview only.
+   */
+  async preview_coupon() {
+    const code = String(
+      this.input.use('promo_code', '') || this.input.use('coupon_code', '') || '',
+    ).trim();
+    if (!code) return this.output.data({ status: 'COUPON_INVALID' });
+
+    const plan = String(this.input.use('plan', 'team')).trim().toLowerCase();
+    // Same outer gate as checkout: any self-serve paid tier. Pro (personal,
+    // 2026-08-03 revival) is couponable like the org tiers — the discount is
+    // applied to the Stripe subscription the same way regardless of holder.
+    if (!/^(pro|team|business)$/.test(plan)) {
+      return this.output.data({ status: 'COUPON_PLAN_UNSUPPORTED', plan });
+    }
+
+    // Keyed by email exactly like reserve, or the "1 email = 1 live deal"
+    // rule would pass here and fail at purchase.
+    const payer = await this.yp.await_proc('payment_get_payer', this.uid);
+    const email = (payer && payer.email) || '';
+    if (!email) return this.output.data({ status: 'COUPON_EMAIL_REQUIRED' });
+
+    const row = this._row(
+      await this.yp.await_proc(
+        'mkt_coupon_validate', code, email, plan, COUPON_HOLD_TTL_SEC,
+      ),
+    );
+    if (!row || row.error) {
+      return this.output.data({
+        status: (row && row.error) || 'COUPON_INVALID',
+        code: row && row.code,
+        email: row && row.email,
+        plan_scope: row && row.plan_scope,
+        requested_plan: row && row.requested_plan,
+      });
+    }
+
+    const percent_off = parseInt(row.percent_off, 10) || 0;
+    const trial_days = this._promoTrialDays(row);
+    // Mirrors checkout's own refusal: a code with neither a discount nor a
+    // free period would render as "applied" and change nothing.
+    if (!percent_off && !trial_days) {
+      return this.output.data({ status: 'OFFER_INVALID', code: row.code });
+    }
+
+    this.output.data({
+      status: 'OK',
+      code: row.code,
+      partner: row.partner || '',
+      kind: row.kind || '',
+      plan_scope: row.plan_scope || 'all',
+      percent_off,
+      trial_days,
+      // 0 = Stripe duration 'once' (single invoice), else N billing cycles.
+      duration_months: parseInt(row.duration_months, 10) || 0,
+    });
+  }
+
   // Hosted Checkout. entity_type 'user' (individual Free->Pro) or 'org' (team,
   // flat: Stripe quantity is always 1, customer = the org the caller owns).
   async checkout() {
@@ -169,24 +303,16 @@ class __private_payment extends Entity {
     // as soon as the new one is paid, so the two never bill in parallel. Do not
     // relax this guard without that half in place.
     const supersede = !!this.input.use('supersede', '');
-    // `defer` refines supersede for a same-plan cycle switch (month <-> year):
-    // instead of killing the current subscription the moment the new one is
-    // paid, the new one starts only when the current one expires — Stripe's
-    // trial_end carries the start date, and the webhook downgrades its cancel
-    // of the replaced subscription to cancel_at_period_end. The user keeps
-    // every day already paid for and is charged nothing today.
-    //
-    // trial_end must be at least 48h out (Stripe rejects less); a switch
-    // requested closer to renewal than that falls back to the immediate
-    // replacement — the remaining time is too short to be worth a second
-    // subscription's bookkeeping, and the FE copy for that path says the
-    // current plan ends now.
-    const defer = supersede && !!this.input.use('defer', '');
+    // A same-plan cycle switch used to be DEFERRED here: the new subscription
+    // idled on a Stripe trial_end until the current one expired, so nothing
+    // was charged on the day. Product moved it back to charging at checkout
+    // like every other plan change, and the deferral had cost more than it
+    // bought — Checkout can only express "no charge now" as a trial, which
+    // Stripe renders as "N days free" under a "Start trial" button (fixed
+    // copy, unrewordable) and settles with a $0 invoice that read as a failed
+    // purchase. Nothing sets trial_end for a cycle switch now; the only
+    // remaining source is an MKT promo's free days, below.
     let trial_end = 0;
-    if (defer && live) {
-      const pe = ~~(current && current.period_end);
-      if (pe >= now + 48 * 3600 + 300) trial_end = pe;
-    }
     if (current && current.subscription_id && live && holder === entity_type && !supersede) {
       const same_plan = String(current.plan || '') === String(this.input.use('plan', 'team'));
       let refusal;
@@ -235,6 +361,13 @@ class __private_payment extends Entity {
       entity_id = this.uid;
       const payer = await this.yp.await_proc('payment_get_payer', this.uid);
       email = payer && payer.email; name = payer && payer.fullname; existing_customer = payer && payer.customer_id;
+    }
+    // Org checkout with an existing organisation never set email above —
+    // MKT coupon reserve is keyed by email, so always resolve the payer.
+    if (!email) {
+      const payer = await this.yp.await_proc('payment_get_payer', this.uid);
+      email = payer && payer.email;
+      if (!name) name = (payer && payer.fullname) || name;
     }
 
     const plan_row = await this.yp.await_proc('payment_get_plan', plan, period, CURRENCY);
@@ -290,9 +423,6 @@ class __private_payment extends Entity {
       // Same-entity replacement (Team <-> Business). The webhook reads this to
       // cancel the subscription being replaced once this one is paid.
       metadata.supersede = '1';
-      // Deferred cycle switch: tell the webhook to let the replaced
-      // subscription run out instead of cancelling it now.
-      if (trial_end) metadata.defer = '1';
       // Name the subscription being replaced EXPLICITLY. The webhook's stale
       // scan lists the session's customer, but the replaced subscription can
       // live on a DIFFERENT customer: a TEAM bootstrap subscribes on a
@@ -310,18 +440,98 @@ class __private_payment extends Entity {
       metadata.org_ident = org_bootstrap.ident;
       metadata.org_name = org_bootstrap.org_name;
     }
-    const create = (cust) => stripe.checkout.sessions.create({
-      mode: 'subscription',
-      customer: cust,
-      line_items,
-      // trial_end (deferred cycle switch) makes the new subscription free
-      // until the replaced one expires — the customer sees "$0 due today,
-      // then {price} from {date}" on the hosted page.
-      subscription_data: trial_end ? { metadata, trial_end } : { metadata },
-      metadata,
-      success_url,
-      cancel_url,
-    });
+
+    // ── MKT outreach promo code (KOL / partners) ──────────────────────
+    // First-party code in YP → reserve (anti-cheat) → Stripe Coupon +
+    // trial_end on the Checkout session. Not Stripe Promotion Codes.
+    const promo_code = String(
+      this.input.use('promo_code', '') || this.input.use('coupon_code', '') || '',
+    ).trim();
+    let promo = null;
+    let stripe_discount_coupon = null;
+    let promo_trial_end = 0;
+    if (promo_code) {
+      if (trial_end) {
+        // Deferred cycle switch already owns trial_end; stacking a promo
+        // trial would silently change when billing starts.
+        return this.output.data({ status: 'PROMO_WITH_DEFER' });
+      }
+      if (live && current && current.subscription_id) {
+        // Already on a Stripe subscription — coupon is for first paid buy
+        // (incl. LAUNCH30 → paid). Deliberate supersede is the only exception.
+        if (!supersede) {
+          return this.output.data({ status: 'COUPON_WITH_ACTIVE_SUB' });
+        }
+      }
+      if (!/^(pro|team|business)$/.test(String(plan))) {
+        return this.output.data({ status: 'COUPON_PLAN_UNSUPPORTED', plan });
+      }
+      if (!email) {
+        return this.output.data({ status: 'COUPON_EMAIL_REQUIRED' });
+      }
+      const reserved = this._row(await this.yp.await_proc(
+        'mkt_coupon_reserve',
+        promo_code, email, this.uid, plan, period, entity_type, '',
+        COUPON_HOLD_TTL_SEC,
+      ));
+      if (!reserved || reserved.error) {
+        return this.output.data({
+          status: (reserved && reserved.error) || 'COUPON_INVALID',
+          code: reserved && reserved.code,
+          email: reserved && reserved.email,
+          // COUPON_PLAN_MISMATCH: the code is locked to one plan and this
+          // is not it. Both sides travel so the client can name the plan
+          // ("this code is for Team") instead of a bare "invalid code".
+          plan_scope: reserved && reserved.plan_scope,
+          requested_plan: reserved && reserved.requested_plan,
+        });
+      }
+      promo = reserved;
+      try {
+        // percent_off=0 (free months) → no Stripe discount object.
+        stripe_discount_coupon = await this._ensureStripeCoupon(reserved);
+      } catch (e) {
+        this.warn && this.warn('mkt stripe coupon failed', e && e.message);
+        return this.output.data({
+          status: 'COUPON_STRIPE_FAILED',
+          reason: (e && e.message) || '',
+        });
+      }
+      const td = this._promoTrialDays(reserved);
+      if (td > 0) promo_trial_end = Math.floor(Date.now() / 1000) + (td * 86400);
+      // A free-months code with no trial and no % would create a bare checkout
+      // — refuse rather than silently charging full price.
+      if (!stripe_discount_coupon && !promo_trial_end) {
+        return this.output.data({ status: 'OFFER_INVALID', code: reserved.code });
+      }
+      metadata.mkt_code = reserved.code;
+      metadata.mkt_kind = reserved.kind || '';
+      metadata.mkt_redemption_id = String(reserved.id);
+      if (reserved.partner) metadata.mkt_partner = reserved.partner;
+    }
+    const eff_trial_end = promo_trial_end || trial_end || 0;
+
+    const create = (cust) => {
+      const opts = {
+        mode: 'subscription',
+        customer: cust,
+        line_items,
+        // trial_end: MKT promo free days only. A cycle switch used to set it
+        // too and no longer does — it is charged at checkout like every other
+        // plan change.
+        subscription_data: eff_trial_end
+          ? { metadata, trial_end: eff_trial_end }
+          : { metadata },
+        metadata,
+        success_url,
+        cancel_url,
+      };
+      // discounts and allow_promotion_codes are mutually exclusive on Stripe.
+      if (stripe_discount_coupon) {
+        opts.discounts = [{ coupon: stripe_discount_coupon }];
+      }
+      return stripe.checkout.sessions.create(opts);
+    };
 
     let session;
     try {
@@ -347,6 +557,13 @@ class __private_payment extends Entity {
       });
       customer_id = fresh.id;
       session = await create(customer_id);
+    }
+    if (promo && promo.id && session && session.id) {
+      try {
+        await this.yp.await_proc('mkt_coupon_bind_session', promo.id, session.id);
+      } catch (e) {
+        this.warn && this.warn('mkt_coupon_bind_session failed', e && e.message);
+      }
     }
     this.output.data({ url: session.url, id: session.id });
   }
@@ -627,10 +844,13 @@ class __private_payment extends Entity {
       cancel_at_period_end: false,
       metadata: { ...live_md, plan, period },
     };
-    // When the billing interval changes, restart the cycle today: the caller
-    // pays the new price now (minus the unused-time credit) and renews a clean
-    // month/year from today, instead of a stub period on the old anchor.
-    if (cur_period !== period) params.billing_cycle_anchor = 'now';
+    if (cur_period !== period) {
+      // Interval changed and the caller wants it now: restart the cycle today.
+      // They pay the new price immediately (minus the unused-time credit) and
+      // renew a clean month/year from today, instead of a stub period on the
+      // old anchor.
+      params.billing_cycle_anchor = 'now';
+    }
 
     let s;
     try {
@@ -695,6 +915,24 @@ class __private_payment extends Entity {
         if (pm && pm.card) { card_brand = pm.card.brand; card_last4 = pm.card.last4; }
       }
     } catch (e) { /* card details are cosmetic — leave unset */ }
+    // A session that charges nothing today: the subscription idles on a Stripe
+    // trial until a later date, so session.amount_total is 0 and Stripe issues
+    // a $0 invoice. The client had no way to tell that apart from a genuinely
+    // free purchase and rendered "Total Payment $0.00" over a $290 switch.
+    //
+    // Cycle switches no longer produce this — they are charged at checkout —
+    // but MKT promo free days still do, and subscriptions deferred before that
+    // change are still live. Both need the same answer, so this stays. Say so
+    // here — the banner on the billing page already branches on the same
+    // condition (settings/account/billing skeleton, 'trialing').
+    const subObj = (session.subscription && typeof session.subscription === 'object') ? session.subscription : null;
+    const defer = md.defer === '1' || !!(subObj && subObj.status === 'trialing' && subObj.trial_end);
+    // When the real billing starts, and what it will cost then. unit_amount
+    // comes off the subscription item (subscriptions carry `items` without an
+    // extra expand); the stored row is the fallback for the window before the
+    // webhook has refreshed it.
+    const item = subObj && subObj.items && subObj.items.data && subObj.items.data[0];
+    const unit = item && item.price && item.price.unit_amount;
     this.output.data({
       status: session.status,                          // complete | open | expired
       payment_status: session.payment_status,          // paid | unpaid | no_payment_required
@@ -707,6 +945,11 @@ class __private_payment extends Entity {
       paid_at: (inv && inv.status_transitions && inv.status_transitions.paid_at) || session.created,
       card_brand,
       card_last4,
+      defer,
+      starts_at: (subObj && subObj.trial_end) || null, // epoch seconds
+      upcoming_amount: unit != null
+        ? unit
+        : (sub && sub.price != null ? Math.round(Number(sub.price)) : null),
     });
   }
 }
