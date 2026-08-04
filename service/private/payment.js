@@ -861,24 +861,106 @@ class __private_payment extends Entity {
       metadata: { ...live_md, plan, period },
     };
     if (defer) {
-      // Swap the price, charge nothing, keep the anchor: the customer keeps
-      // every day they have paid for and the new interval bills at the
-      // existing period end. No proration in either direction — there is
-      // nothing to settle, they are simply on a different price from the next
-      // renewal onward.
+      // A deferred interval change cannot be an update at all.
       //
-      // This replaces routing the switch through Stripe Checkout with a
-      // trial_end, which is how it used to be done. That produced a $0
-      // Checkout session Stripe presents as "N days free" with a "Start
-      // trial" button — its fixed trial copy, which cannot be reworded — for
-      // a customer who is not starting a trial and whose remaining days were
-      // already paid for. Nothing needed collecting: they are an active payer
-      // with a card on file, so there was never a reason to send them to a
-      // payment page at all.
-      params.proration_behavior = 'none';
-      params.billing_cycle_anchor = 'unchanged';
-      // Nothing is invoiced, so there is no payment to keep atomic.
-      delete params.payment_behavior;
+      // The obvious shape — swap the price with proration_behavior 'none' and
+      // billing_cycle_anchor 'unchanged' — is rejected outright by Stripe:
+      // "Changing plan intervals. There's no way to leave billing cycle
+      // unchanged." Changing the interval always resets the anchor, and a
+      // reset anchor invoices the new price today, which is the immediate
+      // switch, not this one.
+      //
+      // A subscription schedule is the primitive that does express it: phase
+      // one is the period already paid for at the current price, phase two
+      // starts the new price the moment it ends. Nothing is charged today and
+      // no Checkout session exists — which is the point. Routing this through
+      // Checkout forced "no charge now" to be modelled as a trial_end, and
+      // Stripe renders any trial as "N days free" under a "Start trial"
+      // button: fixed copy, unchangeable, and wrong twice over here. The
+      // customer is not starting a trial, and the days it calls free are days
+      // they have already paid for.
+      //
+      // end_behavior 'release' hands the subscription back once phase two has
+      // run, so it keeps renewing on the new price as an ordinary
+      // subscription instead of ending when the schedule does.
+      try {
+        // Reuse the schedule already on the subscription when there is one:
+        // Stripe refuses a second, and a caller who switches, changes their
+        // mind and switches back must not hit a dead end on their own
+        // previous decision.
+        const created = live.schedule
+          ? await stripe.subscriptionSchedules.retrieve(
+            typeof live.schedule === 'string' ? live.schedule : live.schedule.id
+          )
+          : await stripe.subscriptionSchedules.create({
+            from_subscription: subscription_id,
+          });
+        // The phase in flight is the one to preserve; on a schedule that has
+        // already been rewritten once, that is still phase 0.
+        const p0 = (created.phases && created.phases[0]) || {};
+        const cur_price = (item && item.price && item.price.id) || null;
+        // Phase one is the period the customer has ALREADY PAID FOR, restated
+        // exactly as it stands. Anything the live subscription carries and
+        // this phase omits is dropped when the schedule takes over — and a
+        // dropped trial is not cosmetic: rewriting a trialing subscription
+        // without its trial_end ends the trial on the spot, opens a fresh
+        // paid period, and invoices the full amount the same day. Observed
+        // doing exactly that: a subscription trialing until Sep 3 came back
+        // 'active' with a period end one year out, billed immediately.
+        const phase_one = {
+          items: [{ price: cur_price, quantity: 1 }],
+          start_date: p0.start_date,
+          end_date: p0.end_date,
+        };
+        const trial_end = ~~live.trial_end;
+        if (String(live.status) === 'trialing'
+          && trial_end > Math.floor(Date.now() / 1000)) {
+          phase_one.trial_end = trial_end;
+        }
+        const sched = await stripe.subscriptionSchedules.update(created.id, {
+          end_behavior: 'release',
+          phases: [
+            phase_one,
+            {
+              items: [{ price: plan_row.stripe_price_id, quantity: 1 }],
+              metadata: { ...live_md, plan, period },
+            },
+          ],
+          metadata: { ...live_md, plan, period, pending_switch: '1' },
+        });
+        const next = (sched.phases && sched.phases[1]) || {};
+        // What phase two will cost. payment_get_plan carries the price ID but
+        // not the figure, and the caller has to name it ("$290.00 on
+        // September 3") or the confirmation says nothing useful.
+        let amount = 0;
+        try {
+          const pr = await stripe.prices.retrieve(plan_row.stripe_price_id);
+          amount = (pr && pr.unit_amount) || 0;
+        } catch (e) { /* the date alone still beats a wrong number */ }
+        return this.output.data({
+          status: 'OK',
+          plan,
+          period,
+          defer: true,
+          scheduled: true,
+          schedule_id: sched.id,
+          amount,
+          currency: plan_row.currency || CURRENCY,
+          // When the new price takes over = when the paid period runs out.
+          period_end: next.start_date || p0.end_date || sub.period_end || 0,
+          subscription_status: live.status || 'active',
+        });
+      } catch (e) {
+        // Leave the subscription exactly as it was and say so; the caller's
+        // fallback is the immediate switch or trying again.
+        try {
+          const s = await stripe.subscriptions.retrieve(subscription_id);
+          if (s && s.schedule) await stripe.subscriptionSchedules.release(s.schedule);
+        } catch (e2) { /* nothing to unwind */ }
+        return this.output.data({
+          status: 'CHANGE_FAILED', error: (e && e.message) || 'schedule failed',
+        });
+      }
     } else if (cur_period !== period) {
       // Interval changed and the caller wants it now: restart the cycle today.
       // They pay the new price immediately (minus the unused-time credit) and
