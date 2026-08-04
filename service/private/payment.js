@@ -657,6 +657,39 @@ class __private_payment extends Entity {
       if (Array.isArray(u)) u = u[0];
       if (u && u.used != null) row.disk_used = Number(u.used) || 0;
     }
+    // A cycle switch waiting for the current period to end lives in a Stripe
+    // subscription schedule, and the subscription itself says nothing about
+    // it: status stays 'active', the price and period end do not move. The
+    // mirror therefore cannot know, and the billing page would keep saying
+    // "renews on <date>" for a plan that is about to become a different one.
+    //
+    // Read it from Stripe rather than mirroring it: this is one call on a page
+    // a user opens rarely, and it cannot drift out of date the way a cached
+    // copy would. Silent on any failure — a schedule lookup must never be the
+    // reason the billing page fails to load.
+    if (row && row.subscription_id) {
+      try {
+        const stripe = this._stripe();
+        const live = await stripe.subscriptions.retrieve(row.subscription_id, {
+          expand: ['schedule'],
+        });
+        const sch = live && live.schedule;
+        const phases = (sch && typeof sch === 'object' && sch.phases) || [];
+        const now = Math.floor(Date.now() / 1000);
+        // The first phase that has not started yet is the pending change; its
+        // plan and period were stamped on the schedule when it was created,
+        // so no reverse price_id -> plan lookup is needed.
+        const next = phases.find((p) => ~~p.start_date > now);
+        const md = (sch && sch.metadata) || {};
+        if (next && md.period && md.period !== row.period) {
+          row.pending_switch = {
+            plan: md.plan || row.plan,
+            period: md.period,
+            starts_at: ~~next.start_date,
+          };
+        }
+      } catch (e) { /* the page is more useful without this than not at all */ }
+    }
     this.output.data(row);
   }
 
