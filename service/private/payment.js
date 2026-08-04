@@ -845,6 +845,12 @@ class __private_payment extends Entity {
       });
     }
 
+    // A DEFERRED cycle switch — same plan, other interval, effective when the
+    // paid period runs out. Only meaningful for that shape; anything else
+    // ignores the flag.
+    const defer = !!this.input.use('defer', '')
+      && cur_plan === plan && cur_period !== period;
+
     const params = {
       items: [{ id: item.id, price: plan_row.stripe_price_id, quantity: 1 }],
       proration_behavior: 'always_invoice',
@@ -854,10 +860,32 @@ class __private_payment extends Entity {
       cancel_at_period_end: false,
       metadata: { ...live_md, plan, period },
     };
-    // When the billing interval changes, restart the cycle today: the caller
-    // pays the new price now (minus the unused-time credit) and renews a clean
-    // month/year from today, instead of a stub period on the old anchor.
-    if (cur_period !== period) params.billing_cycle_anchor = 'now';
+    if (defer) {
+      // Swap the price, charge nothing, keep the anchor: the customer keeps
+      // every day they have paid for and the new interval bills at the
+      // existing period end. No proration in either direction — there is
+      // nothing to settle, they are simply on a different price from the next
+      // renewal onward.
+      //
+      // This replaces routing the switch through Stripe Checkout with a
+      // trial_end, which is how it used to be done. That produced a $0
+      // Checkout session Stripe presents as "N days free" with a "Start
+      // trial" button — its fixed trial copy, which cannot be reworded — for
+      // a customer who is not starting a trial and whose remaining days were
+      // already paid for. Nothing needed collecting: they are an active payer
+      // with a card on file, so there was never a reason to send them to a
+      // payment page at all.
+      params.proration_behavior = 'none';
+      params.billing_cycle_anchor = 'unchanged';
+      // Nothing is invoiced, so there is no payment to keep atomic.
+      delete params.payment_behavior;
+    } else if (cur_period !== period) {
+      // Interval changed and the caller wants it now: restart the cycle today.
+      // They pay the new price immediately (minus the unused-time credit) and
+      // renew a clean month/year from today, instead of a stub period on the
+      // old anchor.
+      params.billing_cycle_anchor = 'now';
+    }
 
     let s;
     try {
@@ -881,6 +909,12 @@ class __private_payment extends Entity {
       status: 'OK',
       plan,
       period,
+      // Whether the new price starts now or at the period end, and what it
+      // will cost then. The caller has to tell the user which of the two just
+      // happened, and only this side knows.
+      defer,
+      amount: (new_items[0] && new_items[0].price && new_items[0].price.unit_amount) || 0,
+      currency: s.currency || CURRENCY,
       subscription_status: s.status || 'active',
       period_end: s.current_period_end || (new_items[0] && new_items[0].current_period_end) || sub.period_end || 0,
     });
