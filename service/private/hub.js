@@ -1158,6 +1158,33 @@ class __private_hub extends Hub {
     }
   }
 
+  /**
+   * Wildcard permission this user already holds on a workspace, 0 when none.
+   *
+   * The '*' row is the workspace-wide grant — the same row permission_grant
+   * writes — so it is the figure an invitation would overwrite.
+   *
+   * db_name comes from get_db_name (derived from the token's own hub id), but
+   * it is interpolated rather than bound, so it is checked against the
+   * identifier charset before use. Any failure reads as 0: the caller then
+   * treats them as a new member, which grants rather than withholds access —
+   * the safe direction for a lookup that could not answer.
+   */
+  async _hubPermission(db_name, uid) {
+    try {
+      if (!/^[A-Za-z0-9_]+$/.test(String(db_name || ''))) return 0;
+      let row = await this.yp.await_query(
+        `SELECT permission FROM \`${db_name}\`.permission
+          WHERE resource_id='*' AND entity_id=? LIMIT 1`,
+        uid
+      );
+      if (isArray(row)) row = row[0];
+      return ~~(row && row.permission);
+    } catch (e) {
+      return 0;
+    }
+  }
+
   async invite() {
     let invitees = toArray(this.input.need("invitees"));
     // Seats are spent HERE, not at redemption: an existing drumate is granted
@@ -1385,10 +1412,51 @@ class __private_hub extends Hub {
     if (!db_name) {
       return this.output.data({ status: 'hub_not_found' });
     }
+    // What this person already holds on the workspace, before anything is
+    // written. Two different decisions below depend on it.
+    const held = await this._hubPermission(db_name, this.uid);
+    let meta = {};
+    try {
+      meta = typeof tokenRow.metadata === 'string'
+        ? JSON.parse(tokenRow.metadata)
+        : (tokenRow.metadata || {});
+    } catch (e) { }
+    const permission = meta.permission || 7;
+    // The proc's third argument is JSON and means "keep what is there" when
+    // empty — but await_proc turns null into '', and '' is not valid JSON, so
+    // the call errored and the driver swallowed it. Silently: every redemption
+    // logged "Origin of error: call yp.token_hub_invite_set_status(…, '')" and
+    // carried on, leaving the token 'active'. An invite link is single-use by
+    // design (the status check above answers 'already_used'), and it never
+    // became one — any copy of the link stayed redeemable until it expired.
+    // Hand back the metadata it already holds: valid JSON, same value.
+    const keep_meta = typeof tokenRow.metadata === 'string'
+      ? tokenRow.metadata
+      : JSON.stringify(tokenRow.metadata || {});
+
+    // Already in, with at least what the invitation offers: redeem the token
+    // and touch nothing else.
+    //
+    // permission_grant is a REPLACE, so it overwrites whatever the person had
+    // — it cannot tell a new member from an existing one. An invitation
+    // carrying the default 7 sent to a workspace admin, or to its owner, took
+    // their access AWAY. Seen for real: an owner on 63 dropped to 7 by
+    // redeeming a link to their own workspace, which then failed every
+    // owner-scoped service on it (all of payment.*, since its ACL is
+    // scope:hub/src:owner).
+    if (held >= permission) {
+      await this.yp.await_proc('token_hub_invite_set_status', secret, 'accepted', keep_meta);
+      return this.output.data({ hub_id, already_member: 1 });
+    }
+
     // Occupancy guard. Invitations sent before the cap existed — or sent by a
     // path that never checked — must not be able to seat more people than the
     // plan sells. This is the backstop: the invite side reserves, this side is
     // what actually fills a seat.
+    //
+    // Skipped for someone already on the workspace (held > 0): they are being
+    // raised from one access level to another, not taking a new seat, and a
+    // full plan must not block that.
     //
     // Measured against MEMBERS, not members+pending: the person accepting is
     // themselves one of the pending, so comparing the combined figure would
@@ -1399,7 +1467,7 @@ class __private_hub extends Hub {
     //
     // Scoped to the HUB's organisation: the person accepting is typically
     // still on their personal domain, so their own domain says nothing.
-    const hubDom = await this._hubDomainId(hub_id);
+    const hubDom = held > 0 ? 0 : await this._hubDomainId(hub_id);
     const budget = await this._seatBudget(hubDom);
     if (budget && budget.members >= budget.seat) {
       return this.output.data({
@@ -1409,19 +1477,12 @@ class __private_hub extends Hub {
         members: budget.members,
       });
     }
-    let meta = {};
-    try {
-      meta = typeof tokenRow.metadata === 'string'
-        ? JSON.parse(tokenRow.metadata)
-        : (tokenRow.metadata || {});
-    } catch (e) { }
-    const permission = meta.permission || 7;
     await this.yp.await_proc(`${db_name}.add_member`, this.uid, permission, 0);
     await this.yp.await_proc(
       `${db_name}.permission_grant`,
       '*', this.uid, 0, permission, 'system', 'Redeemed hub invite token'
     );
-    await this.yp.await_proc('token_hub_invite_set_status', secret, 'accepted', null);
+    await this.yp.await_proc('token_hub_invite_set_status', secret, 'accepted', keep_meta);
     await writeAudit(this, {
       db: db_name,
       uid: this.uid,
