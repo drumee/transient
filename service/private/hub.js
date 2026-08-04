@@ -1097,8 +1097,88 @@ class __private_hub extends Hub {
    *
    * Input: { hub_id, invitees:[email], privilege, message? }
    */
+  /**
+   * Seat budget of the organisation that owns `domainId`, or null when no cap
+   * applies (no organisation, Free — refused elsewhere — or an unlimited tier).
+   *
+   * `used` counts members AND invitations still outstanding: a pending invite
+   * holds a seat, because it can be redeemed at any moment. Same arithmetic as
+   * admin-api's `_orgSeatsUsed`, deliberately — invite, accept and member_add
+   * must not disagree about how full a plan is, or the one with the loosest
+   * sum becomes the way around the other two.
+   *
+   * Every failure returns null (no cap) rather than throwing: a stats query
+   * that times out must not make a workspace uninvitable. The accept guard is
+   * the backstop that keeps occupancy correct either way.
+   */
+  async _seatBudget(domainId) {
+    try {
+      const dom = ~~domainId;
+      if (dom <= 1) return null;
+      const org = await this.yp.await_proc('organisation_get', String(dom));
+      if (isEmpty(org) || !org.id) return null;
+      const raw = await this.yp.await_func('get_quota', org.owner_id || this.uid);
+      const quota = typeof raw === 'string' ? JSON.parse(raw || '{}') : (raw || {});
+      const seat = parseInt(quota && quota.seat, 10) || 0;
+      // 0 = Free (org creation is blocked upstream); the huge sentinel is the
+      // unlimited tier. Neither is a finite budget to spend here.
+      if (seat <= 0 || seat >= 100000) return null;
+      let stats = await this.yp.await_proc('member_list_stats', org.id);
+      if (isArray(stats)) stats = stats[0];
+      const members = parseInt(stats && stats.total_members, 10) || 0;
+      const pending = parseInt(stats && stats.pending_invites, 10) || 0;
+      return {
+        seat, members, pending,
+        used: members + pending,
+        free: Math.max(0, seat - members - pending),
+      };
+    } catch (e) {
+      this.warn('[hub] seat budget lookup failed:', e && e.message);
+      return null;
+    }
+  }
+
+  /**
+   * Domain that owns a hub — the invitee's own domain is not it.
+   *
+   * No `type='hub'` filter: a personal workspace is the drumate's own entity
+   * (type 'drumate') and its id is used as a hub id throughout. Filtering on
+   * 'hub' silently returned nothing for exactly those, which made the accept
+   * guard below no-op on the most common workspace there is.
+   */
+  async _hubDomainId(hubId) {
+    try {
+      const row = await this.yp.await_query(
+        "SELECT dom_id FROM entity WHERE id=? LIMIT 1", hubId
+      );
+      const r = isArray(row) ? row[0] : row;
+      return ~~(r && r.dom_id);
+    } catch (e) {
+      return 0;
+    }
+  }
+
   async invite() {
     let invitees = toArray(this.input.need("invitees"));
+    // Seats are spent HERE, not at redemption: an existing drumate is granted
+    // membership immediately below, and a newcomer gets a token that reserves
+    // one. Until 2026-08 this path had no cap at all — a Team org with one
+    // member could send fifteen invitations, every one accepted, and land at
+    // sixteen members on ten seats once they were redeemed.
+    //
+    // Refuse the whole call rather than filling the remaining seats and
+    // dropping the rest: a partial invite silently loses people, and the
+    // caller cannot tell which of the addresses they typed actually went out.
+    const budget = await this._seatBudget(this.user.domain_id());
+    if (budget && invitees.length > budget.free) {
+      return this.output.data({
+        status: 'SEAT_LIMIT_REACHED',
+        seat: budget.seat,
+        used: budget.used,
+        free: budget.free,
+        requested: invitees.length,
+      });
+    }
     const privilege = this.input.use(Attr.privilege)
       || this.hub.get(Attr.settings).default_privilege;
     const lang = this.user.language() || this.input.app_language();
@@ -1305,6 +1385,30 @@ class __private_hub extends Hub {
     if (!db_name) {
       return this.output.data({ status: 'hub_not_found' });
     }
+    // Occupancy guard. Invitations sent before the cap existed — or sent by a
+    // path that never checked — must not be able to seat more people than the
+    // plan sells. This is the backstop: the invite side reserves, this side is
+    // what actually fills a seat.
+    //
+    // Measured against MEMBERS, not members+pending: the person accepting is
+    // themselves one of the pending, so comparing the combined figure would
+    // refuse the very invitations the org legitimately reserved room for.
+    // Members-only lets every reserved seat be taken and stops exactly at the
+    // cap — nine pending on a ten-seat plan with one member all get in; a
+    // twelfth, over-issued before the cap landed, does not.
+    //
+    // Scoped to the HUB's organisation: the person accepting is typically
+    // still on their personal domain, so their own domain says nothing.
+    const hubDom = await this._hubDomainId(hub_id);
+    const budget = await this._seatBudget(hubDom);
+    if (budget && budget.members >= budget.seat) {
+      return this.output.data({
+        status: 'SEAT_LIMIT_REACHED',
+        hub_id,
+        seat: budget.seat,
+        members: budget.members,
+      });
+    }
     let meta = {};
     try {
       meta = typeof tokenRow.metadata === 'string'
@@ -1473,6 +1577,20 @@ class __private_hub extends Hub {
     if (isEmpty(users) || isEmpty(assignments)) {
       this.output.data({ success: false, results: [] });
       return;
+    }
+
+    // Same seat rule as `invite` — this is the multi-workspace variant of the
+    // same act, so it cannot be the way around the cap.
+    const budget = await this._seatBudget(this.user.domain_id());
+    if (budget && users.length > budget.free) {
+      return this.output.data({
+        success: false,
+        status: 'SEAT_LIMIT_REACHED',
+        seat: budget.seat,
+        used: budget.used,
+        free: budget.free,
+        requested: users.length,
+      });
     }
 
     const username = this.user.get('fullname');
