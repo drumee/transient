@@ -26,28 +26,13 @@ const { Entity, FileIo } = require("@drumee/server-core");
 const { existsSync, readFileSync } = require("fs");
 const { isEmpty, isArray, isString } = require("lodash");
 const { get_env, platform } = require('./lib/env');
+const { logConnection, revokeConnectionLog } = require('./lib/connection_log');
 const { resolve } = require("path");
 const { credential_dir } = sysEnv();
 let keyFile = resolve(credential_dir, `crypto/public.pem`);
 const publicKey = readFileSync(keyFile);
 
-/**
- * Configured envelope sender (email.json -> auth.user), resolved once. Used to
- * build a "Drumee" <addr> display-name From so the inbox shows "Drumee"
- * instead of the raw butler@ address — matching otp.js and the other butler
- * emails. The address is read at runtime (it differs per deployment).
- */
-let _butlerSender;
-function butlerSender() {
-  if (_butlerSender !== undefined) return _butlerSender;
-  try {
-    const f = resolve(credential_dir, "email.json");
-    _butlerSender = (JSON.parse(readFileSync(f, "utf8")).auth || {}).user || null;
-  } catch (e) {
-    _butlerSender = null;
-  }
-  return _butlerSender;
-}
+const { butlerFrom } = require("./lib/mail-sender");
 
 
 //########################################
@@ -226,6 +211,12 @@ class __yp extends Entity {
         await this.yp.await_proc(
           "session_reset", this.input.sid(), r.user.id, this.input.get(Attr.socket_id)
         );
+        // session.signin() logged an accepted connection BEFORE we got here --
+        // it has no idea this gate exists -- so without this the user is refused
+        // entry and their "last login" advances anyway. Take it back rather than
+        // reorder the check: the credentials have to be resolved before there is
+        // a uid to look unverified_email up by.
+        await revokeConnectionLog(this, r.user.id, "EMAIL_NOT_VERIFIED");
         return this.output.data({ status: "EMAIL_NOT_VERIFIED", email: row.unverified_email });
       }
     }
@@ -256,13 +247,10 @@ class __yp extends Entity {
     });
     const tplPath = resolve(__dirname, "./templates/otp.html");
     const html = msg.renderFrom(tplPath, data);
-    // Display-name From ("Drumee" <butler@...>) so the inbox shows "Drumee"
-    // instead of the raw sender address, matching otp.js. Falls back to the
-    // default sender if unset.
-    const sender = butlerSender();
-    const from = sender ? `"Drumee" <${sender}>` : undefined;
+    // Display-name From ("Drumee" <contact@drumee.org>) so the inbox shows
+    // "Drumee" instead of the raw sender address, matching otp.js.
     try {
-      await msg.send(from ? { html, from } : { html });
+      await msg.send({ html, from: butlerFrom() });
     } catch (e) {
       this.warn("2FA OTP email send failed", e);
     }
@@ -270,7 +258,14 @@ class __yp extends Entity {
   }
 
   /**
-   * 
+   * Second leg of a 2FA sign-in: verify the emailed code and open the session.
+   *
+   * This COMPLETES the login that login() started -- session.signin() returns at
+   * its `status == "otp"` branch without logging anything, because at that point
+   * nobody is signed in yet. The connection is therefore logged here, and only
+   * here: session_login_otp is a plain proc and writes no services_log row, so
+   * without this every 2FA account showed a permanently stale "Last login" in
+   * analytics while signing in perfectly normally.
    */
   async login_top() {
     const uid = this.input.get(Attr.id) || this.input.get(Attr.uid) || this.uid;
@@ -280,6 +275,7 @@ class __yp extends Entity {
     if (!result || result.status !== 'success') {
       return this.output.data({ status: 'error' });
     }
+    await logConnection(this, uid);
     const user = await this.yp.await_proc('get_user', uid);
     this.output.data(user);
   }
