@@ -119,10 +119,11 @@ function mapHubInviteRow(r) {
   if (r.data) {
     try { meta = typeof r.data === 'string' ? JSON.parse(r.data) : r.data; } catch (_) { }
   }
+  const hub_id = meta.hub_id || null;
   return {
     category: 'hub_invite',
     key_id: String(r.id),
-    hub_id: meta.hub_id || null,
+    hub_id,
     last_id: r.id,
     cnt: 1,
     ctime: r.ctime,
@@ -131,7 +132,18 @@ function mapHubInviteRow(r) {
     surname: meta.from_fullname || r.hub_headline,
     email: r.inviter_email,
     author_id: r.author_id,
-    hub_name: r.hub_headline || r.hub_ident,
+    // The workspace name the bell row renders. headline/ident stay first so
+    // nothing that resolves today changes, but they are NULL on every hub, so
+    // in practice the name now comes from hub_live_name (yp.hub.name, added to
+    // notification_hub_invites). meta.hub_name is the last resort and covers
+    // the one case the live name cannot: the workspace was deleted, so there is
+    // no yp.hub row left to read. Its guard rejects the old rows that stored the
+    // hub id in that field — same guard hub.invite_received_get already uses,
+    // because rendering a hex id as the workspace name is worse than blank.
+    hub_name: r.hub_headline
+      || r.hub_ident
+      || r.hub_live_name
+      || (meta.hub_name && meta.hub_name !== hub_id ? meta.hub_name : null),
   };
 }
 
