@@ -3,6 +3,7 @@
 
 const { Entity } = require('@drumee/server-core');
 const { RedisStore, Attr, toArray } = require('@drumee/server-essentials');
+const { resolveHubInviteName } = require('../lib/hub-invite-name');
 
 function firstValue(...values) {
   for (const value of values) {
@@ -119,10 +120,11 @@ function mapHubInviteRow(r) {
   if (r.data) {
     try { meta = typeof r.data === 'string' ? JSON.parse(r.data) : r.data; } catch (_) { }
   }
+  const hub_id = meta.hub_id || null;
   return {
     category: 'hub_invite',
     key_id: String(r.id),
-    hub_id: meta.hub_id || null,
+    hub_id,
     last_id: r.id,
     cnt: 1,
     ctime: r.ctime,
@@ -131,7 +133,9 @@ function mapHubInviteRow(r) {
     surname: meta.from_fullname || r.hub_headline,
     email: r.inviter_email,
     author_id: r.author_id,
-    hub_name: r.hub_headline || r.hub_ident,
+    // Shared with hub.invite_received_get so the two surfaces cannot drift
+    // apart again — that drift is what left this one rendering a blank name.
+    hub_name: resolveHubInviteName(r, meta),
   };
 }
 
