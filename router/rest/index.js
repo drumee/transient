@@ -66,6 +66,36 @@ const SECURE_SHARE_READONLY_DENYLIST = new Set([
   "devel.verbosity", "devel.log_over_socket",
 ]);
 
+// Downgrade over-limit clamp (service/lib/over-limit.js). While an org is
+// over its downgraded plan's limits the whole workspace is read-only; these
+// MUTATING services survive the clamp because they are the way OUT of it:
+//   - trash / purge / empty_bin free storage (trash still counts toward
+//     usage, so purging is the resolving action, not deleting);
+//   - member removal frees seats (both console backends);
+//   - server_export honours "export always works" (src:'delete', so the
+//     mutating threshold would eat it);
+//   - drumate.logout is src:'owner' — a locked member must still sign out.
+// payment.* / promo.* are allowed by prefix below — the owner must be able
+// to upgrade or re-subscribe their way out.
+const OVER_LIMIT_MUTATING_ALLOWLIST = new Set([
+  "media.trash", "media.purge", "media.empty_bin",
+  "media.server_export",
+  "adminpanel.member_delete", "admin.hub_member_remove",
+  "drumate.logout",
+  // Google Drive migration is OFF while locked (an import only ADDS bytes) —
+  // the whole src:'owner' namespace stays clamped. These two are the
+  // exception: seeing a migration that was already running when the lock
+  // landed, and STOPPING it, make the overage smaller, not bigger.
+  "google_drive.get_state", "google_drive.cancel",
+]);
+// Once hard-locked, NON-admin members are denied entirely — not even read
+// (Owner/Admin keep view + resolution access). The FE still needs enough to
+// boot into the "workspace locked" screen and leave.
+const HARD_LOCK_SURVIVAL = new Set([
+  "yp.get_env", "desk.get_env", "yp.guest_logout", "drumate.logout",
+]);
+const ADMIN_LEVEL = permissionValue("admin");
+
 
 /**
  *
@@ -344,6 +374,53 @@ class Acl {
           } catch (e) {
             console.warn("[acl] secure-share ceiling check failed (fail-open):", e && e.message);
           }
+        }
+        // Downgrade over-limit read-only clamp. One cached, indexed yp read
+        // (30s TTL inside getState) per domain; personal domains (id<=1) and
+        // platforms without over_limit_enforcement never reach the lookup.
+        // Fail-OPEN like the ceiling above — a failed check keeps the last
+        // known state and never invents a lock.
+        try {
+          const OverLimit = require("../../service/lib/over-limit");
+          if (OverLimit.enabled() && session.user && session.user.get("signed_in")) {
+            const dom = ~~session.user.domain_id();
+            if (dom > 1) {
+              const st = await OverLimit.getState(session.yp, dom);
+              if (st && (st.state === "over_limit" || st.state === "hard_lock")) {
+                const uid = session.user.get("id");
+                if (st.state === "hard_lock" && !HARD_LOCK_SURVIVAL.has(service)) {
+                  // Owner/Admin keep view + resolution access; every other
+                  // role is denied entirely — not even read.
+                  let admin = uid && uid === st.owner_id ? 1 : 0;
+                  if (!admin) {
+                    admin = await session.yp.await_func("domain_permission", uid, dom, ADMIN_LEVEL);
+                  }
+                  if (!admin) {
+                    worker.stop();
+                    return session.exception.unauthorized(`HARD_LOCK_DENIED:${service}`);
+                  }
+                }
+                // admin./adminpanel. pass as a family: their src:'admin' is a
+                // PRIVILEGE requirement, not a mutation marker — the threshold
+                // below would read every admin-console READ (member_stats,
+                // member_list, audit) as mutating and lock the owner out of
+                // the very console that resolves the overage. Nothing in
+                // these namespaces grows usage or seats: invites go through
+                // hub.invite (still clamped), uploads through media.*.
+                const survives = OVER_LIMIT_MUTATING_ALLOWLIST.has(service)
+                  || service.startsWith("payment.")
+                  || service.startsWith("promo.")
+                  || service.startsWith("admin.")
+                  || service.startsWith("adminpanel.");
+                if (mightMutate && !survives) {
+                  worker.stop();
+                  return session.exception.unauthorized(`OVER_LIMIT_READ_ONLY:${service}`);
+                }
+              }
+            }
+          }
+        } catch (e) {
+          console.warn("[over-limit] clamp failed (fail-open):", e && e.message);
         }
         const need = worker.before_granting;
         if (isFunction(worker[need])) {

@@ -140,6 +140,12 @@ function platform() {
   if (global.myDrumee.billing_upgrade !== undefined) {
     platform.billing_upgrade = global.myDrumee.billing_upgrade;
   }
+  // Downgrade over-limit enforcement (read-only lock + resolution flow) —
+  // same rollout pattern as billing_upgrade: cloud feature, off unless the
+  // deployment's myDrumee.json turns it on. Coerced here (unlike above)
+  // because the client only needs on/off; there is no "derive it" third
+  // state for this one.
+  platform.over_limit_enforcement = global.myDrumee.over_limit_enforcement ? 1 : 0;
   platform.cdnHost = global.myDrumee.cdnHost;
   platform.version = global.VERSION;
   platform.TfaMethods = TfaMethods;
