@@ -82,6 +82,11 @@ const OVER_LIMIT_MUTATING_ALLOWLIST = new Set([
   "media.server_export",
   "adminpanel.member_delete", "admin.hub_member_remove",
   "drumate.logout",
+  // Google Drive migration is OFF while locked (an import only ADDS bytes) —
+  // the whole src:'owner' namespace stays clamped. These two are the
+  // exception: seeing a migration that was already running when the lock
+  // landed, and STOPPING it, make the overage smaller, not bigger.
+  "google_drive.get_state", "google_drive.cancel",
 ]);
 // Once hard-locked, NON-admin members are denied entirely — not even read
 // (Owner/Admin keep view + resolution access). The FE still needs enough to
