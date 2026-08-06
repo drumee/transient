@@ -212,7 +212,10 @@ async function notifyDomain(yp, RedisStore, state) {
   );
   const list = (Array.isArray(uids) ? uids : [uids]).filter(Boolean).map((r) => r.uid);
   if (!list.length) return;
-  const recipients = await yp.await_proc("user_sockets", list.join(","));
+  // user_sockets takes a JSON param — pass the ARRAY like reminderWorker
+  // does. A comma-joined string arrives as one scalar, matches no uid, and
+  // the whole push silently fans out to nobody (found live on stage).
+  const recipients = await yp.await_proc("user_sockets", list);
   const rows = Array.isArray(recipients) ? recipients : [recipients];
   if (!rows.filter(Boolean).length) return;
   await RedisStore.sendData(

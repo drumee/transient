@@ -60,10 +60,18 @@ async function initialize() {
 async function lockOne(row) {
   const { org_id, domain_id } = row;
   try {
-    let res = await yp.await_proc('org_over_limit_hard_lock', org_id);
-    if (Array.isArray(res)) res = res[0];
-    if (!res || ~~res.locked !== 1) {
-      // Resolved (or already locked) between the scan and now — nothing to do.
+    await yp.await_proc('org_over_limit_hard_lock', org_id);
+    // Trust the state, not the driver's shape for "SELECT ROW_COUNT()": the
+    // mariadb wrapper returns multi-statement proc results inconsistently
+    // (first run on stage: the flip landed but `locked` read back falsy, so
+    // the WS push was skipped and clients never heard about it). The due
+    // scan only ever lists over_limit rows, so re-reading the row is both
+    // the reliable answer and naturally idempotent — a resolved-in-between
+    // org reads back 'ok'/absent and is skipped the same way.
+    let st = await yp.await_proc('org_over_limit_get', ~~domain_id);
+    if (Array.isArray(st)) st = st[0];
+    if (!st || st.state !== 'hard_lock') {
+      // Resolved between the scan and now — nothing to do.
       return false;
     }
     // Re-evaluate to refresh the numbers and push the hard_lock state to

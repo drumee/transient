@@ -395,9 +395,18 @@ class Acl {
                     return session.exception.unauthorized(`HARD_LOCK_DENIED:${service}`);
                   }
                 }
+                // admin./adminpanel. pass as a family: their src:'admin' is a
+                // PRIVILEGE requirement, not a mutation marker — the threshold
+                // below would read every admin-console READ (member_stats,
+                // member_list, audit) as mutating and lock the owner out of
+                // the very console that resolves the overage. Nothing in
+                // these namespaces grows usage or seats: invites go through
+                // hub.invite (still clamped), uploads through media.*.
                 const survives = OVER_LIMIT_MUTATING_ALLOWLIST.has(service)
                   || service.startsWith("payment.")
-                  || service.startsWith("promo.");
+                  || service.startsWith("promo.")
+                  || service.startsWith("admin.")
+                  || service.startsWith("adminpanel.");
                 if (mightMutate && !survives) {
                   worker.stop();
                   return session.exception.unauthorized(`OVER_LIMIT_READ_ONLY:${service}`);
