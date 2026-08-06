@@ -129,6 +129,25 @@ class __private_promo extends Entity {
     await this.yp.await_proc('payment_clear_entitlement', orgId);
     await this.yp.await_proc('promo_launch30_mark_expired', this.uid);
 
+    // Downgrade over-limit: the org just fell to the free tier — measure it
+    // against the free limits and set the flags/grace if it no longer fits.
+    try {
+      const OverLimit = require('../lib/over-limit');
+      if (OverLimit.enabled()) {
+        let org = await this.yp.await_query(
+          `SELECT domain_id FROM organisation WHERE id = ? LIMIT 1`, orgId
+        );
+        if (Array.isArray(org)) org = org[0];
+        const dom = ~~(org && org.domain_id);
+        if (dom > 1) {
+          const { RedisStore } = require('@drumee/server-essentials');
+          await OverLimit.evaluate(this.yp, dom, {
+            notify: (state) => OverLimit.notifyDomain(this.yp, RedisStore, state),
+          });
+        }
+      }
+    } catch (e) { /* best-effort — the revert above is already committed */ }
+
     let quota;
     try {
       quota = await this.yp.await_func('get_quota', this.uid);

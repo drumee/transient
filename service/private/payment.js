@@ -952,6 +952,57 @@ class __private_payment extends Entity {
         : (sub && sub.price != null ? Math.round(Number(sub.price)) : null),
     });
   }
+
+  // ── Downgrade over-limit resolution (service/lib/over-limit.js) ──────────
+  //
+  // over_limit_state: FRESH evaluation of the caller's domain — recomputes
+  // usage + seats against the current entitlement, persists the flags and
+  // returns the numbers the popup/banner render. A read that re-evaluates on
+  // purpose: opening the popup self-heals any drift (and emits the resolved
+  // push if the org has quietly come back within limits).
+  async over_limit_state() {
+    const OverLimit = require('../lib/over-limit');
+    const dom = ~~this.user.domain_id();
+    if (!OverLimit.enabled() || dom <= 1) {
+      return this.output.data({ state: 'ok', enabled: OverLimit.enabled() ? 1 : 0 });
+    }
+    const { RedisStore } = require('@drumee/server-essentials');
+    const res = await OverLimit.evaluate(this.yp, dom, {
+      notify: (state) => OverLimit.notifyDomain(this.yp, RedisStore, state),
+    });
+    if (!res) return this.output.data({ state: 'ok', enabled: 1 });
+    this.output.data({
+      enabled: 1,
+      state: res.state,
+      flags: { storage: res.storage_over, seats: res.seats_over },
+      grace_deadline: res.grace_deadline,
+      disk_used: res.disk_used,
+      disk_limit: res.disk_limit,
+      seats_used: res.seats_used,
+      seat_limit: res.seat_limit,
+      plan: res.plan,
+    });
+  }
+
+  // "Remind me later" — snooze the popup for THIS admin, server-side (the
+  // design forbids localStorage: a dismissal must never outlive its intent;
+  // resolution wipes the whole block, snoozes included). Default 24h,
+  // OVER_LIMIT_SNOOZE_SEC to tune per environment.
+  async over_limit_dismiss() {
+    const OverLimit = require('../lib/over-limit');
+    const dom = ~~this.user.domain_id();
+    if (!OverLimit.enabled() || dom <= 1) return this.output.data({ status: 'OK' });
+    let org = await this.yp.await_query(
+      `SELECT id FROM organisation WHERE domain_id = ? LIMIT 1`, dom
+    );
+    if (Array.isArray(org)) org = org[0];
+    if (!org || !org.id) return this.output.data({ status: 'OK' });
+    const snooze = parseInt(process.env.OVER_LIMIT_SNOOZE_SEC, 10) || 24 * 3600;
+    const until = Math.floor(Date.now() / 1000) + snooze;
+    await this.yp.await_proc('org_over_limit_dismiss', org.id, this.uid, until);
+    OverLimit.invalidate(dom);
+    this.output.data({ status: 'OK', snoozed_until: until });
+  }
 }
 
 module.exports = __private_payment;

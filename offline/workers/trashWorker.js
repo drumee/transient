@@ -74,6 +74,38 @@ trashQueue.process('empty_trash', CONCURRENCY, async (job) => {
     
     console.log(`[TrashWorker] Found ${entities.length} files to purge`);
     
+    // Downgrade over-limit: mfs_empty_trash just decremented yp.disk_usage —
+    // this is the storage-resolving action, so re-measure the hub's domain
+    // and clear/update the flags live. Best-effort: the purge itself must
+    // never fail on it.
+    try {
+      const OverLimit = require('../../service/lib/over-limit');
+      if (OverLimit.enabled()) {
+        let dom = await yp.await_query(
+          `SELECT dom_id FROM entity WHERE id = ? LIMIT 1`, hub_id
+        );
+        if (Array.isArray(dom)) dom = dom[0];
+        if (~~(dom && dom.dom_id) > 1) {
+          const { RedisStore } = require('@drumee/server-essentials');
+          // This worker never initializes Redis on its own — do it lazily,
+          // once, and fall back to flag-only (no live push) when unavailable.
+          if (!global.__overLimitRedisReady) {
+            try {
+              await RedisStore.prototype.init.call(new RedisStore());
+              global.__overLimitRedisReady = true;
+            } catch (e) { /* flags still written below */ }
+          }
+          await OverLimit.evaluate(yp, ~~dom.dom_id, {
+            notify: global.__overLimitRedisReady
+              ? (state) => OverLimit.notifyDomain(yp, RedisStore, state)
+              : null,
+          });
+        }
+      }
+    } catch (e) {
+      console.warn('[TrashWorker] over-limit re-evaluation failed:', e.message);
+    }
+
     // Spawn purge.js (path resolved relative to this worker — see PURGE_WORKER)
     const cmd = PURGE_WORKER;
     const args = { entities, uid };

@@ -1850,10 +1850,31 @@ class __private_media extends Media {
    * To actually purge entire trash bin
    * @params null
    */
+  // Downgrade over-limit: purge / empty_bin are the storage-RESOLVING
+  // actions (trash still counts toward usage — only these decrement
+  // yp.disk_usage), so each one re-measures the domain and clears/updates
+  // the flags live. trash() calls it too: the numbers don't move there, but
+  // the refreshed push keeps the owner's banner honest about that fact.
+  // Best-effort — the operation itself is already committed.
+  async _evaluateOverLimitAfterResolve() {
+    try {
+      const OverLimit = require('../lib/over-limit');
+      if (!OverLimit.enabled()) return;
+      const dom = ~~this.user.domain_id();
+      if (dom <= 1) return;
+      await OverLimit.evaluate(this.yp, dom, {
+        notify: (state) => OverLimit.notifyDomain(this.yp, RedisStore, state),
+      });
+    } catch (e) {
+      this.warn('[over-limit] post-resolve evaluation failed:', e.message);
+    }
+  }
+
   async empty_bin() {
     if (!this.user.get(Attr.settings).trash_expiry) {
       let list = await this.db.await_proc("mfs_empty_trash");
       await this._empty_bin(list)
+      await this._evaluateOverLimitAfterResolve();
       return this.output.data(list)
     }
     try {
@@ -1921,6 +1942,7 @@ class __private_media extends Media {
     if (!isEmpty(data)) {
       await this._empty_bin(data);
     }
+    await this._evaluateOverLimitAfterResolve();
     this.output.list(data);
   }
 
@@ -2089,6 +2111,7 @@ class __private_media extends Media {
       });
     }
 
+    await this._evaluateOverLimitAfterResolve();
     this.output.list(data);
   }
 

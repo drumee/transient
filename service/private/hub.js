@@ -1459,6 +1459,21 @@ class __private_hub extends Hub {
         members: budget.members,
       });
     }
+    // Downgrade over-limit: while the workspace is over its downgraded
+    // plan's limits, growing the membership is paused along with every other
+    // mutation. This has to live HERE, not in the REST clamp: the redeemer
+    // is anonymous / on their own personal domain, so the clamp inspects the
+    // wrong domain. Role upgrades (held > 0 → hubDom 0) stay allowed — they
+    // take no seat.
+    if (hubDom > 0) {
+      try {
+        const OverLimit = require('../lib/over-limit');
+        const st = await OverLimit.getState(this.yp, hubDom);
+        if (st && st.state) {
+          return this.output.data({ status: 'OVER_LIMIT', hub_id });
+        }
+      } catch (e) { /* fail-open, same rule as the clamp */ }
+    }
     await this.yp.await_proc(`${db_name}.add_member`, this.uid, permission, 0);
     await this.yp.await_proc(
       `${db_name}.permission_grant`,
