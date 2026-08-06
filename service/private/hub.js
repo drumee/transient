@@ -30,6 +30,7 @@ const {
 const { resolve } = require("path");
 const { notifyMemberJoined } = require("../lib/notify-member-joined");
 const { butlerFrom } = require("../lib/mail-sender");
+const { resolveHubInviteName } = require("../lib/hub-invite-name");
 const { MfsTools } = require("@drumee/server-core");
 const { remove_dir } = MfsTools;
 const { toArray } = utils;
@@ -670,14 +671,12 @@ class __private_hub extends Hub {
         `${firstname} ${lastname}`.trim() ||
         r.inviter_email ||
         null;
-      // Prefer the live hub name from yp.entity over whatever was stored at
-      // invite time (older rows had the hub id pasted in here).
+      // Prefer the live hub name over whatever was stored at invite time (older
+      // rows had the hub id pasted in here, and a rename leaves the stored name
+      // stale). Shared with activity.js's mapHubInviteRow so this list and the
+      // bell feed can never disagree about a workspace's name again.
       const hub_id = meta.hub_id || null;
-      const hub_name =
-        r.hub_headline ||
-        r.hub_ident ||
-        (meta.hub_name && meta.hub_name !== hub_id ? meta.hub_name : null) ||
-        null;
+      const hub_name = resolveHubInviteName(r, meta);
       return {
         id: r.id,
         ctime: r.ctime,

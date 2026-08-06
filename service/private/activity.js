@@ -3,6 +3,7 @@
 
 const { Entity } = require('@drumee/server-core');
 const { RedisStore, Attr, toArray } = require('@drumee/server-essentials');
+const { resolveHubInviteName } = require('../lib/hub-invite-name');
 
 function firstValue(...values) {
   for (const value of values) {
@@ -132,18 +133,9 @@ function mapHubInviteRow(r) {
     surname: meta.from_fullname || r.hub_headline,
     email: r.inviter_email,
     author_id: r.author_id,
-    // The workspace name the bell row renders. headline/ident stay first so
-    // nothing that resolves today changes, but they are NULL on every hub, so
-    // in practice the name now comes from hub_live_name (yp.hub.name, added to
-    // notification_hub_invites). meta.hub_name is the last resort and covers
-    // the one case the live name cannot: the workspace was deleted, so there is
-    // no yp.hub row left to read. Its guard rejects the old rows that stored the
-    // hub id in that field — same guard hub.invite_received_get already uses,
-    // because rendering a hex id as the workspace name is worse than blank.
-    hub_name: r.hub_headline
-      || r.hub_ident
-      || r.hub_live_name
-      || (meta.hub_name && meta.hub_name !== hub_id ? meta.hub_name : null),
+    // Shared with hub.invite_received_get so the two surfaces cannot drift
+    // apart again — that drift is what left this one rendering a blank name.
+    hub_name: resolveHubInviteName(r, meta),
   };
 }
 
