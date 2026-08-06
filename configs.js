@@ -164,7 +164,10 @@ function env() {
   const endpointAddress = `${address}:${pushPort}`;
   const restServer = `${address}:${restPort}`;
 
-  let limit = parseInt(process.env.db_pool_size, 10) || 5;
+  let limit = 1;
+  if (process.env.instance_name === 'main') {
+    limit = 2;
+  }
   const yp = new Mariadb({ limit });
   const r = {
     yp,
