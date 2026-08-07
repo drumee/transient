@@ -141,6 +141,9 @@ async function addMigration(opts = {}) {
     // 'user' = the user's drive.file OAuth token; 'sa' = the service account
     // (whole-folder import of a tree the user SHARED with the SA email).
     auth_kind = 'user',
+    // 1 = land the import IN nid itself (folder-window launch); 0 = wrap it
+    // in a GoogleDriveMigration folder under nid (settings/Home launches).
+    direct_into = 0,
   } = opts;
 
   if (!user_id) throw new Error('addMigration: user_id required');
@@ -158,6 +161,7 @@ async function addMigration(opts = {}) {
     mode,
     selections,
     auth_kind,
+    direct_into,
     queued_at: new Date().toISOString(),
   });
 

@@ -159,6 +159,7 @@ class GoogleDriveImporter {
       user_id,
       hub_id,
       nid,
+      direct_into = 0,
       source_folder_id = 'root',
       include_shared_drives = 0,
       conflict_policy = 'skip',
@@ -267,14 +268,24 @@ class GoogleDriveImporter {
       // home_dir, which may be absent on objects returned by mfs_create_node.
       const hubHomeDir = String(destFolder.home_dir).replace(/(\/__storage__.*)$/, '');
 
-      // Everything imported lands in a dedicated "GoogleDriveMigration"
-      // folder under the destination (the user's private home), so the
-      // migration never scatters loose files into their home. Idempotent:
-      // a re-run reuses the existing folder instead of duplicating it.
-      const rootFolder = await this._createFolder('GoogleDriveMigration', destFolder, hubDb, user_id);
+      // Where the content lands:
+      //   direct_into=1  IN the destination folder itself — the folder-window
+      //                  "+ New → Migrate from Google Drive" launch, where the
+      //                  user picked the destination by standing in it. Safe
+      //                  to share a parent: both destFolder and _createFolder's
+      //                  return are mfs_node_attr shapes, and conflict_policy
+      //                  'skip' means an existing name is left alone.
+      //   otherwise      a dedicated "GoogleDriveMigration" folder under the
+      //                  destination (the settings / Home / onboarding
+      //                  launches), so the migration never scatters loose
+      //                  files into a home. Idempotent: a re-run reuses the
+      //                  existing folder instead of duplicating it.
+      const rootFolder = direct_into
+        ? destFolder
+        : await this._createFolder('GoogleDriveMigration', destFolder, hubDb, user_id);
       // Exposed in the job result so the FE "Open in Drumee" lands on THIS
       // folder (the actual import root), not the destination's parent.
-      this._destNidOut = rootFolder && rootFolder.nid;
+      this._destNidOut = (rootFolder && rootFolder.nid) || nid;
 
       if (mode === 'selected' && selections) {
         await this._migrateSelected({

@@ -63,7 +63,8 @@
         "mode": { "type": "string", "required": false, "default": "all", "description": "all | selected" },
         "selections": { "type": "object", "required": false, "description": "selected mode only: { folder_ids: string[], file_ids: string[] }" },
         "auth_kind": { "type": "string", "required": false, "default": "user", "description": "user (drive.file OAuth token) | sa (service-account whole-folder import; requires sa_folder, re-validated server-side)" },
-        "sa_folder": { "type": "string", "required": false, "description": "auth_kind=sa only: Drive folder URL or id the user shared with the SA" }
+        "sa_folder": { "type": "string", "required": false, "description": "auth_kind=sa only: Drive folder URL or id the user shared with the SA" },
+        "direct_into": { "type": "number", "required": false, "description": "1 = import directly INTO nid (folder-window launch); 0/absent = wrap in a GoogleDriveMigration folder under nid (settings/Home launches)" }
       },
       "returns": { "type": "object", "properties": { "job_id": { "type": "integer" } } }
     },
