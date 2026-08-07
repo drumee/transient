@@ -47,6 +47,11 @@ const { MfsTools, Generator, Document } = require("@drumee/server-core");
 const { check_base, remove_node, move_node, copy_node, mkdir, rmdir, cleanSeen } = MfsTools;
 const Media = require("../media");
 const { writeAudit } = require("./_audit");
+const {
+  findMfsMoveResult,
+  isCompleteMfsThreadMigration,
+  waitForMfsThreadMigration,
+} = require("../lib/mfs-move-result");
 const { stringify } = JSON;
 const { isEmpty, isString, values } = require("lodash");
 const { join, resolve, basename, extname } = require("path");
@@ -60,6 +65,8 @@ const { emptyTrash } = require('../../offline/queues/trashQueue');
 const indexQueue = require('../../offline/queues/indexQueue');
 
 const FILE_MOVE_TTL_SECONDS = 15 * 60;
+const FILE_MOVE_THREAD_SETTLE_ATTEMPTS = 5;
+const FILE_MOVE_THREAD_SETTLE_DELAY_MS = 50;
 
 function firstRow(data) {
   return toArray(data)[0] || null;
@@ -796,29 +803,43 @@ class __private_media extends Media {
 
       let movePlan;
       try {
-        movePlan = toArray(await this.yp.await_proc(
+        movePlan = await this.yp.await_proc(
           `${sourceStorage.db_name}.mfs_move_all`,
           [{ nid: saga.source_file_nid, hub_id: saga.source_hub_id }],
           this.uid,
           saga.destination_parent_nid,
           saga.destination_hub_id
-        ));
+        );
       } catch (error) {
         return this._failCrossHubMove(saga, "FILE_MOVE_DATABASE_STEP_FAILED", true);
       }
 
-      const physicalMove = movePlan.find((row) => row.action === "move" && row.nid === saga.source_file_nid);
+      const physicalMove = findMfsMoveResult(movePlan, saga.source_file_nid);
       const destinationFileNid = physicalMove && physicalMove.des_id;
-      const sourcePosition = firstRow(await this.yp.await_proc(
-        `${sourceStorage.db_name}.file_move_thread_position`, null, saga.source_thread_id
-      ));
-      const destinationPosition = destinationFileNid && firstRow(await this.yp.await_proc(
-        `${destinationStorage.db_name}.file_move_thread_position`, destinationFileNid, null
-      ));
+      let sourcePosition = null;
+      let destinationPosition = null;
 
-      if (!destinationFileNid || sourcePosition || !destinationPosition
-        || Number(destinationPosition.root_identity_count) !== 1
-        || Number(destinationPosition.stale_child_identity_count) !== 0) {
+      if (destinationFileNid) {
+        ({ sourcePosition, destinationPosition } = await waitForMfsThreadMigration(
+          async () => ({
+            sourcePosition: firstRow(await this.yp.await_proc(
+              `${sourceStorage.db_name}.file_move_thread_position`, null, saga.source_thread_id
+            )),
+            destinationPosition: firstRow(await this.yp.await_proc(
+              `${destinationStorage.db_name}.file_move_thread_position`, destinationFileNid, null
+            )),
+          }),
+          {
+            attempts: FILE_MOVE_THREAD_SETTLE_ATTEMPTS,
+            delay: () => new Promise((resolveDelay) =>
+              setTimeout(resolveDelay, FILE_MOVE_THREAD_SETTLE_DELAY_MS)
+            ),
+          }
+        ));
+      }
+
+      if (!destinationFileNid
+        || !isCompleteMfsThreadMigration({ sourcePosition, destinationPosition })) {
         saga.destination_file_nid = destinationFileNid;
         saga.destination_thread_id = destinationPosition && destinationPosition.file_thread_id;
         return this._compensateCrossHubMove(saga, sourceStorage, destinationStorage, stagingNode);
@@ -898,16 +919,14 @@ class __private_media extends Media {
     }
 
     try {
-      const compensationPlan = toArray(await this.yp.await_proc(
+      const compensationPlan = await this.yp.await_proc(
         `${destinationStorage.db_name}.mfs_move_all`,
         [{ nid: saga.destination_file_nid, hub_id: saga.destination_hub_id }],
         this.uid,
         saga.source_parent_nid,
         saga.source_hub_id
-      ));
-      const physicalMove = compensationPlan.find((row) =>
-        row.action === "move" && row.nid === saga.destination_file_nid
       );
+      const physicalMove = findMfsMoveResult(compensationPlan, saga.destination_file_nid);
       const compensationFileNid = physicalMove && physicalMove.des_id;
       if (!compensationFileNid) throw new Error("COMPENSATION_DESTINATION_MISSING");
 
