@@ -316,7 +316,7 @@ class __private_payment extends Entity {
     // purchase. Nothing sets trial_end for a cycle switch now; the only
     // remaining source is an MKT promo's free days, below.
     let trial_end = 0;
-    if (current && current.subscription_id && live && !supersede) {
+    if (current?.subscription_id && live && !supersede) {
       let refusal;
       if (holder !== entity_type) {
         // CROSS-ENTITY without the supersede confirmation. The exception in
