@@ -63,6 +63,7 @@ class __private_contact extends Contact {
     this.delete = this.delete.bind(this);
 
     this.search = this.search.bind(this);
+    this.lookup = this.lookup.bind(this);
 
     this.join = this.join.bind(this);
     this.block = this.block.bind(this);
@@ -1779,6 +1780,48 @@ class __private_contact extends Contact {
 
       this.output.list(r);
     }).catch(this.fallback);
+  }
+
+  /**
+   * Type-ahead lookup over the caller's address book, for the
+   * workspace-invite pickers.
+   *
+   * Differs from `my_contacts` in what it matches: `my_contact` /
+   * `contact_search_next` compare the typed string against name columns
+   * only, so a half-typed email address matches nothing. This one matches
+   * every address a contact holds — all `contact_email` rows (not just the
+   * default one), the contact's `entity` when it is an email, and the
+   * linked drumate's account email — while still matching names.
+   *
+   * Answers ONE ROW PER MATCHING EMAIL: the caller is choosing an address
+   * to invite, so a contact with a matching work and private address is
+   * offered twice, each row carrying the same name.
+   *
+   * Input:
+   * - value / key   typed string; blank (or '%') lists the whole book, paged
+   * - filter        array of addresses to exclude (already-picked chips)
+   * - only_drumate  1 = keep only contacts that resolve to a drumate
+   * - page          1-based
+   */
+  async lookup() {
+    const raw = this.input.use('value', '') || this.input.use('key', '') || '';
+    const page = this.input.use(Attr.page, 1);
+    const only_drumate = this.input.use('only_drumate', 0) ? 1 : 0;
+    const filter = toArray(this.input.use(Attr.filter) || []);
+    // The proc owns its wildcards — legacy callers append '%' themselves.
+    const key = String(raw).replace(/%/g, '').trim();
+    try {
+      const rows = await this.db.await_proc(
+        'my_contact_lookup', key, stringify(filter), only_drumate, page
+      );
+      this.output.list(rows);
+    } catch (e) {
+      // An address book with no such routine (an account created before the
+      // proc reached its DB) must degrade to "no matches", not to a 500 on
+      // every keystroke — this drives a type-ahead.
+      this.warn('[contact.lookup] failed:', e && e.message);
+      this.output.list([]);
+    }
   }
 
   /**

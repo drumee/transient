@@ -173,6 +173,22 @@
           "http_status": 400
         }
       ]
+    },
+    "over_limit_state": {
+      "doc": "Downgrade over-limit: fresh evaluation of the caller's org — recomputes usage/seats vs the current entitlement, persists the two flags and returns state + exact overage numbers for the popup/banner. Any signed-in member may read (the read-only banner is shown to everyone).",
+      "scope": "hub",
+      "permission": {
+        "src": "read"
+      },
+      "params": {}
+    },
+    "over_limit_dismiss": {
+      "doc": "Downgrade over-limit: snooze the owner/admin popup for the CALLING user only, server-side (never localStorage). Cleared automatically when the org returns within limits.",
+      "scope": "hub",
+      "permission": {
+        "src": "read"
+      },
+      "params": {}
     }
   },
   "modules": {

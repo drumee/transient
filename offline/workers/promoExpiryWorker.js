@@ -27,7 +27,8 @@
  *   PROMO_EXPIRY_INTERVAL_SEC  poll cadence (default 900 = 15 min)
  */
 
-const { Mariadb } = require('@drumee/server-essentials');
+const { Mariadb, RedisStore } = require('@drumee/server-essentials');
+const OverLimit = require('../../service/lib/over-limit');
 
 const WORKER_NAME = process.env.WORKER_NAME || 'promo-expiry-worker-1';
 const INTERVAL_MS = (parseInt(process.env.PROMO_EXPIRY_INTERVAL_SEC, 10) || 900) * 1000;
@@ -36,6 +37,7 @@ console.log(`[PromoExpiryWorker] Starting worker: ${WORKER_NAME}`);
 console.log(`[PromoExpiryWorker] Poll interval: ${INTERVAL_MS / 1000}s`);
 
 let yp;
+let redisReady = false;
 
 function asArray(x) {
   if (Array.isArray(x)) return x;
@@ -45,6 +47,34 @@ function asArray(x) {
 async function initialize() {
   yp = new Mariadb({ name: 'yp' });
   console.log('[PromoExpiryWorker] Database connected');
+  // For the over-limit push after a revert. Best-effort: without Redis the
+  // flags are still written; clients pick them up on next boot.
+  try {
+    await RedisStore.prototype.init.call(new RedisStore());
+    redisReady = true;
+    console.log('[PromoExpiryWorker] RedisStore initialized');
+  } catch (e) {
+    console.warn('[PromoExpiryWorker] RedisStore unavailable:', e.message);
+  }
+}
+
+// Downgrade over-limit: a promo/coupon revert is a plan-lowering commit like
+// any Stripe cancel — measure the org against the free tier it just fell to.
+async function evaluateOverLimit(org_id) {
+  try {
+    if (!OverLimit.enabled()) return;
+    let org = await yp.await_query(
+      `SELECT domain_id FROM organisation WHERE id = ? LIMIT 1`, org_id
+    );
+    if (Array.isArray(org)) org = org[0];
+    const dom = ~~(org && org.domain_id);
+    if (dom <= 1) return;
+    await OverLimit.evaluate(yp, dom, {
+      notify: redisReady ? (state) => OverLimit.notifyDomain(yp, RedisStore, state) : null,
+    });
+  } catch (e) {
+    console.warn(`[PromoExpiryWorker] over-limit evaluation failed for org=${org_id}:`, e.message);
+  }
 }
 
 async function expireOne(row) {
@@ -53,6 +83,7 @@ async function expireOne(row) {
     // Same revert path an org's Stripe cancel takes — see the module doc.
     await yp.await_proc('payment_clear_entitlement', org_id);
     await yp.await_proc('promo_launch30_mark_expired', payer_id);
+    await evaluateOverLimit(org_id);
     console.log(`[PromoExpiryWorker] expired promo for payer=${payer_id} org=${org_id}`);
     return true;
   } catch (error) {
@@ -77,6 +108,7 @@ async function expireOneRedemption(row) {
   try {
     await yp.await_proc('payment_clear_entitlement', org_id);
     await yp.await_proc('mkt_coupon_redeem_mark_expired', id);
+    await evaluateOverLimit(org_id);
     console.log(`[PromoExpiryWorker] expired coupon redemption id=${id} code=${code} org=${org_id} email=${email}`);
     return true;
   } catch (error) {

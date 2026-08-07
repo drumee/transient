@@ -235,6 +235,40 @@
       "errors": []
     },
 
+    "lookup": {
+      "doc": "Type-ahead lookup over the caller's address book for the workspace-invite pickers. Unlike my_contacts (name columns only), this matches the typed string against EVERY email a contact holds — all contact_email rows, the contact's entity when it is an email, and the linked drumate's account email — as well as the name columns. Answers one row per matching email, best match first (exact → prefix → substring → name-only). A blank key lists the whole address book, paged.",
+      "scope": "hub",
+      "permission": {
+        "src": "owner"
+      },
+      "params": {
+        "value": { "type": "string", "required": false, "default": "", "doc": "Typed string — a full or partial email address, or a name. Blank (or '%') lists everything." },
+        "key": { "type": "string", "required": false, "doc": "Alias for `value`, accepted for callers that name their search field `key`." },
+        "filter": { "type": "array", "required": false, "doc": "Email addresses to exclude — the ones the caller has already picked." },
+        "only_drumate": { "type": "number", "required": false, "default": 0, "doc": "Set to 1 to keep only contacts that resolve to a registered Drumee user." },
+        "page": { "type": "number", "required": false, "default": 1, "doc": "Page number for pagination" }
+      },
+      "returns": {
+        "type": "array",
+        "doc": "Matching addresses, best match first",
+        "items": {
+          "id": { "type": "string", "doc": "Drumee user id when the contact is a registered user, otherwise the contact entity or the email itself" },
+          "contact_id": { "type": "string", "doc": "Address-book record id (null for same-domain colleagues)" },
+          "email": { "type": "string", "doc": "The matching email address" },
+          "category": { "type": "string", "doc": "Which address matched: 'prof' or 'priv' (null when it came from the contact row or a colleague)" },
+          "firstname": { "type": "string", "doc": "First name" },
+          "lastname": { "type": "string", "doc": "Last name" },
+          "fullname": { "type": "string", "doc": "Full display name" },
+          "surname": { "type": "string", "doc": "Display label, falling back to the name parts" },
+          "is_drumate": { "type": "number", "doc": "1 when the address belongs to a registered Drumee user" },
+          "status": { "type": "string", "doc": "Contact relationship status ('mate' for same-domain colleagues)" },
+          "is_blocked": { "type": "number", "doc": "1 when the caller blocked this contact" },
+          "is_blocked_me": { "type": "number", "doc": "1 when this contact blocked the caller" }
+        }
+      },
+      "errors": []
+    },
+
     "email_in_use": {
       "doc": "Check whether an email is already referenced by any of the caller's contacts — as the contact's entity (default identifier) or in their contact_email rows. Pass contact_id when editing to exclude that contact from the check.",
       "scope": "hub",

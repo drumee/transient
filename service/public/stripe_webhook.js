@@ -409,6 +409,36 @@ class __public_stripe_webhook extends Entity {
     } catch (e) { return undefined; }
   }
 
+  // Downgrade over-limit: re-evaluate the org's usage/seats against the
+  // entitlement THIS webhook just wrote. Every plan-lowering path commits
+  // through payment_apply_entitlement / payment_clear_entitlement in this
+  // file, so hooking the three call sites covers checkout-supersede,
+  // change_plan, Billing-Portal downgrades, cancel->free and dunning in one
+  // move. Personal plans never lock a workspace (evaluate() ignores
+  // domain<=1), and upgrades that clear an existing block also flow through
+  // here — that is what flips the workspace back to 'ok' live.
+  // Best-effort by design: the entitlement is already committed, and a
+  // failed evaluation must not 500 the webhook (Stripe would re-deliver).
+  async _evaluateOverLimit(entity_id, entity_type) {
+    try {
+      if (entity_type !== 'org') return;
+      const OverLimit = require('../lib/over-limit');
+      if (!OverLimit.enabled()) return;
+      let org = await this.yp.await_query(
+        `SELECT domain_id FROM organisation WHERE id = ? LIMIT 1`, entity_id
+      );
+      if (Array.isArray(org)) org = org[0];
+      const dom = ~~(org && org.domain_id);
+      if (dom <= 1) return;
+      const { RedisStore } = require('@drumee/server-essentials');
+      await OverLimit.evaluate(this.yp, dom, {
+        notify: (state) => OverLimit.notifyDomain(this.yp, RedisStore, state),
+      });
+    } catch (e) {
+      this.warn && this.warn('[over-limit] post-entitlement evaluation failed:', e && e.message);
+    }
+  }
+
   async receive() {
     let stripe, secret;
     try { stripe = stripeClient(); secret = endpointSecret(); }
@@ -654,6 +684,7 @@ class __public_stripe_webhook extends Entity {
               service: 'payment.plan_updated', plan: eff_plan, status, period_end,
               quota: await this._freshQuota(md.payer_id, entity_id, eff_entity),
             });
+            await this._evaluateOverLimit(entity_id, eff_entity);
             // Resume confirmation email (Figma 3050-96856): a pending cancel
             // flipping back to renewing. previous_attributes carries only the
             // changed fields, so cancel_at_period_end true→false IS the resume
@@ -783,6 +814,7 @@ class __public_stripe_webhook extends Entity {
               service: 'payment.plan_updated', plan: 'free', status: 'canceled',
               quota: await this._freshQuota(md.payer_id, entity_id, etype),
             });
+            await this._evaluateOverLimit(entity_id, etype);
           }
           break;
         }
@@ -826,6 +858,7 @@ class __public_stripe_webhook extends Entity {
                 service: 'payment.plan_updated', plan: eff_plan, status: 'active',
                 quota: await this._freshQuota(md.payer_id, eid, eff_entity),
               });
+              await this._evaluateOverLimit(eid, eff_entity);
               // Payment-receipt email (initial payment AND every renewal both
               // arrive as invoice.paid). A mail failure must never fail the
               // webhook — the entitlement above is already applied and Stripe

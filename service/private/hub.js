@@ -30,6 +30,7 @@ const {
 const { resolve } = require("path");
 const { notifyMemberJoined } = require("../lib/notify-member-joined");
 const { butlerFrom } = require("../lib/mail-sender");
+const { resolveHubInviteName } = require("../lib/hub-invite-name");
 const { MfsTools } = require("@drumee/server-core");
 const { remove_dir } = MfsTools;
 const { toArray } = utils;
@@ -670,14 +671,12 @@ class __private_hub extends Hub {
         `${firstname} ${lastname}`.trim() ||
         r.inviter_email ||
         null;
-      // Prefer the live hub name from yp.entity over whatever was stored at
-      // invite time (older rows had the hub id pasted in here).
+      // Prefer the live hub name over whatever was stored at invite time (older
+      // rows had the hub id pasted in here, and a rename leaves the stored name
+      // stale). Shared with activity.js's mapHubInviteRow so this list and the
+      // bell feed can never disagree about a workspace's name again.
       const hub_id = meta.hub_id || null;
-      const hub_name =
-        r.hub_headline ||
-        r.hub_ident ||
-        (meta.hub_name && meta.hub_name !== hub_id ? meta.hub_name : null) ||
-        null;
+      const hub_name = resolveHubInviteName(r, meta);
       return {
         id: r.id,
         ctime: r.ctime,
@@ -1458,6 +1457,21 @@ class __private_hub extends Hub {
         seat: budget.seat,
         members: budget.members,
       });
+    }
+    // Downgrade over-limit: while the workspace is over its downgraded
+    // plan's limits, growing the membership is paused along with every other
+    // mutation. This has to live HERE, not in the REST clamp: the redeemer
+    // is anonymous / on their own personal domain, so the clamp inspects the
+    // wrong domain. Role upgrades (held > 0 → hubDom 0) stay allowed — they
+    // take no seat.
+    if (hubDom > 0) {
+      try {
+        const OverLimit = require('../lib/over-limit');
+        const st = await OverLimit.getState(this.yp, hubDom);
+        if (st && st.state) {
+          return this.output.data({ status: 'OVER_LIMIT', hub_id });
+        }
+      } catch (e) { /* fail-open, same rule as the clamp */ }
     }
     await this.yp.await_proc(`${db_name}.add_member`, this.uid, permission, 0);
     await this.yp.await_proc(
