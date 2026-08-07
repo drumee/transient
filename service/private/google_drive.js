@@ -290,6 +290,13 @@ class GoogleDrive extends ExtImport {
     const include_shared_drives = this.input.use('include_shared_drives', 0) ? 1 : 0;
     const conflict_policy = this.input.use('conflict_policy', 'skip');
     const auth_kind = this.input.use('auth_kind', 'user') === 'sa' ? 'sa' : 'user';
+    // direct_into=1: land the import IN `nid` itself instead of a
+    // GoogleDriveMigration wrapper under it. Set by the folder-window "+ New"
+    // launch, where the user picked the destination by standing in it; the
+    // settings/Home/onboarding launches keep the wrapper so loose files never
+    // scatter into a home. The write-privilege gate below covers `nid` the
+    // same either way.
+    const direct_into = this.input.use('direct_into', 0) ? 1 : 0;
     let mode = this.input.use('mode', 'all') === 'selected' ? 'selected' : 'all';
     let selections = this.input.use('selections', null);
     if (auth_kind === 'sa') {
@@ -407,6 +414,7 @@ class GoogleDrive extends ExtImport {
       user_id: this.uid,
       hub_id,
       nid,
+      direct_into,
       source_folder_id,
       include_shared_drives,
       conflict_policy,
