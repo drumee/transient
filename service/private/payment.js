@@ -270,14 +270,17 @@ class __private_payment extends Entity {
     // Cycle changes (month <-> year) are a subscription UPDATE, not a new
     // checkout, so they get their own status rather than a generic failure.
     //
-    // One exception: a subscription held by the OTHER kind of entity. A legacy
-    // personal 'pro' holder buying an org plan cannot be served by an in-place
-    // update — change_plan refuses it with PLAN_ENTITY_MISMATCH because the
-    // plan is not sold to that entity kind. Refusing here as well left that
-    // caller in a circle with no working path, so this is exactly the supersede
-    // CHECKOUT the webhook already knows how to finish: it cancels the
-    // superseded subscription once the new one is paid
-    // (_cancelSupersededPersonalSubscription / metadata.supersede).
+    // A subscription held by the OTHER kind of entity cannot be served by an
+    // in-place update — change_plan refuses it with PLAN_ENTITY_MISMATCH
+    // because the plan is not sold to that entity kind. The working path is a
+    // supersede CHECKOUT, which the webhook knows how to finish: it cancels
+    // the superseded subscription once the new one is paid
+    // (_cancelSupersededPersonalSubscription / metadata.supersede /
+    // metadata.supersede_target). But it must carry the supersede flag —
+    // without it the webhook cancels nothing and the caller simply pays for a
+    // second, invisible plan. So a cross-entity checkout WITHOUT supersede is
+    // refused below with USE_SUBSCRIPTION_UPDATE (the FE's warning + confirm
+    // flow), same as a same-entity switch; only the confirmed retry proceeds.
     //
     // That cancel does NOT disturb the org it just paid for. yp.quota is keyed
     // UNIQUE(domain_id, payer_id) — a composite, verified against the deployed
@@ -313,16 +316,31 @@ class __private_payment extends Entity {
     // purchase. Nothing sets trial_end for a cycle switch now; the only
     // remaining source is an MKT promo's free days, below.
     let trial_end = 0;
-    if (current && current.subscription_id && live && holder === entity_type && !supersede) {
-      const same_plan = String(current.plan || '') === String(this.input.use('plan', 'team'));
+    if (current?.subscription_id && live && !supersede) {
       let refusal;
-      if (pending_cancel) refusal = 'PENDING_CANCEL_RESUME_INSTEAD';
-      // A caller in dunning is trying to fix a failed payment, not to shop.
-      // "You're already subscribed" is true but unhelpful there — give the
-      // state its own status so the client can point at the card instead.
-      else if (status === 'past_due') refusal = 'SUBSCRIPTION_PAST_DUE';
-      else if (same_plan && String(current.period || '') === period) refusal = 'ALREADY_SUBSCRIBED';
-      else refusal = 'USE_SUBSCRIPTION_UPDATE';
+      if (holder !== entity_type) {
+        // CROSS-ENTITY without the supersede confirmation. The exception in
+        // the comment above exists so a deliberate kind change (personal pro
+        // <-> org plan) has a working path — but it must still be DELIBERATE.
+        // Left open, this sold an org owner a personal Pro with no warning:
+        // Stripe charged the $5, the org subscription kept running (the
+        // webhook only cancels a replaced subscription when metadata.supersede
+        // is present), and the org's plan row outranks the payer's, so the
+        // UI still said Business — money taken, nothing changed (live case,
+        // prod 2026-08-06). USE_SUBSCRIPTION_UPDATE routes the FE into the
+        // same warning + supersede flow it already runs for same-entity
+        // switches; the confirmed retry passes the guard via `supersede`.
+        refusal = 'USE_SUBSCRIPTION_UPDATE';
+      } else {
+        const same_plan = String(current.plan || '') === String(this.input.use('plan', 'team'));
+        if (pending_cancel) refusal = 'PENDING_CANCEL_RESUME_INSTEAD';
+        // A caller in dunning is trying to fix a failed payment, not to shop.
+        // "You're already subscribed" is true but unhelpful there — give the
+        // state its own status so the client can point at the card instead.
+        else if (status === 'past_due') refusal = 'SUBSCRIPTION_PAST_DUE';
+        else if (same_plan && String(current.period || '') === period) refusal = 'ALREADY_SUBSCRIBED';
+        else refusal = 'USE_SUBSCRIPTION_UPDATE';
+      }
       return this.output.data({
         status: refusal,
         plan: current.plan,

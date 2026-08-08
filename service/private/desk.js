@@ -18,6 +18,7 @@
 const { isArray, after, union, filter, isEmpty } = require('lodash');
 const Media = require('../media');
 const { writeAudit } = require('./_audit');
+const { pushReferralLive } = require('./_referral_live');
 
 const {
   Attr, Privilege, toArray,
@@ -538,6 +539,14 @@ class __private_desk extends Media {
    * asked for, so the form reports it and this records what it reported.
    */
   async track_workspace() {
+    // The services_log row is already written by the router's `log` flag (see
+    // above), so by the time we run, referral_members can already see this
+    // workspace and will report the row's new status. Publishing before that
+    // would push the status the user just left.
+    // Coalesced and sent by service/private/_referral_live.js, which the
+    // upload path uses too — see there for why the row is read back from
+    // referral_members rather than assembled here.
+    pushReferralLive(this, this.uid);
     this.output.data({ ok: 1 });
   }
 
