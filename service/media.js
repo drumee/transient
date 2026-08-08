@@ -22,6 +22,7 @@ const {
 const indexQueue = require("../offline/queues/indexQueue");
 const { writeAudit } = require("./private/_audit");
 const { secureShareWriteVerdict, secureShareCapVerdict, secureShareCapPrivilege } = require("./lib/secure-share-write-guard");
+const { memberCan, CAN_DOWNLOAD } = require("./lib/member-capability");
 const { DENIED } = Events;
 const {
   BATCH_FILE,
@@ -2075,6 +2076,17 @@ class __media extends Mfs {
     if (!(await this._secureShareCapAllowed(["can_download", "can_edit"]))) {
       return this.exception.forbiden();
     }
+    // Workspace MEMBER half of the same rule: download starts at the "View &
+    // chat" tier, so a view-only member (privilege 3) is refused. acl/media.json
+    // asks only for `src: "read"` here, which view satisfies.
+    // Inert for share sessions — memberCan allows whenever a token is present,
+    // so the recipient guard above stays the only authority on that path.
+    // Inline PREVIEW/stream paths (raw / preview / orig / pdf / audio / ogv) are
+    // deliberately untouched: a view-only member must still be able to OPEN and
+    // read a file; only the explicit download/zip action is refused.
+    if (!(await memberCan(this, CAN_DOWNLOAD))) {
+      return this.exception.forbiden();
+    }
     let node = this.source_granted();
     let nid = node.id;
     let socket_id = this.input.need(Attr.socket_id);
@@ -2166,6 +2178,12 @@ class __media extends Mfs {
     // this serves its bytes. A view-only secure-share recipient must not retrieve a
     // previously-staged zip (no token → null → normal ACL, unchanged).
     if (!(await this._secureShareCapAllowed(["can_download", "can_edit"]))) {
+      return this.exception.forbiden();
+    }
+    // Member half, mirroring download() above — same defense-in-depth reasoning:
+    // download() stages the archive, this serves its bytes, and neither should be
+    // reachable by a view-only member.
+    if (!(await memberCan(this, CAN_DOWNLOAD))) {
       return this.exception.forbiden();
     }
     const id = this.input.need(Attr.id);
