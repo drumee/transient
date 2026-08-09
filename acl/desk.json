@@ -225,8 +225,7 @@
       "doc": "Create a new hub (private, public, or share workspace)",
       "scope": "hub",
       "permission": {
-        "src": "owner",
-        "preproc": "check_quota"
+        "src": "owner"
       },
       "log": true,
       "params": {
@@ -277,11 +276,6 @@
         }
       },
       "errors": [
-        {
-          "code": "QUOTA_EXCEEDED",
-          "message": "Hub creation quota exceeded for this area",
-          "http_status": 507
-        },
         {
           "code": "INVALID_FILENAME",
           "message": "Filename contains invalid characters",
