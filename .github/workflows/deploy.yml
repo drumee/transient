@@ -47,7 +47,7 @@ jobs:
           # MODE=stage  -> deploy locally on the runner host (drumee.in), endpoint `main` (native pm2)
           # MODE=container -> deploy into the prod box (sgp) docker container
           case "$TARGET" in
-            PROD) ENV_FILE=production; EP=main;    PORT=24000; BRANCH=preview; MODE=container ;;
+            PROD) ENV_FILE=production; EP=main;    PORT=24000; BRANCH=main; MODE=container ;;
             TEST) ENV_FILE=deploy;     EP=main;    PORT=24000; BRANCH=test;    MODE=stage ;;
             UAT)  ENV_FILE=deploy;     EP=preview; PORT=24001; BRANCH=preview; MODE=container ;;
             *) echo "Unknown target: $TARGET"; exit 1 ;;
