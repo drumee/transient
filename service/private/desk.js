@@ -15,7 +15,7 @@
  * =============================================================================
  */
 
-const { isArray, after, union, filter, isEmpty } = require('lodash');
+const { after, union, filter, isEmpty } = require('lodash');
 const Media = require('../media');
 const { writeAudit } = require('./_audit');
 const { pushReferralLive } = require('./_referral_live');
@@ -44,7 +44,6 @@ class __private_desk extends Media {
    */
   constructor(...args) {
     super(...args);
-    this.check_quota = this.check_quota.bind(this);
     this.pre_copy = this.pre_copy.bind(this);
     this.get_env = this.get_env.bind(this);
     this.home = this.home.bind(this);
@@ -141,66 +140,28 @@ class __private_desk extends Media {
 
   }
 
-  /**
-   * 
-   * @returns 
-   */
-  async check_quota() {
-    const area = this.input.need(Attr.area, Attr.private);
-    const folders = [];
-    if (isArray(this.input.use('folders'))) {
-      for (let path of this.input.use('folders')) {
-        folders.push({ path });
-      }
-    }
-
-    // get_quota is a SQL FUNCTION returning JSON, and the driver hands that
-    // back as a string, not an object — destructuring it directly yielded
-    // undefined for every key, which is the other half of why this guard never
-    // fired. Parse when needed; tolerate a driver that already decoded it.
-    let q = await this.yp.await_func("get_quota", this.uid);
-    if (typeof q === 'string') {
-      try { q = JSON.parse(q); } catch (e) { q = null; }
-    }
-    let { private_hub, share_hub, public_hub } = q || {};
-    let used = ~~(await this.yp.await_func("hub_usage", this.uid, area)) || 0;
-    let cap = null;
-    let message = '_private_hub_limit_reached'
-    switch (area) {
-      case Attr.private:
-        cap = private_hub;
-        message = '_private_hub_limit_reached'
-        break;
-      case Attr.share:
-        cap = share_hub;
-        message = '_share_hub_limit_reached'
-        break;
-      case Attr.public:
-        cap = public_hub;
-        message = '_public_hub_limit_reached'
-        break;
-    }
-    // A plan that does not state a cap for this area is unlimited there.
-    //
-    // This used to read `remain = cap - used` and refuse on `remain <= 0`,
-    // which inverted the intent whenever the cap was absent: the 2026-07 plan
-    // quotas carry no $.private_hub / $.share_hub, so `cap` was undefined,
-    // `remain` was NaN, and `NaN <= 0` is FALSE — the guard passed every time
-    // and the limit was never enforced for anyone. Decide on the cap itself,
-    // so a missing one is explicitly unlimited and a real one is compared as a
-    // number.
-    cap = Number(cap);
-    if (Number.isFinite(cap) && cap > 0 && used >= cap) {
-      this.output.data({
-        error: "QUOTA_EXCEEDED",
-        reason: message,
-        cap,
-        used,
-      })
-      return;
-    }
-    this._done();
-  }
+  // check_quota — REMOVED (2026-08-08). It was the create_hub preproc and
+  // refused a new workspace once `used >= cap`, reading the cap from the
+  // plan's $.private_hub / $.share_hub / $.public_hub.
+  //
+  // Those keys are not workspace COUNTS. They are per-area capability flags,
+  // and the catalog says so plainly: free 1/0/0, pro 1/1/0, team 1/1/0,
+  // business NULL/NULL/NULL. Read as counts, a $29 Team with 10 seats and
+  // 100 GB allows exactly ONE internal workspace — the same as Free — and
+  // nobody on any plan may ever create a public one. Read as flags they are
+  // coherent: private everywhere, share from Pro up, public retired, and an
+  // absent value on Business meaning "no restriction".
+  //
+  // Enforcing them as counts (the 2026-07-28 "the cap never applied" fix,
+  // which made a guard that had never once refused anybody start refusing
+  // everybody) is what put "Workspace limit reached" in front of paying
+  // customers. There is no workspace-count limit in the product, so there is
+  // nothing here to gate: the whole check is gone rather than left as a
+  // pass-through preproc that still costs get_quota + hub_usage per create.
+  //
+  // If a per-AREA gate is ever wanted (e.g. no External workspace on Free),
+  // it is a different check — the flag decides whether an area is offered at
+  // all, and it belongs where the form offers the type, not in a counter.
 
   /**
    * 
