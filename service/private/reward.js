@@ -14,6 +14,9 @@
  */
 const { Entity } = require('@drumee/server-core');
 const { Cache, toArray } = require('@drumee/server-essentials');
+// Live updates for the dashboard's Claim reward tracking table. Same shape as
+// desk.js's use of _referral_live: fire-and-forget, never throws.
+const { pushRewardLive } = require('./_reward_live');
 
 const CAMPAIGN = 'free-storage';
 /**
@@ -37,10 +40,28 @@ const SLOTS = 100;
  * Without that distinction anyone who was mailed got the walkthrough on their
  * next login whether or not they ever clicked, which is the step this closes.
  *
- * Terminal states (done, dropped) are excluded; a later send re-arms the row to
- * 'emailed', so a returning user has to click again before they are eligible.
+ * 'left' IS here, and that is what makes going away recoverable. It is written
+ * for an exit nobody confirmed — a refresh, a closed tab — and a refresh cannot
+ * be told apart from a close at unload time, so treating it as terminal would
+ * let one stray F5 cost someone a prize they were three clicks from claiming.
+ * They resume from `step`, on any device.
+ *
+ * 'dropped' is NOT here, and the difference between the two is the point.
+ * Leaving is not refusing. A user who presses "Drop anyway" on the confirmation
+ * has answered the offer, and asking again at their next login — and every
+ * login after that — is not a recovery, it is nagging. For a while both exits
+ * wrote one status, so making the accidental one recoverable silently made the
+ * deliberate one non-binding too; that is the bug the two statuses close.
+ *
+ * The funnel still records the abandon: yp.reward_claim_track ranks 'left'
+ * BELOW 'started', so coming back and reaching a card step clears it by itself
+ * and the dashboard stops calling an active user gone.
+ *
+ * Genuinely terminal states (done, missed) stay out; a later send re-arms the
+ * row to 'emailed', so a returning user has to click again before they are
+ * eligible.
  */
-const OPEN = new Set(['clicked', 'started']);
+const OPEN = new Set(['clicked', 'started', 'left']);
 /** States the client may report. 'clicked' is posted by the desk when it finds
  *  campaign-arrival evidence relayed through login; the rest come from the
  *  widget. 'emailed' is NOT here: it is seeded at send time by analytics-server
@@ -49,8 +70,14 @@ const OPEN = new Set(['clicked', 'started']);
  *  'missed' IS claimable, but reporting it can only ever cost the caller: it is
  *  how the widget says "I showed this user the sold-out screen and they
  *  dismissed it", and the proc's rank order keeps it under 'done', so a user
- *  who already holds a slot cannot post their way out of it. */
-const STATUS = new Set(['clicked', 'started', 'dropped', 'done', 'missed']);
+ *  who already holds a slot cannot post their way out of it.
+ *
+ *  'dropped' is the same shape of claim: the user pressed "Drop anyway" on the
+ *  confirmation, which is the one place they say outright that they do not want
+ *  this. It costs the caller — it is terminal and keeps them out of OPEN — so
+ *  like 'missed' there is nothing to gain by forging it. Kept distinct from
+ *  'left', which merely means they went away: see the OPEN docblock above. */
+const STATUS = new Set(['clicked', 'started', 'left', 'dropped', 'done', 'missed']);
 const STEPS = ['step1', 'step2', 'step3'];
 
 class __reward extends Entity {
@@ -236,6 +263,18 @@ class __reward extends Entity {
       ))[0];
       granted = row && row.completed_count > 0 ? 1 : 0;
     }
+
+    // Tell any open analytics dashboard the row moved. AFTER the write and
+    // after the read-back, so what the board re-reads is the settled row and
+    // not one still being decided — a 'done' that the cap refuses is a 'missed'
+    // by the time this fires, and pushing before the read would race the board
+    // into showing the wrong one.
+    //
+    // Not awaited and never able to throw: the row is already committed, and
+    // the user's answer must not wait on an analytics message (see
+    // _reward_live.js).
+    pushRewardLive(this, this.uid, status);
+
     this.output.data({ ok: true, status, step, granted });
   }
 }

@@ -21,6 +21,7 @@ const { Mfs } = require('@drumee/server-core');
 const { isEmpty } = require('lodash');
 const { shouldSendNotification } = require('../lib/email-policy');
 const { hashPassword } = require('../lib/secure-share-password');
+const { memberCan, CAN_WRITE } = require('../lib/member-capability');
 
 class __secure_share extends Mfs {
 
@@ -30,6 +31,26 @@ class __secure_share extends Mfs {
    * Backward compat: still accepts legacy email + domain_restriction fields.
    */
   async create() {
+    // 🔒 PRIVILEGE ESCALATION GUARD.
+    //
+    // acl/secure_share.json declares `src: "write"` for this service, but it
+    // pairs it with `fast_check: "user_permission"`, and server-core's acl.js
+    // short-circuits on fast_check (check_env returns before check_source ever
+    // runs). The declared `src` is therefore NEVER evaluated, and any member
+    // with a non-zero privilege reached this method — including a view-only
+    // one (privilege 3).
+    //
+    // That is an escalation, not just an extra button: a share link can grant
+    // `can_edit`, which dmz.js maps to privilege 15. A view or chat member
+    // could mint a link, open it themselves, and write to a workspace they only
+    // had read access to.
+    //
+    // Enforcing the write bit here makes the ACL's own declared intent real.
+    // Share/DMZ recipients are unaffected: memberCan allows whenever a share
+    // token is present, leaving the secure-share guards the sole authority.
+    if (!(await memberCan(this, CAN_WRITE))) {
+      return this.exception.forbiden();
+    }
     const nid    = this.input.need(Attr.nid);
     const days   = this.input.get(Attr.days)  || 0;
     const hours  = this.input.get(Attr.hours) || 0;

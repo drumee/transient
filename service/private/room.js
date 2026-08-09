@@ -17,6 +17,7 @@
 const { isEmpty, isArray, difference, map } = require('lodash');
 const __public_room = require("../room");
 const { Attr, Privilege, Cache, sysEnv, RedisStore, toArray } = require("@drumee/server-essentials")
+const { memberCan, CAN_WRITE } = require("../lib/member-capability");
 
 //########################################
 class __private_room extends __public_room {
@@ -111,6 +112,21 @@ class __private_room extends __public_room {
    * 
    */
   async book() {
+    // Scheduling a meeting is an EDIT-tier action — it creates a `schedule` node
+    // in the workspace — so view (privilege 3) and chat (7) must be refused.
+    //
+    // The ACL cannot do this: acl/room.json declares `src: "write"` but ALSO
+    // `fast_check: "user_permission"`, and server-core's acl.js short-circuits on
+    // fast_check (check_env returns `{fast_check:1}` before check_source ever
+    // runs), so the declared `src` is never evaluated — any member with a
+    // non-zero privilege passes. Hence the explicit gate here.
+    //
+    // This closes the capability on its own: update() and remove() are already
+    // creator-only (NOT_MEETING_OWNER), so a member who cannot create a meeting
+    // has none of their own to edit or delete.
+    if (!(await memberCan(this, CAN_WRITE))) {
+      return this.exception.forbiden();
+    }
     let lang = this.user.get(Attr.profile).lang || this.input.ua_language();
     let name = this.user.get('fullname');
     const Moment = require('moment');

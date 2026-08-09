@@ -21,6 +21,7 @@ const {
 const { Entity, MfsTools } = require("@drumee/server-core");
 const { remove_node, move_node, copy_node } = MfsTools;
 const { stampAuthorIdentity } = require("../lib/message-author");
+const { memberCan, CAN_CHAT } = require("../lib/member-capability");
 
 const { stringify, parse: jsonParse } = JSON;
 const { isEmpty } = require("lodash");
@@ -1401,6 +1402,24 @@ class __private_channel extends Entity {
    *
    */
   async post() {
+    // Chat starts at the "View & chat" tier: view (privilege 3) must not post,
+    // chat (7) / edit (15) / admin (31) / owner (63) may. acl/channel.json asks
+    // only for `src: "read"` here, which a view-only member satisfies (3 & 2 = 2),
+    // so the chat right is enforced at the service layer instead.
+    //
+    // CAN_CHAT is the DOWNLOAD bit (0b100) — see service/lib/member-capability.js
+    // for why it must never be Constants.permission.chat (0b110), which overlaps
+    // read and is therefore truthy for the very role this gate excludes.
+    //
+    // This is also the meeting-chat gate: the in-meeting conversation posts
+    // through this same service, so one right governs both surfaces.
+    // Share/DMZ recipients are untouched — memberCan defers to the secure-share
+    // guards whenever a share token is present.
+    // First statement in the method: no id is minted and nothing is staged
+    // before the caller is known to be allowed.
+    if (!(await memberCan(this, CAN_CHAT))) {
+      return this.exception.forbiden();
+    }
     let message = this.input.use(Attr.message, "");
     const thread_id = this.input.use(Attr.thread_id);
     let attachment = this.input.use(Attr.attachment, []);
@@ -1790,6 +1809,13 @@ class __private_channel extends Entity {
    * trusted from the client) and the original file is never auto-attached.
    */
   async file_thread_post() {
+    // Same chat right as channel.post — a per-file thread is a conversation, and
+    // the UI already hides it from view-only members on this exact bit
+    // (folder/index.js::_syncChatGate flags .window__file-thread-panel too).
+    // Kept as the first statement so nothing is resolved or staged first.
+    if (!(await memberCan(this, CAN_CHAT))) {
+      return this.exception.forbiden();
+    }
     let file_nid = this.input.use("file_nid");
     if (isEmpty(file_nid)) {
       return this.output.data({ status: "INVALID_FILE" });
