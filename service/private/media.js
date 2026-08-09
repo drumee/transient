@@ -764,6 +764,13 @@ class __private_media extends Media {
       mfs_root: join(destinationStorage.home_dir, "__storage__", ".file-move-staging"),
     };
 
+    // The revocation notice names the file, and the only place its name is
+    // still readable is the source snapshot below: mfs_move_all deletes the
+    // source row before this function reaches the emit step. Keep it in a
+    // local — `saga` is reassigned from the transition procedure's result on
+    // every state change, so a property hung on that object would not survive.
+    let sourceFilename = "";
+
     if (["copy_pending", "copy_verified"].includes(saga.state)) {
       const source = firstRow(await this.yp.await_proc(
         `${sourceStorage.db_name}.file_move_source_snapshot`, this.uid, saga.source_file_nid
@@ -778,6 +785,7 @@ class __private_media extends Media {
         || !(destination.permission & Permission.WRITE)) {
         return this._failCrossHubMove(saga, "FILE_MOVE_PERMISSION_OR_POSITION_CHANGED");
       }
+      sourceFilename = source.user_filename || "";
 
       if (Math.floor(Date.now() / 1000) >= saga.expires_at) {
         this._removePhysicalNode(stagingNode);
@@ -894,7 +902,17 @@ class __private_media extends Media {
         destination_thread_id: saga.destination_thread_id,
       });
       if (!saga.failed) {
-        await this._emitCrossHubMoveEvents(saga, sourceStorage, destinationStorage);
+        // The saga is durable and the file has physically moved by now, so a
+        // failure to announce it must not surface as a failed move: the client
+        // treats anything but a committed result as a rollback and would leave
+        // the source tile in place. Matches the compensation path's guard.
+        try {
+          await this._emitCrossHubMoveEvents(
+            saga, sourceStorage, destinationStorage, sourceFilename
+          );
+        } catch (error) {
+          this.warn("Cross-hub move event delivery failed", error);
+        }
       }
     }
 
@@ -1114,17 +1132,30 @@ class __private_media extends Media {
     }
   }
 
-  async _emitCrossHubMoveEvents(saga, sourceStorage, destinationStorage) {
+  async _emitCrossHubMoveEvents(saga, sourceStorage, destinationStorage, sourceFilename) {
     const actor = this._fileMoveActor();
+    const sourceSockets = await this.yp.await_proc("entity_sockets", saga.source_hub_id);
+    const destinationSockets = await this.yp.await_proc("entity_sockets", saga.destination_hub_id);
+
+    // Read the destination node first: it is also the filename fallback for a
+    // resumed saga, where the caller re-entered at source_removed and never
+    // saw the source snapshot. A move does not rename, so the destination
+    // name is the same name the source hub knew.
+    const destinationNode = firstRow(await this.yp.await_proc(
+      `${destinationStorage.db_name}.mfs_access_node`, this.uid, saga.destination_file_nid
+    ));
+    const filename = sourceFilename
+      || (destinationNode && (destinationNode.user_filename || destinationNode.filename))
+      || "";
+
     const common = {
       operation_id: saga.operation_id,
       lineage_id: saga.lineage_id,
       access_revision: saga.access_revision,
       actor,
       reason: "cross_hub_move",
+      filename,
     };
-    const sourceSockets = await this.yp.await_proc("entity_sockets", saga.source_hub_id);
-    const destinationSockets = await this.yp.await_proc("entity_sockets", saga.destination_hub_id);
     await RedisStore.sendData(this.payload({
       ...common,
       state: "revoked",
@@ -1132,17 +1163,20 @@ class __private_media extends Media {
       file_nid: saga.source_file_nid,
       file_thread_id: saga.source_thread_id,
     }, { service: "channel.file_thread_access_changed" }), sourceSockets);
+    // previous_file_nid lets a viewer in the destination hub rebind a mounted
+    // card from the old node id to the one that now backs the same thread.
+    // previous_file_thread_id rides along for symmetry with the compensation
+    // event, which has always carried both; no consumer reads it today.
     await RedisStore.sendData(this.payload({
       ...common,
       state: "restored",
       hub_id: saga.destination_hub_id,
       file_nid: saga.destination_file_nid,
       file_thread_id: saga.destination_thread_id,
+      previous_file_nid: saga.source_file_nid,
+      previous_file_thread_id: saga.source_thread_id,
     }, { service: "channel.file_thread_access_changed" }), destinationSockets);
 
-    const destinationNode = firstRow(await this.yp.await_proc(
-      `${destinationStorage.db_name}.mfs_access_node`, this.uid, saga.destination_file_nid
-    ));
     if (destinationNode) {
       destinationNode.args = {
         src: { nid: saga.source_file_nid, hub_id: saga.source_hub_id },
@@ -1153,6 +1187,26 @@ class __private_media extends Media {
         this.payload(destinationNode, { service: "media.move" }),
         destinationSockets
       );
+    }
+
+    // The source hub is only told the thread is gone; nothing above removes
+    // the file from its grid the way trash and workspace_move both do. Best
+    // effort: the move is already committed, so a delivery failure here must
+    // not surface as a failed move.
+    try {
+      await RedisStore.sendData(
+        this.payload(
+          { nid: saga.source_file_nid, hub_id: saga.source_hub_id },
+          { keys: [Attr.nid, Attr.hub_id], service: "media.remove" }
+        ),
+        sourceSockets
+      );
+      await RedisStore.sendData(
+        this.payload({}, { service: "notification.resync" }),
+        sourceSockets
+      );
+    } catch (error) {
+      this.warn("Cross-hub move source removal event delivery failed", error);
     }
   }
 
@@ -1191,6 +1245,11 @@ class __private_media extends Media {
         recipients
       );
     }
+
+    // No destination-side revoke here: compensation is only reachable from
+    // copy_verified and source_removed (file_move_saga_transition.sql has no
+    // edge out of 'committed'), so the destination hub has never been told the
+    // thread arrived and has nothing to take back.
   }
 
   _fileMoveResult(saga) {
@@ -1268,6 +1327,14 @@ class __private_media extends Media {
         recipients
       );
     }
+
+    // A file thread inside a moved folder is NOT revoked here. The direct
+    // access procedures validate a trash-shaped durable state — thread row
+    // present, media row gone — but a cross-hub move deletes both the media
+    // row and the file_thread row, so no ordering around this call satisfies
+    // them, and the compensating release is blocked by the mirror guard,
+    // leaving the lineage stuck in 'moving' with nothing to reclaim it.
+    // Revoking a moved subtree needs its own operation-aware contract.
   }
 
   /** Allow move with low privilege, but restricted to type=hub

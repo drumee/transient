@@ -35,3 +35,5 @@ jobs:
         run: node offline/test/secure-share-session.test.js
       - name: Run file-move result regression test
         run: node offline/test/mfs-move-result.test.js
+      - name: Run file-thread access event regression test
+        run: node offline/test/file-thread-access-events.test.js
