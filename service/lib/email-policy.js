@@ -14,11 +14,19 @@ function _parseSettings(raw) {
 }
 
 /**
- * Resolve recipient's `email_notifications` preference. Returns false only
- * when the recipient is a Drumate user who has explicitly opted out
- * (`settings.email_notifications === 0`). Returns true for non-Drumate
- * recipients, missing settings, or any lookup failure — never silently
- * drop a security/transactional email.
+ * Resolve recipient's `email_notifications` preference — OPT-IN.
+ *
+ * A registered Drumate user receives notification mail only when they have
+ * explicitly enabled the Settings toggle (`settings.email_notifications`
+ * truthy). A missing key means "never enabled" and mails are NOT sent —
+ * this matches the Settings UI, which renders the toggle off until the
+ * user turns it on.
+ *
+ * Non-Drumate recipients (external guests of a share/invite — no account,
+ * so no toggle to consult) always receive: the email IS the feature there.
+ * Same when the account lookup itself fails — favor delivery over silently
+ * dropping an external guest's share link. A registered user whose settings
+ * row cannot be read is treated as not opted in.
  *
  * Use ONLY for activity/notification emails (share-received, contact-added,
  * etc.). NEVER call this before OTP, password reset, email change, account
@@ -43,9 +51,8 @@ async function shouldSendNotification(yp, email) {
     const r = await yp.await_proc("get_entity_settings", row.id);
     settings = _parseSettings(r && r.settings);
   } catch (_) {
-    return true;
+    return false;
   }
-  if (settings.email_notifications === undefined) return true;
   return !!parseInt(settings.email_notifications);
 }
 

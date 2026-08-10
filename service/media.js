@@ -23,6 +23,7 @@ const indexQueue = require("../offline/queues/indexQueue");
 const { writeAudit } = require("./private/_audit");
 const { secureShareWriteVerdict, secureShareCapVerdict, secureShareCapPrivilege } = require("./lib/secure-share-write-guard");
 const { memberCan, CAN_DOWNLOAD } = require("./lib/member-capability");
+const { notifyHubActivity } = require("./lib/activity-mailer");
 const { DENIED } = Events;
 const {
   BATCH_FILE,
@@ -1372,6 +1373,14 @@ class __media extends Mfs {
       this.warn("changelog_write failed:", e)
     }
     this.__changelog = changelog
+    if (changelog) {
+      // Email leg of the notification fan-out: offline members only, one
+      // mail per hub per cooldown window. Deliberately not awaited — mail
+      // must never delay or fail the file operation.
+      notifyHubActivity(this, { event, src, dest }).catch((e) =>
+        this.warn("activity-mailer:", e && e.message)
+      );
+    }
     return changelog;
   }
 
