@@ -51,9 +51,9 @@
       "returns": { "type": "object", "properties": { "files": { "type": "array" }, "next_page_token": { "type": "string" } } }
     },
     "start_migration": {
-      "doc": "Create a migration_jobs row and enqueue the Bull worker. Returns the job_id immediately — the request does NOT wait for the migration to finish.",
+      "doc": "Create a migration_jobs row and enqueue the Bull worker. Returns the job_id immediately — the request does NOT wait for the migration to finish. Requires WRITE on the destination hub, not ownership: unlike every other service here, hub_id is the DESTINATION workspace (which may belong to somebody else), and the import creates exactly what media.make_dir and media.upload create — both of which ask for write. Demanding owner refused a member who could upload the same bytes by hand, with a bare 'Something went wrong' (reported 2026-08-09).",
       "scope": "hub",
-      "permission": { "src": "owner" },
+      "permission": { "src": "write" },
       "params": {
         "hub_id": { "type": "string", "required": true },
         "nid": { "type": "string", "required": true, "description": "Destination folder node id" },
