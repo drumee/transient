@@ -221,7 +221,41 @@ class __yp extends Entity {
       }
     }
 
+    await this._stampPasswordBacked(r, vars);
     this.output.data(r);
+  }
+
+  /**
+   * A successful PASSWORD login is ground truth that the account holds a
+   * real password. Legacy and OAuth-linked profiles may lack the
+   * password_set flag — without it the FE infers from OAuth links alone
+   * and wrongly routes password holders to the OTP verification path in
+   * change-email / delete-account step-up auth. Self-heal here on every
+   * password login. Covers both branches of session.signin: direct "ok",
+   * and the 2FA hand-off (a bare `{secret}` with no status — the password
+   * was verified before the code was sent). Magic-link and OAuth logins
+   * never reach yp.login, so they can't be stamped by mistake.
+   */
+  async _stampPasswordBacked(r, vars) {
+    try {
+      if (!r) return;
+      let id = null;
+      if (r.status === "ok" && r.user && r.user.id) {
+        id = r.user.id;
+      } else if (r.secret && !r.status && vars.uid && vars.uid.isEmail()) {
+        const row = await this.yp.await_proc("drumate_exists", vars.uid);
+        id = row && row.id;
+      }
+      if (!id) return;
+      const rows = await this.yp.await_query(
+        "SELECT JSON_VALUE(profile,'$.password_set') AS ps FROM drumate WHERE id=?", id
+      );
+      const ps = ((isArray(rows) ? rows[0] : rows) || {}).ps;
+      if (parseInt(ps) === 1) return;
+      await this.yp.call_proc("drumate_update_profile", id, { password_set: 1 });
+    } catch (e) {
+      this.warn("login: password_set stamp failed:", e && e.message);
+    }
   }
 
   /**

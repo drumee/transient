@@ -86,14 +86,29 @@
       "params": {
         "old_password": {
           "type": "string",
-          "required": true,
-          "doc": "Current password for verification"
+          "required": false,
+          "doc": "Current password for verification (password-backed accounts)"
         },
         "new_password": {
           "type": "string",
           "required": true,
           "minLength": 8,
           "doc": "New password (minimum 8 characters)"
+        },
+        "secret": {
+          "type": "string",
+          "required": false,
+          "doc": "OTP secret (OAuth-only accounts verifying via email code)"
+        },
+        "code": {
+          "type": "string",
+          "required": false,
+          "doc": "OTP code (OAuth-only accounts verifying via email code)"
+        },
+        "logout_others": {
+          "type": "number",
+          "required": false,
+          "doc": "1 = terminate every other session of this user after the password change (the calling session stays alive)"
         }
       },
       "returns": {
