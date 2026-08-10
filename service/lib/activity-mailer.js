@@ -53,15 +53,6 @@ const TPL = resolve(__dirname, "..", "private", "templates", "butler", "hub-acti
 // pathological membership can't hold the mail loop.
 const MAX_MEMBER_PAGES = 10;
 
-// yp.entity.area -> desk window kind (mirrors the UI's
-// window/configs/application.js mapping for filetype hub).
-const AREA_KIND = {
-  private: "window_team",
-  share: "window_sharebox",
-  dmz: "window_sharebox",
-  public: "window_website",
-};
-
 function _endpointBase() {
   const { main_domain, endpoint_path } = sysEnv();
   return `https://${main_domain}${endpoint_path || "/-"}`;
@@ -85,22 +76,14 @@ async function _hubDisplayName(ctx, hubId) {
 }
 
 /**
- * Deep link that opens the workspace window on the recipient's desk.
- * Falls back to the plain desk when the entity row can't be read.
+ * Link to the recipient's desk. Deliberately NOT a deep link into the
+ * specific workspace/window (nid/hub_id/kind/filetype query string) — that
+ * broke when the base URL was wrong (e.g. no route env set) and gains
+ * little over just landing on the desk, where the workspace is one click
+ * away. Kept as its own function in case a deep link is wanted again later.
  */
-async function _hubLink(ctx, hubId) {
-  const base = _endpointBase();
-  try {
-    const rows = toArray(
-      await ctx.yp.await_query("SELECT home_id, area FROM entity WHERE id=?", hubId)
-    );
-    const r = rows[0];
-    if (r && r.home_id) {
-      const kind = AREA_KIND[r.area] || "window_team";
-      return `${base}/#/desk/wm/open/nid=${r.home_id}&hub_id=${hubId}&kind=${kind}&filetype=hub`;
-    }
-  } catch (_) {}
-  return `${base}/#/desk`;
+function _hubLink() {
+  return `${_endpointBase()}/#/desk`;
 }
 
 function _actorName(ctx) {
@@ -245,7 +228,7 @@ async function notifyHubActivity(ctx, opt = {}) {
   if (isEmpty(recipients)) return;
 
   const hubName = await _hubDisplayName(ctx, hubId);
-  const link = await _hubLink(ctx, hubId);
+  const link = _hubLink();
   const { action, filename } = _describe(opt.event, opt.src, opt.dest);
   const subject = `${_actorName(ctx)} ${action} “${hubName}” on Drumee`;
 
@@ -302,7 +285,7 @@ async function notifyTaskEvent(ctx, opt = {}) {
   const kind = TASK_ACTION[opt.kind] ? opt.kind : "assigned";
   const action = TASK_ACTION[kind](opt.title ? String(opt.title) : "");
   const hubName = await _hubDisplayName(ctx, hubId);
-  const link = await _hubLink(ctx, hubId);
+  const link = _hubLink();
   const subject = `${_actorName(ctx)} ${action} “${hubName}” on Drumee`;
 
   for (const uid of uids) {
