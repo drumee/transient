@@ -23,11 +23,10 @@
 // A recipient gets a mail only when ALL of these hold:
 //   1. they are not the actor;
 //   2. they have no active socket (online users already saw the WS push);
-//   3. the Redis burst-guard key is free — the first event mails
-//      immediately, follow-ups inside ACTIVITY_MAIL_COOLDOWN_SEC (default
-//      60 s) are collapsed so one drag-and-drop of 20 files produces one
-//      email, not 20 (claimed with SET NX EX *before* sending so
-//      concurrent events can't double-send);
+//   3. the Redis dedup key is free — ACTIVITY_MAIL_COOLDOWN_SEC (default
+//      1 s) only collapses simultaneous double-fires of the same event
+//      (claimed with SET NX EX *before* sending so concurrent events
+//      can't double-send);
 //   4. shouldSendNotification passes (the Settings "Email notifications"
 //      toggle — opt-out, matching every other notification mail).
 //
@@ -45,8 +44,9 @@ const { Messenger, RedisStore, sysEnv, Attr, toArray } = require("@drumee/server
 const { shouldSendNotification } = require("./email-policy");
 const { butlerFrom } = require("./mail-sender");
 
-// Burst guard, NOT a throttle: the first event mails immediately.
-const COOLDOWN_SEC = parseInt(process.env.ACTIVITY_MAIL_COOLDOWN_SEC, 10) || 60;
+// Dedup window, NOT a throttle: every offline-recipient event mails; the
+// 1 s claim only stops the same event double-sending under concurrency.
+const COOLDOWN_SEC = parseInt(process.env.ACTIVITY_MAIL_COOLDOWN_SEC, 10) || 1;
 const TPL = resolve(__dirname, "..", "private", "templates", "butler", "hub-activity.html");
 
 // hub_get_members_by_type pages by 45 (pageToLimits); cap the walk so a
