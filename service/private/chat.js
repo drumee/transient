@@ -21,6 +21,11 @@ const { remove_node, move_node, copy_node } = MfsTools;
 const { stringify } = JSON;
 const { mkdirSync } = require("fs");
 const { isEmpty, isArray, map, includes } = require("lodash");
+const { CAN_CHAT, CAN_READ, privilegeAllows } = require("../lib/member-capability");
+
+const ENTITY_ID_RE = /^[0-9a-zA-Z_-]{1,32}$/;
+const DB_NAME_RE = /^[A-Za-z0-9_]+$/;
+const MAX_ELIGIBILITY_HUBS = 50;
 
 
 class privateChat extends Entity {
@@ -30,6 +35,7 @@ class privateChat extends Entity {
     this.post = this.post.bind(this);
     this.acknowledge = this.acknowledge.bind(this);
     this.forward = this.forward.bind(this);
+    this.forward_eligibility = this.forward_eligibility.bind(this);
     this.contact_rooms = this.contact_rooms.bind(this);
     this.chat_rooms = this.chat_rooms.bind(this);
     this.chat_room_info = this.chat_room_info.bind(this);
@@ -419,29 +425,247 @@ class privateChat extends Entity {
   }
 
   /**
+   * Resolve a recipient's drumate row once for the current request.
+   */
+  async _drumateFor(entity_id, drumateCache) {
+    if (drumateCache.has(entity_id)) return drumateCache.get(entity_id);
+    const drumate = await this.yp.await_proc("drumate_exists", entity_id);
+    drumateCache.set(entity_id, drumate);
+    return drumate;
+  }
+
+  /**
+   * Keep forward's P2P policy aligned with chat.post: a formal contact or any
+   * registered drumate (colleague) remains a valid recipient.
+   */
+  async _p2pAllowed(entity_id, drumate) {
+    if (!isEmpty(drumate)) return true;
+    try {
+      const contact = await this.db.await_proc(
+        "my_contact_exists",
+        "entity",
+        entity_id,
+        null,
+        null
+      );
+      return !isEmpty(contact) && contact.uid == entity_id;
+    } catch (e) {
+      this.warn("[chat.forward] contact lookup failed", entity_id, e && e.message);
+      return false;
+    }
+  }
+
+  /**
+   * Check one entity's wildcard membership row in a hub. Defaults to the
+   * caller, but takes an explicit entity so the same read answers both
+   * questions forward needs: "may I post into this hub" and "is this recipient
+   * a chat member of the hub the message came from". Missing, expired and
+   * failed lookups all deliberately collapse to false.
+   */
+  async _hubChatAllowed(hub_id, entity_id = this.uid, bit = CAN_CHAT) {
+    try {
+      if (!ENTITY_ID_RE.test(String(hub_id || ""))) return false;
+      if (!ENTITY_ID_RE.test(String(entity_id || ""))) return false;
+      const dbName = await this.yp.await_func("get_db_name", hub_id);
+      if (!DB_NAME_RE.test(String(dbName || ""))) return false;
+      const result = await this.yp.await_query(
+        `SELECT permission AS privilege FROM \`${dbName}\`.permission
+          WHERE resource_id='*' AND entity_id=?
+          AND (expiry_time=0 OR expiry_time>UNIX_TIMESTAMP()) LIMIT 1`,
+        entity_id
+      );
+      const member = toArray(result)[0];
+      if (!member || member.privilege == null) return false;
+      return privilegeAllows(member.privilege, bit);
+    } catch (e) {
+      this.warn("[chat.forward] hub eligibility lookup failed", hub_id, e && e.message);
+      return false;
+    }
+  }
+
+  /**
+   * Is this entity a member of the hub at all, whatever their role?
+   *
+   * A recipient only needs membership, while the caller relaying the message
+   * needs the chat right — they are the one reading the conversation. CAN_READ
+   * is the lowest bit every stored role carries (view 0b000011 up to owner
+   * 0b111111), so it tests "has an active wildcard row" without admitting the
+   * `entity_id='*'` placeholder rows, whose privilege is 0.
+   */
+  async _hubMemberAllowed(hub_id, entity_id) {
+    return this._hubChatAllowed(hub_id, entity_id, CAN_READ);
+  }
+
+  /**
+   * Confinement rule for a message read out of a workspace conversation: it may
+   * only reach members of that same workspace.
+   *
+   * A recipient id is either a person (contact row) or a hub (share-room row),
+   * and both are checked against the SOURCE workspace:
+   *   - the source workspace itself  -> allowed when the caller may chat there
+   *     (forwarding back into the room the message came from)
+   *   - a person                     -> allowed when they are a MEMBER of the
+   *     source workspace, whatever their role. Membership is the rule, not the
+   *     chat right: a view-only member is still someone the workspace has
+   *     already admitted (user decision 2026-08-11). The caller doing the
+   *     relaying is held to the higher chat bar, since they are the one reading
+   *     the conversation.
+   *   - any other hub                -> refused, even one the caller may chat
+   *     in, because that would move the message out of its workspace
+   *
+   * Deliberately NOT the same rule as chat.post: post starts from the author's
+   * own words, forward relays someone else's out of the room they wrote them in.
+   */
+  async _sourceMemberAllowed(entity_id, source_hub_id, eligCache, drumateCache) {
+    const key = `${source_hub_id}:${entity_id}`;
+    if (eligCache.has(key)) return eligCache.get(key);
+    let allowed;
+    if (entity_id === source_hub_id) {
+      // Back into the room it came from: only the caller's own right matters.
+      allowed = await this._hubChatAllowed(source_hub_id);
+    } else {
+      // A recipient is a person or a hub, and only a person can be a member of
+      // the source workspace. The distinction has to be made explicitly:
+      // `permission` is a COMMON table, so a hub DB has a `resource_id='*'` row
+      // granting its own owner privilege 63 — reading the source hub's table
+      // for another HUB id would otherwise sometimes match and let the message
+      // leave its workspace.
+      let drumate;
+      try {
+        drumate = await this._drumateFor(entity_id, drumateCache);
+      } catch (e) {
+        this.warn("[chat.forward] drumate lookup failed", entity_id, e && e.message);
+        drumate = null;
+      }
+      allowed = isEmpty(drumate)
+        ? false
+        : await this._hubMemberAllowed(source_hub_id, entity_id);
+    }
+    eligCache.set(key, allowed);
+    return allowed;
+  }
+
+  /**
+   * Resolve one forward recipient with request-local caches only.
+   *
+   * `source_hub_id` is the workspace the forwarded message was read from, or
+   * null for a P2P conversation (which belongs to no workspace). It selects the
+   * rule, and the drumate lookup still runs either way because
+   * `_distributeMessage` needs that classification to pick its write path.
+   */
+  async _canChatWith(entity_id, eligCache, drumateCache, source_hub_id = null) {
+    // Out of a workspace conversation: confined to that workspace's chat
+    // members. Nothing else qualifies a recipient here — not being a contact,
+    // not being a member of some other workspace the caller belongs to.
+    // It resolves the drumate row itself, and caches it for _distributeMessage.
+    if (source_hub_id) {
+      return this._sourceMemberAllowed(
+        entity_id,
+        source_hub_id,
+        eligCache,
+        drumateCache,
+      );
+    }
+
+    let drumate;
+    try {
+      drumate = await this._drumateFor(entity_id, drumateCache);
+    } catch (e) {
+      this.warn("[chat.forward] drumate lookup failed", entity_id, e && e.message);
+      return false;
+    }
+
+    // P2P source: unchanged contact-or-registered-drumate policy, plus any hub
+    // the caller may chat in.
+    if (eligCache.has(entity_id)) return eligCache.get(entity_id);
+    let allowed = await this._p2pAllowed(entity_id, drumate);
+    if (allowed && isEmpty(drumate)) {
+      // A formal-contact match is still a P2P recipient even if the yellow-page
+      // lookup is temporarily empty. Preserve that classification downstream.
+      drumate = { id: entity_id, contact: 1 };
+      drumateCache.set(entity_id, drumate);
+    }
+    if (!allowed) allowed = await this._hubChatAllowed(entity_id);
+    eligCache.set(entity_id, allowed);
+    return allowed;
+  }
+
+  /**
+   * Batch eligibility for the forward picker, mirroring the guard in forward().
+   *
+   * With `source_hub_id` (a workspace conversation) each requested id is scored
+   * as a recipient of THAT workspace: its own id when the caller may chat there,
+   * a person when they are a chat member of it, and 0 for every other hub.
+   * Without it (P2P) the question is only whether the caller may chat in each
+   * requested hub — contact rows need no request in that case.
+   *
+   * The response never distinguishes a missing hub, a non-member, an expired
+   * member or a failed lookup.
+   */
+  async forward_eligibility() {
+    const requested = this.input.use("hub_ids");
+    const sourceHubId = this.input.use("source_hub_id");
+    if (!isArray(requested) || requested.length > MAX_ELIGIBILITY_HUBS ||
+      requested.some((hub_id) => typeof hub_id !== "string")) {
+      return this.output.data({ status: "INVALID_HUB_IDS" });
+    }
+    if (sourceHubId != null &&
+      (typeof sourceHubId !== "string" || !ENTITY_ID_RE.test(sourceHubId))) {
+      return this.output.data({ status: "INVALID_HUB_IDS" });
+    }
+
+    const hubIds = [...new Set(requested)];
+    const eligibility = Object.create(null);
+    for (const hub_id of hubIds) eligibility[hub_id] = 0;
+
+    // Secure-share sessions are creator-bound; never expose the creator's hub
+    // memberships through this read endpoint.
+    if (this.input.get("token")) return this.output.data(eligibility);
+
+    // Same precondition as forward(): no relaying out of a workspace the caller
+    // may not chat in, so every row reads 0 rather than leaking its membership.
+    if (sourceHubId && !(await this._hubChatAllowed(sourceHubId))) {
+      return this.output.data(eligibility);
+    }
+
+    const eligCache = new Map();
+    const drumateCache = new Map();
+    for (const hub_id of hubIds) {
+      if (!ENTITY_ID_RE.test(hub_id)) continue;
+      const ok = sourceHubId
+        ? await this._sourceMemberAllowed(
+          hub_id,
+          sourceHubId,
+          eligCache,
+          drumateCache,
+        )
+        : await this._hubChatAllowed(hub_id);
+      eligibility[hub_id] = ok ? 1 : 0;
+    }
+    this.output.data(eligibility);
+  }
+
+  /**
    *
    */
-  async _distributeMessage(input, message, thread_id, entities) {
+  async _distributeMessage(input, message, thread_id, entities, drumateCache = new Map()) {
     let temp_result = [];
     let mydata = {};
-    let hisdata = {};
-    let myinput = { ...input };
-    let hisinput = { ...input };
-    let acknowledge = {};
     let socket_id = this.input.get(Attr.socket_id);
     for (let entity_id of entities) {
-      let drumate = await this.yp.await_proc("drumate_exists", entity_id);
-      //if(!message_id) message_id = await this.db.await_proc('message_id');
-      let message_id = await this.yp.await_func("uniqueId");
+      const drumate = await this._drumateFor(entity_id, drumateCache);
+      const entityInput = { ...input, entity_id };
+      const message_id = entityInput.message_id || await this.yp.await_func("uniqueId");
+      entityInput.message_id = message_id;
       if (!isEmpty(drumate)) {
         // Single write: message stored in sender's DB only.
         // p2p_post_message SP handles cross-DB p2p_time update for receiver.
-        myinput.peer_id = entity_id;
+        entityInput.peer_id = entity_id;
         mydata = await this.yp.await_proc(
           "forward_proc",
           this.uid,
           "p2p_post_message",
-          `'${stringify(myinput)}','${message}'`
+          `'${stringify(entityInput)}','${message}'`
         );
         // mention_ids is returned as a JSON string from the DB; normalise to array
         if (mydata && mydata.mention_ids && !isArray(mydata.mention_ids)) {
@@ -453,7 +677,7 @@ class privateChat extends Entity {
             "forward_proc",
             this.uid,
             "channel_post_attachment",
-            `'${message_id}','${this.uid}','${stringify(input.attachment)}'`
+            `'${message_id}','${entity_id}','${stringify(input.attachment)}'`
           );
           mydata.is_attachment = 1;
         }
@@ -529,16 +753,16 @@ class privateChat extends Entity {
           "forward_proc",
           entity_id,
           "channel_post_message",
-          `'${stringify(input)}','${msg.message}'`
-        );
-        await this.yp.await_proc(
-          "forward_proc",
-          entity_id,
-          "channel_post_attachment",
-          `'${message_id}','${entity_id}','${stringify(input.attachment)}'`
+          `'${stringify(entityInput)}','${message}'`
         );
         data.is_attachment = 0;
         if (!isEmpty(input.attachment)) {
+          await this.yp.await_proc(
+            "forward_proc",
+            entity_id,
+            "channel_post_attachment",
+            `'${message_id}','${entity_id}','${stringify(input.attachment)}'`
+          );
           data.is_attachment = 1;
         }
         let profile = this.user.get("profile") || {};
@@ -716,16 +940,64 @@ class privateChat extends Entity {
    *
    */
   async forward() {
-    let entities = this.input.need(Attr.entities) || [];
-    let nodes = this.input.need(Attr.nodes) || {};
-    let peer_id = this.input.use(Attr.peer_id);
-    let forwards = [];
+    const requestedEntities = this.input.need(Attr.entities);
+    const nodes = this.input.need(Attr.nodes) || {};
+    const peer_id = this.input.use(Attr.peer_id);
+    const forwards = [];
     let temp_result = [];
+    const entities = [];
+    const rejected = [];
+    const seen = new Set();
+
+    if (!isArray(requestedEntities)) {
+      return this.output.data({ status: "INVALID_RECIPIENT", rejected });
+    }
+    for (const entity_id of requestedEntities) {
+      if (typeof entity_id !== "string" || !ENTITY_ID_RE.test(entity_id)) {
+        rejected.push(entity_id);
+        continue;
+      }
+      if (seen.has(entity_id)) continue;
+      seen.add(entity_id);
+      entities.push(entity_id);
+    }
 
     // P2P context: nodes.hub_id is the caller's own user ID (drumate entity),
     // not a hub entity. forward_message_get only knows hub channel, so we
     // look up each message via p2p_get_message with a cross-DB fallback.
+    //
+    // Claiming P2P for a workspace message gains nothing: the P2P path reads
+    // `p2p_channel` in a drumate DB, where a workspace `channel` row does not
+    // exist, so the lookup finds nothing and the request ends in
+    // INVALID_MESSAGES.
     const isP2P = nodes.hub_id === this.uid;
+    const sourceHubId = isP2P ? null : nodes.hub_id;
+
+    const eligCache = new Map();
+    const drumateCache = new Map();
+
+    // A workspace message may only be relayed by someone who may chat in that
+    // workspace. forward_message_get resolves the hub DB from the client's own
+    // hub_id without checking the reader, so without this the caller's own
+    // access to the source room was never established.
+    if (sourceHubId) {
+      if (typeof sourceHubId !== "string" ||
+        !(await this._hubChatAllowed(sourceHubId))) {
+        return this.output.data({ status: "INVALID_SOURCE", rejected });
+      }
+    }
+
+    const allowed = [];
+    for (const entity_id of entities) {
+      if (await this._canChatWith(entity_id, eligCache, drumateCache, sourceHubId)) {
+        allowed.push(entity_id);
+      } else {
+        rejected.push(entity_id);
+      }
+    }
+    if (isEmpty(allowed)) {
+      return this.output.data({ status: "INVALID_RECIPIENT", rejected });
+    }
 
     if (isP2P) {
       const messageIds = isArray(nodes.messages)
@@ -763,8 +1035,11 @@ class privateChat extends Entity {
         forwards.push(node);
       }
     }
+    if (isEmpty(forwards)) {
+      return this.output.data({ status: "INVALID_MESSAGES", rejected });
+    }
     for (let msg of forwards) {
-      let input = {
+      const input = {
         author_id: this.uid,
         uid: this.uid,
         message: "",
@@ -782,8 +1057,17 @@ class privateChat extends Entity {
         msg.message = msg.message.replace(/'/gi, "''");
       }
 
-      let r = await this._distributeMessage(input, msg.message, null, entities);
+      const r = await this._distributeMessage(
+        input,
+        msg.message,
+        null,
+        allowed,
+        drumateCache
+      );
       temp_result = temp_result.concat(r);
+    }
+    if (!isEmpty(rejected) && !isEmpty(temp_result)) {
+      temp_result[0] = { ...temp_result[0], rejected };
     }
     this.output.data(temp_result);
   }

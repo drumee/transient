@@ -34,6 +34,9 @@ const SECURE_SHARE_READONLY_DENYLIST = new Set([
   // chat / channel — read-src, mutate or impersonate the creator
   "channel.post", "channel.file_thread_post", "channel.delete", "channel.post_ticket", "channel.send_ticket",
   "channel.bookmark_add", "channel.bookmark_remove", "chat.attachment",
+  // Read-only but creator-bound secure-share sessions must not probe the
+  // creator's workspace chat memberships.
+  "chat.forward_eligibility",
   // channel.react: read-src but mutates message metadata (toggle emoji reaction).
   // chat.react is write-src → already caught by the threshold below.
   "channel.react",
