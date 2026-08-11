@@ -1092,6 +1092,78 @@ class __private_hub extends Hub {
    * that times out must not make a workspace uninvitable. The accept guard is
    * the backstop that keeps occupancy correct either way.
    */
+  /**
+   * Everyone who ALREADY holds or reserves a seat on this domain, as a set of
+   * lowercased emails plus uids.
+   *
+   * A seat belongs to a person, not to a grant. Inviting somebody into a
+   * second folder is not a second person: the budget below already counts
+   * them (as a member, or as a pending invite), so charging the invitation
+   * again refuses an org that has not actually grown. Reported 2026-08-11 —
+   * invite an address into folder A, then into another, and the second call
+   * answers SEAT_LIMIT_REACHED for one human being.
+   *
+   * Both identifiers go in because callers pass either: `invite` takes
+   * emails, `invite_with_roles` takes contact "entities" that may be a uid.
+   *
+   * Pending comes from pending_invites_by_domain — the same proc behind the
+   * admin console's Pending Invites card and the same three sources
+   * member_list_stats counts, so the guard and the number the owner reads can
+   * never disagree.
+   *
+   * @param {Number} domainId
+   * @returns {Promise<Set<String>>}
+   */
+  async _seatedIdentities(domainId) {
+    const out = new Set();
+    // parseInt||0, not Math.trunc: a missing domain must read as 0 so the
+    // guard below returns an empty set, and Math.trunc(undefined) is NaN,
+    // which would sail past `dom <= 1`.
+    const dom = Number.parseInt(domainId, 10) || 0;
+    if (dom <= 1) return out;
+    const add = (v) => {
+      const k = String(v == null ? '' : v).trim().toLowerCase();
+      if (k) out.add(k);
+    };
+    try {
+      const rows = toArray(await this.yp.await_query(
+        `SELECT p.uid, d.email
+           FROM privilege p
+           INNER JOIN drumate d ON d.id = p.uid
+           INNER JOIN entity e ON e.id = d.id
+          WHERE p.domain_id = ?
+            AND COALESCE(JSON_VALUE(d.profile, '$.category'), '') <> 'system'
+            AND e.status NOT IN ('archived', 'frozen', 'deleted')`,
+        dom
+      ));
+      for (const r of rows) { if (r) { add(r.uid); add(r.email); } }
+    } catch (e) {
+      this.warn('[hub] seated members lookup failed:', e?.message);
+    }
+    try {
+      const rows = toArray(await this.yp.await_proc('pending_invites_by_domain', dom, ''));
+      for (const r of rows) { if (r) add(r.email); }
+    } catch (e) {
+      this.warn('[hub] pending invites lookup failed:', e?.message);
+    }
+    return out;
+  }
+
+  /**
+   * How many of these addresses would take a NEW seat.
+   * @param {Number} domainId
+   * @param {Array} entries emails, or contact entities (email | uid)
+   */
+  async _newcomers(domainId, entries) {
+    const seated = await this._seatedIdentities(domainId);
+    if (!seated.size) return toArray(entries);
+    return toArray(entries).filter((e) => {
+      const raw = (e && (e.email || e.uid || e.id)) || e;
+      const k = String(raw == null ? '' : raw).trim().toLowerCase();
+      return !k || !seated.has(k);
+    });
+  }
+
   async _seatBudget(domainId) {
     try {
       const dom = ~~domainId;
@@ -1178,13 +1250,20 @@ class __private_hub extends Hub {
     // dropping the rest: a partial invite silently loses people, and the
     // caller cannot tell which of the addresses they typed actually went out.
     const budget = await this._seatBudget(this.user.domain_id());
-    if (budget && invitees.length > budget.free) {
+    // Charge for PEOPLE the org does not already have. Someone already a
+    // member, or already holding a live invitation, is being added to one
+    // more folder — the budget counts them once and this must not count them
+    // again (see _seatedIdentities).
+    const newcomers = budget
+      ? await this._newcomers(this.user.domain_id(), invitees)
+      : invitees;
+    if (budget && newcomers.length > budget.free) {
       return this.output.data({
         status: 'SEAT_LIMIT_REACHED',
         seat: budget.seat,
         used: budget.used,
         free: budget.free,
-        requested: invitees.length,
+        requested: newcomers.length,
       });
     }
     const privilege = this.input.use(Attr.privilege)
@@ -1637,14 +1716,20 @@ class __private_hub extends Hub {
     // Same seat rule as `invite` — this is the multi-workspace variant of the
     // same act, so it cannot be the way around the cap.
     const budget = await this._seatBudget(this.user.domain_id());
-    if (budget && users.length > budget.free) {
+    // ...including the part that matters most here: this call assigns ONE
+    // person to SEVERAL workspaces at once, so counting the entries would
+    // charge a seat per workspace for a single human being.
+    const newcomers = budget
+      ? await this._newcomers(this.user.domain_id(), users)
+      : users;
+    if (budget && newcomers.length > budget.free) {
       return this.output.data({
         success: false,
         status: 'SEAT_LIMIT_REACHED',
         seat: budget.seat,
         used: budget.used,
         free: budget.free,
-        requested: users.length,
+        requested: newcomers.length,
       });
     }
 
