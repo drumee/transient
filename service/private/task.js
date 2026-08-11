@@ -18,6 +18,7 @@
 const { Attr, RedisStore, toArray } = require('@drumee/server-essentials');
 const { isEmpty } = require('lodash');
 const { Entity } = require('@drumee/server-core');
+const { notifyTaskEvent } = require('../lib/activity-mailer');
 
 // Built-in Kanban columns. Custom columns live in the task_column table and
 // use their row id as the task.status key — see _isValidStatus().
@@ -156,6 +157,14 @@ class __private_task extends Entity {
     } catch (e) {
       this.warn('[task._notifyMentions] push failed:', e && e.message);
     }
+    // Email leg for offline recipients — same theme and rules as the hub
+    // activity mail. Deliberately not awaited.
+    notifyTaskEvent(this, {
+      uids,
+      title: meta.title,
+      taskId: task_id,
+      kind: kind === 'reply' ? 'reply' : 'mention',
+    }).catch((e) => this.warn('[task._notifyMentions] mail failed:', e && e.message));
   }
 
   /**
@@ -211,6 +220,14 @@ class __private_task extends Entity {
     } catch (e) {
       this.warn('[task._notifyAssignees] push failed:', e && e.message);
     }
+    // Email leg for offline assignees — same theme and rules as the hub
+    // activity mail. Deliberately not awaited.
+    notifyTaskEvent(this, {
+      uids,
+      title: meta.title,
+      taskId: task_id,
+      kind: 'assigned',
+    }).catch((e) => this.warn('[task._notifyAssignees] mail failed:', e && e.message));
   }
 
   /**

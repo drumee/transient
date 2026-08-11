@@ -464,11 +464,81 @@
             "is_attachment": {
               "type": "integer",
               "description": "1 if message has attachments, 0 otherwise"
+            },
+            "rejected": {
+              "type": "array",
+              "required": false,
+              "description": "Recipient IDs rejected from a mixed request; present on the first response item only",
+              "items": {
+                "type": "string"
+              }
             }
           }
         }
       },
-      "errors": []
+      "errors": [
+        {
+          "code": "INVALID_RECIPIENT",
+          "message": "No requested recipient may receive the forwarded message",
+          "returns": {
+            "status": "INVALID_RECIPIENT",
+            "rejected": []
+          }
+        },
+        {
+          "code": "INVALID_MESSAGES",
+          "message": "None of the requested source messages still exists",
+          "returns": {
+            "status": "INVALID_MESSAGES",
+            "rejected": []
+          }
+        },
+        {
+          "code": "INVALID_SOURCE",
+          "message": "The caller may not chat in the workspace the message came from",
+          "returns": {
+            "status": "INVALID_SOURCE",
+            "rejected": []
+          }
+        }
+      ]
+    },
+
+    "forward_eligibility": {
+      "doc": "Score forward recipients. With source_hub_id, each requested ID is scored as a recipient of that workspace: 1 for a person who is one of its members whatever their role, 1 for the workspace itself when the caller may chat there, 0 for any other workspace. The caller must hold the chat right in source_hub_id or every row reads 0. Without source_hub_id (a P2P conversation) it reports whether the caller may chat in each requested workspace. Missing, inaccessible, expired and failed lookups all return 0.",
+      "scope": "hub",
+      "permission": {
+        "src": "read"
+      },
+      "params": {
+        "hub_ids": {
+          "type": "array",
+          "required": true,
+          "maxItems": 50,
+          "description": "Recipient entity IDs already visible to the caller - workspace IDs, or person IDs when source_hub_id is set",
+          "items": {
+            "type": "string"
+          }
+        },
+        "source_hub_id": {
+          "type": "string",
+          "required": false,
+          "description": "The workspace the forwarded message was read from. Omit for a P2P conversation"
+        }
+      },
+      "returns": {
+        "type": "object",
+        "description": "Map of requested entity ID to 1 when it may receive the forward, otherwise 0"
+      },
+      "errors": [
+        {
+          "code": "INVALID_HUB_IDS",
+          "message": "hub_ids must be an array of at most 50 strings, and source_hub_id a well-formed entity ID",
+          "returns": {
+            "status": "INVALID_HUB_IDS"
+          }
+        }
+      ]
     },
 
     "messages": {

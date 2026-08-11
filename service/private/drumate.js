@@ -179,12 +179,30 @@ class __private_drumate extends Entity {
    * @returns 
    */
   async change_password() {
-    const old_password = this.input.need(Attr.old_password);
     const new_password = this.input.need(Attr.new_password);
-    let r = await this.yp.await_proc('check_password_next', this.uid, old_password);
-    if (isEmpty(r)) {
-      this.output.data({ error: 'wrong_password' });
-      return
+    // Accept EITHER credential, strictly verifying whichever was sent —
+    // same contract as unlink_oauth. The FE picks by the ACCOUNT's state:
+    // password-backed accounts send old_password, accounts that never set
+    // a password (OAuth signups) send an email OTP (secret + code). An
+    // email OTP is equivalent proof to the forgot-password flow, so it is
+    // also a valid way to (re)set the password of such an account.
+    let r;
+    const old_password = this.input.use(Attr.old_password);
+    if (!isEmpty(old_password)) {
+      r = await this.yp.await_proc('check_password_next', this.uid, old_password);
+      if (isEmpty(r)) {
+        this.output.data({ error: 'wrong_password' });
+        return
+      }
+    } else {
+      const secret = this.input.need(Attr.secret);
+      const code = this.input.need(Attr.code);
+      const otp = await this.yp.await_proc('secret_check', this.uid, secret, code);
+      if (!otp || otp.code != code) {
+        this.output.data({ error: 'INVALID_CODE' });
+        return
+      }
+      await this.yp.await_proc('secret_clear', this.uid, 'all');
     }
     if (!new_password.match(/(.+){8,}/)) { //(/(.+){2,} +(.+){4,}/)
       this.output.data({ error: 'uncompliant_password' });
@@ -193,6 +211,16 @@ class __private_drumate extends Entity {
       // Flag the account as password-backed so step-up flows
       // (delete_account, change_email) gate on password rather than OTP.
       await this.yp.call_proc('drumate_update_profile', this.uid, { password_set: 1 });
+      // "Log out of other devices": drop every other session's cookie and
+      // socket; the calling session (input.sid) survives. Best-effort — a
+      // cleanup failure must not report the password change as failed.
+      if (parseInt(this.input.use('logout_others', 0))) {
+        try {
+          await this.yp.await_proc('session_logout_others', this.uid, this.input.sid());
+        } catch (e) {
+          this.warn('change_password: session_logout_others failed:', e && e.message);
+        }
+      }
       this.output.data(r)
     }
   }
