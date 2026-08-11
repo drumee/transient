@@ -1116,7 +1116,10 @@ class __private_hub extends Hub {
    */
   async _seatedIdentities(domainId) {
     const out = new Set();
-    const dom = ~~domainId;
+    // parseInt||0, not Math.trunc: a missing domain must read as 0 so the
+    // guard below returns an empty set, and Math.trunc(undefined) is NaN,
+    // which would sail past `dom <= 1`.
+    const dom = Number.parseInt(domainId, 10) || 0;
     if (dom <= 1) return out;
     const add = (v) => {
       const k = String(v == null ? '' : v).trim().toLowerCase();
@@ -1135,13 +1138,13 @@ class __private_hub extends Hub {
       ));
       for (const r of rows) { if (r) { add(r.uid); add(r.email); } }
     } catch (e) {
-      this.warn('[hub] seated members lookup failed:', e && e.message);
+      this.warn('[hub] seated members lookup failed:', e?.message);
     }
     try {
       const rows = toArray(await this.yp.await_proc('pending_invites_by_domain', dom, ''));
       for (const r of rows) { if (r) add(r.email); }
     } catch (e) {
-      this.warn('[hub] pending invites lookup failed:', e && e.message);
+      this.warn('[hub] pending invites lookup failed:', e?.message);
     }
     return out;
   }
