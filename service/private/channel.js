@@ -21,6 +21,7 @@ const {
 const { Entity, MfsTools } = require("@drumee/server-core");
 const { remove_node, move_node, copy_node } = MfsTools;
 const { stampAuthorIdentity } = require("../lib/message-author");
+const { movePlanRows } = require("./_move-plan");
 const { memberCan, CAN_CHAT } = require("../lib/member-capability");
 
 const { stringify, parse: jsonParse } = JSON;
@@ -322,14 +323,16 @@ class __private_channel extends Entity {
     }
 
     const proc = copy_only ? "mfs_copy_all" : "mfs_move_all";
-    let data = await this.db.call_proc(
-      proc,
-      stringify(src),
-      this.hub.get(Attr.id),
-      desdir.id,
-      sbox.hub_id,
+    let data = movePlanRows(
+      await this.db.call_proc(
+        proc,
+        stringify(src),
+        this.hub.get(Attr.id),
+        desdir.id,
+        sbox.hub_id,
+      ),
+      this,
     );
-    data = toArray(data);
 
     let tempattachment = [];
     for (let node of data) {
@@ -445,14 +448,16 @@ class __private_channel extends Entity {
   async _promote_staged_to_folder(deviceNids, folderNid) {
     const hub_id = this.hub.get(Attr.id);
     const src = deviceNids.map((nid) => ({ nid, hub_id }));
-    let data = await this.db.call_proc(
-      "mfs_move_all",
-      stringify(src),
-      this.uid,
-      folderNid,
-      hub_id,
+    let data = movePlanRows(
+      await this.db.call_proc(
+        "mfs_move_all",
+        stringify(src),
+        this.uid,
+        folderNid,
+        hub_id,
+      ),
+      this,
     );
-    data = toArray(data);
     const remap = {};
     for (let node of data) {
       if (node.action === "move" && node.des_id) {
