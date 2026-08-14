@@ -1536,7 +1536,12 @@
     "move_cross_hub": {
       "scope": "hub",
       "permission": {
-        "src": "write"
+        "src": "delete",
+        "dest": "write",
+        "preproc": {
+          "checker": "pre_transact",
+          "action": "move"
+        }
       },
       "log": true,
       "doc": "Server-owned single-file cross-hub move with durable lineage and retry state; client moved_in and lineage metadata are ignored.",

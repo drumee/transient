@@ -44,18 +44,14 @@ const {
 } = Constants;
 
 const { MfsTools, Generator, Document } = require("@drumee/server-core");
-const { check_base, remove_node, move_node, copy_node, mkdir, rmdir, cleanSeen } = MfsTools;
+const { check_base, check_safety, remove_node, move_node, copy_node, mkdir, rmdir, cleanSeen } = MfsTools;
 const Media = require("../media");
 const { writeAudit } = require("./_audit");
-const {
-  findMfsMoveResult,
-  isCompleteMfsThreadMigration,
-  waitForMfsThreadMigration,
-} = require("../lib/mfs-move-result");
+const { movePlanRows } = require("./_move-plan");
 const { stringify } = JSON;
 const { isEmpty, isString, values } = require("lodash");
-const { join, resolve, basename, extname } = require("path");
-const { existsSync, readFileSync, writeFileSync, readdirSync, statSync, copyFileSync, mkdirSync } = require("fs");
+const { join, resolve, basename, extname, dirname } = require("path");
+const { existsSync, readFileSync, writeFileSync, readdirSync, statSync, copyFileSync, mkdirSync, renameSync, cpSync, rmSync } = require("fs");
 const { writeFileSync: writeJson } = require("jsonfile");
 const SPAWN_OPT = { detached: true, stdio: ["ignore", "ignore", "ignore"] };
 const Spawn = require("child_process").spawn;
@@ -64,27 +60,8 @@ const JSON_OPT = { spaces: 2, EOL: "\r\n" };
 const { emptyTrash } = require('../../offline/queues/trashQueue');
 const indexQueue = require('../../offline/queues/indexQueue');
 
-const FILE_MOVE_TTL_SECONDS = 15 * 60;
-const FILE_MOVE_THREAD_SETTLE_ATTEMPTS = 5;
-const FILE_MOVE_THREAD_SETTLE_DELAY_MS = 50;
-
 function firstRow(data) {
   return toArray(data)[0] || null;
-}
-
-function samePhysicalNode(source, destination) {
-  if (!source || !destination || !existsSync(source) || !existsSync(destination)) return false;
-  const sourceStat = statSync(source);
-  const destinationStat = statSync(destination);
-  if (sourceStat.isDirectory() !== destinationStat.isDirectory()) return false;
-  if (!sourceStat.isDirectory()) return sourceStat.size === destinationStat.size;
-  const sourceEntries = readdirSync(source).sort();
-  const destinationEntries = readdirSync(destination).sort();
-  if (sourceEntries.length !== destinationEntries.length) return false;
-  return sourceEntries.every((entry, index) =>
-    entry === destinationEntries[index]
-      && samePhysicalNode(join(source, entry), join(destination, entry))
-  );
 }
 
 //########################################
@@ -95,9 +72,9 @@ class __private_media extends Media {
     this.chk_pre_transact = this.chk_pre_transact.bind(this);
     this.pre_transact = this.pre_transact.bind(this);
     this.copy_all = this.copy_all.bind(this);
-    this.move_cross_hub = this.move_cross_hub.bind(this);
     this.move_all = this.move_all.bind(this);
     this.workspace_move = this.workspace_move.bind(this);
+    this.move_cross_hub = this.move_cross_hub.bind(this);
     this.pre_restore_into = this.pre_restore_into.bind(this);
     this.restore_into = this.restore_into.bind(this);
     this.restore = this.restore.bind(this);
@@ -202,7 +179,13 @@ class __private_media extends Media {
     const src = this.heap.srcgrantlst;
     const uid = this.user.uid();
     const { hub_id, id } = this.dest_granted();
-    let data = await this.db.await_proc(proc, src, uid, id, hub_id);
+    let data = movePlanRows(await this.db.await_proc(proc, src, uid, id, hub_id), this);
+    // after_transact consumes the plan and returns only the rows it rendered
+    // for the destination, which drops the nid -> des_id pairing that the
+    // 'move' rows carry. Cross-workspace file threads need exactly that
+    // pairing: the file arrives under a new node id, and the thread left
+    // behind has to be told which one.
+    this.heap.movePlan = data;
     const deniedlst = this.heap.srcdeniedlst || [];
     if (isEmpty(data)) {
       if (deniedlst.length > 0) {
@@ -213,7 +196,6 @@ class __private_media extends Media {
       return null;
     }
     let items = [];
-    data = toArray(data);
     for (let item of data) {
       if (!item.failed) {
         items.push(item);
@@ -231,6 +213,70 @@ class __private_media extends Media {
    * @param {*} data
    */
   async move_node(data) { }
+
+  /**
+   * Move a node's files to the storage directory it will live under after a
+   * cross-workspace move.
+   *
+   * MfsTools.move_node cannot do this. It validates the destination with
+   * check_base, which requires the directory to already exist — but the
+   * destination here is a node that was created seconds ago and has no
+   * directory yet. check_base returns null, move_node returns without moving
+   * anything, and says nothing. The result is a database row pointing at a node
+   * id with no files behind it: the record says the file moved, every preview
+   * and download 404s.
+   *
+   * That is why a workspace ends up with more storage directories than files —
+   * one abandoned directory per move, each holding the only copy of its file.
+   *
+   * A plain rename is enough: both storage roots live on the same filesystem,
+   * so this is one atomic operation with no copy. The EXDEV fallback covers a
+   * future split across devices.
+   *
+   * Only check_base is bypassed. The safety lock still applies: move_node
+   * refuses to touch a directory another process has claimed, and skipping
+   * check_base is no reason to move a locked one.
+   *
+   * Failure is logged, never thrown: the database move has already committed by
+   * the time this runs, and the files are still readable at the old path.
+   */
+  _relocateNodeStorage(src, dest) {
+    if (!src || !dest || !src.nid || !dest.nid) return false;
+    if (!src.mfs_root || !dest.mfs_root) return false;
+    const from = resolve(src.mfs_root, `${src.nid}`);
+    const to = resolve(dest.mfs_root, `${dest.nid}`);
+    if (from === to) return true;
+    try {
+      if (!existsSync(from)) {
+        this.warn("Node storage missing at source, nothing to relocate", {
+          from, to,
+        });
+        return false;
+      }
+      check_safety(from);
+      if (existsSync(to)) {
+        this.warn("Node storage already present at destination", { to });
+        return true;
+      }
+      mkdirSync(dirname(to), { recursive: true });
+      try {
+        renameSync(from, to);
+      } catch (error) {
+        if (error && error.code === "EXDEV") {
+          cpSync(from, to, { recursive: true });
+          rmSync(from, { recursive: true, force: true });
+        } else {
+          throw error;
+        }
+      }
+      return true;
+    } catch (error) {
+      this.warn("Failed to relocate node storage", {
+        from, to, error: error && error.message,
+      });
+      return false;
+    }
+  }
 
   /**
    *
@@ -318,7 +364,7 @@ class __private_media extends Media {
         case "move":
           src = { nid: node.nid, mfs_root: node.src_mfs_root };
           dest = { nid: node.des_id, hub_id: rid, mfs_root: node.des_mfs_root };
-          move_node(src, dest, 1);
+          this._relocateNodeStorage(src, dest);
           break;
         case "copy":
           src = { nid: node.nid, mfs_root: node.src_mfs_root };
@@ -644,376 +690,6 @@ class __private_media extends Media {
     await this.transact("mfs_copy_all");
   }
 
-  /**
-   * Server-owned, single-file cross-hub move. Ordinary media.copy remains
-   * copy-only; this coordinator never consumes client moved_in/lineage data.
-   */
-  async move_cross_hub() {
-    const requestedOperationId = this.input.get("operation_id");
-    let saga;
-
-    if (requestedOperationId) {
-      saga = firstRow(await this.yp.await_proc("file_move_saga_get", requestedOperationId));
-      if (!saga || saga.actor_id !== this.uid) {
-        return this.exception.user("FILE_MOVE_OPERATION_NOT_FOUND");
-      }
-      if (["committed", "compensated", "failed", "expired", "compensation_failed"].includes(saga.state)) {
-        return this.output.data(this._fileMoveResult(saga));
-      }
-    } else {
-      saga = await this._beginCrossHubMove();
-      if (!saga) return;
-    }
-
-    const result = await this._runCrossHubMove(saga);
-    this.output.data(result);
-  }
-
-  async _beginCrossHubMove() {
-    const sourceHubId = this.input.get(Attr.hub_id) || this.hub.get(Attr.id);
-    const sourceFileNid = this.input.need(Attr.nid);
-    const destinationHubId = this.input.need(RECIPIENT_ID);
-    const destinationParentNid = this.input.need(PID);
-
-    if (!isString(sourceFileNid) || sourceHubId === destinationHubId) {
-      this.exception.user("CROSS_HUB_SINGLE_FILE_REQUIRED");
-      return null;
-    }
-
-    const sourceStorage = firstRow(await this.yp.await_proc("file_move_entity_storage", sourceHubId));
-    const destinationStorage = firstRow(await this.yp.await_proc("file_move_entity_storage", destinationHubId));
-    if (!sourceStorage || !destinationStorage) {
-      this.exception.user("FILE_MOVE_HUB_NOT_FOUND");
-      return null;
-    }
-
-    const source = firstRow(await this.yp.await_proc(
-      `${sourceStorage.db_name}.file_move_source_snapshot`, this.uid, sourceFileNid
-    ));
-    const destination = firstRow(await this.yp.await_proc(
-      `${destinationStorage.db_name}.file_move_destination_snapshot`, this.uid, destinationParentNid
-    ));
-    if (!source || source.category === FOLDER || source.category === HUB || !source.file_thread_id) {
-      this.exception.user("FILE_THREAD_MOVE_REQUIRED");
-      return null;
-    }
-    if (!(source.permission & Permission.DELETE) || !destination
-      || !(destination.permission & Permission.WRITE)) {
-      this.exception.forbiden("FILE_MOVE_PERMISSION_DENIED");
-      return null;
-    }
-
-    const lineage = firstRow(await this.yp.await_proc(
-      "file_thread_lineage_resolve", sourceHubId, sourceFileNid
-    ));
-    if (lineage && (lineage.state !== "active" || lineage.current_thread_id !== source.file_thread_id)) {
-      this.exception.user("FILE_MOVE_LINEAGE_CONFLICT");
-      return null;
-    }
-
-    if (lineage && lineage.original_hub_id === destinationHubId) {
-      const precheck = firstRow(await this.yp.await_proc(
-        `${destinationStorage.db_name}.file_move_return_precheck`, lineage.original_file_nid
-      ));
-      if (!precheck || precheck.old_node_available) {
-        this.exception.user("FILE_MOVE_OLD_NODE_AVAILABLE");
-        return null;
-      }
-    }
-
-    const operationId = this.randomString().slice(0, 16);
-    const lineageId = (lineage && lineage.lineage_id) || this.randomString().slice(0, 16);
-    const begun = firstRow(await this.yp.await_proc(
-      "file_move_saga_begin",
-      operationId,
-      lineageId,
-      this.uid,
-      sourceHubId,
-      sourceFileNid,
-      source.parent_nid,
-      source.file_thread_id,
-      destinationHubId,
-      destinationParentNid,
-      Math.floor(Date.now() / 1000) + FILE_MOVE_TTL_SECONDS
-    ));
-    if (!begun || begun.failed) {
-      this.exception.user((begun && begun.status) || "FILE_MOVE_SAGA_FAILED");
-      return null;
-    }
-    if (begun.actor_id !== this.uid) {
-      this.exception.user("FILE_MOVE_OPERATION_IN_PROGRESS");
-      return null;
-    }
-    return begun;
-  }
-
-  async _runCrossHubMove(saga) {
-    const sourceStorage = firstRow(await this.yp.await_proc(
-      "file_move_entity_storage", saga.source_hub_id
-    ));
-    const destinationStorage = firstRow(await this.yp.await_proc(
-      "file_move_entity_storage", saga.destination_hub_id
-    ));
-    if (!sourceStorage || !destinationStorage) {
-      return this._failCrossHubMove(saga, "FILE_MOVE_STORAGE_NOT_FOUND", true);
-    }
-
-    const sourceNode = { nid: saga.source_file_nid, mfs_root: sourceStorage.mfs_root };
-    const stagingNode = {
-      nid: saga.operation_id,
-      mfs_root: join(destinationStorage.home_dir, "__storage__", ".file-move-staging"),
-    };
-
-    // The revocation notice names the file, and the only place its name is
-    // still readable is the source snapshot below: mfs_move_all deletes the
-    // source row before this function reaches the emit step. Keep it in a
-    // local — `saga` is reassigned from the transition procedure's result on
-    // every state change, so a property hung on that object would not survive.
-    let sourceFilename = "";
-
-    if (["copy_pending", "copy_verified"].includes(saga.state)) {
-      const source = firstRow(await this.yp.await_proc(
-        `${sourceStorage.db_name}.file_move_source_snapshot`, this.uid, saga.source_file_nid
-      ));
-      const destination = firstRow(await this.yp.await_proc(
-        `${destinationStorage.db_name}.file_move_destination_snapshot`,
-        this.uid,
-        saga.destination_parent_nid
-      ));
-      if (!source || source.file_thread_id !== saga.source_thread_id
-        || !(source.permission & Permission.DELETE) || !destination
-        || !(destination.permission & Permission.WRITE)) {
-        return this._failCrossHubMove(saga, "FILE_MOVE_PERMISSION_OR_POSITION_CHANGED");
-      }
-      sourceFilename = source.user_filename || "";
-
-      if (Math.floor(Date.now() / 1000) >= saga.expires_at) {
-        this._removePhysicalNode(stagingNode);
-        return this._transitionCrossHubMove(saga, saga.state, "expired", {
-          failure_code: "FILE_MOVE_EXPIRED",
-        });
-      }
-
-      if (saga.state === "copy_pending" || !check_base(stagingNode)) {
-        this._removePhysicalNode(stagingNode);
-        copy_node(sourceNode, stagingNode, 0);
-        const sourcePath = check_base(sourceNode);
-        const stagingPath = check_base(stagingNode);
-        if (!samePhysicalNode(sourcePath, stagingPath)) {
-          this._removePhysicalNode(stagingNode);
-          return this._failCrossHubMove(saga, "FILE_MOVE_COPY_VERIFY_FAILED");
-        }
-        if (saga.state === "copy_pending") {
-          saga = await this._transitionCrossHubMove(saga, "copy_pending", "copy_verified");
-          if (saga.failed) return this._fileMoveResult(saga);
-        }
-      }
-
-      let movePlan;
-      try {
-        movePlan = await this.yp.await_proc(
-          `${sourceStorage.db_name}.mfs_move_all`,
-          [{ nid: saga.source_file_nid, hub_id: saga.source_hub_id }],
-          this.uid,
-          saga.destination_parent_nid,
-          saga.destination_hub_id
-        );
-      } catch (error) {
-        return this._failCrossHubMove(saga, "FILE_MOVE_DATABASE_STEP_FAILED", true);
-      }
-
-      const physicalMove = findMfsMoveResult(movePlan, saga.source_file_nid);
-      const destinationFileNid = physicalMove && physicalMove.des_id;
-      let sourcePosition = null;
-      let destinationPosition = null;
-
-      if (destinationFileNid) {
-        ({ sourcePosition, destinationPosition } = await waitForMfsThreadMigration(
-          async () => ({
-            sourcePosition: firstRow(await this.yp.await_proc(
-              `${sourceStorage.db_name}.file_move_thread_position`, null, saga.source_thread_id
-            )),
-            destinationPosition: firstRow(await this.yp.await_proc(
-              `${destinationStorage.db_name}.file_move_thread_position`, destinationFileNid, null
-            )),
-          }),
-          {
-            attempts: FILE_MOVE_THREAD_SETTLE_ATTEMPTS,
-            delay: () => new Promise((resolveDelay) =>
-              setTimeout(resolveDelay, FILE_MOVE_THREAD_SETTLE_DELAY_MS)
-            ),
-          }
-        ));
-      }
-
-      if (!destinationFileNid
-        || !isCompleteMfsThreadMigration({ sourcePosition, destinationPosition })) {
-        saga.destination_file_nid = destinationFileNid;
-        saga.destination_thread_id = destinationPosition && destinationPosition.file_thread_id;
-        return this._compensateCrossHubMove(saga, sourceStorage, destinationStorage, stagingNode);
-      }
-
-      saga = await this._transitionCrossHubMove(saga, "copy_verified", "source_removed", {
-        destination_file_nid: destinationFileNid,
-        destination_thread_id: destinationPosition.file_thread_id,
-      });
-      if (saga.failed) return this._fileMoveResult(saga);
-      saga._movePlan = movePlan;
-    }
-
-    if (saga.state === "source_removed") {
-      const destinationNode = {
-        nid: saga.destination_file_nid,
-        mfs_root: destinationStorage.mfs_root,
-      };
-      const sourcePath = check_base(sourceNode);
-      let stagingPath = check_base(stagingNode);
-      let destinationPath = check_base(destinationNode);
-
-      if (!destinationPath && stagingPath) {
-        move_node(stagingNode, destinationNode, 0);
-        stagingPath = check_base(stagingNode);
-        destinationPath = check_base(destinationNode);
-      }
-      if (!sourcePath || !destinationPath || !samePhysicalNode(sourcePath, destinationPath)) {
-        return this._compensateCrossHubMove(saga, sourceStorage, destinationStorage, stagingNode);
-      }
-      this._removePhysicalNode(sourceNode);
-      if (stagingPath) this._removePhysicalNode(stagingNode);
-
-      const lineage = firstRow(await this.yp.await_proc(
-        "file_thread_lineage_resolve", saga.source_hub_id, saga.source_file_nid
-      ));
-      if (lineage && lineage.original_hub_id === saga.destination_hub_id) {
-        const rebound = firstRow(await this.yp.await_proc(
-          `${destinationStorage.db_name}.channel_file_thread_rebind_returned_file`,
-          lineage.original_file_nid,
-          saga.destination_file_nid,
-          saga.source_thread_id
-        ));
-        if (!rebound || rebound.failed) {
-          return this._compensateCrossHubMove(saga, sourceStorage, destinationStorage, stagingNode);
-        }
-        saga.destination_thread_id = rebound.file_thread_id;
-      }
-
-      saga = await this._transitionCrossHubMove(saga, "source_removed", "committed", {
-        destination_file_nid: saga.destination_file_nid,
-        destination_thread_id: saga.destination_thread_id,
-      });
-      if (!saga.failed) {
-        // The saga is durable and the file has physically moved by now, so a
-        // failure to announce it must not surface as a failed move: the client
-        // treats anything but a committed result as a rollback and would leave
-        // the source tile in place. Matches the compensation path's guard.
-        try {
-          await this._emitCrossHubMoveEvents(
-            saga, sourceStorage, destinationStorage, sourceFilename
-          );
-        } catch (error) {
-          this.warn("Cross-hub move event delivery failed", error);
-        }
-      }
-    }
-
-    return this._fileMoveResult(saga);
-  }
-
-  async _compensateCrossHubMove(saga, sourceStorage, destinationStorage, stagingNode) {
-    const expected = saga.state;
-    if (!saga.destination_file_nid) {
-      saga = await this._transitionCrossHubMove(saga, expected, "compensation_failed", {
-        failure_code: "COMPENSATION_CANONICAL_TARGET_MISSING",
-      });
-      return this._fileMoveResult(saga);
-    }
-    saga = await this._transitionCrossHubMove(saga, expected, "compensating", {
-      destination_file_nid: saga.destination_file_nid,
-      destination_thread_id: saga.destination_thread_id,
-      failure_code: "FILE_MOVE_DESTINATION_THREAD_OR_COPY_CONFLICT",
-    });
-    if (saga.failed) {
-      return this._fileMoveResult(saga);
-    }
-
-    try {
-      const compensationPlan = await this.yp.await_proc(
-        `${destinationStorage.db_name}.mfs_move_all`,
-        [{ nid: saga.destination_file_nid, hub_id: saga.destination_hub_id }],
-        this.uid,
-        saga.source_parent_nid,
-        saga.source_hub_id
-      );
-      const physicalMove = findMfsMoveResult(compensationPlan, saga.destination_file_nid);
-      const compensationFileNid = physicalMove && physicalMove.des_id;
-      if (!compensationFileNid) throw new Error("COMPENSATION_DESTINATION_MISSING");
-
-      const originalNode = { nid: saga.source_file_nid, mfs_root: sourceStorage.mfs_root };
-      const destinationNode = { nid: saga.destination_file_nid, mfs_root: destinationStorage.mfs_root };
-      const compensatedNode = { nid: compensationFileNid, mfs_root: sourceStorage.mfs_root };
-      const physicalSource = check_base(originalNode) ? originalNode
-        : (check_base(destinationNode) ? destinationNode : stagingNode);
-      copy_node(physicalSource, compensatedNode, 0);
-      if (!samePhysicalNode(check_base(physicalSource), check_base(compensatedNode))) {
-        throw new Error("COMPENSATION_COPY_VERIFY_FAILED");
-      }
-
-      const rebound = firstRow(await this.yp.await_proc(
-        `${sourceStorage.db_name}.channel_file_thread_rebind_returned_file`,
-        saga.source_file_nid,
-        compensationFileNid,
-        saga.source_thread_id
-      ));
-      if (!rebound || rebound.failed) throw new Error("COMPENSATION_THREAD_REBIND_FAILED");
-
-      if (physicalSource !== originalNode) this._removePhysicalNode(physicalSource);
-      if (saga.source_file_nid !== compensationFileNid) this._removePhysicalNode(originalNode);
-      this._removePhysicalNode(destinationNode);
-      this._removePhysicalNode(stagingNode);
-
-      saga = await this._transitionCrossHubMove(saga, "compensating", "compensated", {
-        compensation_file_nid: compensationFileNid,
-        compensation_thread_id: rebound.file_thread_id,
-      });
-    } catch (error) {
-      saga = await this._transitionCrossHubMove(saga, "compensating", "compensation_failed", {
-        failure_code: (error && error.message) || "FILE_MOVE_COMPENSATION_FAILED",
-      });
-    }
-    if (!saga.failed && saga.state === "compensated") {
-      try {
-        await this._emitCrossHubCompensationEvents(saga, sourceStorage);
-      } catch (error) {
-        this.warn("Cross-hub compensation event delivery failed", error);
-      }
-    }
-    return this._fileMoveResult(saga);
-  }
-
-  async _failCrossHubMove(saga, failureCode, uncertain = false) {
-    const nextState = uncertain ? "compensation_failed" : "failed";
-    const failedSaga = await this._transitionCrossHubMove(
-      saga, saga.state, nextState, { failure_code: failureCode }
-    );
-    return this._fileMoveResult(failedSaga);
-  }
-
-  async _transitionCrossHubMove(saga, expectedState, nextState, extra = {}) {
-    const transitioned = firstRow(await this.yp.await_proc("file_move_saga_transition", {
-      operation_id: saga.operation_id,
-      actor_id: this.uid,
-      expected_state: expectedState,
-      next_state: nextState,
-      ...extra,
-    }));
-    return transitioned || { ...saga, failed: 1, status: "SAGA_TRANSITION_EMPTY" };
-  }
-
-  _removePhysicalNode(node) {
-    if (!node || !check_base(node)) return;
-    remove_node(node, 0);
-  }
-
   _fileMoveActor() {
     const firstname = this.user.get(Attr.firstname) || "";
     const lastname = this.user.get(Attr.lastname) || "";
@@ -1095,7 +771,7 @@ class __private_media extends Media {
     }
   }
 
-  async _transitionDirectFileThreadAccess(target, targetState, reason) {
+  async _transitionDirectFileThreadAccess(target, targetState, reason, holder = null) {
     if (!target) return null;
     try {
       const transition = firstRow(await this.yp.await_proc(
@@ -1107,7 +783,12 @@ class __private_media extends Media {
         target.file_nid,
         target.file_thread_id,
         targetState,
-        reason
+        reason,
+        (holder && holder.hub_id) || null,
+        (holder && holder.file_nid) || null,
+        // Only meaningful on the way out, and only readable now: the media row
+        // that carries the name is deleted by the move.
+        (reason === "move_out" && target.filename) || null
       ));
       if (!transition || transition.failed || Number(transition.transitioned) !== 1) {
         return transition;
@@ -1121,9 +802,17 @@ class __private_media extends Media {
         reason,
         state: targetState === "active" ? "restored" : "revoked",
         hub_id: target.hub_id,
+        // On move_back the thread rebinds to the node the file came back as,
+        // so the client is told the new id alongside the one it still holds.
+        // Everything else leaves the file where it was and sends one id.
         file_nid: target.file_nid,
+        previous_file_nid: target.previous_file_nid || undefined,
         file_thread_id: target.file_thread_id,
         filename: target.filename,
+        // Where the file went, so the source workspace can name it on the
+        // thread's info card instead of just greying the thread out.
+        holder_hub_id: (holder && holder.hub_id) || undefined,
+        holder_hub_name: (holder && holder.hub_name) || undefined,
       }, { service: "channel.file_thread_access_changed" }), recipients);
       return transition;
     } catch (error) {
@@ -1132,143 +821,335 @@ class __private_media extends Media {
     }
   }
 
-  async _emitCrossHubMoveEvents(saga, sourceStorage, destinationStorage, sourceFilename) {
-    const actor = this._fileMoveActor();
-    const sourceSockets = await this.yp.await_proc("entity_sockets", saga.source_hub_id);
-    const destinationSockets = await this.yp.await_proc("entity_sockets", saga.destination_hub_id);
-
-    // Read the destination node first: it is also the filename fallback for a
-    // resumed saga, where the caller re-entered at source_removed and never
-    // saw the source snapshot. A move does not rename, so the destination
-    // name is the same name the source hub knew.
-    const destinationNode = firstRow(await this.yp.await_proc(
-      `${destinationStorage.db_name}.mfs_access_node`, this.uid, saga.destination_file_nid
-    ));
-    const filename = sourceFilename
-      || (destinationNode && (destinationNode.user_filename || destinationNode.filename))
-      || "";
-
-    const common = {
-      operation_id: saga.operation_id,
-      lineage_id: saga.lineage_id,
-      access_revision: saga.access_revision,
-      actor,
-      reason: "cross_hub_move",
-      filename,
-    };
-    await RedisStore.sendData(this.payload({
-      ...common,
-      state: "revoked",
-      hub_id: saga.source_hub_id,
-      file_nid: saga.source_file_nid,
-      file_thread_id: saga.source_thread_id,
-    }, { service: "channel.file_thread_access_changed" }), sourceSockets);
-    // previous_file_nid lets a viewer in the destination hub rebind a mounted
-    // card from the old node id to the one that now backs the same thread.
-    // previous_file_thread_id rides along for symmetry with the compensation
-    // event, which has always carried both; no consumer reads it today.
-    await RedisStore.sendData(this.payload({
-      ...common,
-      state: "restored",
-      hub_id: saga.destination_hub_id,
-      file_nid: saga.destination_file_nid,
-      file_thread_id: saga.destination_thread_id,
-      previous_file_nid: saga.source_file_nid,
-      previous_file_thread_id: saga.source_thread_id,
-    }, { service: "channel.file_thread_access_changed" }), destinationSockets);
-
-    if (destinationNode) {
-      destinationNode.args = {
-        src: { nid: saga.source_file_nid, hub_id: saga.source_hub_id },
-        dest: { ...destinationNode },
-        operation_id: saga.operation_id,
-      };
-      await RedisStore.sendData(
-        this.payload(destinationNode, { service: "media.move" }),
-        destinationSockets
-      );
+  /**
+   * Threads attached to the files about to move, captured while the media rows
+   * still exist. After mfs_move_all they are gone from this workspace and
+   * file_move_source_snapshot returns nothing.
+   *
+   * A moved folder is expanded here too, since a thread can hang off any file
+   * inside it, at any depth.
+   */
+  async _snapshotFileThreadsBeforeMove(sourceNodes) {
+    const snapshots = new Map();
+    for (const node of toArray(sourceNodes)) {
+      const nid = node && (node.nid || node.id);
+      const hubId = node && (node.actual_hub_id || node.hub_id);
+      if (!nid || !hubId) continue;
+      const storage = firstRow(await this.yp.await_proc("file_move_entity_storage", hubId));
+      const dbName = storage && storage.db_name;
+      if (!dbName) continue;
+      try {
+        // Handles a file and a folder alike: given a file it returns at most
+        // that file's own thread, given a folder it returns every thread
+        // beneath it at any depth.
+        const threads = toArray(await this.yp.await_proc(
+          `${dbName}.channel_file_thread_list_in_subtree`, nid
+        ));
+        for (const row of threads) {
+          if (!row || !row.file_nid || !row.file_thread_id) continue;
+          const key = String(row.file_nid);
+          if (snapshots.has(key)) continue;
+          const target = {
+            hub_id: hubId,
+            file_nid: row.file_nid,
+            file_thread_id: row.file_thread_id,
+            filename: row.user_filename || row.file_nid,
+          };
+          // Reserve now, while the media row is still here. The reservation
+          // parks the lineage in 'moving', which is also what stops a second
+          // operation touching this thread mid-move. If it fails the thread is
+          // simply left alone — the file still moves, and a thread left marked
+          // active over a departed file is recoverable.
+          const reservation = await this._reserveDirectFileThreadTrash(target);
+          if (reservation && !reservation.failed
+            && Number(reservation.reserved) === 1) {
+            target.reserved = true;
+          } else {
+            this.warn("File thread move-out reservation failed", {
+              hub_id: hubId,
+              file_nid: row.file_nid,
+              status: reservation && reservation.status,
+            });
+          }
+          snapshots.set(key, target);
+        }
+      } catch (error) {
+        this.warn("Unable to list file threads before move", { nid, error });
+      }
     }
+    return snapshots;
+  }
 
-    // The source hub is only told the thread is gone; nothing above removes
-    // the file from its grid the way trash and workspace_move both do. Best
-    // effort: the move is already committed, so a delivery failure here must
-    // not surface as a failed move.
+  /**
+   * Hands back reservations for threads whose files did not end up moving.
+   * A reservation parks the lineage in 'moving', and only the operation that
+   * took it can clear it, so anything left behind would block every later move
+   * of that thread.
+   */
+  async _releaseFileThreadReservations(snapshots, movedFileNids) {
+    if (!snapshots || !snapshots.size) return;
+    for (const [key, target] of snapshots) {
+      if (!target || !target.reserved) continue;
+      if (movedFileNids && movedFileNids.has(key)) continue;
+      await this._releaseDirectFileThreadTrash(target);
+      target.reserved = false;
+    }
+  }
+
+  /**
+   * The nid -> des_id pairs for every real file in a completed move plan.
+   * Folders and hub roots are skipped: only a file can carry a thread.
+   */
+  _movedFilePairs() {
+    const plan = toArray(this.heap.movePlan);
+    const pairs = [];
+    for (const row of plan) {
+      if (!row || row.action !== "move" || !row.nid || !row.des_id) continue;
+      if (row.category === FOLDER || row.category === HUB) continue;
+      pairs.push({ source_file_nid: row.nid, destination_file_nid: row.des_id });
+    }
+    return pairs;
+  }
+
+  /**
+   * Display name of a workspace, matching how after_transact names a
+   * workspace-move destination: the hub profile first, then the personal-space
+   * owner for a drumate.
+   */
+  async _hubDisplayName(hubId) {
+    if (!hubId) return "";
     try {
-      await RedisStore.sendData(
-        this.payload(
-          { nid: saga.source_file_nid, hub_id: saga.source_hub_id },
-          { keys: [Attr.nid, Attr.hub_id], service: "media.remove" }
-        ),
-        sourceSockets
-      );
-      await RedisStore.sendData(
-        this.payload({}, { service: "notification.resync" }),
-        sourceSockets
+      const hub = firstRow(await this.yp.await_proc("get_hub", hubId)) || {};
+      let profile = {};
+      try {
+        profile = isString(hub.profile) ? JSON.parse(hub.profile) : (hub.profile || {});
+      } catch (_) { }
+      return profile.name || hub.name || hub.hubname || hub.headline || "";
+    } catch (error) {
+      this.warn("Unable to resolve workspace name", { hub_id: hubId, error });
+      return "";
+    }
+  }
+
+  /**
+   * A file leaving its workspace: the thread stays behind, readable but frozen,
+   * and records where the file went.
+   *
+   * Ordering is not negotiable. mfs_move_all deletes the source media row, and
+   * the transition refuses to mark a thread unavailable while that row is still
+   * there — the same check that stops a thread being revoked over a file that
+   * never actually left.
+   *
+   * A failure here never undoes the move. The file has already crossed; the
+   * worst case is a thread still marked active whose file is gone, which the
+   * UI renders as an unavailable card. That is a far better outcome than
+   * unwinding a completed move.
+   */
+  async _markFileThreadMovedOut(target, destinationHubId, destinationFileNid) {
+    if (!target || !destinationHubId || !destinationFileNid) return null;
+    // The reservation was taken before the move, while the media row still
+    // existed — reserve requires a live file, the transition requires a
+    // departed one, so they sit on opposite sides of mfs_move_all.
+    if (!target.reserved) {
+      this.warn("File thread move-out skipped: no reservation", {
+        hub_id: target.hub_id,
+        file_nid: target.file_nid,
+      });
+      return null;
+    }
+    const holder = {
+      hub_id: destinationHubId,
+      file_nid: destinationFileNid,
+      hub_name: await this._hubDisplayName(destinationHubId),
+    };
+    const transition = await this._transitionDirectFileThreadAccess(
+      target, "unavailable", "move_out", holder
+    );
+    // Consumed either way: the transition clears current_operation_id on
+    // success, and releases it on failure. Leaving the flag set would make the
+    // final sweep hand back a reservation that no longer exists.
+    target.reserved = false;
+    if (!transition || transition.failed || Number(transition.transitioned) !== 1) {
+      // Release it so the lineage does not sit in 'moving' forever, blocking
+      // every later move of the same thread.
+      await this._releaseDirectFileThreadTrash(target);
+      this.warn("File thread move-out transition failed", {
+        hub_id: target.hub_id,
+        file_nid: target.file_nid,
+        status: transition && transition.status,
+      });
+    }
+    return transition;
+  }
+
+  /**
+   * A file returning to the workspace its thread never left. The thread wakes
+   * up and re-points at the node the file came back as.
+   *
+   * rebind runs first and is the strict half: it refuses on a thread-id
+   * mismatch or a thread already present on the returning node, so a file that
+   * merely looks like the original cannot capture someone else's conversation.
+   */
+  async _markFileThreadMovedBack(lineage, returnedFileNid, sourceDbName) {
+    if (!lineage || !returnedFileNid) return null;
+    const homeHubId = lineage.current_hub_id;
+    const homeFileNid = lineage.current_file_nid;
+    const threadId = lineage.current_thread_id;
+    try {
+      const storage = firstRow(await this.yp.await_proc(
+        "file_move_entity_storage", homeHubId
+      ));
+      const homeDb = (storage && storage.db_name) || sourceDbName;
+      if (!homeDb) {
+        this.warn("File thread move-back: home storage unresolved", { hub_id: homeHubId });
+        return null;
+      }
+      const rebound = firstRow(await this.yp.await_proc(
+        `${homeDb}.channel_file_thread_rebind_returned_file`,
+        homeFileNid, returnedFileNid, threadId
+      ));
+      if (!rebound || rebound.failed) {
+        this.warn("File thread rebind on return failed", {
+          hub_id: homeHubId,
+          old_file_nid: homeFileNid,
+          returned_file_nid: returnedFileNid,
+          status: rebound && rebound.status,
+        });
+        return rebound;
+      }
+      const target = {
+        // The transition is keyed on lineage_id and re-points current_file_nid
+        // at the returning node, so it takes the new id here. The old one goes
+        // along as previous_file_nid, which is what the client needs to swap
+        // the thread onto the file it can now open.
+        hub_id: homeHubId,
+        file_nid: returnedFileNid,
+        returned_file_nid: returnedFileNid,
+        previous_file_nid: homeFileNid,
+        file_thread_id: threadId,
+        lineage_id: lineage.lineage_id,
+        transition_id: this.randomString().slice(0, 16),
+        filename: rebound.filename || "",
+      };
+      return await this._transitionDirectFileThreadAccess(
+        target, "active", "move_back", null
       );
     } catch (error) {
-      this.warn("Cross-hub move source removal event delivery failed", error);
+      this.warn("File thread move-back failed", error);
+      return null;
     }
   }
 
-  async _emitCrossHubCompensationEvents(saga, sourceStorage) {
-    const actor = this._fileMoveActor();
-    const recipients = await this.yp.await_proc("entity_sockets", saga.source_hub_id);
-    const compensatedNode = firstRow(await this.yp.await_proc(
-      `${sourceStorage.db_name}.mfs_access_node`, this.uid, saga.compensation_file_nid
-    ));
-    const common = {
-      operation_id: saga.operation_id,
-      lineage_id: saga.lineage_id,
-      access_revision: saga.access_revision,
-      actor,
-      reason: "cross_hub_move_compensated",
-      hub_id: saga.source_hub_id,
-      filename: compensatedNode && (compensatedNode.filename || compensatedNode.user_filename),
-    };
-    await RedisStore.sendData(this.payload({
-      ...common,
-      state: "restored",
-      file_nid: saga.compensation_file_nid,
-      file_thread_id: saga.compensation_thread_id,
-      previous_file_nid: saga.source_file_nid,
-      previous_file_thread_id: saga.source_thread_id,
-    }, { service: "channel.file_thread_access_changed" }), recipients);
-
-    if (compensatedNode) {
-      compensatedNode.args = {
-        src: { nid: saga.source_file_nid, hub_id: saga.source_hub_id },
-        dest: { ...compensatedNode },
-        operation_id: saga.operation_id,
-      };
-      await RedisStore.sendData(
-        this.payload(compensatedNode, { service: "media.move" }),
-        recipients
-      );
+  /**
+   * A file deleted for good while it was away. The thread is still in its home
+   * workspace and still readable, but nothing will ever come back to it, so it
+   * moves to a terminal state rather than waiting indefinitely.
+   *
+   * Trash does not come through here: a trashed file can be restored, and the
+   * thread should keep waiting.
+   */
+  async _markFileThreadOrphaned(holderHubId, holderFileNid) {
+    if (!holderHubId || !holderFileNid) return null;
+    try {
+      // One row per thread that was waiting: the file may have been discussed
+      // in several workspaces, and deleting it ends the wait in all of them.
+      const orphaned = toArray(await this.yp.await_proc(
+        "file_thread_lineage_orphan_holder",
+        this.randomString().slice(0, 16), holderHubId, holderFileNid
+      )).filter((row) => row && row.lineage_id);
+      for (const row of orphaned) {
+        // Each event goes to the workspace that still holds that thread, never
+        // to the one where the file was deleted.
+        const recipients = await this.yp.await_proc("entity_sockets", row.current_hub_id);
+        await RedisStore.sendData(this.payload({
+          lineage_id: row.lineage_id,
+          access_revision: row.access_revision,
+          actor: this._fileMoveActor(),
+          reason: "orphaned",
+          state: "orphaned",
+          hub_id: row.current_hub_id,
+          file_nid: row.current_file_nid,
+          file_thread_id: row.current_thread_id,
+        }, { service: "channel.file_thread_access_changed" }), recipients);
+      }
+      return orphaned;
+    } catch (error) {
+      this.warn("File thread orphan marking failed", error);
+      return null;
     }
-
-    // No destination-side revoke here: compensation is only reachable from
-    // copy_verified and source_removed (file_move_saga_transition.sql has no
-    // edge out of 'committed'), so the destination hub has never been told the
-    // thread arrived and has nothing to take back.
   }
 
-  _fileMoveResult(saga) {
-    return {
-      operation_id: saga.operation_id,
-      lineage_id: saga.lineage_id,
-      state: saga.state,
-      source_hub_id: saga.source_hub_id,
-      source_file_nid: saga.source_file_nid,
-      source_thread_id: saga.source_thread_id,
-      destination_hub_id: saga.destination_hub_id,
-      destination_file_nid: saga.destination_file_nid,
-      destination_thread_id: saga.destination_thread_id,
-      compensation_file_nid: saga.compensation_file_nid,
-      compensation_thread_id: saga.compensation_thread_id,
-      access_revision: saga.access_revision,
-      failure_code: saga.failure_code,
-      expires_at: saga.expires_at,
-    };
+  /**
+   * Applies the thread half of a completed cross-workspace move, one file at a
+   * time so that a problem with one thread cannot strand the others.
+   *
+   * Each moved file falls into one of three cases, decided by whether a thread
+   * elsewhere is already tracking it:
+   *   - tracked, and this workspace is that thread's home  -> the file is
+   *     coming home, wake the thread up
+   *   - tracked, but home is somewhere else                -> the file is
+   *     passing through, just follow it
+   *   - not tracked                                        -> if it had a
+   *     thread here, that thread stays behind
+   */
+  async _applyFileThreadMove(sourceHubId, sourceDbName, destinationHubId, snapshots) {
+    if (!sourceHubId || !destinationHubId
+      || String(sourceHubId) === String(destinationHubId)) return;
+    const pairs = this._movedFilePairs();
+    if (!pairs.length) return;
+
+    for (const pair of pairs) {
+      try {
+        // Every thread anywhere that is waiting on this file. A file discussed
+        // in more than one workspace has one sleeping thread per workspace, and
+        // a single move can touch several of them at once.
+        const waiting = toArray(await this.yp.await_proc(
+          "file_thread_lineage_resolve_holder", sourceHubId, pair.source_file_nid
+        )).filter((row) => row && row.lineage_id);
+
+        for (const lineage of waiting) {
+          if (String(lineage.current_hub_id) === String(destinationHubId)) {
+            // This thread's own workspace is where the file is going: its wait
+            // is over.
+            await this._markFileThreadMovedBack(
+              lineage, pair.destination_file_nid, sourceDbName
+            );
+          } else {
+            // Still away from home. Follow the file so the thread's info card
+            // keeps naming the workspace that actually holds it.
+            const tracked = firstRow(await this.yp.await_proc(
+              "file_thread_lineage_track_holder",
+              lineage.lineage_id, destinationHubId, pair.destination_file_nid
+            ));
+            if (!tracked || tracked.failed || Number(tracked.tracked) !== 1) {
+              this.warn("File thread holder tracking failed", {
+                lineage_id: lineage.lineage_id,
+                status: tracked && tracked.status,
+              });
+            }
+          }
+        }
+
+        // Independent of the above: this workspace may ALSO have its own thread
+        // on the file, written by the people here. That thread stays, and goes
+        // to sleep now that the file is leaving.
+        //
+        // Both halves run for the same move. Sending a file back to A while B
+        // has its own conversation about it wakes A's thread and puts B's to
+        // sleep in one pass — handling only one of them is what left B's thread
+        // pointing at a file that was no longer there.
+        const target = snapshots && snapshots.get(String(pair.source_file_nid));
+        if (!target) continue;
+        await this._markFileThreadMovedOut(
+          target, destinationHubId, pair.destination_file_nid
+        );
+      } catch (error) {
+        this.warn("File thread move handling failed", {
+          source_file_nid: pair.source_file_nid,
+          error,
+        });
+      }
+    }
   }
 
   /**
@@ -1276,6 +1157,43 @@ class __private_media extends Media {
    */
   async move_all() {
     await this.transact("mfs_move_all");
+  }
+
+  /**
+   * Compatibility shim for browsers still running the previous bundle.
+   *
+   * That bundle picks this endpoint whenever the file being moved has a chat
+   * thread, and the saga behind it is gone: threads no longer travel between
+   * databases. Removing the endpoint outright broke exactly the case it was
+   * meant for — a cached client kept calling it and every move of a file with a
+   * thread failed.
+   *
+   * The move itself is identical either way, so forward to workspace_move.
+   * Delete once no client can still ask for this name.
+   */
+  async move_cross_hub() {
+    const source = toArray(this.heap.srcgrantlst)[0] || {};
+    const destination = this.dest_granted() || {};
+
+    await this.workspace_move();
+
+    // The old bundle refuses the move unless the reply says state
+    // "committed" — it was written to poll a saga. workspace_move raises on
+    // failure, so reaching this line means the files have moved, and this
+    // vocabulary is the only success that client recognises.
+    //
+    // Overwrites the payload workspace_move already wrote (through transact).
+    // The old bundle reads only `state` from this response, and the grid it
+    // would otherwise repaint from is driven by the media.move / media.remove
+    // events, not by this reply.
+    this.output.data({
+      operation_id: this.randomString().slice(0, 16),
+      state: "committed",
+      source_hub_id: source.actual_hub_id || source.hub_id || null,
+      source_file_nid: source.nid || source.id || null,
+      destination_hub_id: destination.actual_hub_id || destination.hub_id || null,
+      access_revision: 0,
+    });
   }
 
   /**
@@ -1297,8 +1215,24 @@ class __private_media extends Media {
       return;
     }
 
-    const result = await this.transact("mfs_move_all");
-    if (isEmpty(result)) return;
+    // Captured before the move: mfs_move_all deletes the source media rows, and
+    // file_move_source_snapshot reads them.
+    const threadSnapshots = await this._snapshotFileThreadsBeforeMove(sourceNodes);
+
+    let result;
+    try {
+      result = await this.transact("mfs_move_all");
+    } catch (error) {
+      // The reservations were taken before the move; nothing moved, so release
+      // them rather than leave every affected thread parked in 'moving' with
+      // no operation left to clear it.
+      await this._releaseFileThreadReservations(threadSnapshots);
+      throw error;
+    }
+    if (isEmpty(result)) {
+      await this._releaseFileThreadReservations(threadSnapshots);
+      return;
+    }
 
     const sourceUpdates = {};
     for (const node of sourceNodes) {
@@ -1328,13 +1262,40 @@ class __private_media extends Media {
       );
     }
 
-    // A file thread inside a moved folder is NOT revoked here. The direct
-    // access procedures validate a trash-shaped durable state — thread row
-    // present, media row gone — but a cross-hub move deletes both the media
-    // row and the file_thread row, so no ordering around this call satisfies
-    // them, and the compensating release is blocked by the mirror guard,
-    // leaving the lineage stuck in 'moving' with nothing to reclaim it.
-    // Revoking a moved subtree needs its own operation-aware contract.
+    // The thread half of the move. Threads are never carried across databases:
+    // each one stays in the workspace where it was written, marked unavailable
+    // while its file is away, and wakes up if that file comes back. Messages
+    // therefore never leave the database that owns them, which is what makes
+    // this safe where copying them was not.
+    //
+    // Deliberately last, and deliberately unable to fail the move: the files
+    // have already crossed. A thread left marked active over a departed file
+    // shows up as an unavailable card, which is recoverable; unwinding a
+    // completed move is not.
+    // One pass per distinct source workspace: a selection can span several,
+    // and each has its own database to resolve threads against.
+    const handledSourceHubs = new Set();
+    for (const source of values(sourceUpdates)) {
+      const sourceHubId = String(source.hub_id);
+      if (handledSourceHubs.has(sourceHubId)) continue;
+      handledSourceHubs.add(sourceHubId);
+      const storage = firstRow(await this.yp.await_proc(
+        "file_move_entity_storage", source.hub_id
+      ));
+      await this._applyFileThreadMove(
+        source.hub_id,
+        storage && storage.db_name,
+        destinationHubId,
+        threadSnapshots
+      );
+    }
+
+    // A selection can be partly refused (permissions, circular reference), so a
+    // reserved thread whose file never moved has to be handed back.
+    const movedNids = new Set(
+      this._movedFilePairs().map((pair) => String(pair.source_file_nid))
+    );
+    await this._releaseFileThreadReservations(threadSnapshots, movedNids);
   }
 
   /** Allow move with low privilege, but restricted to type=hub
@@ -1933,6 +1894,33 @@ class __private_media extends Media {
   }
 
   /**
+   * Tells any thread still waiting on a purged file that it will never come
+   * back. Almost every purge matches nothing here, so a miss is the norm and
+   * costs one indexed lookup.
+   *
+   * Only permanent deletion reaches this. Trash leaves the thread waiting,
+   * because a trashed file can still be restored.
+   *
+   * mfs_delete_trash returns the node ids without a hub, so the workspace
+   * comes from the request context — purge always runs against the caller's
+   * current workspace.
+   */
+  async _orphanThreadsForPurged(purged) {
+    const hubId = this.hub && this.hub.get(Attr.id);
+    if (!hubId) return;
+    for (const entry of toArray(purged)) {
+      const nid = entry && (entry.id || entry.nid);
+      if (!nid) continue;
+      if (entry.category === FOLDER || entry.category === HUB) continue;
+      try {
+        await this._markFileThreadOrphaned(entry.hub_id || hubId, nid);
+      } catch (error) {
+        this.warn("Unable to orphan thread for purged file", { nid, error });
+      }
+    }
+  }
+
+  /**
    * To actually purge entire trash bin
    * @params null
    */
@@ -2027,6 +2015,7 @@ class __private_media extends Media {
     let data = await this.db.await_proc("mfs_delete_trash", list);
     if (!isEmpty(data)) {
       await this._empty_bin(data);
+      await this._orphanThreadsForPurged(data);
     }
     await this._evaluateOverLimitAfterResolve();
     this.output.list(data);
