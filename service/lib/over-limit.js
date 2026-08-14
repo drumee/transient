@@ -35,9 +35,21 @@ const GRACE_SEC = parseInt(process.env.OVER_LIMIT_GRACE_SEC, 10) || 7 * 24 * 360
 
 // Business's seat quota is a 100000 sentinel meaning unlimited (same read as
 // hub.js _seatBudget). Free org rows don't exist (payment_clear_entitlement
-// DELETES the row) — a downgraded-to-free org is capped at 1 seat (the owner)
-// and the free fallback row's disk allowance.
+// DELETES the row) — a downgraded-to-free org falls back to the free tier's
+// seat cap and the free fallback row's disk allowance.
 const SEAT_UNLIMITED = 100000;
+
+// Free's member cap, counting the owner — the same number the catalog row
+// carries (yp.plan free.quota.$.seat) and the same scale as Team's 10.
+//
+// Hard-coded here on purpose: this branch runs precisely when the org has NO
+// entitlement row to read a number from, so there is nothing to query. It was
+// 1 while Free was solo-locked; the 2026-08-14 pricing restructure moved Free
+// to 3 members, and leaving this at 1 would flag every Free org with two or
+// three people as seats-over and put it in graced read-only — the exact
+// opposite of what opening up Free is for. If the catalog number moves again,
+// this moves with it.
+const FREE_SEAT_CAP = 3;
 
 // domainId -> { at: epoch-ms, row: {...}|null } — null row = no org / clean.
 const cache = new Map();
@@ -98,12 +110,12 @@ async function _limits(yp, domainId, orgId) {
     };
   }
   // No org entitlement row -> free tier. Disk from the canonical free
-  // fallback row (the last tier of every entitlement cascade); seat 1 = the
-  // owner alone, which is what "Free: 1 member" means in the plan matrix.
+  // fallback row (the last tier of every entitlement cascade); seats from
+  // FREE_SEAT_CAP, which counts the owner.
   let free = firstRow(await yp.await_query(
     `SELECT disk FROM quota WHERE payer_id = 'ffffffffffffffff' LIMIT 1`
   ));
-  return { plan: "free", disk: Number(free && free.disk) || 5000000000, seat: 1 };
+  return { plan: "free", disk: Number(free && free.disk) || 5000000000, seat: FREE_SEAT_CAP };
 }
 
 /**
@@ -151,7 +163,7 @@ async function evaluate(yp, domainId, opts = {}) {
     }
 
     const seatCap = (limits.seat == null || limits.seat <= 0 || limits.seat >= SEAT_UNLIMITED)
-      ? (limits.plan === "free" ? 1 : null)
+      ? (limits.plan === "free" ? FREE_SEAT_CAP : null)
       : limits.seat;
 
     const storageOver = limits.disk > 0 && diskUsed > limits.disk ? 1 : 0;
