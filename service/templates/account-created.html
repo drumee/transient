@@ -11,13 +11,23 @@
   <% } %>
   <% if (typeof is_new !== 'undefined' && is_new) { %>
   <!-- New OAuth account: report the Google Ads sign-up conversion
-       ("Lượt đăng ký"). This interstitial runs in the same browser that
-       clicked the ad, so the gclid cookie is still there and Ads can
-       attribute the signup; the app bundle (which carries the Google tag)
-       never loads on this page, hence a standalone snippet. Hostname-gated:
-       self-hosted AGPL deployments must not report into our Ads account.
-       Queue first, loader after — the conversion is queued before gtag.js
-       lands, whatever the network does. -->
+       ("Lượt đăng ký"). This page IS the "đăng ký thành công" page for the SSO
+       route — the account is created by the callback that renders it, and the
+       email/password route's in-app call never runs here because the app bundle
+       (which carries the Google tag) never loads on this page. Hence a
+       standalone snippet. The interstitial runs in the same browser that
+       clicked the ad, so the gclid cookie is still there and Ads can attribute
+       the signup. Hostname-gated: self-hosted AGPL deployments must not report
+       into our Ads account. Queue first, loader after — the conversion is
+       queued before gtag.js lands, whatever the network does.
+
+       KEEP THE LABEL IN SYNC with _reportSignupConversion in the signup plugin
+       (signup/src/widgets/form/index.js). These are the only two sign-up
+       conversion call sites and they are mutually exclusive per user — SSO here,
+       email/password there — so both must feed the SAME conversion action or
+       the campaign's reported signups silently exclude one whole route.
+       No value/currency: the Ads console snippet carries none, so whatever the
+       conversion action is configured with applies. -->
   <script>
     (function () {
       if (!/(^|\.)drumee\.com$/i.test(location.hostname)) return;
@@ -26,9 +36,7 @@
       gtag('js', new Date());
       gtag('config', 'AW-18350168481');
       gtag('event', 'conversion', {
-        send_to: 'AW-18350168481/TMlhCIGxq9scEKGzha5E',
-        value: 1.0,
-        currency: 'VND'
+        send_to: 'AW-18350168481/-ZHOCLnjv-EcEKGzha5E'
       });
       var s = document.createElement('script');
       s.async = true;
