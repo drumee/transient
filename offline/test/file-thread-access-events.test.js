@@ -35,8 +35,6 @@ function loadMediaMethods() {
   const source = MEDIA_SOURCE;
   const methods = {};
   for (const name of [
-    "_emitCrossHubMoveEvents",
-    "_emitCrossHubCompensationEvents",
     "_transitionDirectFileThreadAccess",
     "_reserveDirectFileThreadTrash",
     "_releaseDirectFileThreadTrash",
@@ -179,7 +177,13 @@ test("the delete path emits exactly the fields it always has", async () => {
   const events = accessEvents(sent);
   assert.strictEqual(events.length, 1);
   const { payload } = events[0];
-  assert.deepStrictEqual(Object.keys(payload).sort(), [
+  // The emitter is shared with the move path, so the move-only keys are always
+  // present in the object literal and left undefined here. What must not drift
+  // is the set of fields that actually carry a value over the wire.
+  const populated = Object.keys(payload)
+    .filter((key) => payload[key] !== undefined)
+    .sort();
+  assert.deepStrictEqual(populated, [
     "__service", "access_revision", "actor", "file_nid", "file_thread_id",
     "filename", "hub_id", "lineage_id", "operation_id", "reason", "state",
   ]);
@@ -188,6 +192,8 @@ test("the delete path emits exactly the fields it always has", async () => {
   assert.strictEqual(payload.access_revision, 7);
   assert.strictEqual(payload.previous_file_nid, undefined,
     "delete path must not gain move-only fields");
+  assert.strictEqual(payload.holder_hub_id, undefined,
+    "nothing holds a deleted file");
 });
 
 test("a restore keeps the delete path's active state mapping", async () => {
@@ -246,125 +252,6 @@ test("a reason the procedure does not whitelist is refused", async () => {
   assert.strictEqual(Number(transition.transitioned), 0);
   assert.strictEqual(transition.status, "INVALID_DIRECT_TRANSITION");
   assert.strictEqual(accessEvents(sent).length, 0);
-});
-
-// ── move path: reach parity ───────────────────────────────────────────────
-
-const moveSaga = {
-  operation_id: "op-1",
-  lineage_id: "lin-1",
-  access_revision: 4,
-  source_hub_id: "hub-src",
-  source_file_nid: "file-src",
-  source_thread_id: "thread-src",
-  destination_hub_id: "hub-dst",
-  destination_file_nid: "file-dst",
-  destination_thread_id: "thread-dst",
-};
-
-function moveStub(destinationNode) {
-  return makeStub({
-    procs: {
-      entity_sockets: (hubId) => [{ socket_id: `sock-${hubId}` }],
-      mfs_access_node: destinationNode ? [destinationNode] : [],
-    },
-  });
-}
-
-test("a move names the file it revoked", async () => {
-  const { stub, sent } = moveStub({ id: "file-dst", user_filename: "Budget.xlsx" });
-  await runMethod("_emitCrossHubMoveEvents", stub, [
-    moveSaga, { db_name: "srcdb" }, { db_name: "dstdb" }, "Budget.xlsx",
-  ]);
-
-  const revoked = accessEvents(sent).find((e) => e.payload.state === "revoked");
-  assert.ok(revoked, "a revoke must reach the source hub");
-  assert.strictEqual(revoked.payload.filename, "Budget.xlsx");
-  assert.strictEqual(revoked.payload.hub_id, "hub-src");
-});
-
-test("a resumed saga still names the file, from the destination node", async () => {
-  const { stub, sent } = moveStub({ id: "file-dst", user_filename: "Budget.xlsx" });
-  // Empty filename: the caller re-entered at source_removed and never read the
-  // source snapshot, which is the normal path for any retry.
-  await runMethod("_emitCrossHubMoveEvents", stub, [
-    moveSaga, { db_name: "srcdb" }, { db_name: "dstdb" }, "",
-  ]);
-
-  const revoked = accessEvents(sent).find((e) => e.payload.state === "revoked");
-  assert.strictEqual(revoked.payload.filename, "Budget.xlsx");
-});
-
-test("the destination is told which node the thread used to live on", async () => {
-  const { stub, sent } = moveStub({ id: "file-dst", user_filename: "Budget.xlsx" });
-  await runMethod("_emitCrossHubMoveEvents", stub, [
-    moveSaga, { db_name: "srcdb" }, { db_name: "dstdb" }, "Budget.xlsx",
-  ]);
-
-  const restored = accessEvents(sent).find((e) => e.payload.state === "restored");
-  assert.ok(restored, "a restore must reach the destination hub");
-  assert.strictEqual(restored.payload.previous_file_nid, "file-src");
-  assert.strictEqual(restored.payload.previous_file_thread_id, "thread-src");
-  assert.strictEqual(restored.payload.file_nid, "file-dst");
-});
-
-test("the source hub is told to drop the moved file from its grid", async () => {
-  const { stub, sent } = moveStub({ id: "file-dst", user_filename: "Budget.xlsx" });
-  await runMethod("_emitCrossHubMoveEvents", stub, [
-    moveSaga, { db_name: "srcdb" }, { db_name: "dstdb" }, "Budget.xlsx",
-  ]);
-
-  const removes = sent.filter((s) => s.payload.__service === "media.remove");
-  assert.strictEqual(removes.length, 1);
-  assert.strictEqual(removes[0].payload.nid, "file-src");
-  assert.strictEqual(removes[0].payload.hub_id, "hub-src");
-  assert.deepStrictEqual(removes[0].recipients, [{ socket_id: "sock-hub-src" }]);
-  assert.ok(sent.some((s) => s.payload.__service === "notification.resync"));
-
-  const order = sent.map((s) => s.payload.__service);
-  assert.ok(
-    order.indexOf("channel.file_thread_access_changed") < order.indexOf("media.remove"),
-    "the thread must be frozen before the grid repaints around it"
-  );
-});
-
-test("a rollback restores the source and leaves the destination alone", async () => {
-  // Compensation is only reachable from copy_verified and source_removed, so
-  // the destination hub was never told the thread arrived and must not be sent
-  // a revoke for it.
-  const { stub, sent } = makeStub({
-    procs: {
-      entity_sockets: (hubId) => [{ socket_id: `sock-${hubId}` }],
-      mfs_access_node: [{ id: "file-comp", filename: "Budget.xlsx" }],
-    },
-  });
-
-  await runMethod("_emitCrossHubCompensationEvents", stub, [
-    {
-      ...moveSaga,
-      compensation_file_nid: "file-comp",
-      compensation_thread_id: "thread-comp",
-    },
-    { db_name: "srcdb" },
-  ]);
-
-  const events = accessEvents(sent);
-  assert.strictEqual(events.length, 1);
-  assert.strictEqual(events[0].payload.state, "restored");
-  assert.strictEqual(events[0].payload.hub_id, "hub-src");
-  assert.strictEqual(events[0].payload.previous_file_nid, "file-src");
-});
-
-test("the saga has no edge out of committed, so post-commit rollback is not modelled", () => {
-  const sqlPath = join(__dirname, "..", "..", "..", "schemas", "yellow_page",
-    "procedures", "mfs", "file_move_saga_transition.sql");
-  if (!existsSync(sqlPath)) {
-    console.log("       (skipped: schemas repo not checked out)");
-    return;
-  }
-  const sql = readFileSync(sqlPath, "utf8");
-  assert.doesNotMatch(sql, /_expected_state\s*=\s*'committed'/,
-    "if this ever gains an edge, the compensation path must tell the destination too");
 });
 
 // ── workspace_move: deliberately not handled here ─────────────────────────

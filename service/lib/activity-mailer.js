@@ -130,13 +130,24 @@ function _redis() {
 
 /**
  * Hub-wide members (owner included — permission&32 rows) with their email,
- * fullname and `online` flag, minus the actor. The proc only exists on hub
- * databases; on a personal (drumate) database the call throws and we treat
- * the hub as having no one to notify.
+ * fullname and `online` flag, minus the actor.
+ *
+ * hub_get_members_by_type is a hub-only proc, so on a personal (drumate)
+ * database there is nobody else to notify. We test the area up front rather
+ * than letting the call fail: swallowing the throw was behaviourally correct
+ * but mariadb_stub logs every SQL failure at WARN *before* we catch it, so
+ * PROD alerted on ER_SP_DOES_NOT_EXIST ~500x/day from the moment activity
+ * mail went live (2026-08-11) — every MFS event funnels through
+ * changelog_write, and on a personal desk that is every upload.
+ *
+ * Mirrors the existing guard in service/private/hub.js `_members_by_type`.
+ * The try/catch below is kept as a backstop for any other database that
+ * happens to lack the proc.
  */
 async function _recipients(ctx, actorId) {
   const seen = new Set();
   const out = [];
+  if (ctx.hub && ctx.hub.get && ctx.hub.get(Attr.area) === "personal") return out;
   for (let page = 1; page <= MAX_MEMBER_PAGES; page++) {
     let rows;
     try {
