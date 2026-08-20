@@ -83,8 +83,11 @@ async function _limits(yp, domainId, orgId) {
   if (row && row.disk != null) {
     return {
       plan: String(row.plan || "").toLowerCase(),
+      // Number() everywhere a driver value enters arithmetic: mariadb hands
+      // BIGINT columns (and COUNT()s) back as BigInt, and BigInt/Number
+      // division throws — found live on the liam endpoint.
       disk: Number(row.disk) || 0,
-      seat: row.seat == null ? null : ~~row.seat,
+      seat: row.seat == null ? null : Number(row.seat),
     };
   }
   let free = firstRow(await yp.await_query(
@@ -125,7 +128,7 @@ function _seatCandidates(seatsUsed, seatCap) {
  * not any per-user login age.
  */
 function _ageCandidates(ctime, nowSec) {
-  const born = ~~ctime;
+  const born = Number(ctime || 0);
   if (!born) return [];
   const age = nowSec - born;
   for (const [trigger, step] of AGE_STEPS) {
@@ -174,7 +177,9 @@ async function grant(yp, domainId, uid) {
     let seatsUsed = 0;
     try {
       const stats = firstRow(await yp.await_proc("member_list_stats", org.id));
-      seatsUsed = ~~(stats && stats.total_members) + ~~(stats && stats.pending_invites);
+      // COUNT()s arrive as BigInt — Number() before any arithmetic.
+      seatsUsed = Number((stats && stats.total_members) || 0)
+        + Number((stats && stats.pending_invites) || 0);
     } catch (e) { /* seats family just yields nothing */ }
 
     const nowSec = Math.floor(Date.now() / 1000);
@@ -192,7 +197,7 @@ async function grant(yp, domainId, uid) {
       const res = firstRow(await yp.await_proc(
         "org_upgrade_nudge_mark", org.id, uid, cand.trigger, day, limits.plan
       ));
-      if (res && ~~res.granted) {
+      if (res && Number(res.granted)) {
         return {
           trigger: cand.trigger,
           family: cand.family,
@@ -202,12 +207,12 @@ async function grant(yp, domainId, uid) {
             disk_used: diskUsed,
             disk_limit: limits.disk,
             seats_used: seatsUsed,
-            seat_limit: limits.seat == null ? 0 : ~~limits.seat,
-            age_days: org.ctime ? Math.floor((nowSec - ~~org.ctime) / 86400) : 0,
+            seat_limit: limits.seat == null ? 0 : Number(limits.seat),
+            age_days: org.ctime ? Math.floor((nowSec - Number(org.ctime)) / 86400) : 0,
           },
         };
       }
-      if (res && ~~res.capped_today) return null; // shared daily cap — stop
+      if (res && Number(res.capped_today)) return null; // shared daily cap — stop
       // seen_already → next candidate
     }
     return null;
