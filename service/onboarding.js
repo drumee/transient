@@ -307,7 +307,11 @@ class Onboarding extends Entity {
     if (industry)     profile.industry     = industry;
     if (team_size)    profile.team_size    = team_size;
     if (intent)       profile.intent       = intent;
-    await this.yp.await_proc('drumate_update_profile', this.uid, profile);
+    await this.yp.await_proc(
+      'drumate_update_profile',
+      this.uid,
+      JSON.stringify(profile)
+    );
     this.output.data(profile);
   }
 
