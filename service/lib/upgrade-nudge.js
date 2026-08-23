@@ -153,10 +153,12 @@ async function grant(yp, domainId, uid) {
     if (!org) return null; // personal accounts have no workspace nudges
 
     const limits = await _limits(yp, dom, org.id);
-    const target = TARGET_PLAN[limits.plan];
-    if (!target) return null; // top tier — nowhere to nudge to
 
     // "Until upgraded": block armed against another plan → wipe, re-arm.
+    // Runs BEFORE the top-tier bail-out so an upgrade to Business (no next
+    // tier, nothing to show) still clears the old counters — otherwise a
+    // later downgrade back to Team would find the stale block and never
+    // nudge again (found live on stage, case D5).
     let block = null;
     try {
       const md = typeof org.metadata === "string" ? JSON.parse(org.metadata) : org.metadata;
@@ -166,6 +168,9 @@ async function grant(yp, domainId, uid) {
       await yp.await_proc("org_upgrade_nudge_reset", org.id);
       block = null;
     }
+
+    const target = TARGET_PLAN[limits.plan];
+    if (!target) return null; // top tier — nowhere to nudge to
 
     // ---- live numbers (same sources as over-limit.js) ----
     const usage = firstRow(await yp.await_query(
