@@ -138,7 +138,7 @@ Drumee database.
   classes extend `Logger` and use `this.debug()` rather than `console.log`. Raw shell
   `mariadb` calls in `lib/utils.js` handle user creation/grants and schema loading.
 
-See [`setup-schemas/README.md`](../setup-schemas/README.md) and
+See [`setup-schemas/README.md`](https://github.com/drumee/setup-schemas/blob/main/README.md) and
 `setup-schemas/CLAUDE.md`.
 
 ---
@@ -171,7 +171,7 @@ every `build.sh` aborts if `UID == 0`.
 - `.deb`s land in `<pkg>/build/`; set `DEB_BUILD_TARGET` to also copy them elsewhere.
 
 This repo already ships extensive docs under `debian/docs/`. Start at
-[`debian/README.md`](../debian/README.md), which links overview, build-pipeline,
+[`debian/README.md`](https://github.com/drumee/debian/blob/main/README.md), which links overview, build-pipeline,
 utilities, version-management, deployment, and per-package guides.
 
 ---
@@ -199,7 +199,7 @@ utilities, version-management, deployment, and per-package guides.
   `sidebar_position`, `description`), uses `NN-` filename prefixes for ordering, and
   must be added to `sidebars.ts` to appear.
 
-See [`drumee.github.io/README.md`](../drumee.github.io/README.md) and
+See [`drumee.github.io/README.md`](https://github.com/drumee/drumee.github.io/blob/main/README.md) and
 `drumee.github.io/CLAUDE.md`.
 
 ---

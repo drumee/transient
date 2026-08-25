@@ -7,7 +7,7 @@ the PM2 process ecosystem, and — optionally — Jitsi Meet, Prosody, and Cotur
 
 The Node scripts here only *generate* files. The shell helpers in `bin/` apply them to
 a running system. In production this whole repo ships inside the `drumee-infra` Debian
-package (see the [`debian`](../debian) repo), whose post-install runs `bin/install`.
+package (see the [`debian`](https://github.com/drumee/debian) repo), whose post-install runs `bin/install`.
 
 > For how this repo fits with `setup-schemas`, `debian`, and the docs site, see
 > [`DOCUMENTATION.md`](DOCUMENTATION.md).
@@ -149,4 +149,4 @@ This package depends on @drumee/setup-infra
 This module is used **internally by the Drumee Docker container or Drumee Bare Metall installer** on first boot.  
 You don’t need to run it manually unless you are developing Drumee.
 
-### For end users: just use our [Quickstart](https://docs.drumee.org/getting-started/02-own-cloud#option-a--docker-recommended)
+### For end users: just use our [Quickstart](https://docs.drumee.com/getting-started/02-own-cloud#option-a--docker-recommended)
