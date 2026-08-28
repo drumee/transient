@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="23px" height="23px" viewBox="0 0 23 23" version="1.1" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+    <!-- Generator: Sketch 48.2 (47327) - http://www.bohemiancoding.com/sketch -->
+    <title>Select Cursor</title>
+    <desc>Created with Sketch.</desc>
+    <defs>
+        <circle id="path-1" cx="10.5" cy="10.5" r="1.3125"></circle>
+    </defs>
+    <g id="Cursors" stroke="none" stroke-width="1" fill="none" fill-rule="evenodd" transform="translate(-49.000000, -52.000000)">
+        <g id="Select-Cursor" transform="translate(50.000000, 53.000000)">
+            <rect id="Rectangle" stroke="#FFFFFF" stroke-width="0.5" fill="#FF3466" fill-rule="evenodd" stroke-linecap="round" stroke-linejoin="round" x="9.625" y="0" width="1.75" height="7"></rect>
+            <rect id="Rectangle-Copy-2" stroke="#FFFFFF" stroke-width="0.5" fill="#FF3466" fill-rule="evenodd" stroke-linecap="round" stroke-linejoin="round" transform="translate(3.500000, 10.500000) rotate(90.000000) translate(-3.500000, -10.500000) " x="2.625" y="7" width="1.75" height="7"></rect>
+            <rect id="Rectangle-Copy-4" stroke="#FFFFFF" stroke-width="0.5" fill="#FF3466" fill-rule="evenodd" stroke-linecap="round" stroke-linejoin="round" transform="translate(17.500000, 10.500000) rotate(90.000000) translate(-17.500000, -10.500000) " x="16.625" y="7" width="1.75" height="7"></rect>
+            <rect id="Rectangle-Copy-3" stroke="#FFFFFF" stroke-width="0.5" fill="#FF3466" fill-rule="evenodd" stroke-linecap="round" stroke-linejoin="round" transform="translate(10.500000, 17.500000) rotate(180.000000) translate(-10.500000, -17.500000) " x="9.625" y="14" width="1.75" height="7"></rect>
+            <g id="Oval">
+                <use fill="#FF3466" fill-rule="evenodd" xlink:href="#path-1"></use>
+                <circle stroke="#FFFFFF" stroke-width="0.5" cx="10.5" cy="10.5" r="1.5625"></circle>
+            </g>
+        </g>
+    </g>
+</svg>

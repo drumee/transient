@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<svg
+   xmlns:dc="http://purl.org/dc/elements/1.1/"
+   xmlns:cc="http://creativecommons.org/ns#"
+   xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+   xmlns:svg="http://www.w3.org/2000/svg"
+   xmlns="http://www.w3.org/2000/svg"
+   xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
+   xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+   width="100px"
+   height="100px"
+   viewBox="0 0 100 100"
+   version="1.1"
+   id="svg11"
+   sodipodi:docname="social_svg_g_1_fb.svg"
+   inkscape:version="0.92.1 r15371">
+  <metadata
+     id="metadata15">
+    <rdf:RDF>
+      <cc:Work
+         rdf:about="">
+        <dc:format>image/svg+xml</dc:format>
+        <dc:type
+           rdf:resource="http://purl.org/dc/dcmitype/StillImage" />
+        <dc:title>Artboard</dc:title>
+      </cc:Work>
+    </rdf:RDF>
+  </metadata>
+  <sodipodi:namedview
+     pagecolor="#ffffff"
+     bordercolor="#666666"
+     borderopacity="1"
+     objecttolerance="10"
+     gridtolerance="10"
+     guidetolerance="10"
+     inkscape:pageopacity="0"
+     inkscape:pageshadow="2"
+     inkscape:window-width="1920"
+     inkscape:window-height="1017"
+     id="namedview13"
+     showgrid="false"
+     inkscape:zoom="4.72"
+     inkscape:cx="-16.711173"
+     inkscape:cy="32.853198"
+     inkscape:window-x="-8"
+     inkscape:window-y="-8"
+     inkscape:window-maximized="1"
+     inkscape:current-layer="svg11" />
+  <!-- Generator: Sketch 48.2 (47327) - http://www.bohemiancoding.com/sketch -->
+  <title
+     id="title2">Artboard</title>
+  <desc
+     id="desc4">Created with Sketch.</desc>
+  <defs
+     id="defs6" />
+<style type="text/css">
+  .icon-fill-fb{fill:#3b5791;}
+</style>     
+  <g
+     id="Insert-Buttons"
+     transform="matrix(6.5498308,0,0,6.5498308,-275.47166,-274.84289)"
+     style="fill:none;fill-rule:evenodd;stroke:none;stroke-width:1">
+    <g
+       id="Artboard"
+       style="fill:#3b5791">
+      <path class="icon-fill-fb"
+         d="M 47.884758,57.191073 V 50.062952 H 46 v -2.566561 h 1.884758 V 45.304316 C 47.884758,43.581734 48.998107,42 51.563422,42 c 1.038701,0 1.806924,0.09958 1.806924,0.09958 l -0.06066,2.396629 c 0,0 -0.783319,-0.0076 -1.638101,-0.0076 -0.925136,0 -1.073324,0.426283 -1.073324,1.133985 0,0.559375 0,-1.19229 0,1.873955 h 2.784965 l -0.121182,2.566562 h -2.663783 v 7.128121 h -2.713503 z"
+         id="Shape-3"
+         inkscape:connector-curvature="0" />
+    </g>
+  </g>
+</svg>

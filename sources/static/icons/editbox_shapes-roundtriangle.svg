@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="20px" height="19px" viewBox="0 0 20 19" version="1.1" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+    <!-- Generator: Sketch 51.3 (57544) - http://www.bohemiancoding.com/sketch -->
+    <title>Rectangle</title>
+    <desc>Created with Sketch.</desc>
+    <defs></defs>
+    <g id="Insert_panel/sections" stroke="none" stroke-width="1" fill="none" fill-rule="evenodd">
+        <g id="shape_editor/-S1" transform="translate(-232.000000, -306.000000)" stroke="#89929E">
+            <g id="Group-2-+-Group-2-Copy-2-Mask-Copy" transform="translate(174.000000, 121.000000)">
+                <g id="Group-2" transform="translate(0.000000, 30.000000)">
+                    <path d="M68.4472136,156.012461 C68.3988317,155.915697 68.3203705,155.837236 68.2236068,155.788854 C67.9766175,155.66536 67.676281,155.765472 67.5527864,156.012461 L59.1708204,172.776393 C59.1361065,172.845821 59.118034,172.922377 59.118034,173 C59.118034,173.276142 59.3418916,173.5 59.618034,173.5 L76.381966,173.5 C76.4595886,173.5 76.5361451,173.481927 76.6055728,173.447214 C76.8525621,173.323719 76.9526742,173.023382 76.8291796,172.776393 L68.4472136,156.012461 Z" id="Rectangle"></path>
+                </g>
+            </g>
+        </g>
+    </g>
+</svg>

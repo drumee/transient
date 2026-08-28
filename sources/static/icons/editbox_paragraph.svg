@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="18px" height="17px" viewBox="0 0 18 17" version="1.1" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+    <!-- Generator: Sketch 48.1 (47250) - http://www.bohemiancoding.com/sketch -->
+    <title>Group</title>
+    <desc>Created with Sketch.</desc>
+    <defs></defs>
+    <g id="Tab/paragraph_normal" stroke="none" stroke-width="1" fill="none" fill-rule="evenodd" transform="translate(-14.000000, -16.000000)">
+        <g id="Group" transform="translate(14.000000, 16.000000)" fill="#FFFFFF" fill-rule="nonzero">
+            <polygon id="Line" points="0 12 0 10 7 10 7 12"></polygon>
+            <polygon id="Line" points="11 12 11 10 18 10 18 12"></polygon>
+            <polygon id="Line" points="0 17 0 15 7 15 7 17"></polygon>
+            <polygon id="Line" points="11 17 11 15 18 15 18 17"></polygon>
+            <g id="Group-2">
+                <polygon id="Line" points="0 2 0 0 7 0 7 2"></polygon>
+            </g>
+            <g id="Group-2" transform="translate(11.000000, 0.000000)">
+                <polygon id="Line" points="0 2 0 0 7 0 7 2"></polygon>
+            </g>
+            <polygon id="Line" points="0 7 0 5 7 5 7 7"></polygon>
+            <polygon id="Line" points="11 7 11 5 18 5 18 7"></polygon>
+        </g>
+    </g>
+</svg>

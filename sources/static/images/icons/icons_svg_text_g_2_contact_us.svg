@@ -1,0 +1,74 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<svg
+   xmlns:dc="http://purl.org/dc/elements/1.1/"
+   xmlns:cc="http://creativecommons.org/ns#"
+   xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+   xmlns:svg="http://www.w3.org/2000/svg"
+   xmlns="http://www.w3.org/2000/svg"
+   xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
+   xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+   width="100px"
+   height="100px"
+   viewBox="0 0 100 100"
+   version="1.1"
+   style="background: #FFFFFF;"
+   id="svg12"
+   sodipodi:docname="icons_svg_text_g_2_contact_us.svg"
+   inkscape:version="0.92.1 r15371">
+  <metadata
+     id="metadata16">
+    <rdf:RDF>
+      <cc:Work
+         rdf:about="">
+        <dc:format>image/svg+xml</dc:format>
+        <dc:type
+           rdf:resource="http://purl.org/dc/dcmitype/StillImage" />
+        <dc:title>Artboard Copy 68</dc:title>
+      </cc:Work>
+    </rdf:RDF>
+  </metadata>
+  <sodipodi:namedview
+     pagecolor="#ffffff"
+     bordercolor="#666666"
+     borderopacity="1"
+     objecttolerance="10"
+     gridtolerance="10"
+     guidetolerance="10"
+     inkscape:pageopacity="0"
+     inkscape:pageshadow="2"
+     inkscape:window-width="1920"
+     inkscape:window-height="1017"
+     id="namedview14"
+     showgrid="false"
+     inkscape:zoom="2.36"
+     inkscape:cx="50"
+     inkscape:cy="50"
+     inkscape:window-x="-8"
+     inkscape:window-y="-8"
+     inkscape:window-maximized="1"
+     inkscape:current-layer="svg12" />
+  <!-- Generator: Sketch 48.2 (47327) - http://www.bohemiancoding.com/sketch -->
+  <title
+     id="title2">Artboard Copy 68</title>
+  <desc
+     id="desc4">Created with Sketch.</desc>
+  <defs
+     id="defs6" />
+  <g
+     id="Insert-Buttons"
+     transform="matrix(8.2919134,0,0,8.2919134,-364.59642,-364.59766)"
+     style="fill:none;fill-rule:evenodd;stroke:none;stroke-width:1">
+    <g
+       id="Artboard-Copy-68"
+       style="fill:#ff827f;fill-rule:nonzero">
+      <g
+         id="send-2"
+         transform="translate(44,44)">
+        <path
+           d="M 7.4285714,12 C 7.2131429,12 7.0142857,11.878286 6.9171429,11.684 l -1.696,-3.392 C 5.128,8.1057143 5.144,7.8828571 5.2622857,7.7108571 L 8,4 4.2885714,6.7371429 C 4.1165714,6.856 3.8937143,6.8708571 3.7074286,6.7782857 L 0.316,5.0828571 C 0.11257143,4.9805714 -0.01142857,4.7674286 0.00114286,4.54 0.01314286,4.3125714 0.16,4.1137143 0.37371429,4.0354286 L 11.230857,0.03542857 c 0.208572,-0.076 0.443429,-0.02628571 0.601714,0.132 0.157715,0.15714286 0.209143,0.39257143 0.132,0.60171429 L 7.9645714,11.626286 C 7.8857143,11.84 7.6874286,11.986857 7.46,11.998857 7.4497143,11.999429 7.4388571,12 7.4285714,12 Z"
+           id="Shape"
+           inkscape:connector-curvature="0" />
+      </g>
+    </g>
+  </g>
+</svg>

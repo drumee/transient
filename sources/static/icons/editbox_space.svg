@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="22px" height="18px" viewBox="0 0 22 18" version="1.1" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+    <!-- Generator: Sketch 48.1 (47250) - http://www.bohemiancoding.com/sketch -->
+    <title>Group</title>
+    <desc>Created with Sketch.</desc>
+    <defs></defs>
+    <g id="Tab/space_normal" stroke="none" stroke-width="1" fill="none" fill-rule="evenodd" transform="translate(-12.000000, -14.000000)">
+        <g id="Paragrapgh" fill="#FFFFFF" fill-rule="nonzero">
+            <g id="Group" transform="translate(12.000000, 14.000000)">
+                <polygon id="Line" points="0.25 0 1.75 0 1.75 18 0.25 18"></polygon>
+                <path d="M17.509996,8.25 C17.9242096,8.25 18.259996,8.58578644 18.259996,9 C18.259996,9.41421356 17.9242096,9.75 17.509996,9.75 L4.49039555,9.75 C4.07618199,9.75 3.74039555,9.41421356 3.74039555,9 C3.74039555,8.58578644 4.07618199,8.25 4.49039555,8.25 L17.509996,8.25 Z" id="Line"></path>
+                <polygon id="Line" points="17.9891914 8.42304956 17.0308006 9.57695044 14.0208046 7.07695044 14.9791954 5.92304956"></polygon>
+                <polygon id="Line" transform="translate(6.004998, 7.750000) scale(-1, 1) translate(-6.004998, -7.750000) " points="7.98919136 8.42304956 7.03080065 9.57695044 4.02080464 7.07695044 4.97919536 5.92304956"></polygon>
+                <polygon id="Line" points="7.98701707 10.9148125 7.02862636 12.0687133 4.01863036 9.56871335 4.97702107 8.41481246"></polygon>
+                <polygon id="Line" transform="translate(16.165820, 10.080081) scale(-1, 1) translate(-16.165820, -10.080081) " points="18.150013 10.753131 17.1916222 11.9070318 14.1816262 9.40703185 15.140017 8.25313097"></polygon>
+                <polygon id="Line" points="20.25 0 21.75 0 21.75 18 20.25 18"></polygon>
+            </g>
+        </g>
+    </g>
+</svg>

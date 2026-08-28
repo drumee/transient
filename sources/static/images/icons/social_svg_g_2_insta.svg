@@ -1,0 +1,74 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<svg
+   xmlns:dc="http://purl.org/dc/elements/1.1/"
+   xmlns:cc="http://creativecommons.org/ns#"
+   xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+   xmlns:svg="http://www.w3.org/2000/svg"
+   xmlns="http://www.w3.org/2000/svg"
+   xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
+   xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+   width="100px"
+   height="100px"
+   viewBox="0 0 100 100"
+   version="1.1"
+   id="svg12"
+   sodipodi:docname="social_svg_g_1_insta.svg"
+   inkscape:version="0.92.1 r15371">
+  <metadata
+     id="metadata16">
+    <rdf:RDF>
+      <cc:Work
+         rdf:about="">
+        <dc:format>image/svg+xml</dc:format>
+        <dc:type
+           rdf:resource="http://purl.org/dc/dcmitype/StillImage" />
+        <dc:title>Artboard Copy 3</dc:title>
+      </cc:Work>
+    </rdf:RDF>
+  </metadata>
+  <sodipodi:namedview
+     pagecolor="#ffffff"
+     bordercolor="#666666"
+     borderopacity="1"
+     objecttolerance="10"
+     gridtolerance="10"
+     guidetolerance="10"
+     inkscape:pageopacity="0"
+     inkscape:pageshadow="2"
+     inkscape:window-width="1920"
+     inkscape:window-height="1017"
+     id="namedview14"
+     showgrid="false"
+     inkscape:zoom="2.36"
+     inkscape:cx="50"
+     inkscape:cy="50"
+     inkscape:window-x="-8"
+     inkscape:window-y="-8"
+     inkscape:window-maximized="1"
+     inkscape:current-layer="svg12" />
+  <!-- Generator: Sketch 48.2 (47327) - http://www.bohemiancoding.com/sketch -->
+  <title
+     id="title2">Artboard Copy 3</title>
+  <desc
+     id="desc4">Created with Sketch.</desc>
+  <defs
+     id="defs6" />
+  <style type="text/css">.icon-fill-1e5c83{fill:#1e5c83;}</style>
+  <g
+     id="Insert-Buttons"
+     transform="matrix(8.5770065,0,0,8.5770065,-377.97923,-385.3751)"
+     style="fill:none;fill-rule:evenodd;stroke:none;stroke-width:1">
+    <g
+       id="Artboard-Copy-3"
+       style="fill:#1e5c83">
+      <g
+         id="38-instagram"
+         transform="translate(44,44)">
+        <path 
+           d="M 9.456876,0.960454 H 2.34 c -1.236222,0 -2.241954,1.005498 -2.241954,2.24172 v 2.36808 4.74903 c 0,1.236222 1.005732,2.24172 2.241954,2.24172 h 7.11711 c 1.236222,0 2.24172,-1.005498 2.24172,-2.24172 V 5.57002 3.20194 C 11.698596,1.965718 10.693098,0.960454 9.456876,0.960454 Z m 0.643032,1.336842 0.256464,-9.36e-4 V 2.551654 4.262662 L 8.396622,4.26898 8.389836,2.302912 Z M 4.242654,5.57002 C 4.614246,5.055922 5.21703,4.718728 5.898438,4.718728 c 0.681408,0 1.284192,0.337194 1.655316,0.851292 0.241722,0.335556 0.386568,0.745992 0.386568,1.190592 0,1.125774 -0.916812,2.04165 -2.042118,2.04165 -1.126008,0 -2.041884,-0.915876 -2.041884,-2.04165 2.34e-4,-0.4446 0.144612,-0.855036 0.386334,-1.190592 z m 6.325722,4.74903 c 0,0.613314 -0.498654,1.1115 -1.1115,1.1115 H 2.34 c -0.61308,0 -1.111734,-0.498186 -1.111734,-1.1115 V 5.57002 h 1.7316 C 2.81034,5.937868 2.726334,6.339646 2.726334,6.760612 c 0,1.748682 1.42272,3.172338 3.172104,3.172338 1.74915,0 3.17187,-1.423656 3.17187,-3.172338 0,-0.420966 -0.084474,-0.822744 -0.234,-1.190592 h 1.732068 z"
+           id="Shape"
+           inkscape:connector-curvature="0" />
+      </g>
+    </g>
+  </g>
+</svg>

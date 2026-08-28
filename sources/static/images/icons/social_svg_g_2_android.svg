@@ -1,0 +1,91 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<svg
+   xmlns:dc="http://purl.org/dc/elements/1.1/"
+   xmlns:cc="http://creativecommons.org/ns#"
+   xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+   xmlns:svg="http://www.w3.org/2000/svg"
+   xmlns="http://www.w3.org/2000/svg"
+   xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
+   xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+   width="100px"
+   height="100px"
+   viewBox="0 0 100 100"
+   version="1.1"
+   id="svg19"
+   sodipodi:docname="social_svg_g_1_android.svg"
+   inkscape:version="0.92.1 r15371">
+  <metadata
+     id="metadata23">
+    <rdf:RDF>
+      <cc:Work
+         rdf:about="">
+        <dc:format>image/svg+xml</dc:format>
+        <dc:type
+           rdf:resource="http://purl.org/dc/dcmitype/StillImage" />
+        <dc:title>Artboard Copy 4</dc:title>
+      </cc:Work>
+    </rdf:RDF>
+  </metadata>
+  <sodipodi:namedview
+     pagecolor="#ffffff"
+     bordercolor="#666666"
+     borderopacity="1"
+     objecttolerance="10"
+     gridtolerance="10"
+     guidetolerance="10"
+     inkscape:pageopacity="0"
+     inkscape:pageshadow="2"
+     inkscape:window-width="1920"
+     inkscape:window-height="1017"
+     id="namedview21"
+     showgrid="false"
+     inkscape:zoom="2.36"
+     inkscape:cx="50"
+     inkscape:cy="50"
+     inkscape:window-x="-8"
+     inkscape:window-y="-8"
+     inkscape:window-maximized="1"
+     inkscape:current-layer="svg19" />
+  <!-- Generator: Sketch 48.2 (47327) - http://www.bohemiancoding.com/sketch -->
+  <title
+     id="title2">Artboard Copy 4</title>
+  <desc
+     id="desc4">Created with Sketch.</desc>
+  <defs
+     id="defs6" />
+     <style type="text/css">
+  .icon-fill-an{fill:#95c03b;}
+</style>
+  <g
+     id="Insert-Buttons"
+     transform="matrix(8.4894791,0,0,8.4894791,-374.43319,-374.02978)"
+     style="fill:none;fill-rule:evenodd;stroke:none;stroke-width:1">
+    <g
+       id="Artboard-Copy-4"
+       style="fill:#95c03b">
+      <g
+         id="36-android"
+         transform="translate(45,44)">
+        <g
+           id="Group">
+          <path 
+             d="M 6.556914,1.068912 6.684912,0.877266 6.81057,0.688194 7.093476,0.263952 C 7.128108,0.21177 7.114068,0.14157 7.062354,0.106704 7.009704,0.071838 6.939504,0.085878 6.904638,0.138294 L 6.601608,0.59319 6.474078,0.784368 6.344676,0.97812 C 5.934708,0.819234 5.477706,0.73008 4.994964,0.73008 4.51269,0.73008 4.055688,0.819234 3.64572,0.97812 L 3.51702,0.784368 3.38949,0.59319 3.085992,0.13806 C 3.05136,0.085878 2.980926,0.071838 2.92851,0.10647 2.876562,0.141102 2.862522,0.211536 2.897154,0.263718 L 3.179826,0.68796 3.305952,0.877032 3.43395,1.068678 C 2.47104,1.517022 1.819818,2.366442 1.819818,3.338712 h 6.351228 c 0,-0.972036 -0.651222,-1.821456 -1.614132,-2.2698 z M 3.634488,2.431494 c -0.18837,0 -0.34047,-0.152334 -0.34047,-0.340236 0,-0.187902 0.1521,-0.340002 0.34047,-0.340002 0.187902,0 0.340002,0.1521 0.340002,0.340002 0,0.187902 -0.1521,0.340236 -0.340002,0.340236 z m 2.721654,0 c -0.187902,0 -0.340002,-0.152334 -0.340002,-0.340236 0,-0.187902 0.1521,-0.340002 0.340002,-0.340002 0.18837,0 0.34047,0.1521 0.34047,0.340002 0,0.187902 -0.1521,0.340236 -0.34047,0.340236 z"
+             id="Shape"
+             inkscape:connector-curvature="0" />
+          <path 
+             d="M 1.868724,3.792672 H 1.819818 V 4.358484 4.820166 8.78319 c 0,0.396162 0.321984,0.71838 0.718146,0.71838 H 3.056508 C 3.039192,9.561474 3.029364,9.624888 3.029364,9.690408 v 0.037908 0.226746 1.17234 c 0,0.37557 0.304902,0.680472 0.680706,0.680472 0.375804,0 0.680472,-0.304902 0.680472,-0.680472 V 9.955062 9.728316 9.690408 c 0,-0.065286 -0.010062,-0.128934 -0.02691,-0.188838 h 1.2636 C 5.609916,9.561474 5.600322,9.624888 5.600322,9.690408 v 0.037908 0.226746 1.17234 c 0,0.37557 0.304902,0.680472 0.680472,0.680472 0.37557,0 0.680472,-0.304902 0.680472,-0.680472 V 9.955062 9.728316 9.690408 c 0,-0.065286 -0.00959,-0.128934 -0.02691,-0.188838 h 0.51831 c 0.396162,0 0.71838,-0.322218 0.71838,-0.71838 V 4.820166 4.358484 3.792672 H 8.12214 Z"
+             id="path9"
+             inkscape:connector-curvature="0" />
+          <path 
+             d="m 0.685386,3.792672 c -0.375804,0 -0.680472,0.304434 -0.680472,0.680706 v 2.910726 c 0,0.37557 0.304668,0.680472 0.680472,0.680472 0.37557,0 0.680472,-0.304902 0.680472,-0.680472 v -2.91096 c 0,-0.376038 -0.304668,-0.680472 -0.680472,-0.680472 z"
+             id="path11"
+             inkscape:connector-curvature="0" />
+          <path 
+             d="m 9.305478,3.792672 c -0.376038,0 -0.680472,0.304434 -0.680472,0.680706 v 2.910726 c 0,0.37557 0.304434,0.680472 0.680472,0.680472 0.37557,0 0.680004,-0.304902 0.680004,-0.680472 v -2.91096 c 0,-0.376038 -0.304434,-0.680472 -0.680004,-0.680472 z"
+             id="path13"
+             inkscape:connector-curvature="0" />
+        </g>
+      </g>
+    </g>
+  </g>
+</svg>

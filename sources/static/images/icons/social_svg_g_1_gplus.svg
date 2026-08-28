@@ -1,0 +1,79 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<svg
+   xmlns:dc="http://purl.org/dc/elements/1.1/"
+   xmlns:cc="http://creativecommons.org/ns#"
+   xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+   xmlns:svg="http://www.w3.org/2000/svg"
+   xmlns="http://www.w3.org/2000/svg"
+   xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
+   xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+   width="100px"
+   height="100px"
+   viewBox="0 0 100 100"
+   version="1.1"
+   id="svg13"
+   sodipodi:docname="social_svg_g_1_gplus.svg"
+   inkscape:version="0.92.1 r15371">
+  <metadata
+     id="metadata17">
+    <rdf:RDF>
+      <cc:Work
+         rdf:about="">
+        <dc:format>image/svg+xml</dc:format>
+        <dc:type
+           rdf:resource="http://purl.org/dc/dcmitype/StillImage" />
+        <dc:title>Artboard Copy 2</dc:title>
+      </cc:Work>
+    </rdf:RDF>
+  </metadata>
+  <sodipodi:namedview
+     pagecolor="#ffffff"
+     bordercolor="#666666"
+     borderopacity="1"
+     objecttolerance="10"
+     gridtolerance="10"
+     guidetolerance="10"
+     inkscape:pageopacity="0"
+     inkscape:pageshadow="2"
+     inkscape:window-width="1920"
+     inkscape:window-height="1017"
+     id="namedview15"
+     showgrid="false"
+     inkscape:zoom="2.36"
+     inkscape:cx="50"
+     inkscape:cy="50"
+     inkscape:window-x="-8"
+     inkscape:window-y="-8"
+     inkscape:window-maximized="1"
+     inkscape:current-layer="svg13" />
+  <!-- Generator: Sketch 48.2 (47327) - http://www.bohemiancoding.com/sketch -->
+  <title
+     id="title2">Artboard Copy 2</title>
+  <desc
+     id="desc4">Created with Sketch.</desc>
+  <defs
+     id="defs6" />
+<style type="text/css">
+  .icon-fill-9d2b24{fill:#9d2b24;}
+</style>     
+  <g
+     id="Insert-Buttons"
+     transform="matrix(8.1771861,0,0,8.1771861,-359.54619,-359.54619)"
+     style="fill:none;fill-rule:evenodd;stroke:none;stroke-width:1">
+    <g
+       id="Artboard-Copy-2"
+       style="fill:#9d2b24">
+      <g
+         id="Shape-+-Shape-2"
+         transform="translate(44,44)">
+        <polygon class="icon-fill-9d2b24" 
+           id="Shape"
+           points="9.6408,0.234 9.6408,1.9188 7.956,1.9188 7.956,2.7612 9.6408,2.7612 9.6408,4.446 10.4832,4.446 10.4832,2.7612 12.168,2.7612 12.168,1.9188 10.4832,1.9188 10.4832,0.234 " />
+        <path class="icon-fill-9d2b24" 
+           d="M 6.2749613,6.9630941 C 5.9431004,6.713579 5.2207374,6.2023046 5.2207374,5.8591385 c 0,-0.402401 0.1146398,-0.6004578 0.7190593,-1.0731798 0.6194515,-0.4849662 1.0580232,-1.1239764 1.0580232,-1.9168654 0,-0.8638718 -0.3526744,-1.6474949 -1.0159005,-2.02805517 H 6.9218338 L 7.722,0 H 4.1414051 C 2.3243473,0 0.81024258,1.3418885 0.81024258,2.8181313 c 0,1.5085077 0.99492172,2.7109126 2.70361682,2.7109126 0.1187695,0 0.2340701,-0.00612 0.3472232,-0.01423 -0.1108405,0.2129483 -0.1901303,0.4502194 -0.1901303,0.6990727 0,0.4191126 0.2301056,0.6583692 0.5148881,0.9355163 -0.2150736,0 -0.4228789,0.00579 -0.6495156,0.00579 C 1.4562892,7.1551943 0,8.5890791 0,9.9653835 0,11.320343 1.7552778,12.168 3.8354786,12.168 6.2069042,12.168 7.665506,10.820155 7.665506,9.4646986 7.6653408,8.3782819 7.4312708,7.8317643 6.2749613,6.9630941 Z M 4.2124327,4.9132635 C 3.2326698,4.8838321 2.3017023,3.9875128 2.1325117,2.7047393 1.9634887,1.4214641 2.6202971,0.43969344 3.5997246,0.46862315 4.5791521,0.4978873 5.4170564,1.5505609 5.586247,2.8335016 5.75527,4.1166095 5.1916925,4.9421932 4.2124327,4.9132635 Z M 3.8543388,11.466 C 2.4315403,11.466 1.404,10.557119 1.404,9.4653064 c 0,-1.0698738 1.2055536,-1.9929409 2.6285155,-1.9771056 0.3319972,0.00346 0.6412728,0.057403 0.922269,0.1491159 0.7723716,0.5418648 1.3954998,0.8805097 1.5519357,1.4980872 0.02926,0.125033 0.04528,0.25386 0.04528,0.385656 C 6.552,10.612872 5.8548222,11.466 3.8543388,11.466 Z"
+           id="Shape-2"
+           inkscape:connector-curvature="0" />
+      </g>
+    </g>
+  </g>
+</svg>

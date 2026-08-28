@@ -1,0 +1,112 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<svg
+   xmlns:dc="http://purl.org/dc/elements/1.1/"
+   xmlns:cc="http://creativecommons.org/ns#"
+   xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+   xmlns:svg="http://www.w3.org/2000/svg"
+   xmlns="http://www.w3.org/2000/svg"
+   xmlns:xlink="http://www.w3.org/1999/xlink"
+   xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
+   xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+   width="100px"
+   height="100px"
+   viewBox="0 0 100 100"
+   version="1.1"
+   style="background: #FFFFFF;"
+   id="svg16"
+   sodipodi:docname="social_svg_g_3_fb.svg"
+   inkscape:version="0.92.1 r15371">
+  <metadata
+     id="metadata20">
+    <rdf:RDF>
+      <cc:Work
+         rdf:about="">
+        <dc:format>image/svg+xml</dc:format>
+        <dc:type
+           rdf:resource="http://purl.org/dc/dcmitype/StillImage" />
+        <dc:title>Artboard Copy 47</dc:title>
+      </cc:Work>
+    </rdf:RDF>
+  </metadata>
+  <sodipodi:namedview
+     pagecolor="#ffffff"
+     bordercolor="#666666"
+     borderopacity="1"
+     objecttolerance="10"
+     gridtolerance="10"
+     guidetolerance="10"
+     inkscape:pageopacity="0"
+     inkscape:pageshadow="2"
+     inkscape:window-width="1920"
+     inkscape:window-height="1017"
+     id="namedview18"
+     showgrid="false"
+     inkscape:zoom="2.36"
+     inkscape:cx="50"
+     inkscape:cy="50"
+     inkscape:window-x="-8"
+     inkscape:window-y="-8"
+     inkscape:window-maximized="1"
+     inkscape:current-layer="svg16" />
+  <!-- Generator: Sketch 48.2 (47327) - http://www.bohemiancoding.com/sketch -->
+  <title
+     id="title2">Artboard Copy 47</title>
+  <desc
+     id="desc4">Created with Sketch.</desc>
+  <defs
+     id="defs11">
+    <linearGradient
+       x1="50%"
+       y1="99.9850045%"
+       x2="50%"
+       y2="23.9455555%"
+       id="linearGradient-1">
+      <stop
+         stop-color="#FF9067"
+         offset="0%"
+         id="stop6" />
+      <stop
+         stop-color="#FF827F"
+         offset="100%"
+         id="stop8" />
+    </linearGradient>
+    <linearGradient
+       inkscape:collect="always"
+       xlink:href="#linearGradient-1"
+       id="linearGradient4497"
+       x1="50"
+       y1="61.996402"
+       x2="50"
+       y2="43.746933"
+       gradientUnits="userSpaceOnUse" />
+    <linearGradient
+       inkscape:collect="always"
+       xlink:href="#linearGradient-1"
+       id="linearGradient4499"
+       x1="50"
+       y1="61.996402"
+       x2="50"
+       y2="43.746933"
+       gradientUnits="userSpaceOnUse" />
+  </defs>
+  FF827F
+  <style type="text/css">
+    .icon-fill-FF827F{
+        fill:#FF827F;
+    }
+</style>
+  <g
+     id="Insert-Buttons"
+     transform="matrix(4.1458333,0,0,4.1458333,-157.29166,-157.29166)"
+     style="fill:none;fill-rule:evenodd;stroke:none;stroke-width:1">
+    <g
+       id="Artboard-Copy-47"
+       style="fill:url(#linearGradient4499)">
+      <path  class="icon-fill-FF827F"
+         d="M 38,50 50,38 62,50 50,62 Z m 10.601399,-2.538566 v 1.269283 H 47 v 1.67718 h 1.600799 v 4.392102 h 1.8888 v -4.392102 h 1.596 l 0.2382,-1.67718 h -1.8342 v -1.089328 c 0,-0.494276 0.1428,-0.830192 0.9096,-0.830192 h 1.0008 v -1.548213 c -0.1692,-0.0204 -0.7614,-0.06298 -1.4364,-0.06298 -1.41,0 -2.3622,0.801999 -2.3622,2.261434 z"
+         id="Facebook-Icon"
+         style="fill:url(#linearGradient4497)"
+         inkscape:connector-curvature="0" />
+    </g>
+  </g>
+</svg>

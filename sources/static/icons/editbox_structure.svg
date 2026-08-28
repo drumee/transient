@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="21px" height="17px" viewBox="0 0 21 17" version="1.1" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+    <!-- Generator: Sketch 48.1 (47250) - http://www.bohemiancoding.com/sketch -->
+    <title>Group</title>
+    <desc>Created with Sketch.</desc>
+    <defs></defs>
+    <g id="Tab/menu-Copy-1" stroke="none" stroke-width="1" fill="none" fill-rule="evenodd" transform="translate(-13.000000, -15.000000)">
+        <g id="Title" fill="#FFFFFF">
+            <g id="Group" transform="translate(13.000000, 15.000000)">
+                <rect id="Rectangle-24" x="8" y="0" width="5" height="5"></rect>
+                <rect id="Rectangle-24" x="0" y="12" width="5" height="5"></rect>
+                <rect id="Rectangle-24" x="8" y="12" width="5" height="5"></rect>
+                <rect id="Rectangle-24" x="16" y="12" width="5" height="5"></rect>
+                <polygon id="Line-2" fill-rule="nonzero" points="10 4 11 4 11 8 10 8"></polygon>
+                <polygon id="Line-2" fill-rule="nonzero" points="2 8 3 8 3 12 2 12"></polygon>
+                <polygon id="Line-2" fill-rule="nonzero" points="10 9 11 9 11 13 10 13"></polygon>
+                <polygon id="Line-2" fill-rule="nonzero" points="18 8 19 8 19 12 18 12"></polygon>
+                <polygon id="Line" fill-rule="nonzero" points="2.84782609 9 2.84782609 8 18 8 18 9"></polygon>
+            </g>
+        </g>
+    </g>
+</svg>

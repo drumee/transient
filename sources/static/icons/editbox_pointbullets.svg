@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="14px" height="15px" viewBox="0 0 14 15" version="1.1" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+    <!-- Generator: Sketch 48.1 (47250) - http://www.bohemiancoding.com/sketch -->
+    <title>Group</title>
+    <desc>Created with Sketch.</desc>
+    <defs></defs>
+    <g id="Button/bulletshapes_normal" stroke="none" stroke-width="1" fill="none" fill-rule="evenodd" transform="translate(-13.000000, -12.000000)">
+        <g id="Group" transform="translate(13.000000, 12.000000)">
+            <circle id="Oval-6" fill="#89929E" cx="1.23529412" cy="1.23529412" r="1.23529412"></circle>
+            <circle id="Oval-6" fill="#89929E" cx="1.23529412" cy="7.17647059" r="1.23529412"></circle>
+            <circle id="Oval-6" fill="#89929E" cx="1.23529412" cy="13.1176471" r="1.23529412"></circle>
+            <path d="M5.35294118,2.23529412 L13.5882353,2.23529412" id="Line" stroke="#89929E" stroke-width="1.5"></path>
+            <path d="M5.35294118,7.17647059 L13.5882353,7.17647059" id="Line" stroke="#89929E" stroke-width="1.5"></path>
+            <path d="M5.35294118,12.1176471 L13.5882353,12.1176471" id="Line" stroke="#89929E" stroke-width="1.5"></path>
+        </g>
+    </g>
+</svg>

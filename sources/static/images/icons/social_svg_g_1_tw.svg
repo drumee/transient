@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<svg
+   xmlns:dc="http://purl.org/dc/elements/1.1/"
+   xmlns:cc="http://creativecommons.org/ns#"
+   xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+   xmlns:svg="http://www.w3.org/2000/svg"
+   xmlns="http://www.w3.org/2000/svg"
+   xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
+   xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+   width="100px"
+   height="100px"
+   viewBox="0 0 100 100"
+   version="1.1"
+   id="svg11"
+   sodipodi:docname="social_svg_g_1_tw.svg"
+   inkscape:version="0.92.1 r15371">
+  <metadata
+     id="metadata15">
+    <rdf:RDF>
+      <cc:Work
+         rdf:about="">
+        <dc:format>image/svg+xml</dc:format>
+        <dc:type
+           rdf:resource="http://purl.org/dc/dcmitype/StillImage" />
+        <dc:title>Artboard Copy</dc:title>
+      </cc:Work>
+    </rdf:RDF>
+  </metadata>
+  <sodipodi:namedview
+     pagecolor="#ffffff"
+     bordercolor="#666666"
+     borderopacity="1"
+     objecttolerance="10"
+     gridtolerance="10"
+     guidetolerance="10"
+     inkscape:pageopacity="0"
+     inkscape:pageshadow="2"
+     inkscape:window-width="1920"
+     inkscape:window-height="1017"
+     id="namedview13"
+     showgrid="false"
+     inkscape:zoom="3.337544"
+     inkscape:cx="58.317956"
+     inkscape:cy="36.455918"
+     inkscape:window-x="-8"
+     inkscape:window-y="-8"
+     inkscape:window-maximized="1"
+     inkscape:current-layer="svg11" />
+  <!-- Generator: Sketch 48.2 (47327) - http://www.bohemiancoding.com/sketch -->
+  <title
+     id="title2">Artboard Copy</title>
+  <desc
+     id="desc4">Created with Sketch.</desc>
+  <defs
+     id="defs6" />
+     <style type="text/css">
+        .icon-fill-tw{fill:#32a7e0;}
+      </style>
+  <g
+     id="Insert-Buttons"
+     transform="matrix(6.1791968,0,0,6.1791968,-259.27626,-256.13583)"
+     style="fill:none;fill-rule:evenodd;stroke:none;stroke-width:1">
+    <g
+       id="Artboard-Copy"
+       style="fill:#32a7e0">
+      <path class="icon-fill-tw"
+         d="m 58.102416,44.549045 c -0.592404,0.26279 -1.229171,0.440318 -1.897338,0.520186 0.682015,-0.408839 1.205904,-1.056233 1.452511,-1.827696 -0.638377,0.378646 -1.34535,0.653513 -2.097892,0.801655 C 54.957147,43.401109 54.098571,43 53.148372,43 c -1.824395,0 -3.303636,1.47908 -3.303636,3.303475 0,0.258925 0.02923,0.511088 0.0855,0.752864 -2.745609,-0.137755 -5.179799,-1.452994 -6.809114,-3.451696 -0.284367,0.4879 -0.447323,1.055347 -0.447323,1.660795 0,1.146164 0.583227,2.15731 1.46966,2.749715 -0.541602,-0.01715 -1.050919,-0.165774 -1.496309,-0.413186 -3.22e-4,0.01377 -3.22e-4,0.02762 -3.22e-4,0.04154 0,1.600572 1.138757,2.935778 2.650042,3.239307 -0.277202,0.07552 -0.569057,0.115856 -0.870412,0.115856 -0.212953,0 -0.419868,-0.02077 -0.621631,-0.05926 0.420513,1.312421 1.640426,2.267611 3.086093,2.29418 -1.130625,0.886112 -2.555038,1.414188 -4.102875,1.414188 -0.266654,0 -0.529606,-0.01562 -0.788048,-0.04621 1.462012,0.937398 3.198568,1.484394 5.064104,1.484394 6.076458,0 9.399336,-5.033912 9.399336,-9.399497 0,-0.143231 -0.0032,-0.285656 -0.0096,-0.427437 0.645623,-0.465679 1.205663,-1.047537 1.648557,-1.709987 z"
+         id="Shape-5"
+         inkscape:connector-curvature="0" />
+    </g>
+  </g>
+</svg>

@@ -1,0 +1,82 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<svg
+   xmlns:dc="http://purl.org/dc/elements/1.1/"
+   xmlns:cc="http://creativecommons.org/ns#"
+   xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+   xmlns:svg="http://www.w3.org/2000/svg"
+   xmlns="http://www.w3.org/2000/svg"
+   xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
+   xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+   width="100px"
+   height="100px"
+   viewBox="0 0 100 100"
+   version="1.1"
+   id="svg13"
+   sodipodi:docname="icons_svg_g_1_map.svg"
+   inkscape:version="0.92.1 r15371">
+  <metadata
+     id="metadata17">
+    <rdf:RDF>
+      <cc:Work
+         rdf:about="">
+        <dc:format>image/svg+xml</dc:format>
+        <dc:type
+           rdf:resource="http://purl.org/dc/dcmitype/StillImage" />
+        <dc:title>Artboard Copy 22</dc:title>
+      </cc:Work>
+    </rdf:RDF>
+  </metadata>
+  <sodipodi:namedview
+     pagecolor="#ffffff"
+     bordercolor="#666666"
+     borderopacity="1"
+     objecttolerance="10"
+     gridtolerance="10"
+     guidetolerance="10"
+     inkscape:pageopacity="0"
+     inkscape:pageshadow="2"
+     inkscape:window-width="1920"
+     inkscape:window-height="1017"
+     id="namedview15"
+     showgrid="false"
+     inkscape:zoom="2.36"
+     inkscape:cx="50"
+     inkscape:cy="50"
+     inkscape:window-x="-8"
+     inkscape:window-y="-8"
+     inkscape:window-maximized="1"
+     inkscape:current-layer="svg13" />
+  <!-- Generator: Sketch 48.2 (47327) - http://www.bohemiancoding.com/sketch -->
+  <title
+     id="title2">Artboard Copy 22</title>
+  <desc
+     id="desc4">Created with Sketch.</desc>
+  <defs
+     id="defs6" />
+  <style type="text/css">
+    .icon-fill-4184f3{
+        fill:#4184f3;
+    }
+  </style>
+  <g
+     id="Insert-Buttons"
+     transform="matrix(7.2123226,0,0,7.2123226,-310.61613,-310.72131)"
+     style="fill:none;fill-rule:evenodd;stroke:none;stroke-width:1">
+    <g
+       id="Artboard-Copy-22"
+       style="fill:#4184f3;fill-rule:nonzero">
+      <g
+         id="Group-5"
+         transform="translate(45,43)">
+        <path class="icon-fill-4184f3"
+           d="M 5,13.9125 4.7352941,13.591667 C 4.5588235,13.358333 0.05882353,8.1375 0.05882353,5.0166667 0.05882353,2.3041667 2.2941177,0.11666667 5,0.11666667 c 2.7058824,0 4.9411765,2.21666663 4.9411765,4.90000003 0,3.1208333 -4.5,8.3708333 -4.6764706,8.5750003 z M 5,0.7875 c -2.3529412,0 -4.23529412,1.8958333 -4.23529412,4.2 0,2.45 3.26470592,6.620833 4.23529412,7.816667 C 5.9705882,11.608333 9.2352941,7.4666667 9.2352941,4.9875 9.2352941,2.6833333 7.3529412,0.7875 5,0.7875 Z"
+           id="Fill-55"
+           inkscape:connector-curvature="0" />
+        <path class="icon-fill-4184f3"
+           d="M 5,6.8833333 C 3.9705882,6.8833333 3.1176471,6.0375 3.1176471,5.0166667 3.1176471,3.9958333 3.9705882,3.15 5,3.15 6.0294118,3.15 6.8823529,3.9958333 6.8823529,5.0166667 6.8823529,6.0375 6.0294118,6.8833333 5,6.8833333 Z M 5,3.85 c -0.6470588,0 -1.1764706,0.525 -1.1764706,1.1666667 0,0.6416666 0.5294118,1.1666666 1.1764706,1.1666666 0.6470588,0 1.1764706,-0.525 1.1764706,-1.1666666 C 6.1764706,4.375 5.6470588,3.85 5,3.85 Z"
+           id="Fill-56"
+           inkscape:connector-curvature="0" />
+      </g>
+    </g>
+  </g>
+</svg>

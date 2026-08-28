@@ -1,0 +1,97 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<svg
+   xmlns:dc="http://purl.org/dc/elements/1.1/"
+   xmlns:cc="http://creativecommons.org/ns#"
+   xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+   xmlns:svg="http://www.w3.org/2000/svg"
+   xmlns="http://www.w3.org/2000/svg"
+   xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
+   xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+   width="100px"
+   height="100px"
+   viewBox="0 0 100 100"
+   version="1.1"
+   style="background: #FFFFFF;"
+   id="svg15"
+   sodipodi:docname="icons_svg_text_g_2_send.svg"
+   inkscape:version="0.92.1 r15371"><metadata
+   id="metadata19">
+  <rdf:RDF>
+    <cc:Work
+       rdf:about="">
+      <dc:format>image/svg+xml</dc:format>
+      <dc:type
+         rdf:resource="http://purl.org/dc/dcmitype/StillImage" />
+      <dc:title>Artboard Copy 66</dc:title>
+    </cc:Work>
+  </rdf:RDF>
+</metadata>
+<sodipodi:namedview
+   pagecolor="#ffffff"
+   bordercolor="#666666"
+   borderopacity="1"
+   objecttolerance="10"
+   gridtolerance="10"
+   guidetolerance="10"
+   inkscape:pageopacity="0"
+   inkscape:pageshadow="2"
+   inkscape:window-width="1920"
+   inkscape:window-height="932"
+   id="namedview17"
+   showgrid="false"
+   inkscape:zoom="2.36"
+   inkscape:cx="-6.9915254"
+   inkscape:cy="48.305085"
+   inkscape:window-x="0"
+   inkscape:window-y="27"
+   inkscape:window-maximized="1"
+   inkscape:current-layer="svg15" />
+<!-- Generator: Sketch 48.2 (47327) - http://www.bohemiancoding.com/sketch -->
+<title
+   id="title2">Artboard Copy 66</title>
+<desc
+   id="desc4">Created with Sketch.</desc>
+<defs
+   id="defs6" />
+
+     ff827f
+<style
+   type="text/css"
+   id="style7">
+    .icon-fill-ff827f{
+        fill:#ff827f;
+    }
+</style>
+<g
+   id="Insert-Buttons"
+   transform="matrix(8.2917797,0,0,8.2917797,-364.5883,-368.73487)"
+   style="fill:none;fill-rule:evenodd;stroke:none;stroke-width:1">
+  <g
+     id="Artboard-Copy-66"
+     style="fill:#ff827f;fill-rule:nonzero">
+    <g
+       id="cart-simple"
+       transform="translate(44,45)">
+      <ellipse
+         class="icon-fill-47A6DF"
+         id="Oval"
+         cx="3"
+         cy="9.8999996"
+         rx="1.125"
+         ry="1.1" />
+      <ellipse
+         class="icon-fill-47A6DF"
+         id="ellipse9"
+         cx="10.125"
+         cy="9.8999996"
+         rx="1.125"
+         ry="1.1" />
+      <path
+         class="icon-fill-47A6DF"
+         d="M 10.5,8.0666667 H 2.625 c -0.185625,0 -0.3435,-0.1327334 -0.370875,-0.3124 l -1.077,-7.02093337 H 0 V 0 h 1.5 c 0.185625,0 0.3435,0.13273333 0.370875,0.3124 l 0.23325,1.5209333 H 11.625 c 0.1125,0 0.218625,0.049133 0.289875,0.1342 0.07125,0.0847 0.09975,0.1965334 0.07762,0.3043334 l -1.125,5.5 c -0.03487,0.1716 -0.188625,0.2948 -0.3675,0.2948 z"
+         id="Shape"
+         inkscape:connector-curvature="0" />
+    </g>
+  </g>
+</g>
+</svg>
