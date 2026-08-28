@@ -1,0 +1,17 @@
+{
+  "editor.tabSize": 2,
+  "git.ignoreLimitWarning": true,
+  "javascript.validate.enable": true,
+  "editor.quickSuggestionsDelay": 30,
+  "editor.snippetSuggestions": "bottom",
+  "editor.wordBasedSuggestionsMode": "allDocuments",
+  "debug.console.acceptSuggestionOnEnter": "on",
+  "typescript.suggest.autoImports": false,
+  "editor.acceptSuggestionOnEnter": "smart",
+  "editor.inlineSuggest.enabled": false,
+  "javascript.suggest.autoImports": false,
+  "javascript.updateImportsOnFileMove.enabled": "always",
+  "editor.suggest.showProperties": false,
+  "javascript.suggest.completeFunctionCalls": false,
+  "workbench.editor.enablePreview": false
+}

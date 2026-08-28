@@ -1,0 +1,44 @@
+{
+  "services": {
+    "create": {
+      "scope": "hub",
+      "permission": {
+        "src": "anyone",
+        "fast_check": "public-api"
+      },
+      "log": true
+    },
+    "load": {
+      "scope": "hub",
+      "permission": {
+        "src": "anyone",
+        "fast_check": "public-api"
+      }
+    },
+    "get_env": {
+      "scope": "hub",
+      "permission": {
+        "src": "anyone",
+        "fast_check": "public-api"
+      }
+    },
+    "subscribe_me": {
+      "scope": "hub",
+      "permission": {
+        "src": "anyone",
+        "fast_check": "public-api"
+      }
+    },
+    "remove": {
+      "scope": "hub",
+      "permission": {
+        "src": "anyone",
+        "fast_check": "public-api"
+      }
+    }
+  },
+  "modules": {
+    "private": "service/index",
+    "public": "service/index"
+  }
+}
