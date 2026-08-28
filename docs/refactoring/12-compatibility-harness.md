@@ -20,6 +20,8 @@ The harness freezes current behavior at architectural boundaries. Source-contrac
 
 All scripts use `set -euo pipefail`, are non-interactive, and propagate failures.
 
+The reproducible container environment is wrapped by `scripts/test-env/{check,build,up,status,e2e,logs,down,reset}.sh` and documented in `13-test-environment.md`. After `up.sh`, source `.tmp/test-env/baseline/runtime.env` to provide the live server/UI URLs to this harness. Current environment status is `NOT READY`: Debian non-image validation passes, but the imported server/UI build contexts lack the `node_modules` required by the immutable `INSTALL_DEPS=0` image builder, so image build and live E2E have not run.
+
 ## Test matrix
 
 | Surface | Test | Level | Automated | Destructive | Status |
