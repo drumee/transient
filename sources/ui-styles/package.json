@@ -1,0 +1,41 @@
+{
+	"name": "@drumee/ui-styles",
+	"version": "1.0.6",
+	"description": "Drumee reusable SASS component library",
+	"main": "dist/css/main.css",
+	"style": "dist/css/main.css",
+	"sass": "./src/main.scss",
+	"homepage": "https://drumee.com",
+	"author": "Somanos Sar <somanos@drumee.com> (http://drumee.com)",
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/drumee/ui-styles.git"
+	},
+	"bugs": {
+		"url": "https://github.com/drumee/ui-styles/issues/"
+	},
+	"files": [
+		"dist/",
+		"src/",
+		"README.md"
+	],
+	"scripts": {
+		"build": "sass src:dist/css --style=compressed",
+		"build:dev": "sass src:dist/css --watch",
+		"prepublishOnly": "npm run build",
+		"release": "git push && npm publish --access public && npm version patch"
+	},
+	"keywords": [
+		"sass",
+		"scss",
+		"css",
+		"styles"
+	],
+	"license": "MIT",
+	"devDependencies": {
+		"sass": "^1.66.0"
+	},
+	"peerDependencies": {
+		"sass": "^1.66.0"
+	}
+}
