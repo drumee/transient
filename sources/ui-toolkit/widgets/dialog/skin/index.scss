@@ -1,0 +1,22 @@
+@use '@drumee/ui-styles/src/mixins';
+@use '../../../skin' as *;
+
+.dtk-butler-dialog {
+  @include dtk-butler-main;
+  @include dtk-butler-button;
+
+  &__message {
+    font-weight: 400;
+    font-style: normal;
+    font-size: 14px;
+    line-height: 22px;
+    text-align: center;
+    letter-spacing: 1px;
+
+    span {
+      font-weight: bold;
+      cursor: pointer;
+    }
+  }
+
+}
