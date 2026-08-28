@@ -1,0 +1,186 @@
+{
+  "services": {
+    "html": {
+      "doc": "Send a html page with preset to load document using onlyoffice document server",
+      "scope": "hub",
+      "permission": {
+        "src": "anonymous",
+        "fast_check": "public-api"
+      },
+      "params": {
+        "nid": {
+          "type": "string",
+          "required": true,
+          "doc": "File node id."
+        },
+        "hub_id": {
+          "type": "string",
+          "required": true,
+          "doc": "File hub id."
+        }
+      },
+      "returns": {
+        "type": "octet/stream",
+        "doc": "Render templates/editor.html with the data required by the document server."
+      },
+      "errors": [
+        {
+          "code": "PERMISSION_DENIED",
+          "message": "Permission denied",
+          "http_status": 401
+        }
+      ]
+    },
+    "preload": {
+      "doc": "Send a html page with template content to force frontend to cache ",
+      "scope": "hub",
+      "permission": {
+        "src": "read"
+      },
+      "params": {
+        "nid": {
+          "type": "string",
+          "required": true,
+          "doc": "File node id."
+        },
+        "hub_id": {
+          "type": "string",
+          "required": true,
+          "doc": "File hub id."
+        }
+      },
+      "returns": {
+        "type": "octet/stream",
+        "doc": "Render templates/editor.html with the data required by the document server."
+      },
+      "errors": [
+        {
+          "code": "PERMISSION_DENIED",
+          "message": "Permission denied",
+          "http_status": 401
+        }
+      ]
+    },
+    "read": {
+      "doc": "Send requested file content. Permission intentionally set to anonymous because it's sent by third party. The permission control relies on the the method onlyoffice.html",
+      "scope": "hub",
+      "permission": {
+        "src": "anonymous",
+        "fast_check": "public-api"
+      },
+      "params": {
+        "uid": {
+          "type": "string",
+          "required": true,
+          "doc": "The user id requesting the access"
+        },
+        "nid": {
+          "type": "string",
+          "required": true,
+          "doc": "File node id."
+        },
+        "hub_id": {
+          "type": "string",
+          "required": true,
+          "doc": "File hub id."
+        },
+        "sessionKey": {
+          "type": "string",
+          "required": true,
+          "doc": "Unique identifier used by Onlyoffice."
+        },
+        "signature": {
+          "type": "string",
+          "required": true,
+          "doc": "Signature to ensure that the request has not been altered."
+        }
+      },
+      "returns": {
+        "type": "octet/stream",
+        "doc": "File content"
+      }
+    },
+    "callback": {
+      "doc": "Initiates OnlyOffice authorization flow.",
+      "scope": "hub",
+      "permission": {
+        "src": "anonymous",
+        "fast_check": "public-api"
+      }
+    },
+    "new_doc": {
+      "doc": "Copy the file specified by *name* from the templates location yp.syp_conf.doc_templates into the pid.",
+      "scope": "hub",
+      "permission": {
+        "src": "write"
+      }
+    },
+    "save_as": {
+      "doc": "Editor 'Save Copy as…': create a sibling copy of the document, its content pulled from the document server's download URL.",
+      "scope": "hub",
+      "permission": {
+        "src": "write"
+      },
+      "params": {
+        "nid": {
+          "type": "string",
+          "required": true,
+          "doc": "Source document node id."
+        },
+        "hub_id": {
+          "type": "string",
+          "required": true,
+          "doc": "Hub id."
+        },
+        "url": {
+          "type": "string",
+          "required": true,
+          "doc": "Download URL of the copy on the document server (must be the eurofficeServerUrl origin)."
+        },
+        "title": {
+          "type": "string",
+          "required": true,
+          "doc": "Name for the copy."
+        },
+        "file_type": {
+          "type": "string",
+          "required": false,
+          "doc": "Format of the copy; v1 must match the source extension."
+        }
+      }
+    },
+    "retitle": {
+      "doc": "Mirror a rename into the live document-server session (Command Service meta) so every open editor retitles.",
+      "scope": "hub",
+      "permission": {
+        "src": "write"
+      },
+      "params": {
+        "nid": {
+          "type": "string",
+          "required": true,
+          "doc": "Document node id."
+        },
+        "hub_id": {
+          "type": "string",
+          "required": true,
+          "doc": "Hub id."
+        },
+        "key": {
+          "type": "string",
+          "required": true,
+          "doc": "Editor session key (hub.nid.mtime)."
+        },
+        "title": {
+          "type": "string",
+          "required": true,
+          "doc": "New display title, extension included."
+        }
+      }
+    }
+  },
+  "modules": {
+    "private": "service/euroffice",
+    "public": "service/euroffice"
+  }
+}
