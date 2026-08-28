@@ -1,0 +1,24 @@
+{
+  "services": {
+    "initiate": {
+      "doc": "Initiates Google OAuth 2.0 authorization flow.",
+      "scope": "hub",
+      "permission": {
+        "src": "anonymous",
+        "fast_check": "public-api"
+      }
+    },
+    "callback": {
+      "doc": "Handles the OAuth 2.0 callback from Google Sign-In.",
+      "scope": "hub",
+      "permission": {
+        "src": "anonymous",
+        "fast_check": "public-api"
+      }
+    }
+  },
+  "modules": {
+    "private": "service/google",
+    "public": "service/google"
+  }
+}

@@ -1,0 +1,64 @@
+{
+  "services": {
+    "get_info": {
+      "scope": "hub",
+      "permission": {
+        "src": "anonymous",
+        "fast_check": "public-api"
+      }
+    },
+    "create_account": {
+      "scope": "hub",
+      "permission": {
+        "src": "anonymous",
+        "fast_check": "public-api"
+      }
+    },
+    "verify_otp": {
+      "scope": "hub",
+      "permission": {
+        "src": "anonymous",
+        "fast_check": "public-api"
+      }
+    },
+    "save_info": {
+      "scope": "hub",
+      "permission": {
+        "src": "anonymous",
+        "fast_check": "public-api"
+      }
+    },
+    "verify_email": {
+      "scope": "hub",
+      "permission": {
+        "src": "anonymous",
+        "fast_check": "public-api"
+      }
+    },
+    "resend_verification": {
+      "scope": "hub",
+      "permission": {
+        "src": "anonymous",
+        "fast_check": "public-api"
+      }
+    },
+    "send_welcome": {
+      "scope": "hub",
+      "permission": {
+        "src": "anonymous",
+        "fast_check": "public-api"
+      }
+    },
+    "check_verification": {
+      "scope": "hub",
+      "permission": {
+        "src": "anonymous",
+        "fast_check": "public-api"
+      }
+    }
+  },
+  "modules": {
+    "private": "service/signup",
+    "public": "service/signup"
+  }
+}

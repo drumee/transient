@@ -1,0 +1,149 @@
+{
+  "services": {
+    "save_user_info": {
+      "scope": "hub",
+      "permission": {
+        "src": "anonymous",
+        "fast_check": "public-api"
+      }
+    },
+    "save_signup_info": {
+      "scope": "hub",
+      "permission": {
+        "src": "anonymous",
+        "fast_check": "public-api"
+      }
+    },
+    "save_usage_plan": {
+      "scope": "hub",
+      "permission": {
+        "src": "anonymous",
+        "fast_check": "public-api"
+      }
+    },
+    "save_industry": {
+      "scope": "hub",
+      "permission": {
+        "src": "anonymous",
+        "fast_check": "public-api"
+      }
+    },
+    "save_role": {
+      "scope": "hub",
+      "permission": {
+        "src": "anonymous",
+        "fast_check": "public-api"
+      }
+    },
+    "save_team_size": {
+      "scope": "hub",
+      "permission": {
+        "src": "anonymous",
+        "fast_check": "public-api"
+      }
+    },
+    "save_intent": {
+      "scope": "hub",
+      "permission": {
+        "src": "anonymous",
+        "fast_check": "public-api"
+      }
+    },
+    "save_challenges": {
+      "scope": "hub",
+      "permission": {
+        "src": "anonymous",
+        "fast_check": "public-api"
+      }
+    },
+    "save_tools": {
+      "scope": "hub",
+      "permission": {
+        "src": "anonymous",
+        "fast_check": "public-api"
+      }
+    },
+    "save_privacy": {
+      "scope": "hub",
+      "permission": {
+        "src": "anonymous",
+        "fast_check": "public-api"
+      }
+    },
+    "get_response": {
+      "scope": "hub",
+      "permission": {
+        "src": "anonymous",
+        "fast_check": "public-api"
+      }
+    },
+    "check_completion": {
+      "scope": "hub",
+      "permission": {
+        "src": "anonymous",
+        "fast_check": "public-api"
+      }
+    },
+    "mark_complete": {
+      "scope": "hub",
+      "permission": {
+        "src": "anonymous",
+        "fast_check": "public-api"
+      }
+    },
+    "get_countries": {
+      "scope": "hub",
+      "permission": {
+        "src": "anonymous",
+        "fast_check": "public-api"
+      }
+    },
+    "reset": {
+      "scope": "hub",
+      "permission": {
+        "src": "anonymous",
+        "fast_check": "public-api"
+      }
+    },
+    "update_profile": {
+      "scope": "hub",
+      "permission": {
+        "src": "anonymous",
+        "fast_check": "public-api"
+      }
+    },
+    "get_env": {
+      "scope": "hub",
+      "permission": {
+        "src": "anonymous",
+        "fast_check": "public-api"
+      }
+    },
+    "get_onboarding_invite_link": {
+      "scope": "hub",
+      "permission": {
+        "src": "anonymous",
+        "fast_check": "public-api"
+      }
+    },
+    "send_onboarding_invites": {
+      "scope": "hub",
+      "permission": {
+        "src": "anonymous",
+        "fast_check": "public-api"
+      },
+      "log": true
+    },
+    "get_activation_status": {
+      "scope": "hub",
+      "permission": {
+        "src": "anonymous",
+        "fast_check": "public-api"
+      }
+    }
+  },
+  "modules": {
+    "private": "service/onboarding",
+    "public": "service/onboarding"
+  }
+}

@@ -1,0 +1,42 @@
+{
+  "name": "@drumee/loby",
+  "version": "0.0.0",
+  "description": "Signin + Signup + onborading",
+  "main": "index.js",
+  "scripts": {
+    "deploy": "drumee-server-deploy",
+    "dev": "drumee-server-devel",
+    "register-plugin": "drumee-server-plugin add",
+    "remove-plugin": "drumee-server-plugin remove",
+    "release": "git push && npm publish --access public && npm version patch",
+    "send-beta-email": "node emailing/scripts/send-beta-announcement.js",
+    "test": "node --test test/*.test.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git@github.com:drumee/analytics-server.git"
+  },
+  "bugs": {
+    "url": "https://github.com/drumee/analytics-server/issues"
+  },
+  "author": "Somanos Sar <somanos@drumee.com>",
+  "license": "APACHE V2",
+  "dependencies": {
+    "@drumee/server-core": "^1.1.68",
+    "@drumee/server-essentials": "^1.2.29",
+    "argparse": "^2.0.1",
+    "axios": "^1.13.2",
+    "csv-parse": "^5.5.3",
+    "csv-stringify": "^6.4.5",
+    "google-auth-library": "^10.5.0",
+    "jsonfile": "^6.2.0",
+    "jsonwebtoken": "^9.0.2",
+    "jwks-rsa": "^3.2.0",
+    "lodash": "^4.17.21",
+    "shelljs": "^0.8.5",
+    "unique-names-generator": "^4.7.1"
+  },
+  "devDependencies": {
+    "@drumee/server-dev-tools": "^1.1.32"
+  }
+}
