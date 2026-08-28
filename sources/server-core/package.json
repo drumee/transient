@@ -1,0 +1,38 @@
+{
+  "name": "@drumee/server-core",
+  "version": "1.1.84",
+  "description": "Drumee server core",
+  "main": "lib/index.js",
+  "scripts": {
+    "test": " npm run test:modules && npm run test:acl && npm run test:db",
+    "test:acl": "node lib/test/acl.js",
+    "test:db": "node lib/test/db.js",
+    "test:modules": "source /etc/drumee/drumee.sh node lib/test/modules.js",
+    "release": "git push && npm publish --access public && npm version patch"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/drumee/server-core.git"
+  },
+  "bugs": {
+    "url": "https://github.com/drumee/server-core/issues"
+  },
+  "author": "Somanos Sar <somanos@drumee.com>",
+  "license": "AGPL V3",
+  "devDependencies": {
+    "@drumee/server-dev-tools": "^1.0.1",
+    "readline-sync": "^1.4.10"
+  },
+  "dependencies": {
+    "@drumee/server-essentials": "^1.3.1",
+    "accept-language": "^3.0.18",
+    "cookie": "^1.0.2",
+    "geoip-lite": "^1.4.10",
+    "js-yaml": "^5.2.2",
+    "moment": "^2.30.1",
+    "multiparty": "^4.2.3",
+    "music-metadata": "^11.14.0",
+    "ovh": "^2.0.3",
+    "shelljs": "^0.8.5"
+  }
+}
