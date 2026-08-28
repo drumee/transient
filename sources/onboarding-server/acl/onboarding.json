@@ -1,0 +1,78 @@
+{
+  "services": {
+    "save_user_info": {
+      "scope": "hub",
+      "permission": { 
+        "src": "anonymous",
+        "fast_check": "public-api" 
+      }
+    },
+    "save_usage_plan": {
+      "scope": "hub",
+      "permission": { 
+        "src": "anonymous",
+        "fast_check": "public-api"
+      }
+    },
+    "save_tools": {
+      "scope": "hub",
+      "permission": { 
+        "src": "anonymous",
+        "fast_check": "public-api"
+      }
+    },
+    "save_privacy": {
+      "scope": "hub",
+      "permission": { 
+        "src": "anonymous",
+        "fast_check": "public-api"
+      }
+    },
+    "get_response": {
+      "scope": "hub",
+      "permission": { 
+        "src": "anonymous",
+        "fast_check": "public-api"
+      }
+    },
+    "check_completion": {
+      "scope": "hub",
+      "permission": { 
+        "src": "anonymous",
+        "fast_check": "public-api"
+      }
+    },
+    "mark_complete": {
+      "scope": "hub",
+      "permission": { 
+        "src": "anonymous",
+        "fast_check": "public-api" 
+      }
+    },
+    "get_countries": {            
+      "scope": "hub",             
+      "permission": {
+        "src": "anonymous",      
+        "fast_check": "public-api" 
+      }
+    },
+    "reset": {            
+      "scope": "hub",             
+      "permission": {
+        "src": "anonymous",      
+        "fast_check": "public-api" 
+      }
+    },
+    "get_env": {                  
+      "scope": "hub",             
+      "permission": {
+        "src": "anonymous",
+        "fast_check": "public-api"
+      }
+    }
+  },
+  "modules": {
+    "private": "service/onboarding", 
+    "public": "service/onboarding" 
+  }
+}

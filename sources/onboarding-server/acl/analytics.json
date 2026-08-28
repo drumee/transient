@@ -1,0 +1,38 @@
+{
+  "services": {
+    "get_env": {
+      "scope": "hub",
+      "permission": {
+        "src": "read"
+      }
+    },
+    "users_history": {
+      "scope": "hub",
+      "permission": {
+        "src": "read"
+      }
+    },
+    "users_list": {
+      "scope": "hub",
+      "permission": {
+        "src": "read"
+      }
+    },
+    "emailing": {
+      "scope": "hub",
+      "permission": {
+        "src": "read"
+      }
+    },
+    "trafic_history": {
+      "scope": "hub",
+      "permission": {
+        "src": "read"
+      }
+    }
+  },
+  "modules": {
+    "private": "service/index",
+    "public": "service/index"
+  }
+}
