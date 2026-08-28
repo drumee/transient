@@ -4,12 +4,15 @@ The classification column classifies the responsibility named in the first colum
 
 | Responsibility | Current evidence location | Current implementation / dependencies | Responsibility classification | Risk |
 |---|---|---|---|---|
-| Request/session/ACL | `sources/server-core/lib/{session,input,output,acl}.js` | Hosts service execution on essentials | `KEEP_OS` | High |
-| Dynamic service dispatch | `sources/server-team/router/rest/index.js`, `service.js` | Registers ACL modules/plugins | `KEEP_OS` | Critical |
+| Generic request/session/ACL engine | `sources/server-core/lib/{session,input,output,acl}.js` | Hosts requests and evaluates supplied access rules | `KEEP_OS` | High |
+| Generic REST/module dispatcher | `sources/server-team/router/rest/index.js`, `service.js` | Registers modules/plugins and dispatches authorized service calls | `KEEP_OS` | Critical |
+| Service-specific deny/allow policy | `sources/server-team/acl/**` and service checks | Defines access policy for particular services; consumes generic ACL engine | Same owner as service (`TEAM_MODULE`, `SYSTEM_MODULE`, or `INVESTIGATE`) | High |
+| Secure-share policy | `sources/server-team/acl/secure_share.json`, secure-share service/schema families | Defines secure-share authorization behavior | `INVESTIGATE` | Critical |
+| Billing/over-limit policy | Team billing services and `sources/server-team/service/lib/env.js` feature/policy exposure | Product/distribution policy, not generic authorization machinery | `TEAM_MODULE` or policy module (`INVESTIGATE`) | High |
 | Team backend services | `sources/server-team/{service,acl}/**` | Workspace, sharing, chat, tasks, meetings, billing | `TEAM_MODULE` (split by family) | Critical |
 | MFS engine | `sources/server-core/lib/{mfs,entity,file-io}.js`; `schemas/common/procedures/mfs_*.sql` | Node semantics, permission, storage mapping | `KEEP_OS` | Critical |
 | LETC/kind runtime | `sources/ui-core/letc/**` | Rendering and dynamic kind registry | `SDK_OR_ESSENTIALS` | High |
-| Browser shell/router | `sources/ui-team/src/drumee/{api.js,index.web.js,router/**}` | Bootstrap and host navigation | `KEEP_OS` | Critical |
+| Minimal browser host/shell responsibility | Mixed evidence in `sources/ui-team/src/drumee/{api.js,index.web.js,router/**}` and `sources/ui-core/letc/**` | Must bootstrap the UI runtime and host dynamically loaded applications; no minimal implementation exists yet | `KEEP_OS`; exact source boundary `INVESTIGATE` | Critical |
 | Window Manager | `sources/ui-team/src/drumee/modules/desk/wm/**`, `builtins/window/{core,manager}.js` | Hosts windows/DnD | `KEEP_OS` | Critical |
 | Finder/folder UI | UI `builtins/window/{folder,serverexplorer}/**` | User-facing MFS browser | `SYSTEM_MODULE` | High |
 | Signin | `sources/signin/src/**` | Sign-in/guest kinds | `SYSTEM_MODULE` | Medium |
@@ -31,4 +34,4 @@ The classification column classifies the responsibility named in the first colum
 
 Nothing is classified `LEGACY` without call-site or history proof.
 
-In particular, `sources/server-team/router/rest/index.js`, UI Team shell/Window Manager files, and mixed schema directories are not thereby designated future OS files. They currently contain behavior from which the `KEEP_OS` responsibility must be isolated while non-OS behavior remains with its owning module or layer.
+In particular, `sources/server-team/router/rest/index.js`, UI Team boot/Window Manager files, and mixed schema directories are not thereby designated future OS files. UI Team is the integrated compatibility application, not an existing minimal shell. Its current files contain evidence from which the browser-host responsibility may eventually be isolated while Team behavior remains with modules/distribution code. The ACL engine's ownership likewise does not pull the rules it evaluates into the OS.

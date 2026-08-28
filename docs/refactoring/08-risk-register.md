@@ -9,12 +9,13 @@
 | Split plugin discovery/lifecycle | `HIGH` | REST loader, UI bootstrap and Debian installer use separate contracts |
 | Runtime globals | `HIGH` | UI-core/UI-team window globals and server shared global caches |
 | Window Manager/Finder/DnD | `CRITICAL` | `ui-team/builtins/media/core.js` and window seed graph |
-| ACL/service-name assumptions | `CRITICAL` | ACL JSON drives dispatch; fixture every scope/permission |
+| ACL engine/policy ownership confusion | `CRITICAL` | ACL JSON drives dispatch, but service policy is not generic engine behavior; fixture every scope/permission and preserve module ownership |
 | CLI direct DB/shard access | `CRITICAL` | Raw yp queries and qualified calls; stable API requires parity |
 | CLI DB/API difference | `CRITICAL` | API backend throws; parity absent |
 | Procedure result leakage | `HIGH` | `setup-schemas/lib/drumate.js::createHub` documents mixed result sets |
 | Webpack aliases/dynamic imports | `HIGH` | UI seed registry and environment-driven signin build |
 | Team boot sequence | `CRITICAL` | bootstrap events/globals span ui-core and ui-team |
+| Mistaking UI Team for the minimal shell | `CRITICAL` | UI Team boot files also register the integrated Team application; derive the host contract through tests before selecting symbols |
 | Provisioner/runtime/CLI semantic cycle | `HIGH` | All mutate yp, shards and storage |
 | Patch/upgrade order | `CRITICAL` | schema patch trees and Debian schemas-patch |
 | Docker/native divergence | `HIGH` | two deployment channels require shared scenarios |

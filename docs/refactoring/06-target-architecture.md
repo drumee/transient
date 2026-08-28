@@ -18,7 +18,9 @@ existing Core / Essentials / LETC SDK
 deployment consumes versioned runtime + distribution + modules
 ```
 
-The Minimal OS must own the `KEEP_OS` responsibilities: boot/configuration, request/session/context, identity/entity/hub context, ACL enforcement, service dispatch, backend/frontend discovery adapters, event/WebSocket transport, MFS semantic primitives and storage adapter, LETC host integration, browser routing/shell hosting and Window Manager primitives. Current implementations may be split, adapted, reproduced, or left partly with modules; no file-level destination is selected by this responsibility list.
+The Minimal OS must own the `KEEP_OS` responsibilities: boot/configuration, request/session/context, identity/entity/hub context, the generic ACL evaluation engine, REST/service dispatch, backend/frontend discovery adapters, event/WebSocket transport, MFS semantic primitives and storage adapter, LETC host integration, browser routing/shell hosting and Window Manager primitives. It supplies mechanisms, not every policy consumed by them. Service-specific deny/allow lists remain with their services; billing/over-limit policy belongs to Team or a separately approved policy module; secure-share policy is `INVESTIGATE`. Current implementations may be split, adapted, reproduced, or left partly with modules; no file-level destination is selected by this responsibility list.
+
+The browser shell is therefore a target responsibility, not a description or rename of `sources/ui-team`. UI Team currently bundles the host path with the complete Team product. Mapping must first identify the smallest boot, routing, runtime-readiness, application-hosting and Window Manager contracts; everything beyond those proven host needs stays with system/Team modules or remains `INVESTIGATE`.
 
 Core/SDK remains based on `server-core`, `server-essentials`, `ui-core`, `ui-essentials`, `ui-toolkit`, and `ui-styles`; no new low-level replacement is proposed.
 

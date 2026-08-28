@@ -2,7 +2,7 @@
 
 All remain `INVESTIGATE` until code/history/runtime evidence or approval resolves them.
 
-1. What exact yp/schema subset is minimal, especially sharing, DMZ, quota, notification and base hub membership?
+1. What exact yp/schema subset is minimal, especially DMZ, quota, notification and base hub membership? Secure-share policy is specifically unclassified and must not be pulled into the OS merely because it uses the ACL engine.
 2. Which process fills/repairs the factory pool in each channel, what are its state transitions, and how are failures reclaimed?
 3. Is the physical MFS layout stable or should core expose a storage adapter? Which alternate stores exist?
 4. What exact common-template application order exists, and how can module schemas update every current/future entity atomically?
@@ -22,3 +22,5 @@ All remain `INVESTIGATE` until code/history/runtime evidence or approval resolve
 18. Which existing installation versions must Docker/native upgrades cover?
 19. Should marketplace/onboarding/sandbox examples become normative module-contract evidence? They were sampled, not exhaustively classified.
 20. What final repositories/names follow validated extraction? `transient` must not determine them.
+21. Should billing/over-limit behavior remain a Team policy or become a reusable policy module? Either way, it is outside the generic dispatcher/ACL engine.
+22. What is the smallest browser-shell contract—boot inputs, readiness events, router responsibilities, application hosting and Window Manager integration—and which current UI Team behaviors must remain outside it?

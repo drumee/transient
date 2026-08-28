@@ -2,7 +2,7 @@
 
 ## CURRENT
 
-Backend modules use ACL JSON with service/scope/permission declarations and `modules.private/public` implementation paths (`sources/loby/acl/signup.json`). `server-team/router/rest/index.js::loadPlugins` reads configured ACL directories and registers them. Loby adds package identity/scripts, services and schemas, but runtime loading does not install schemas.
+Backend modules use ACL JSON with service/scope/permission declarations and `modules.private/public` implementation paths (`sources/loby/acl/signup.json`). `server-team/router/rest/index.js::loadPlugins` reads configured ACL directories and registers them. The runtime owns generic registration, dispatch and evaluation; each module owns its service-specific policy declarations. Loby adds package identity/scripts, services and schemas, but runtime loading does not install schemas.
 
 Frontend modules use a separate `index.json` entry resolved by `server-team/service/bootstrap.js::plugin`. `ui-core/letc/kind/index.js::loadPlugin` loads that JS; signin's seeds map kind IDs to imports and its entry calls `Kind.registerAddons`. Locales/assets/build are package-specific.
 
@@ -25,6 +25,8 @@ lifecycle: { install: declarative-step, upgrade: declarative-step }
 ```
 
 The smallest shared contract is metadata, artifact locations, compatibility, dependencies and state. Runtime, schema provisioner, distribution builder, CLI and deployment may use separate adapters.
+
+Module ACL entries declare policy to the host but do not become OS policy. Secure-share policy remains unclassified; billing/over-limit policy belongs to Team or a separately approved policy module.
 
 ## ADD
 
