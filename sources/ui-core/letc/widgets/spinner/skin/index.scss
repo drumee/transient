@@ -1,0 +1,14 @@
+
+@use 'mixins/drumee';
+
+.spinner-{
+  &__ui{
+    z-index: 1000;
+  }
+  &__main{
+    background-color: inherit;
+  }
+  &__container{
+    background-color: inherit;
+  }
+}
