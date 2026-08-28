@@ -1,0 +1,68 @@
+#!/bin/bash
+script_dir="$(dirname "$(readlink -f "$0")")"
+base_dir="$(dirname $script_dir)"
+manifest="$base_dir/patches/manifest.txt"
+
+schemas=$base_dir
+quiet=0
+for arg in "$@"; do
+  case $arg in
+  --schemas=*)
+    schemas="${arg#*=}"
+    shift
+    ;;
+  --manifest=*)
+    manifest="${arg#*=}"
+    shift
+    ;;
+  --quiet=*)
+    quiet="${arg#*=}"
+    shift
+    ;;
+  esac
+done
+
+if [ ! -f "$manifest" ]; then
+  echo "No manifest were found from $manifest. Exited"
+  exit 0
+fi
+
+opt="--force=$quiet --schemas=$schemas --orphan=remove --ignore-error" 
+
+collation=$(mariadb -e "show variables like 'character_set_collations';")
+if [ "$collation" != "" ]; then
+  mariadb -e "set GLOBAL character_set_collations='utf8mb4=utf8mb4_general_ci'"
+fi
+
+cd $base_dir
+for i in $(cat $manifest); do
+  echo $i
+  target=null
+  if [[ $i =~ ^yellow_page\/.+\.sql$ ]]; then
+    target=yp 
+  elif [[ $i =~ ^drumate\/.+\.sql$ ]]; then
+    target=drumate
+  elif [[ $i =~ ^hub\/.+\.sql$ ]]; then
+    target=hub
+  elif [[ $i =~ ^common\/.+\.sql$ ]]; then
+    target=common
+  elif [[ $i =~ ^mailserver\/.+\.sql$ ]]; then
+    target=mailserver
+  elif [[ $i =~ ^utils\/.+\.sql$ ]]; then
+    target=utils
+  fi
+
+  if [ $target != "null" ]; then
+    if [[ $target =~ ^(drumate|hub|common)$ ]]; then
+      if [ -x /usr/sbin/drumee ]; then
+        /usr/sbin/drumee stop factory
+      fi
+    fi  
+  	node $script_dir/patch.js --source=$i --target=$target $opt
+  else 
+    echo Invalid target
+  fi
+done
+if [ -x /usr/sbin/drumee ]; then
+  /usr/sbin/drumee start factory
+fi

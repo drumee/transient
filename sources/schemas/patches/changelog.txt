@@ -1,0 +1,2478 @@
+2026-08-24 (oauth_state gains utm_source/utm_medium/utm_campaign/utm_content --
+  the campaign an OAuth signup arrived on. Exactly what
+  2026-08-11-oauth-state-ref.sql did for the referral handle: the signup UI
+  captures utm_* in browser storage, the callback runs server-side, and the
+  visitor is bounced out to Google/Apple in between, so the campaign had
+  nowhere to survive the round trip and every campaign-sourced OAuth signup
+  was recorded as organic. Four named columns rather than a JSON blob, sized
+  and collated to match `ref`. NULLable with no default -- a row without them
+  means "no campaign", which is the common case. ADD COLUMN IF NOT EXISTS, so
+  it is safe to replay.
+  Only the patch is listed, deliberately: tables/oauth_state.sql opens with
+  DROP TABLE IF EXISTS and would discard the in-flight state rows, failing
+  every sign-in mid-redirect -- the same reason the 2026-08-11 entry gives.
+  Changelog entry added retroactively 2026-08-27 during the test->preview
+  promotion; the patch itself shipped in 4694f32 without one.)
+  yellow_page/patches/2026-08-24-oauth-state-utm.sql
+
+2026-08-23 (Upgrade-nudge gate procedures for personal accounts and for
+  organisations. One gate decides whether a member gets an upsell popup right
+  now and atomically MARKS it shown, so the two suppression rules -- once per
+  threshold, and a shared daily cap -- cannot be raced by two tabs. No new
+  table: org state lives in organisation.metadata.$.upgrade_nudge and personal
+  state in drumate.profile, both written with a single JSON_MERGE_PATCH UPDATE.
+  The *_reset procs clear a stale block so a downgrade re-arms the nudge.
+  drumate_seat_usage reports members plus live invitations across the account's
+  workspaces, which is what the seats trigger reads.
+  The whole feature is gated on the myDrumee.upgrade_nudges config flag and is
+  OFF everywhere, so these procs are dormant until it is switched on.
+  Changelog entry added retroactively 2026-08-27 during the test->preview
+  promotion; the procedures shipped in b256ffd and 11f93ea without one.)
+  yellow_page/procedures/subscription/drumate_seat_usage.sql
+  yellow_page/procedures/subscription/drumate_upgrade_nudge_mark.sql
+  yellow_page/procedures/subscription/drumate_upgrade_nudge_reset.sql
+  yellow_page/procedures/subscription/org_upgrade_nudge_mark.sql
+  yellow_page/procedures/subscription/org_upgrade_nudge_reset.sql
+
+2026-08-25 (Core feature adoption: real tracking behind the dashboard's
+  Engagement > Core function page, which until now was a mockup with ten
+  invented figures and no measured ones. Adds yp.feature_usage -- one row per
+  (user, feature), stamped the FIRST time the user touches it and carrying
+  running hits/volume counters -- plus the feature_mark writer and a partial
+  backfill. Order matters: the table and the procedure must be in place BEFORE
+  the services that call them, or the first chat message after deploy warns on
+  every post.)
+  yellow_page/tables/feature_usage.sql
+  yellow_page/procedures/analytics/feature_mark.sql
+  patches/feature_usage_backfill.sql
+
+  APPLIED to stage yp 2026-08-25 (mariadb --database yp < file, which is what
+  bin/patch-from-file does for the yellow_page class -- stage has no schemas
+  git checkout). None of the three objects existed beforehand, so there was no
+  drift to diff against. Backfill run the same day, twice, second run verified
+  byte-identical:
+    upload   62 users, 9306 files, 65.1 GB, earliest 2025-10-22
+    meeting  31 users,  409 meetings,        earliest 2026-04-28
+    chat/task  nothing on that first run -- see the crawl below, which was
+               added later the same day and does recover them.
+
+  CHAT AND TASK ADDED 2026-08-25, same file, via a crawl (the temporary
+  _feature_usage_crawl procedure at the bottom). The earlier claim in this
+  entry -- that chat and task "leave no trace in yp, so there is nothing to
+  replay" -- was true about yp and WRONG as a conclusion. They are not in yp,
+  but they are in the per-entity databases, and a ONE-TIME crawl of those is
+  perfectly affordable; what is unaffordable is the READ path doing it on
+  every page load, which is what yp.feature_usage exists to prevent. Those are
+  different constraints and the first was mistaken for the second.
+  Applied to stage, run twice, second run byte-identical, upload and meeting
+  rows verified UNCHANGED by the crawl:
+    chat  36 users, 1376 messages, earliest 2025-10-22
+    task  19 users,   91 tasks,    earliest 2026-05-04
+  Cross-checked before running: an independent shell crawl over the same
+  databases predicted exactly 36/1376 and 19/91 after the drumate INNER JOIN.
+  The join drops 5 authors with no drumate row (73 messages, 11 tasks) --
+  deleted accounts, which core_function would filter out at read time anyway.
+
+  THE CHAT COUNT RESTS ON ONE VERIFIED INVARIANT. p2p_channel looked like a
+  mirror from the service code -- chat.js _distributeMessage writes to the peer
+  as well through forward_proc -- which would have double-counted every direct
+  message, once per participant. Checked against stage instead of assumed:
+  across every drumate database author_id is ALWAYS that database's owner (0
+  exceptions), and no non-NULL message_id appears in more than one table (309
+  rows, 277 distinct ids, the 32-row gap being 33 NULLs collapsing). It is an
+  OUTBOX. If that ever changes, the crawl double-counts silently.
+  THE FOLDER FILTER EARNED ITS KEEP: stage has 10822 media.new rows of which
+  1355 are mimetype='folder'. Without the predicate the backfill would have
+  reported 10822 uploads, a 14.6% inflation, and disagreed with the Funnel
+  page's Upload stage over exactly those users.
+  THE MEETING DEDUPE TOO: 1829 conference.join rows collapsed to 409 distinct
+  (uid, room_id) meetings -- counting raw joins would have reported 4.5x the
+  meetings anyone attended.
+  Cross-checked against funnel_milestone: 62 uploaders here vs 63 there. The
+  one difference is uid 0317d60f0317d614, which has no drumate row -- a deleted
+  account. funnel_milestone deliberately has no FK so its rows outlive the
+  account; this backfill INNER JOINs drumate, and so does core_function, so a
+  deleted user could never appear in the numerator anyway. The reverse set is
+  empty. This is agreement, not drift.
+  KNOWN, SHARED WITH THE FUNNEL: the DMZ guest (guest@drumee.in, 410 uploads)
+  is counted as an uploader. yp.funnel_milestone carries the same guest upload
+  row with the identical ctime, and guest@drumee.in does not match
+  analytics_test_email_regexp(). The upload statement here has no guest
+  exclusion ON PURPOSE -- it matches funnel_backfill.sql, and excluding guests
+  on one side only would split the two pages' populations again. Fixing it
+  means deciding whether guest uploads count and applying that to BOTH sides
+  at once. The meeting statement DOES exclude the guest, because there the
+  guest is an artefact of anonymous joins rather than a real actor.
+
+  WHY A TABLE. Only ONE of the four features leaves any trace in yp. Uploads
+  write yp.mfs_changelog, so they are derivable (expensively). Chat lives in
+  `channel`, one table per WORKSPACE, and `p2p_channel`, one per USER. Tasks
+  live in `task`, a common/ table that exists once per hub AND once per
+  drumate. Meetings live in yp.conference, whose rows are DELETED on leave --
+  after the call there is nothing left to count at all. Deriving three of the
+  four means crawling every database on the server, so the data is brought to
+  yp at write time instead.
+
+  WHY COUNTERS SHARE THE FIRST-USE ROW. The page needs adoption (does a row
+  exist) and volume (total uploads, avg messages/user) from the same
+  population. A separate counter table would be two writes per event and two
+  answers to "has this user used chat" that drift apart. ctime is written by
+  the INSERT and never appears in the UPDATE clause, so it keeps meaning first
+  use however many events land.
+
+  WHO WRITES IT. feature_mark is called from six places, all fire-and-forget
+  after their own write has committed, all batched through server-team
+  service/lib/feature-usage.js:
+    upload    service/media.js store(), media.new branch only, +filesize
+    chat      service/private/chat.js post()            (p2p)
+    chat      service/private/channel.js post()         (workspace)
+    chat      service/private/channel.js file_thread_post()
+    task      service/private/task.js create()
+    meeting   service/conference.js join(), deduped per (uid, room_id)
+
+  THE BATCHER IS NOT OPTIONAL, and this is where it differs from
+  funnel-milestone.js next door. That file MEMOISES and drops repeats, because
+  only the first occurrence can change anything. Here every event moves a
+  counter, so nothing may be dropped -- they are accumulated in process and
+  flushed as one call carrying the delta. feature_mark's _hits/_volume are
+  INCREMENTS for exactly this reason.
+
+  WHAT THE BACKFILL CAN AND CANNOT RECOVER. Upload: fully, from mfs_changelog
+  media.new rows -- uid, timestamp and src.filesize are all there (verified;
+  note the JSON key is `ownpath`, not the `ownpth` media.js also tests for).
+  Meeting: from yp.services_log, because acl/conference.json sets "log": true
+  on conference.join -- PROBE FIRST, this box has no such rows. Chat and task:
+  NOT AT ALL. Neither has a log flag and both live per-instance. They read 0
+  until the services deploy, and the page names the collection start date
+  rather than presenting a cold start as a measurement.
+
+  Read side lives in analytics-server (procedures/yp/core_function.sql), not
+  here: it is a dashboard query, and that repo's manifest is how it is applied.
+
+2026-08-24 (Activation funnel: real tracking behind the dashboard's
+  Activation > Funnel page, which until now was a mockup with one measured
+  figure and four invented ones. Adds yp.funnel_milestone -- one row per
+  (user, milestone), stamped the FIRST time the user reaches it -- plus the
+  funnel_mark writer and a backfill. Order matters: the table and the
+  procedure must be in place BEFORE the services that call them, or the first
+  media.make_dir after deploy warns on every folder created.
+  APPLIED to stage yp 2026-08-24 via bin/patch-from-file, backfill run there
+  the same day: 226 onboarded (all approx), 41 folder, 61 upload, 36 activated.
+  NOT applied to prod. The SERVICES that write these rows -- server-team and
+  loby -- are not deployed to stage yet, so until they are the table holds
+  backfilled history only and stops accruing.)
+  yellow_page/tables/funnel_milestone.sql
+  yellow_page/procedures/analytics/funnel_mark.sql
+  patches/funnel_backfill.sql
+
+  WHY A TABLE. Three of the four milestones were already derivable and one was
+  not. folder and upload are MIN(timestamp) over yp.mfs_changelog -- possible,
+  but a full scan plus a JSON_VALUE per row on every page load, over the
+  busiest write path we have. `onboarded` is not derivable at all:
+  drumate.profile.$.onboarded is a BOOLEAN and nothing anywhere records WHEN
+  the wizard was finished. A funnel with one undated stage cannot be cohorted
+  or timed, so the page could report that a user onboarded but never when.
+
+  WHO WRITES IT. funnel_mark is called from three places, all fire-and-forget
+  after their own write has committed:
+    onboarded   loby service/onboarding.js update_profile -- after
+                drumate_update_profile, NOT after mark_complete. mark_complete
+                only validates; it can succeed and be followed by a failed
+                profile write, leaving a user who never got onboarded = 1.
+    folder      server-team service/media.js make_dir
+    upload      server-team service/media.js store, media.new branch only
+  'activated' is never passed in. funnel_mark derives it when both legs exist,
+  stamped GREATEST(folder, upload), and SIGNALs if a caller hands it directly
+  -- so "both, either order" lives in one place instead of in two handlers.
+
+  THE SYSTEM FOLDERS NEED NO EXCLUSION, and this is worth knowing before
+  anyone "fixes" the backfill by adding one. Photos/Documents/Videos/Musics
+  come from the drumate factory template and "Personal Workspace" from loby
+  make_default_folers; all of them call mfs_make_dir procedure-to-procedure.
+  Only the media.make_dir SERVICE writes an mfs_changelog row, so the seeded
+  folders were never in the data the backfill reads. Verified: the only
+  mimetype='folder' changelog rows on this box belong to a real site import.
+  Chat attachments are absent the same way -- changelog_write returns early
+  for /__chat__/ paths, and media.js repeats that test before marking.
+
+  THE BACKFILLED `onboarded` DATES ARE ESTIMATES, flagged approx=1 on the row
+  and surfaced on the page as a chip. There was no completion time to recover,
+  so entity.ctime stands in. The COUNT is exact; only the dates are not. Any
+  future cohort or time-to-onboard work must exclude approx rows rather than
+  average them in.
+
+  Read side lives in analytics-server (procedures/yp/funnel_summary.sql), not
+  here: it is a dashboard query, and that repo's manifest is how it is applied.
+
+2026-08-23 (A meeting host who LEAVES and comes back is host again. `role` was
+  recomputed on every join from "is this room empty?", so the moment anybody
+  else was still in the call the returning host came back an 'attendee' and the
+  meeting topbar dropped its End-meeting affordance -- it reads room.user.role
+  once, at join, and never re-evaluates it. A live room that has no active host
+  row now hands the role to the first edit-tier joiner, the same rule the
+  'share' branch already used; and both host tests skip the caller's own row,
+  which a conference.leave still in flight can leave behind on a fast rejoin.
+  Procedure only -- no table change, nothing to backfill.)
+  yellow_page/procedures/conference/conference_join.sql
+
+2026-08-17 (Tier gates: task-tracker views + group-meeting duration. Adds
+  quota.task_views (comma-separated whitelist of task views, or '*') and
+  quota.meeting_minutes (hard cap on a type='meeting' room, 0 = uncapped).
+  FREE is the only gated tier -- 'board,list' and 45 minutes; pro and every
+  org tier get '*' and 0. Pro is a PAID plan and is deliberately open.
+  The keys go in yp.plan.QUOTA, not FEATURES: only `quota` is copied into a
+  live entitlement by payment_apply_entitlement and only `quota` is returned
+  by the get_quota FUNCTION that feeds the clients, so an entitlement placed
+  in `features` would read as undefined everywhere it matters.
+  Four row populations have to agree or a whole population stays ungated: the
+  plan catalog, live paid entitlements, live free entitlements, and the free
+  SENTINEL row (payer_id='ffffffffffffffff'), which get_quota falls back to
+  for most free accounts. The catalog statements are scoped to
+  entity_type IN ('user','org') so the addon SKUs are left alone -- an addon
+  contributes seat and disk quantity, never views or meeting length.
+  The clients FAIL OPEN on a missing key, so this patch is what ACTIVATES the
+  feature; ship the client first, watch nothing change, then run this.
+  Re-runnable: absolute values, never increments. No table change.)
+  yellow_page/patches/2026-08-17-plan-feature-gates.sql
+  yellow_page/tables/plan.sql
+
+2026-08-20 (folder-chat mention search now has an additive, source-backed
+  projection. mfs_search_node stores current media authority and complete
+  home-root-relative MEDIUMTEXT paths; mfs_search_closure indexes the
+  ancestor/descendant relation through the depth-1001 frontier. The singleton
+  state row publishes schema/projection versions and mutation/reconciled
+  high-water marks, and the reader is readiness-gated with typed failures.
+  Rebuild is idempotent and path-safe; trigger-safe AFTER sync plus a
+  READ-COMMITTED pre-fence source snapshot keep inserts,
+  renames, moves, visibility changes, and deletes reconciled in the same
+  source transaction. No BEFORE media fence is used because InnoDB may acquire
+  a source row before trigger execution; the final high-water fence retries
+  any concurrent mutation. Child-before-parent restores fail closed to BUILDING;
+  later parent writes reconcile complete existing generations automatically,
+  while generation-zero rollout and incomplete graphs require rebuild. The
+  trigger core materializes source cursor rows before projection writes so
+  concurrent parent/child media updates do not take shared source locks while
+  holding the singleton state row.)
+  common/tables/mfs_search_node.sql
+  common/tables/mfs_search_closure.sql
+  common/tables/mfs_search_state.sql
+  common/procedures/mfs/mfs_search_projection_rebuild.sql
+  common/procedures/mfs/mfs_search_projection_sync_core.sql
+  common/procedures/mfs/mfs_search_projection_sync.sql
+  common/procedures/mfs/mfs_search_names.sql
+  common/triggers/mfs_search_media_after_insert.sql
+  common/triggers/mfs_search_media_after_update.sql
+  common/triggers/mfs_search_media_after_delete.sql
+
+2026-08-17 (folder-chat file mentions now use one live scoped name search
+  instead of serializing every subtree page. mfs_search_names walks current
+  media.parent_id edges only, derives hub identity and area from the local
+  database, pairs expiry with the grant selected by direct/wildcard/lineage
+  precedence, and requires read bit 2 at the root, every edge, and every
+  result. Hidden/deleted/internal branches, mounted hubs, roots, unreadable or
+  expired branches, and link traversal stop before names can leak; visible
+  link rows remain searchable. Cycle, depth, and mention-path overflow signal
+  typed failures before a result set, while literal case-insensitive,
+  accent-sensitive filename/path matching is deterministically capped at six.
+  Secure-share login atomically touches and binds its cookie, optional
+  privilege ceiling, and socket identity; session_check_cookie exposes that
+  marker only while ceiling_uid still matches cookie.uid, and MFS-token
+  sessions explicitly report a false marker. Additive/idempotent routines, no
+  table or index migration.)
+  common/procedures/mfs/mfs_search_names.sql
+  yellow_page/procedures/session/set_session_share_context.sql
+  yellow_page/procedures/session/session_check_cookie.sql
+2026-08-14 (promo_launch30.ended_seen_at + mark_seen accepts the 'ended'
+  surface -- the trial-ended decision gate. When the 1-month Team trial
+  lapses, promoExpiryWorker clears the entitlement and the org drops to Free;
+  until now the client said nothing about it anywhere except the Billing page,
+  so anyone not looking at that exact screen watched Team features disappear
+  with no explanation. The new modal (prototype 2026-08-14) is a GATE, not a
+  notice: no close button, and it returns on every home mount until the owner
+  picks Upgrade or Continue on Free. That is why this needs a column of its
+  own rather than reusing home/billing/welcome_seen_at -- those mean "shown
+  once, never again", this one means "the choice has been made", and it is the
+  only thing that stops the modal reappearing. Nullable and unset on every
+  existing row on purpose: an org whose trial already lapsed never got the
+  choice, so it sees the gate on its next home mount. ALTER is IF NOT EXISTS
+  and the proc rewrite is idempotent, so both re-apply cleanly. The seed
+  table is deliberately NOT touched: welcome_seen_at is not in it either --
+  it arrives via add_welcome_seen_at_to_promo_launch30 -- and this patch
+  positions the new column AFTER it, so adding it to the seed would put it
+  ahead of a column that does not exist yet on a fresh database. Same
+  pattern as the column before it. get_state must select the new column as
+  well -- caught in testing: mark_seen wrote the flag, get_state did not
+  return it, so the client read "not answered" forever and the gate came
+  back on every mount. It looks like a working feature until the second
+  page load.)
+  yellow_page/patches/2026-08-14-promo-ended-seen.sql
+  yellow_page/procedures/promo/promo_launch30_mark_seen.sql
+  yellow_page/procedures/promo/promo_launch30_get_state.sql
+
+2026-08-14 (Free and Pro get 3 member seats; Team stays 10. Free and Pro block
+  every invite today, which kills the referral loop at the point it matters
+  most -- the pricing 1-pager of the same date sets both to 3. Seat is a TOTAL
+  that INCLUDES THE OWNER: _seatBudget computes `free = seat - members -
+  pending` and `members` already counts the owner, so 3 means the owner plus
+  two, on the same scale as Team's 10. Measured on production first, because
+  the seed in this repo has drifted from what is live: free seat 0 (not 1 as
+  the 1-pager assumed), pro 1 with a Stripe price set on both periods, team 10,
+  business 100000. Free's 0 was doing double duty as "cannot invite" -- `if
+  (!quota.seat)` reads it that way and the client's isFreeSoloPlan treats it as
+  solo-locked -- so moving it to 3 retires that overload; the client change
+  shipping alongside makes the block purely seat-driven instead of keying off
+  the plan NAME, without which Free stays blocked whatever this row says. The
+  patch also carries live entitlements forward: yp.quota holds a snapshot taken
+  when the plan was applied, so an existing Free/Pro account would keep its old
+  seat number until the next subscription event. Only rows below 3 are raised,
+  so re-running changes nothing. The pro rows are updated where they exist --
+  the seed carries no pro row at all (retired in the 2026-07 rebuild, later
+  re-activated on prod out of band), so on a fresh database those UPDATEs match
+  nothing; that drift is real and left visible rather than papered over.)
+  yellow_page/tables/plan.sql
+  yellow_page/patches/2026-08-14-pricing-free-pro-3-seats.sql
+
+2026-08-18 (Free plan storage goes 5 GB -> 25 GB, a product decision from
+  Lexis. Two places hold the figure and both move: the catalog row in yp.plan,
+  which every new grant copies from, and the live yp.quota rows, which hold a
+  snapshot taken when the entitlement was granted and are rewritten by nothing
+  else -- so without the second UPDATE no existing free account would see the
+  change until it re-subscribed. Every write is wrapped in GREATEST and the row
+  filter only selects rows already below 25 GB, so the patch cannot reduce an
+  allowance: unlike the 2026-07-24 reduction it needs no usage guard, because
+  giving someone more room cannot put them over quota. $.disk is JSON_SET but
+  $.desk_disk/$.hub_disk are JSON_REPLACE, which only rewrites keys already
+  present -- prod's fallback row carries neither and must not sprout them,
+  since disk_limit reads IFNULL($.desk_disk, $.disk). Measured against the full
+  live tables first, not the seed: 2 catalog rows on each of stage and prod
+  (the active usd one at 5 GB and the dormant eur one at 20 GB, swept on
+  purpose so a re-activated row cannot resurrect a stale allowance -- same
+  reasoning as the 2026-08-14 seat patch, which is why neither filters
+  active=1); and for entitlements, 8 rows on stage against exactly ONE on prod,
+  the 'ffffffffffffffff' free fallback. Those counts are point-in-time and must
+  be re-measured before the prod apply -- stage was first measured at 7 and
+  applied at 8, because a subscription lapsed in between and moved id 184 onto
+  the free plan. Normal churn, and the raise-only rule makes an extra row
+  harmless, but never carry a count over from an earlier session.
+  Note that prod row sits at 20 GB, not
+  the 5 GB the catalog advertised: the 2026-07-24 reduction skipped it because
+  its domain-1 usage -- every free account on the shared domain summed -- could
+  never fit in 5 GB, so prod free accounts have quietly had 20 GB all along.
+  This closes that gap as well. Seats are untouched: Free stays at the 3 set on
+  2026-08-14.)
+  yellow_page/patches/2026-08-18-free-plan-25gb.sql
+  yellow_page/tables/plan.sql
+  yellow_page/tables/quota.sql
+2026-08-12 (Files can now be attached to a single task comment, not just to the
+  task. task_file keys on (task_id, file_nid) and has nowhere to record which
+  comment a file belongs to, so a dropped file could only ever become a task
+  attachment; task_comment_file is its per-comment twin, same three columns and
+  the same INSERT IGNORE link proc. Unlink is author-only, unlike
+  task_unlink_file: a task attachment belongs to the board, but a comment's
+  files belong to whoever wrote the comment, exactly as its body does. Only the
+  link rows are ever deleted -- the media node lives in the folder body and
+  stays there. task_comment_list gains an `attachments` JSON array built the
+  same way as `reactions`, shaped like task_get_linked_files' rows so the client
+  renders both with one card. Both cascade paths are updated by hand, since
+  none of these tables carry foreign keys: task_comment_delete drops the files
+  of the root AND of the replies it already takes with it, and task_delete
+  drops them for every comment on the task.)
+  common/tables/task_comment_file.sql
+  common/procedures/task/task_comment_link_file.sql
+  common/procedures/task/task_comment_unlink_file.sql
+  common/procedures/task/task_comment_list.sql
+  common/procedures/task/task_comment_delete.sql
+  common/procedures/task/task_delete.sql
+2026-08-12 (a file thread now stays in the workspace whose members wrote it,
+  and cross-workspace move stops losing the file. A file leaving a workspace
+  used to take its conversation with it, across databases: the migrate helper
+  recreated the thread at the destination and DELETEd the source file_thread
+  row -- the row every part of the lineage design keys on. That made the whole
+  feature inert. move_out looked for the thread it was meant to freeze, found
+  nothing, returned DURABLE_STATE_MISMATCH, and so no revoked event was ever
+  emitted: a viewer with the thread open was told nothing at all, and the
+  lineage rows left behind named node ids that existed in no database.
+  Dropping that call is what makes the thread stay put; it now goes read-only
+  and records which workspace holds the file, and sending the file back wakes
+  it up again.
+  file_thread_lineage gains holder_* for this. current_* carried two meanings
+  at once while trash was the only case -- trash never moves a file, so the
+  thread's position and the file's were the same row. A move splits them:
+  current_* is where the THREAD is, holder_* where the FILE is, NULL when it
+  is home. Keeping current_* stable is what lets UNIQUE (current_hub_id,
+  current_file_nid) stay correct when a later thread is created on the moved
+  file at the destination. state gains 'orphaned' for a file deleted
+  permanently while away -- terminal, and distinct from 'unavailable' (still
+  returnable) and 'failed' (a broken saga, a different thing); every waiting
+  thread is marked orphaned rather than deleted, because the messages are
+  still someone's.
+  The access procedures are rekeyed off the thread. reserve looked a lineage
+  up by (current_hub_id, current_file_nid), but a cross-hub move gives the
+  file a new node id every time it travels, so after the first move the lookup
+  matched nothing: a second lineage was inserted for the same thread while the
+  previous row stayed parked in 'moving' holding an operation id no caller
+  would ever clear, and each parked row blocked the next move of that thread.
+  Twelve accumulated in a single day of testing across two live threads.
+  release could not undo it either -- it required the media row still to be
+  present, yet its worst case is exactly a cross-hub move, where mfs_move_all
+  has already deleted that row. Both escape routes demanded rows the move
+  itself had removed. The thread id survives a move, so all three procedures
+  resolve on it and fall back to the file position for older lineages, and the
+  CAS predicates now use current_operation_id, which is unique per operation.
+  resolve and orphan return sets rather than one row, since a workspace may
+  hold its own thread on the same file: sending a file to B while A has its
+  own conversation about it must wake A's thread and sleep B's in one pass.
+  list_in_subtree walks parent_id, not parent_path -- a rename rewrites every
+  path beneath it, and a thread must not be missed because a folder was once
+  renamed. mfs_move_all emits the move plan before the SEO result sets:
+  seo_update_hub ends in a bare SELECT and runs once per moved node, so the
+  cursor loop was emitting a result set per iteration ahead of the plan and
+  the driver read {updated_words, updated_register, status} in its place.
+  The saga entries leave the manifest: server-team's test branch no longer
+  calls file_move_saga_* (0 references, against 1/1/2 still present on its
+  preview branch and in the deployed production runtime), routing every move
+  through workspace_move instead. They are DE-LISTED, not dropped -- the .sql
+  files stay in the tree and the routines stay in the database -- so a server
+  still on the saga path keeps working, which is what makes this payload safe
+  to apply ahead of the matching server-team promotion rather than in
+  lockstep with it. The collapse patch stays OUT of
+  the manifest deliberately: it reconciles rows once and is not schema. It is
+  safe to re-run, leaves 'orphaned' rows alone, and cannot simply collapse by
+  (hub, thread) -- a file away from home may legitimately carry its own thread
+  in the workspace holding it, so presence of the file_thread row in that
+  hub's own database is what separates a second real thread from a leftover.
+  Measured before applying: on production file_thread_lineage is EMPTY -- 0
+  rows, 0 duplicate (hub,thread) groups, 0 reservations parked over an hour --
+  so the reconciliation is a no-op there and only stage had rows to collapse.)
+  yellow_page/tables/file_thread_lineage.sql
+  yellow_page/patches/260812-file-thread-lineage-holder.sql
+  yellow_page/patches/260812-file-thread-lineage-collapse-stale.sql
+  yellow_page/procedures/mfs/file_move_readiness.sql
+  yellow_page/procedures/mfs/file_thread_access_reserve_direct.sql
+  yellow_page/procedures/mfs/file_thread_access_release_direct.sql
+  yellow_page/procedures/mfs/file_thread_access_transition_direct.sql
+  yellow_page/procedures/mfs/file_thread_lineage_resolve_holder.sql
+  yellow_page/procedures/mfs/file_thread_lineage_track_holder.sql
+  yellow_page/procedures/mfs/file_thread_lineage_orphan_holder.sql
+  common/procedures/channel/channel_file_thread_info.sql
+  common/procedures/channel/channel_file_thread_list_by_folder.sql
+  common/procedures/channel/channel_file_thread_list_in_subtree.sql
+  common/procedures/mfs/mfs_move_all.sql
+
+2026-08-11 (oauth_state gains the ref column that loby has been writing to all
+  along. The signup UI captures ?ref=<member> in browser storage; the OAuth
+  callback runs server-side, and the visitor is bounced out to Google or Apple
+  in between, so the handle has to be parked where it survives the round trip.
+  google.initiate and apple.initiate park it on the state row they already
+  write for CSRF protection, and handleOAuthCallback reads it back with
+  SELECT s.* to thread it into create_account's profile, where the analytics
+  referral procs look for it. Both initiate methods wrap that insert in a
+  try/catch that falls back to a 3-column insert "on a DB without the optional
+  oauth_state.ref column" -- but no schema here has ever had the column, not
+  tables/oauth_state.sql and not templates/factory/seed/yp.sql, so the
+  fallback was not a fallback, it was the only path taken: every OAuth signup
+  lost its referral attribution, and the catch being silent meant nothing said
+  so. varchar(64) ascii to match what initiate stores, which it lowercases and
+  truncates to 64 before the insert; NULLable with no default, since "no
+  referrer" is the common case and is exactly what the callback's `if (ref)`
+  guard expects. Only the patch is listed below, deliberately:
+  tables/oauth_state.sql opens with DROP TABLE IF EXISTS, so applying it
+  against a live database would discard the in-flight state rows and fail
+  every sign-in currently mid-redirect.)
+  yellow_page/patches/2026-08-11-oauth-state-ref.sql
+
+2026-08-11 (profile.password_set is allowed through drumate_update_profile's
+  whitelist, and backfilled for accounts that provably hold a password. The
+  step-up auth verifier branches on that flag: password_set=1 requires the
+  current password, password_set=0 requires an email-OTP secret+code. It is
+  stamped from five places -- change_password, forgot-password, the yp.login
+  self-heal in _stampPasswordBacked, the unlink_oauth self-heal, and
+  set_password -- but the whitelist loop in drumate_update_profile only writes
+  keys it carries an entry for, and it never carried "password_set", so every
+  one of those stamps was dropped in silence and no historical stamp ever
+  persisted. Same failure shape as industry/team_size/intent above it.
+  The backfill keys on proof rather than inference: a services_log row for
+  yp.login, yp.signin or yp.login_top with success=1. That predicate is safe
+  because OAuth logins never write to services_log at all -- loby runs the
+  Google/Apple flow out-of-band, and the only oauth-related name in the whole
+  table is drumate.unlink_oauth -- so those three names are exclusively the
+  password endpoints. Measured on production, not assumed: 1423 success=1 rows
+  over 430 distinct uids stamp 380 of 3542 drumate rows, and every one of the
+  380 has a valid JSON object profile (0 NULL, 0 invalid, 0 non-object), so
+  JSON_SET cannot null out a profile. Of those 380, 345 have no oauth_accounts
+  row at all and 35 are OAuth-linked with real password history (up to 106
+  successes). The behavioural delta is only those 35: _resolveUsePassword
+  already falls back to the password path for an account with no oauth row, so
+  for the 345 the stamp only makes explicit what the server already infers,
+  and the 35 move from OTP to password -- a tightening, and it makes the FE
+  mirror in settings_main._reconcilePasswordSet and the server agree. The 1184
+  OAuth-only users with no password login are deliberately left untouched and
+  keep the OTP path until a first password login self-heals the flag. Note
+  fingerprint cannot be used as the discriminator even though it is the
+  password hash (check_password_next does fingerprint=sha2(_pw,512)): it is
+  NOT NULL and populated for OAuth-only accounts too. The UPDATE is idempotent
+  -- its WHERE password_set IS NULL guard excludes every row it has already
+  stamped -- so it is safe to re-run.)
+  yellow_page/procedures/drumate/drumate_update_profile.sql
+  yellow_page/patches/2026-08-11-backfill-password-set.sql
+
+2026-08-11 (a workspace owner's access to their own workspace is repaired
+  where it was lost, and made non-revocable so it cannot be lost again. That
+  access is NOT implied by yp.hub.owner_id -- it is a stored grant, written
+  twice at creation by desk_create_hub: permission_grant('*', owner, 0, 63,
+  'system', '') in the workspace's own DB and permission_grant(hub_id, owner,
+  ...) in the owner's drumate DB. mfs_access_node -> user_permission() reads
+  those rows and nothing else, so where they are missing the owner is locked
+  out of their own workspace -- and silently: hub.invite requires src 'admin'
+  (bit 16), answers PERMISSION_DENIED, and the client renders an empty
+  response with no reason in it. Reported only as "invite does nothing".
+  Measured, not assumed: 7 of 566 active workspaces on stage and 2 of 5197 on
+  production had NO owner grant on EITHER side; the affected workspaces span
+  private and share areas alike, so this is not area-specific. On the broken
+  hub the owner's privilege on the root node read 0 against 31 on a healthy
+  one. The newest affected workspace was created 2026-05-27 -- before the
+  2026-07-02 dual-write fix -- and nothing created since is affected
+  (workspaces created today all carry 63), so the write path that produced
+  this is already closed and what remains is residue. hub_owner_grant_repair
+  clears it: cursor over active hubs with a real owner, dynamic-SQL check for
+  an existing '*' grant, and permission_grant on both sides where it is
+  missing -- so the row is written exactly the way creation writes it.
+  _apply=0 reports and writes nothing; =1 repairs; either way it is idempotent
+  (a workspace whose owner already holds the grant is skipped) and it swallows
+  per-database errors so one unreachable workspace cannot abandon the rest.
+  The member side is skipped when the owner has no database -- a deleted
+  account still named as owner -- since there is nowhere to write and the hub
+  side is what the ACL reads. permission_revoke closes the door behind it: a
+  targeted delete of an owner's own grant is now a silent no-op, matched in
+  both stored shapes (resource '*' in the hub DB, resource = hub id in the
+  owner's DB). Silent rather than SIGNAL because the callers are bulk
+  member-cleanup loops that would abort mid-way and leave the rest
+  half-removed; skipping the one row they must not touch lets the removal
+  finish. Only the targeted single-row delete is guarded -- the bare-entity
+  teardown that clears a resource wholesale is untouched, since a workspace
+  being dismantled has no owner access left to protect. Verified on stage:
+  dry run listed exactly the 7, the repair fixed all 7, the re-run reported
+  0/0; the owner's grant survived a revoke while an ordinary member's grant
+  still deleted normally on both sides and the teardown path still cleared;
+  and inviting into the previously broken workspace went from DENIED with an
+  empty body to GRANTED with the invitation written.)
+  common/procedures/permission/permission_revoke.sql
+  yellow_page/procedures/directory/hub_owner_grant_repair.sql
+  yellow_page/patches/2026-08-11-hub-owner-grant-repair.sql
+
+2026-08-11 (room_list_scheduled moves hub/ -> common/ so it also reaches the
+  drumate class. PROD alerted repeatedly with ER_SP_DOES_NOT_EXIST (1305) on
+  '<db>.room_list_scheduled' for six different databases (7_e0094475e0094476,
+  0_177e7213177e7214, 0_226315c6226315c7, d_699fb466699fb467,
+  3_d6ce6d45d6ce6d46, 5_f4fbe5e8f4fbe5e9) -- every one of them entity
+  type='drumate'. room.js calls it on `this.db`, which is the CURRENT desk's
+  database, so opening the folder meeting calendar on a PERSONAL desk hits the
+  drumate DB, where the proc was never deployed: measured 25/25 sampled hub DBs
+  PRESENT vs 25/25 sampled drumate DBs MISSING. Same shape as the 2026-07
+  file-thread gap. Safe to share: the body reads ONLY `media` (id,
+  user_filename, owner_id, category, extension, mimetype, publish_time,
+  metadata, status) -- all present in the drumate class -- and touches no
+  read_channel/hub-only model, so there is no drumate counterpart to clobber.
+  Pure file rename, body byte-identical: the deployed hub bodies all hash
+  ad9b829407042e9b751d5304b00f25a1, so re-applying over hub is a no-op --
+  verified md5-unchanged on stage hub DBs across two consecutive runs.
+  Non-breaking: same name, same signature, same result columns; where it
+  already existed nothing changes, where it was missing a 1305 becomes a
+  normal empty/valid result. Stage: applied to target=common, 1037/1037 DBs,
+  MISSING=0, functional on drumate + hub + the NULL,NULL bounds path; factory
+  restarted so newly minted DBs inherit it.)
+  common/procedures/room/room_list_scheduled.sql
+
+2026-08-11 (drumate_online_state no longer raises ER_PARSE_ERROR when the
+  caller's uid has no entity row. It builds its result with dynamic SQL, and
+  CONCAT() returns NULL if ANY argument is NULL -- so a NULL _db_name made @s
+  NULL and `PREPARE stmt FROM @s` failed with 1064 "... near 'NULL' at line
+  1". The existing fallback, `SELECT db_name FROM entity WHERE
+  id='ffffffffffffffff'`, is dead code: that id is the anonymous/system
+  sentinel the runtime really does pass (seen live as uid=ffffffffffffffff on
+  bootstrap.authn / yp.get_env / MainPage) and it has NEVER existed as an
+  entity row -- confirmed 0 rows on both prod and stage. The other trigger is a
+  just-deleted account: drumate_delete removes the entity row while the
+  browser session keeps calling, which is how prod produced ~7400 of these in a
+  single main-error log, in bursts of ~200/minute, each one surfacing as
+  SERVER_FAULT DB_PAGE_ERROR. Now returns the empty set with the SAME ten
+  columns (user_id, my_state, my_id, his_state, his_id, uid, firstname,
+  lastname, id, server) instead of failing -- every consumer already tolerates
+  it: push/broadcastStatus, yp/broadcastStatus and entity/pushUserOnlineStatus
+  only iterate the rows, contact.connection_status passes it to output.list,
+  and desk.set_online_status already guards `if (r && r[0])`. The success path
+  is untouched: the COALESCE around online_state() cannot change a value
+  because that function returns IF() over COUNT(*) and is never NULL. Verified
+  on stage -- output byte-identical for 7 real uids before/after, and
+  ffffffffffffffff + a nonexistent uid went from 1064 to a clean empty result.)
+  yellow_page/procedures/drumate/drumate_online_state.sql
+
+2026-08-10 (payment_ledger + payment_ledger_upsert -- the revenue dashboard's
+  single source of truth. ONE ROW PER PAID STRIPE INVOICE, unique on invoice_id.
+  Nothing in yp could answer "how much did we bill in March": subscription_new is
+  a CURRENT-STATE mirror, UNIQUE on entity_id, one row per customer with ctime
+  overwritten on every change. subscription_history was meant to be this ledger
+  and has never had a writer (0 rows on stage), and its unique key
+  (subscription_id, payment_intent_id, entity_id) does not dedupe on the thing
+  Stripe actually identifies a payment by -- so it is left alone rather than
+  revived.
+
+  TWO WRITERS, ONE PROC. server-team's stripe_webhook.js (invoice.paid and
+  charge.refunded, real time) and analytics-server's bin/revenue-reconcile.js
+  (history + self-heal) both go through payment_ledger_upsert, which is
+  idempotent on invoice_id so they are safe to run concurrently. A second
+  hand-written INSERT is how the reconciled figure ends up disagreeing with the
+  live one and nobody can say which is right.
+
+  THE TWO WRITERS ARE NOT EQUAL AUTHORITIES, and the proc encodes that. The
+  webhook resolves plan/period/entity_type from the price actually charged
+  (_planFromItems) and the entity from organisation.owner_id (_resolveOrgEntity);
+  the reconcile job can only read subscription metadata, which goes stale on any
+  Billing-Portal or dashboard price switch. So when source='reconcile' meets a
+  stored row whose source='webhook', plan, period, entity_type, entity_id AND
+  source are all PRESERVED, while amount_paid/amount_refunded/paid_at stay
+  overwritable -- reconcile must still be able to record a refund the webhook
+  never saw. Without this a nightly reconcile pass moved $990 from the Business
+  slice of the dashboard to the Team slice and left the row still stamped
+  'webhook', so the provenance field vouched for data reconcile had replaced.
+
+  net_amount is GENERATED STORED (amount_paid - amount_refunded) so it can be
+  indexed and summed off disk. It can go NEGATIVE when credit notes exceed a
+  payment; that is deliberate and unclamped -- silently zeroing real money would
+  be worse -- and every consumer must decide how to present a negative share
+  rather than assuming one cannot occur. Money is in MINOR UNITS throughout,
+  matching subscription_new.price (9900 = $99.00); never floats, which drift
+  once summed over a year.
+
+  Collation follows yp exactly (ascii_general_ci ids, utf8mb4_general_ci table).
+  The reward tables were built utf8mb4_unicode_ci against a general_ci yp and
+  every cross-schema join threw ERROR 1267.
+
+  APPLIED BY HAND to stage yp 2026-08-10, on a clean slate -- table and proc were
+  both absent, nothing overwritten. Write path exercised there for the first
+  time: identity preserved against a reconcile restatement while the refund
+  landed, ENUMs coerced without 1265, three calls produced two rows. Test rows
+  deleted afterwards.)
+  yellow_page/tables/payment_ledger.sql
+  yellow_page/procedures/subscription/payment_ledger_upsert.sql
+
+2026-08-10 (delivery fix, no SQL change: conference_join was never listed in
+  patches/manifest.txt, so neither the 2026-08-08 nor the 2026-08-09 entry
+  below ever reached a database -- the manifest is what the patch runner
+  applies, and the proc deployed on stage still carried the pre-fix body while
+  both changelog entries claimed otherwise. Every other proc touched recently
+  (reward_claim_track, disk_limit, quota_plan_sync, org_provision) is listed;
+  this one was missed. Listing it now; applied to stage yp 2026-08-10 and
+  verified live -- both the view/chat START refusal and the shared-workspace
+  host branch are present in the deployed body.)
+  yellow_page/procedures/conference/conference_join.sql
+
+2026-08-10 (organisation.name is no longer UNIQUE. Every path that creates an
+  organisation names it from the payer's display name -- promo._provisionOrg
+  builds `${fullname}'s Team` and the checkout form pre-fills the same shape --
+  so two accounts sharing a display name collided on UNIQUE KEY `name` and
+  org_provision died with ER_DUP_ENTRY. That killed the LAUNCH30 claim
+  ("Something went wrong. Please reload and try again."; observed live on
+  drumee.in for 'Thao Linh Hoang''s Team' and 'To Bảo Phạm''s Team', each
+  already owned by a DIFFERENT account, each retried three times) and, worse,
+  the paid path: checkout provisions the org in the Stripe webhook AFTER the
+  charge, so the throw leaves a paying customer with no organisation. The
+  ident is the identity -- org_provision already guards it against
+  entity.ident and organisation.ident, and _provisionOrg retries with a random
+  suffix -- while id / domain_id / owner_id / link keep their UNIQUE keys.
+  Nothing reads an organisation by name in yp, server-team, admin-api,
+  analytics-server or loby. Idempotent: the index is dropped only when
+  present; no rows are written.)
+  yellow_page/patches/2026-08-10-organisation-name-not-unique.sql
+  yellow_page/tables/organisation.sql
+
+2026-08-09 (conference_join: a meeting started in a SHARED workspace never
+  showed up in the folder chat. media.owner_id on a shared workspace ROOT is the
+  system id 'ffffffffffffffff', so the share branch's owner test could never
+  match and NOBODY became host -- while window/meeting posts the "X started a
+  meeting" card only when role='host'. The first edit-tier participant now hosts,
+  mirroring the 'private' branch. Strictly additive: view/chat never become host,
+  a node owner (file/folder share) keeps host exactly as before, and dmz/public
+  are unchanged. Non-breaking -- same signature, same result columns, yp only,
+  no factory restart.)
+  yellow_page/procedures/conference/conference_join.sql
+2026-08-11 (member_list_stats: pending_invites counts distinct PEOPLE, not
+  invitation ROWS. One person may legitimately be invited into several
+  folders or workspaces; each invite writes its own row, and summing the rows
+  charged that person a seat per folder -- so inviting the same address into a
+  second folder answered SEAT_LIMIT_REACHED for one human being (reported
+  2026-08-11). Live on stage before the fix: 20520094@gm.uit.edu.vn held three
+  rows across three hubs of domain 7 and counted as three; domain 7 read 15
+  pending and now reads 9. The three sources (pending_invitation, named-email
+  secure-share tokens, hub_invite tokens) are UNIONed on the normalised email
+  so somebody present in more than one still counts once -- which also
+  retires the explicit NOT EXISTS that used to de-duplicate the token/
+  pending_invitation pair. Anyone already holding a seat is excluded:
+  total_members counts them, and leaving them here billed the same person
+  twice the moment an existing member was invited into one more folder.
+  Non-breaking -- same signature, same result columns, yp only.)
+  yellow_page/procedures/adminpannel/member_list_stats.sql
+  yellow_page/procedures/adminpannel/pending_invites_by_domain.sql
+  (the list behind the stat card is grouped the same way, one row per person
+  rather than one per invitation: with the card counting people, an ungrouped
+  list showed 9 on the badge and 15 rows underneath for the same nine humans.
+  workspace_name now carries every workspace they were invited to, so no
+  detail is lost; expiry_time reports "never" when any invitation is
+  non-expiring and otherwise the soonest. Same columns, so no client change.)
+
+2026-08-08 (conference_join: view and chat members can no longer START a
+  meeting; joining one that is already running is unaffected. Enforced by
+  falling into the existing `SELECT 0 permission` refusal -- the only signal
+  the client treats as a hard stop (webrtc/room/index.js aborts on
+  !c.user.permission). The status/role columns are PRESENTATIONAL (status is
+  a data-attribute, role only enables host affordances), so returning
+  'attendee'/'waiting' does not prevent a meeting and must never be used as a
+  gate. Scoped to _area IN ('private','share'); 'personal' is excluded because
+  the P2P callee is granted privilege 3 by conference_invite, and dmz/public
+  keep today's rules. A caller holding the write bit never enters the new
+  block, so edit/admin/owner behaviour is byte-identical in every area.
+  Non-breaking -- same signature, same result columns, yp only, no factory
+  restart.)
+  yellow_page/procedures/conference/conference_join.sql
+
+2026-08-07 (disk_limit / disk_free: an organisation's storage is ONE shared
+  allowance -- Team sells 100 GB for the team -- but usage was measured
+  per MEMBER, so ten members on Team effectively had 100 GB each.
+  disk_limit declared _org_id and never assigned it: its two org-wide
+  branches were unreachable and every call fell through to the per-owner
+  sums. Enabling them would have been worse -- they aggregate through
+  map_role, the CUSTOM-ROLE assignment table (written by adminpannel/
+  role_map), which holds no rows until someone assigns a custom role: 0 on
+  prod, 1 on stage. disk_free DID assign _org_id, so its org branches ran
+  against that empty table and returned zero usage -- every org member
+  measured as using nothing and was handed the entire quota.
+  Both now branch on domain_id > 1 and sum yp.disk_usage across the
+  domain's members via yp.privilege (IN-subquery, so a duplicate privilege
+  row cannot double-count). Domain 1 -- the shared free-users domain, 2991
+  accounts on prod -- keeps the per-owner path. The trigger-fed
+  yp.quota_usage cache was considered and rejected: it disagrees with live
+  disk_usage rows by 127x on at least one prod domain (1.4 GB cached vs
+  182 GB real).
+  disk_limit additionally returns usage_scope ('domain'|'owner'); its
+  org_id output column is retained as NULL for shape compatibility.
+  Callers audited: media.js copy-flow precheck (service/private/media.js
+  before_relocate) reads available_disk/watermark/owner_id by name --
+  unchanged; the upload gate (chekcDiskLimit -> get_quota/get_domain_usage)
+  never used these procs; no other SQL calls disk_free.
+  Measured before changing anything: on prod the per-domain figure is
+  IDENTICAL to the per-owner one for every org (no org has more than one
+  member yet), so nothing moves on deploy. Verified on stage where orgs do
+  have members: domain 3 (5 members, owner personally storing nothing) went
+  from used 0 / available 100 GB to used 2.86 GB / available 97.14 GB in
+  both procs; a domain-1 personal account was byte-identical before and
+  after.
+  Workspace COUNTS (private_hub/share_hub) stay per-owner on purpose: a
+  workspace cap is about what one person may create; widening it is a
+  separate product question.
+  APPLIED TO STAGE 2026-08-07, yp.)
+  yellow_page/procedures/utils/disk_limit.sql
+  yellow_page/procedures/utils/disk_free.sql
+
+2026-08-07 (quota_plan_sync / quota_plan_audit -- raise entitlement rows that
+  fell BEHIND the plan catalog.
+  yp.quota holds a COPY of a plan's quota JSON taken when the entitlement was
+  granted (payment_apply_entitlement, promo_launch30_grant, mkt_coupon_redeem
+  all work that way), so rows granted BEFORE a catalog change keep the old
+  numbers until the customer renews. Nothing else rewrites them.
+  Measured on prod 2026-08-07: 20 LAUNCH30 orgs on 50 GB while Team sells
+  100 GB, and one paying Business org whose seat cap reads 1 instead of
+  unlimited. Stage carried a paying Team org on 5 GB. The granting code is
+  NOT at fault (it reads the catalog); this is residue from patch-application
+  timing, so the cure is a backfill.
+  THE ONE RULE: a field is raised only when the row's number is BELOW the
+  catalog's; a number ABOVE the catalog is left exactly as it is. A Pro row
+  on the old 5 GB becomes 50 GB, but a Free row on a legacy 20 GB keeps it
+  and a Team row on the pre-rebuild 250 GB keeps that. Reducing an allowance
+  is a product decision about one customer, not a data repair, and it is the
+  only thing that can hurt -- cutting disk under someone's stored bytes
+  blocks every upload. This procedure cannot do it. Applied PER FIELD, so a
+  row short on disk and generous on caps gets its disk raised and its caps
+  left alone.
+  One exception, guarded: seat 0 is the pre-rebuild default, and hub.js
+  _seatBudget reads seat <= 0 as no budget at all, so those orgs invite
+  without limit today. Raising 0 to the plan's 10 tightens in effect, so a
+  seat is never written below the org's current occupancy (members + pending
+  invites). Verified on prod: every affected org holds 1 member.
+  Refuses to run at all when the catalog is itself behind (CATALOG_STALE):
+  prod's active free/team rows carry no workspace caps while 123 quota rows
+  carry them correctly, and trusting the catalog there would REMOVE them --
+  a loosening, which the raise-only rule would not stop. The guard names the
+  patch to apply first.
+  Written with JSON_MERGE_PATCH of a document holding only the changed
+  fields, so every other key survives. Idempotent.
+  Verified on stage across every branch: a Pro row seeded with the old
+  5 GB / seat 0 / hist 0 came back 50 GB / 1 / 7; a 250 GB Team row and a
+  20 GB Free row were left untouched; a mixed row had its disk raised
+  5 -> 100 GB while its private_hub of 99 stayed 99; a Business row seeded
+  with stale caps had exactly those three keys removed; an org holding 13
+  people had its seat raise withheld and taken once occupancy fell to 2;
+  with the caps stripped from the catalog every call refused and 46 at-risk
+  rows kept their caps; a second run found nothing to do.
+  Purely additive -- two new procedures, no table changes.)
+  yellow_page/procedures/subscription/quota_plan_sync.sql
+
+2026-08-06 (recalculate_domain_usage: entity's domain column is dom_id, not
+  domain_id — the e.domain_id reference made the proc throw
+  ER_BAD_FIELD_ERROR on every call since it shipped, so domain-usage drift
+  repair (and scripts/recalc-domain-usage.js) had never actually worked.
+  Surfaced by the over-limit evaluation calling it before measuring usage
+  (fail-open, so evaluation still ran on the cached counter). Verified on
+  stage: CALL yp.recalculate_domain_usage(18) now returns the JSON result
+  row instead of the error.
+  APPLIED TO STAGE 2026-08-06, yp.)
+  yellow_page/procedures/directory/recalculate_domain_usage.sql
+
+2026-08-06 (Downgrade over-limit resolution — state machine for the plan
+  downgrade enforcement feature. When a downgrade (Team->Free, Business->Team,
+  trial expiry, cancel) leaves the org over the NEW plan's storage or seat
+  limit, the server records TWO INDEPENDENT flags (storage / seats — never one
+  boolean: fixing one must not unlock the other) plus a one-shot grace
+  deadline in organisation.metadata.$.over_limit (same JSON_SET home as the
+  versioning retention policy). org_over_limit_set owns the transitions
+  atomically: deadline is set once on ok->over_limit and never moved by
+  duplicate webhooks or partial fixes; numbers refresh on every evaluation;
+  both-clear removes the whole block and reports prev_state so callers can
+  emit the resolved event. org_over_limit_get is the cheap scalar read the
+  REST read-only clamp uses; org_over_limit_hard_lock is the status-guarded
+  over_limit->hard_lock flip (promo_launch30_mark_expired shape) run by the
+  grace worker scanning org_over_limit_due; org_over_limit_dismiss stores the
+  per-admin popup snooze server-side (design forbids localStorage).
+  Purely additive — five new procedures, no table changes.)
+  yellow_page/procedures/subscription/org_over_limit_set.sql
+  yellow_page/procedures/subscription/org_over_limit_get.sql
+  yellow_page/procedures/subscription/org_over_limit_hard_lock.sql
+  yellow_page/procedures/subscription/org_over_limit_due.sql
+  yellow_page/procedures/subscription/org_over_limit_dismiss.sql
+
+2026-08-06 (workspace-invite notifications rendered "<inviter> invited you to "
+  with no workspace name. yp.entity.ident and headline are NULL on every hub,
+  and those two columns were the only name source this proc exposed. Return the
+  live name from yp.hub.name as hub_live_name -- additive, every pre-existing
+  column untouched, and yp.hub.id is UNIQUE so the extra LEFT JOIN cannot
+  multiply rows. yp.hub.hubname is deliberately NOT in the chain: it is the hex
+  id, and rendering that as a workspace name is worse than rendering nothing.)
+  drumate/procedures/notification/notification_hub_invites.sql
+
+2026-08-04 (drumate_update_profile: mirror the onboarding answers industry,
+  team_size and intent onto the profile.
+  The procedure writes only the JSON paths named in its whitelist and skips
+  everything else in silence. These three were never listed, so loby's
+  onboarding.update_profile -- which has always built all three into its
+  payload -- had them dropped on the floor: a completed onboarding left the
+  answers in onboarding_responses and a profile carrying none of them. `role`
+  came through only because role happens to be whitelisted.
+  Confirmed on stage, where three accounts that finished the wizard with
+  industry, team_size and intent all stored read NULL for each in
+  yp.drumate.profile.
+  Purely additive. The procedure loops the whitelist and writes a path only
+  when the caller actually supplies it, so services that do not send these
+  keys are unaffected and existing values are never cleared -- verified on a
+  scratch DB with both a full onboarding payload and a firstname-only one.
+  APPLIED TO STAGE 2026-08-04, yp. Prior definition saved on that host at
+  ~huan/onboarding-backup-20260804-231019/drumate_update_profile_before.sql.
+  The 3 accounts checked were backfilled from their onboarding rows; 22 other
+  accounts still hold onboarding answers their profile lacks and would need a
+  one-shot backfill -- NOT done.
+  Pairs with loby fix/onboarding-flow-reliability, which is what populates
+  onboarding_responses in the first place.)
+  yellow_page/procedures/drumate/drumate_update_profile.sql
+
+2026-08-03 (users_list REMOVED from this repo. It was a duplicate of a routine
+  analytics-server owns, and keeping it here was a live hazard: replaying this
+  manifest against a yp that the analytics dashboard reads would DOWNGRADE the
+  deployed procedure.
+  Both repos declared `yp.users_list`, and this copy was behind. It served
+  neither reward_status nor the joined_from/joined_to date filter that
+  analytics-server added later, so applying it would have blanked the all-users
+  table's Joined filter and its claimed-reward badge -- and with the badge, the
+  row-lock that stops someone who already claimed being mailed the campaign
+  again. The file's own header records an earlier near-miss of exactly this
+  kind ("Applying that revision would have blanked the analytics users table"),
+  which is the tell: it was reverse-engineered FROM the deployed procedure
+  rather than being its source, so it could only ever trail whatever
+  analytics-server shipped.
+  Removed rather than reconciled because a second copy re-diverges the moment
+  either side is edited, and this one has no consumer to justify the risk.
+  Established before deleting: nothing in this repo CALLs users_list, no
+  procedure here depends on it, the only ACL exposing it is
+  analytics-server's analytics.json, and it is NOT in templates/factory/seed --
+  so no database is provisioned from it here. All three call sites are in
+  analytics-server, which already owns 19 other yp procedures under its own
+  schemas/procedures/yp; a plugin owning yp routines is the existing pattern,
+  not an exception.
+  OWNER IS NOW analytics-server, schemas/procedures/yp/users_list.sql, applied
+  from that repo's manifest. Do not re-add a copy here -- if this repo ever
+  needs the body, read it from there. The logout fix that briefly lived in this
+  file is in that copy too, and its changelog carries the full account.
+  Stage was not touched by this removal: it already runs analytics-server's
+  copy, patched by hand 2026-08-03.)
+  yellow_page/procedures/directory/users_list.sql  [DELETED]
+
+2026-08-03 (direct coupon redeem could only grant ORG plans, so a Pro-scoped
+  free-period code had nowhere to be spent: not at checkout (a 100%-off code
+  has nothing to charge) and not here. The org assumption sat in three places
+  -- the catalog lookup hardcoded entity_type='org', the quota write stamped
+  '$.organization' = 1 and keyed the row to the org id, and the up-front
+  ARGS_INVALID guard required _org_id. entity_type now comes FROM the catalog
+  and decides the holder: org -> org-keyed row, ORG_REQUIRED if the caller
+  passed none; user -> keyed to the PAYER on whatever domain they already
+  live on, organization left as the catalog has it. Same split
+  payment_apply_entitlement already makes, so a Pro granted by coupon and a
+  Pro bought through Stripe produce the same row. Fixing only the type check
+  would have been worse than the bug -- it would have granted a personal plan
+  TO an organisation the redeemer must never be given. org_id in
+  mkt_coupon_redemption now carries the entitlement HOLDER (org id, or uid for
+  a personal grant); the expiry worker feeds it to payment_clear_entitlement,
+  which keys on payer_id and already has an individual branch, so revocation
+  needed no change.)
+  yellow_page/procedures/mkt/mkt_coupon_redeem.sql
+
+2026-08-03 (Pro returns to the catalog as a PERSONAL plan -- $5/mo, $50/yr, 50 GB,
+  1 hub, 1 member + unlimited guests, no admin console. NOT the retired B2C
+  `pro` tier from 2026-07-24 (that one was org-shaped: organization:1, 5
+  seats, a pro_seat add-on) -- this is entity_type 'user', organization:0,
+  strictly personal. seat is 1, not 0: isFreeSoloPlan() (ui-team) reads
+  seat===0 as "block every invite", and Pro's whole pitch is unlimited
+  guests. The patch re-activates its own rows after the 2026-07-24 blanket
+  `plan_code='pro' -> active=0`, so a fresh database replaying patches in
+  order still ends with Pro on sale. stripe_price_id seeded NULL; set per
+  environment out-of-band as usual.)
+  yellow_page/patches/2026-08-03-pricing-pro-personal.sql
+
+2026-08-03 (a deleted account still counted as an org member. drumate_freeze
+  (account deletion) marks the entity 'frozen' and rewrites the email to
+  '<uid>/<email>', but leaves the yp.privilege row on the org's domain --
+  both member queries filtered only 'archived', so the deleted person
+  stayed a member forever. One org's only "member" was its own deleted
+  owner. Excluded 'frozen' and 'deleted' from both queries; a read-time
+  fix also corrects rows already in this state, no backfill needed.)
+  yellow_page/procedures/adminpannel/member_list.sql
+  yellow_page/procedures/adminpannel/member_list_stats.sql
+
+2026-08-03 (a free-period MKT code (percent_off=0, trial_days>0) is not a discount
+  on a purchase -- it IS the transaction, so promo.redeem grants the plan's
+  quota directly with no Stripe Checkout, no card. Discount codes are
+  refused here and stay on Checkout, where there is real money to collect.
+  A direct grant is identified as status='confirmed' AND trial_ends_at IS
+  NOT NULL AND stripe_subscription_id IS NULL -- mkt_coupon_redeem_due uses
+  exactly that predicate so a redemption that DID go through Checkout is
+  never reverted out from under a paying customer.)
+  yellow_page/patches/add_direct_redeem_to_mkt_coupon_redemption.sql
+  yellow_page/procedures/mkt/mkt_coupon_redeem.sql
+  yellow_page/procedures/mkt/mkt_coupon_redeem_due.sql
+  yellow_page/procedures/mkt/mkt_coupon_redeem_mark_expired.sql
+
+2026-08-02 (MKT outreach coupon campaign -- partner/KOL codes redeemable at
+  checkout, either a percent discount (kol_discount) or a free-period grant
+  (free_months/warm_trial), scoped to one plan or all plans. Reserve/
+  validate share one hold TTL so a preview (Apply) and the real reserve
+  (Proceed) can never disagree about whether a code is spent: reserve
+  RELEASES stale pendings before checking, so validate must IGNORE them
+  the same way rather than count them as live, or Apply and Proceed read
+  different answers for the identical row.)
+  yellow_page/tables/mkt_coupon.sql
+  yellow_page/tables/mkt_coupon_redemption.sql
+  yellow_page/patches/add_plan_scope_to_mkt_coupon.sql
+  yellow_page/procedures/mkt/mkt_coupon_create.sql
+  yellow_page/procedures/mkt/mkt_coupon_update.sql
+  yellow_page/procedures/mkt/mkt_coupon_list.sql
+  yellow_page/procedures/mkt/mkt_coupon_get_by_code.sql
+  yellow_page/procedures/mkt/mkt_coupon_stats.sql
+  yellow_page/procedures/mkt/mkt_coupon_redemptions.sql
+  yellow_page/procedures/mkt/mkt_coupon_reserve.sql
+  yellow_page/procedures/mkt/mkt_coupon_validate.sql
+  yellow_page/procedures/mkt/mkt_coupon_confirm.sql
+  yellow_page/procedures/mkt/mkt_coupon_bind_session.sql
+  yellow_page/procedures/mkt/mkt_coupon_set_stripe_id.sql
+  yellow_page/procedures/mkt/mkt_coupon_partner_stats.sql
+
+2026-08-02 (secure share access table -- a "require email, any address" link was
+  labelled "Public link". Both that mode and a genuinely public link have an
+  empty allowed_emails, and the panel derives the Shared-with label from that
+  column, so the two were indistinguishable client-side even after a recipient
+  had typed their address (the address IS stored -- only the label was wrong).
+  secure_share_list now also returns require_email so the panel can tell them
+  apart. Additive column: all three callers spread the row by name and the UI
+  reads named fields, so nothing existing is affected. yp only.)
+  yellow_page/procedures/secure_share/secure_share_list.sql
+
+2026-08-02 (verify-email lands the user IN the app. Clicking the signup mail's
+  link verified the address and then dropped the user on the sign-in screen,
+  because nothing in the flow ever created a session. v2 does the same
+  verification as v1 and additionally binds the caller's cookie, using the same
+  five-field write as session_signin and session_login_with_oauth -- ttl
+  included, which is why session_login_otp was NOT reused: it omits ttl because
+  a preceding session_signin already set it, and it writes the otp table, whose
+  presence session_check_cookie treats as a pending-2FA signal. The token check
+  stays INSIDE the procedure so this cannot become a "log in as any uid"
+  primitive, and entity.status is checked -- the guard session_login_otp and
+  session_login_with_oauth both lack -- so a frozen/archived/locked account is
+  never handed a session. Single use: the verification row is consumed, so a
+  link cannot mint a second session. New procedure, so production keeps calling
+  1-arg v1 until the loby plugin ships. yp only.)
+  yellow_page/procedures/drumate/drumate_verify_email_token_v2.sql
+
+2026-08-02 (signup email verification -- the token was predictable. v1
+  drumate_set_verification_token minted it as sha2(uuid(), 224); MariaDB UUID()
+  is version 1 (timestamp + clock_seq + MAC) and sha2 adds no entropy, so two
+  tokens minted moments apart differ only in a narrow time_low field -- measured
+  on production, 164 ticks apart with every other field identical. Today that
+  only lets someone verify an address that was going to be verified anyway, but
+  it must be strong before the verify link can ever establish a session. v2
+  takes the token from the caller, which now supplies 256 bits from
+  crypto.randomBytes. New procedure, not a change to v1, because the signature
+  gains a parameter -- production keeps calling 2-arg v1 until the loby plugin
+  ships, so the apply is non-breaking in both directions. yp only.)
+  yellow_page/procedures/drumate/drumate_set_verification_token_v2.sql
+
+2026-08-01 (secure share — the "Notify me when someone opens this" toggle could
+  not be turned off. notify_on_open was writable only by secure_share_create,
+  but the toggle sits BELOW the Get-link button, so turning it off after the
+  link exists changed nothing in the panel and the sender kept receiving open
+  notifications (real-time secure_share_opened plus the share_open feed row).
+  New creator-scoped setter, notify_on_open the only writable column, empty
+  result when the token is not yours — same contract as secure_share_revoke.
+  Nothing else reads it, so it cannot change existing behaviour. yp only.)
+  yellow_page/procedures/secure_share/secure_share_set_notify_on_open.sql
+
+2026-08-01 (file-thread access revocation and recovery. Revoking a file's chat
+  thread the moment the file leaves the workspace, and rebinding it when the
+  file comes back. The lineage/saga tables are the durable record a cross-hub
+  move needs: mfs_move_all commits destination rows before it returns canonical
+  ids, so nothing here can be one atomic transaction -- the saga states make the
+  gap explicit and recoverable instead of pretending it does not exist.
+  channel_file_thread_resolve_access is the single authorization boundary every
+  file-thread-derived read and mutation now passes through; it is what makes a
+  cached message_id unusable after access is gone.
+  channel_file_thread_trashed_filename exists so a revoked root card can still
+  name its file: the card stays in the conversation as history rather than
+  disappearing on reload, and only a trashed node yields a name, so a file the
+  caller merely cannot read leaks nothing.)
+  yellow_page/tables/file_thread_lineage.sql
+  yellow_page/tables/file_move_saga.sql
+  yellow_page/procedures/mfs/file_move_entity_storage.sql
+  yellow_page/procedures/mfs/file_thread_lineage_resolve.sql
+  yellow_page/procedures/mfs/file_thread_access_reserve_direct.sql
+  yellow_page/procedures/mfs/file_thread_access_release_direct.sql
+  yellow_page/procedures/mfs/file_thread_access_transition_direct.sql
+  yellow_page/procedures/mfs/file_move_saga_begin.sql
+  yellow_page/procedures/mfs/file_move_saga_get.sql
+  yellow_page/procedures/mfs/file_move_saga_transition.sql
+  common/procedures/channel/channel_file_thread_resolve_access.sql
+  common/procedures/channel/channel_file_thread_list_by_folder.sql
+  common/procedures/channel/channel_file_thread_rebind_returned_file.sql
+  common/procedures/channel/channel_file_thread_trashed_filename.sql
+  common/procedures/mfs/file_move_source_snapshot.sql
+  common/procedures/mfs/file_move_destination_snapshot.sql
+  common/procedures/mfs/file_move_return_precheck.sql
+  common/procedures/mfs/file_move_thread_position.sql
+
+2026-07-31 (MANIFEST BACKFILL — no SQL changed, only manifest.txt. An audit of
+  the last 30 commits against manifest.txt found six changed .sql files the
+  manifest never listed, which means `bin/patch-from-manifest patches/` has been
+  silently skipping them: a routine absent from the manifest is not merely
+  un-applied, it looks applied, because the run reports success either way. Two
+  of them are the bug FIXES below, so the bugs were fixed in git and still live
+  in every database the manifest was trusted to patch.
+
+  All five added here are routines carrying DROP ... IF EXISTS, so they are safe
+  to replay and safe to sit in the manifest permanently. Appended in dependency
+  order — none of them depends on another, and none introduces a table, so the
+  position is free; they go last so the existing order is undisturbed.
+
+  THE SIXTH IS DELIBERATELY NOT ADDED: yellow_page/tables/quota.sql. 5683d69
+  restructured it — primary key moved off domain_id onto a new AUTO_INCREMENT
+  id, domain_id/payer_id became NOT NULL, ctime/mtime added — and the file is
+  CREATE TABLE IF NOT EXISTS, so replaying it against an existing quota table
+  does NOTHING. Listing it would be worse than omitting it: the manifest would
+  claim to carry the restructure while changing nothing, which is exactly the
+  false-coverage this entry exists to remove. That change needs a dated ALTER in
+  patches/, the way 2026-06-22-quota-entitlement-cols.sql was done. NOT WRITTEN
+  HERE — it needs a decision about the live tables it would rewrite the keys of,
+  which is not a manifest cleanup.
+
+  Also recorded because they had no entry at all:
+    session_check_cookie, get_hub  e83d207 (2026-07-30) "Fix and optimize
+                                   session and get_hub".
+    verify-email.sql               ad429cd (2026-07-31) email verification never
+                                   completed — the proc wrote to a GENERATED
+                                   column. Note the filename/routine mismatch
+                                   the header warns about: this file defines
+                                   `drumate_verify_email`.
+    notification_workspace_moves   850063d (2026-07-31) new proc, workspace-move
+                                   unread counts. Reads mfs_ack / mfs_dismissed /
+                                   permission, all long-standing, so it needs no
+                                   companion table entry.
+  drumate_delete already had an entry below; it was missing only from the
+  manifest.
+
+  NONE OF THESE HAVE BEEN APPLIED TO ANY DATABASE BY THIS ENTRY. It changes what
+  a future patch run covers, nothing more — the five are still unapplied
+  wherever they were unapplied before, and get_hub/session_check_cookie in
+  particular are on the login path, so patch them deliberately and not as a side
+  effect of the next unrelated run.)
+  patches/manifest.txt
+
+2026-07-31 (reward delivery report reaches stage — the SQL side of commit
+  0463cb5 "Fix/reward delivery report" landed in this repo with NO entry here,
+  and consequently was never applied: stage yp had no failed_at/last_error on
+  reward_claim and no reward_claim_failed at all, while the deployed
+  analytics-server has been calling that proc since the same release. Every
+  refusal was therefore swallowed by the caller's try/catch and the funnel could
+  not distinguish an address the MTA rejected from a user who ignored the mail —
+  the exact gap the change was written to close. Applied by hand to stage yp
+  2026-07-31, in the order below: the ALTER FIRST, because both procedures
+  reference the two new columns. reward_expiry_due was checked and left alone —
+  its live body already matched. Live bodies diffed against the repo before
+  patching, per the DRIFT RULE in analytics-server's own changelog: the repo was
+  strictly ahead in every case, so nothing hand-applied was overwritten.)
+  yellow_page/patches/2026-07-31-reward-claim-failure-reason.sql
+  yellow_page/procedures/reward/reward_claim_failed.sql
+  yellow_page/procedures/reward/reward_claim_emailed.sql
+
+2026-07-31 (account deletion is now complete — drumate_delete cleared only
+  entity/drumate/vhost/privilege/cookie and left the credentials behind. The
+  surviving oauth_accounts row is the serious one: session_login_with_oauth
+  resolves on provider_user_id before it looks at the address, so a re-signup
+  kept resolving to the dead id instead of falling through to signup, and
+  re-bound the caller's cookie to it — a deleted user got 403 "frozen" on /-/
+  and lost the whole site, not just the account. Now purges auth state first,
+  then the entity-scoped rows entity_delete already cleared for a hub but this
+  never did for a drumate, the account's own rows, and the address-keyed rows
+  that release the address. Reads profile.old_email so accounts already retired
+  by the legacy freeze clean up the same way. Deliberately kept, because other
+  people read them: mfs_changelog, services_log, meeting_schedule, billing.
+  DROP DATABASE guard used OR where it meant AND.)
+  yellow_page/procedures/drumate/drumate_delete.sql
+
+2026-07-30 (Admin Console access request persist — a plain member on a Team
+  plan could ask the org owner for Admin Console rights, but the request lived
+  only in the owner's in-memory WS buffer: reload / offline / second session
+  lost it. Persist pending rows in yp keyed by (domain_id, requester_uid),
+  list them when a privileged user opens the console, and dismiss on banner
+  close. create is idempotent (re-ask refreshes mtime); list JOINs drumate for
+  display name/email; dismiss clears one requester or every pending row for
+  the domain. admin_access_request_get lets the member overlay reload show
+  "Request sent" instead of re-offering Ask. grant marks pending as granted
+  after domain_grant elevates org privilege (no mobile/OTP). Applied by hand
+  to stage yp 2026-07-30.)
+  yellow_page/tables/admin_access_request.sql
+  yellow_page/procedures/adminpannel/admin_access_request_create.sql
+  yellow_page/procedures/adminpannel/admin_access_request_list.sql
+  yellow_page/procedures/adminpannel/admin_access_request_dismiss.sql
+  yellow_page/procedures/adminpannel/admin_access_request_get.sql
+  yellow_page/patches/2026-07-30-admin_access_request_granted_cols.sql
+  yellow_page/procedures/adminpannel/admin_access_request_grant.sql
+
+2026-07-31 (LAUNCH30 promo — "Start your 1-month Team Plan today", claimed
+  with no card and no Stripe object at all. promo_launch30 tracks per-payer
+  "seen" flags (server-side, not localStorage — a modal shown once must not
+  re-show on cache clear or another device) and the claim itself. grant
+  writes a Team-plan yp.quota row keyed to the org/domain org_provision
+  bootstrapped, source='promo-launch30', period_end=+30d — mirrors
+  payment_apply_entitlement's org branch exactly so get_quota's existing
+  org-lookup picks it up with no reader changes. due/mark_expired let a
+  worker revert an expired trial the same way an org's Stripe cancel does
+  (payment_clear_entitlement deletes the row, member falls to their own
+  per-user tier). Applied by hand to stage yp 2026-07-31.)
+  yellow_page/tables/promo_launch30.sql
+  yellow_page/procedures/promo/promo_launch30_get_state.sql
+  yellow_page/procedures/promo/promo_launch30_mark_seen.sql
+  yellow_page/procedures/promo/promo_launch30_grant.sql
+  yellow_page/procedures/promo/promo_launch30_due.sql
+  yellow_page/procedures/promo/promo_launch30_mark_expired.sql
+2026-07-29 (warn people before the reward term ends, and stop lying to users who
+  are over quota. The 5-year claim-reward grant already expires correctly -- the
+  read-time guards handle that -- but nothing told anyone it was coming, and on
+  day 1826 a user who had accumulated tens of GB would simply find uploads
+  failing, with an account screen that said their usage was fine.
+
+  WHAT AN EXPIRED REWARD IS. A gift that ends, not an unpaid invoice. The
+  allowance returns to free, existing files STAY -- readable, downloadable,
+  shareable, indefinitely -- and new uploads pause until the user is back under
+  the limit. Nothing here ever deletes anything. That is a deliberate departure
+  from offline/subscription/downgrade.js, which for a LAPSED PAID PLAN escalates
+  over ~181 days and then calls clean() to entity_delete every hub and wipe the
+  desk. Sharing that ladder would mean destroying data we gave away as a prize.
+
+  NOTHING IN THIS ENTRY IS LOAD-BEARING. reward_expiry_due is query-only and the
+  worker only sends mail. If neither is ever installed, the term still ends on
+  the right day and enforcement still holds; users are simply not warned. A
+  notification feature must not be able to break the entitlement it describes.
+
+  reward_expiry_due answers "who, at which stage", and excludes users UNDER the
+  free allowance entirely -- for them expiry changes a number and nothing else,
+  and with ~100 people in the campaign, mailing the unaffected is expensive
+  noise. Usage is the owner's own total (hubs owned + own desk from
+  yp.disk_usage), the same pair my_disk_limit adds up and the same one
+  enforcement measures, so "over quota" means here what it means everywhere. The
+  allowance is READ from the seeded free row rather than written as 5000000000 --
+  the free plan has already moved once (20 GB -> 5 GB) and a literal would
+  quietly mis-select the whole population next time.
+
+  THE GUARD IS "NOT SENT", NOT "DAY 30". Three touches: 30 days, 7 days, and the
+  day the term ends. `stage` is the most urgent threshold the user has REACHED,
+  and a row is returned only when no notice has been recorded at that stage. A
+  `days_left = 30` test is true for exactly 24 hours and never returns, so one
+  missed cron night would skip that warning forever -- for something that happens
+  once in five years, that is the difference between a warning and none. Taking
+  the most urgent reached stage also makes catch-up correct: a user first seen at
+  5 days out gets the 7-day notice, not a "30 days remaining" mail that is
+  already false, and the worker records the skipped stages as superseded so they
+  cannot fire later.
+
+  contact_activity is the ledger AND the notification -- one write, two purposes,
+  no table that exists only to hold a checkbox. Superseded rows carry no message,
+  so the worker stamps dismissed_at on them AT INSERT and the feed's ordinary
+  `dismissed_at IS NULL` filter hides them; without that the user would collect a
+  stack of blank notifications. The insert is guarded by NOT EXISTS because a
+  stage can already hold a REAL row (mailed at 30, then crossed into the 7-day
+  window) and re-inserting it as superseded both duplicated the ledger and sat a
+  dismissed duplicate beside a genuine notice. Both problems were seen in the
+  scratch run before the guard existed.
+
+  contact_reward_expiry_unread ships WITH the event, not after it. activity.js
+  says why in as many words: "Every new contact_activity event needs its own
+  *_unread proc here -- storage_alert was added without one, so recipients got the
+  email but no in-app notification (the panel opens on Unread ON)."
+
+  THE UI STOPPED CLAMPING. window/account/data/index.js did `if (used > max) used
+  = max`, so someone storing 14 GB against 5 GB was shown a tidy "5 GB / 5 GB" at
+  100% -- which reads as "exactly full" when the truth is "9 GB over, uploads
+  refused". That is the screen a user opens to find out why an upload failed, and
+  it told them nothing was wrong. Being over quota is NOT rare: the 20 -> 5 GB
+  free migration deliberately grandfathered accounts already above the new
+  allowance, so those users are over it today, years before any reward lapses.
+  The storage screen now names the state and the amount, and the available/used
+  pie drops its "available" slice rather than plotting a negative.
+
+  There is no individual paid plan to upsell -- every paid tier is
+  entity_type='org' -- so the mail leads with freeing space and mentions Team
+  second, as a workspace they would create. Leading with Team would ask a solo
+  user to form an organisation to solve a personal storage problem, immediately
+  after a free gift ran out.
+
+  Verified on a scratch DB across the full five-year lifecycle: three users at 19
+  / 4 / 0 days out get stages 30 / 7 / 0, a user under the allowance and a user
+  200 days out are both excluded, re-running sends nothing, crossing into each
+  window re-arms the next stage exactly once, the ledger ends with one row per
+  stage and no duplicates, and the activity feed returns only the real notices
+  and none of the superseded ones.)
+  yellow_page/procedures/reward/reward_expiry_due.sql
+  yellow_page/procedures/contact/contact_reward_expiry_unread.sql
+
+2026-07-29 (guard the reward term everywhere it is READ, not only where it is
+  enforced. The grant landed with read-time expiry in get_quota, disk_limit,
+  disk_free and my_disk_limit — the paths that decide whether an upload is
+  allowed — and stopped there. Three other procs resolve the same rows and none
+  of them knew, so after the term lapsed they would have gone on reporting the
+  reward's 2^63-1 while enforcement had already dropped the user to 5 GB. A
+  console that disagrees with enforcement is worse than one that shows nothing:
+  the workspace would have read 'healthy' at 0% forever for someone whose
+  uploads were being refused.
+
+  get_workspace_storage_summary (admin Storage Console) and
+  payment_get_subscription (the billing screen's entitlement_plan / disk_limit)
+  get the same source='reward' predicate the enforcement path uses.
+
+  get_hub_storage_stats WAS ALREADY WRONG, INDEPENDENTLY OF ANY OF THIS. It read
+  `SELECT disk FROM yp.quota WHERE domain_id=_dom_id LIMIT 1` — no ORDER BY, no
+  payer filter — and a domain routinely holds several rows: org_provision
+  re-keys a payer's personal row onto the new org domain, and domain 1 holds one
+  per solo payer. Measured on stage, where domain 1 holds twelve: for a solo
+  user's hub it reported 100 GB BELONGING TO AN UNRELATED USER as "the domain
+  quota". The reward row only widened the blast radius, by putting a 9.2 EB
+  candidate into the same lottery. It now resolves deterministically through the
+  tiers disk_limit enforces with — organisation row, else the hub OWNER's row
+  (expired reward skipped), else the seeded free fallback.
+
+  Its usage figure had the matching hole: quota_usage is keyed by domain and the
+  disk_usage_sync_quota_cache trigger only writes rows for domain_id > 1, so for
+  a solo user's hub the lookup found nothing and the panel showed 0% used of a
+  capacity belonging to someone else. When the capacity is the owner's, the
+  usage has to be the owner's: summed from yp.disk_usage over their hubs plus
+  their own desk, the same pair my_disk_limit adds up. This file was also never
+  registered in the manifest at all — a replay never installed it.
+
+  SCALAR SUBQUERIES, NOT `SELECT ... INTO`, INSIDE A CURSOR LOOP. This is the
+  bug the guard itself introduced, and it is worth stating plainly.
+  get_workspace_storage_summary walks its hubs with a cursor whose
+  `CONTINUE HANDLER FOR NOT FOUND` is armed for the FETCH. A `SELECT ... INTO`
+  matching no row raises NOT FOUND as well, so it fired that handler, set
+  _finished = 1 and silently ENDED THE LOOP — every remaining workspace vanished
+  from the console with no error at all. The hazard predates this change (an
+  owner with no payer row already triggered it), but the expiry guard is written
+  precisely to match zero rows, so it turned a rare edge into the normal path.
+  Caught in the scratch run: an expired reward on the FIRST hub dropped the
+  second hub from the result entirely. Every tier in that block is now a scalar
+  subquery, which yields NULL for a missing row — what each IF was already
+  testing for. The pre-loop _org_disk lookup got the same treatment; it was safe
+  only because _finished is reset before OPEN, and relying on that is how the
+  mistake reached the loop body.
+
+  That cascade also gained the tier-4 free fallback disk_limit has and it was
+  missing, so an owner with no personal row no longer resolves to quota_bytes 0
+  — which rendered as 'healthy' at 0% for a user enforcement caps at 5 GB.
+
+  Verified on a scratch DB: with the reward LIVE the owner's hub reports the
+  sentinel and a second hub reports 5 GB; with it EXPIRED both report 5 GB and
+  BOTH still appear (the loop no longer dies); get_hub_storage_stats falls from
+  9.22 EB to 5 GB with the owner's real usage against it; and
+  payment_get_subscription reports a NULL entitlement instead of a lapsed one.)
+  hub/procedures/admin/get_hub_storage_stats.sql (newly registered)
+  yellow_page/procedures/adminpannel/get_workspace_storage_summary.sql (already
+    registered; mirrored in admin-dash-server, refreshed)
+  yellow_page/procedures/subscription/payment_get_subscription.sql (already
+    registered)
+
+2026-07-29 (the reward campaign grants the PRIZE, not just the slot. Everything
+  shipped so far awarded a place and stopped there: reward_claim_track bumped
+  completed_count under the slot lock, reward.track answered granted:1, and the
+  widget told the user they had claimed "5 years of unlimited storage" — while
+  nothing anywhere wrote to yp.quota and every resolver went on handing them the
+  free 5 GB. reward_grant_storage materialises it as a personal quota row (plan
+  reward-5y, source 'reward', period_end = completion + 5 years), CALLed from
+  reward_claim_track inside the EXISTING GET_LOCK('reward_slot') section so the
+  place and the prize are taken together — there is no ordering in which a user
+  consumes one of the 100 places and receives nothing. The signature did not
+  change, so this lands as a schema patch with no server deploy, the same
+  property the slot cap was written to protect.
+
+  UNLIMITED IS $.unlimited, AND ALSO THE BIGINT SENTINEL. $.disk carries
+  9223372036854775807 as well, and not for symmetry: `disk` is a generated
+  column over $.disk and every resolver computes _q_disk - used, so a row with
+  the flag but no number reads 0, then NEGATIVE free space, and locks the user
+  out of their own account. It is also what makes the rollout order safe — after
+  this patch alone, server-team media.js already honours that exact figure, so
+  there is no window where the grant is written but not enforced.
+
+  THE TERM ENDS AT READ TIME, in get_quota (both routines), disk_limit,
+  disk_free and my_disk_limit, scoped to source='reward'. No sweeper has to
+  still be installed and running in 2031 for five years to actually elapse.
+  Stripe rows keep today's behaviour: their period_end is informational and
+  cancellation DELETEs the row, so a generic check would start revoking live
+  subscriptions whose renewal webhook was merely late. period_end is DEFAULT
+  NULL in the deployed schema, so every guard reads NULL as "no expiry" beside
+  0. The guard matters MOST in disk_free, which is personal-FIRST while the
+  other three are tenant-first (a pre-existing inconsistency, flagged not
+  fixed): without it an expired reward would outrank even a domain entitlement.
+
+  reward_personal_eligible is ONE rule in ONE place, read by the desk gate
+  (server-team reward.get_state), by reward_claim_track's award decision and by
+  the grant write. It was briefly two copies and they disagreed inside a single
+  scratch-DB run: the grant refused a user covered by an org entitlement while
+  the award went through regardless, so an ineligible user burned one of the
+  campaign's places and got nothing — permanently, since reward_slots_used
+  counts completed_count. A PERSONAL row is the right shape because every
+  resolver is tenant-first, so one written for an org member would never be read
+  at all; those users are turned away at the gate instead, before Step 1.
+
+  reward_grant_storage ALSO REQUIRES completed_count > 0. From
+  reward_claim_track that is redundant, but payment_clear_entitlement calls it
+  for every cancelling individual — to restore a reward that a subscription had
+  overwritten and the DELETE would otherwise drop to 5 GB — and without the
+  check, cancelling a subscription granted 5 years of unlimited storage to users
+  who had never seen the campaign. Caught by the scratch run, which handed the
+  prize to a user whose only contact with the flow was being refused by the cap.
+
+  reward_claim.completed_at is a NEW COLUMN because mtime cannot date the term:
+  it moves on every track post and reward_claim_emailed bumps it again on a
+  re-arm, so a second campaign wave would silently restart everyone's five years
+  from the day of the mail. Written once, on the first granted completion, and
+  never moved — the same rule, and the same reason, as completed_count. It is
+  what makes the grant re-materialisable at its ORIGINAL term rather than five
+  fresh years for cancelling a subscription.
+
+  ORDER IN THE MANIFEST IS LOAD-BEARING, and only FOUR entries are new. The
+  three dependencies go INTO the existing reward block rather than after it: the
+  ALTER beside the other reward_claim column patches (reward_claim_track writes
+  completed_at and the backfill reads it), and reward_personal_eligible +
+  reward_grant_storage beside reward_slots_used, ahead of reward_claim_track,
+  which CALLs the last of them — a proc CALLing one that does not exist yet does
+  not fail at CREATE time, it fails at RUN time, on a user's completion. The
+  backfill is appended LAST, after every routine and column it reads.
+
+  The seven other files this entry touches were ALREADY REGISTERED and are NOT
+  re-listed. They pick up their new bodies from the entries they already have;
+  a second entry would only replay them, and — for reward_claim_track, listed
+  above reward_grant_storage — would also invert the dependency order this
+  paragraph relies on. Same rule the 2026-07-29 slot-cap entry applied to
+  tables/reward_claim.sql. Written the wrong way round first, with all eleven
+  files appended to the tail; caught by diffing the manifest against itself for
+  duplicates, which is worth doing after every append.
+
+  EXISTING WINNERS ARE BACKFILLED, dated from their own completion rather than
+  from the deploy: they were promised the term when they finished, and they are
+  the campaign's earliest and most engaged users — "going forward only" would
+  have rewarded everybody except the people who responded fastest. completed_at
+  is seeded from mtime for rows written before the column existed, which is the
+  best available evidence and errs towards giving slightly more. The residue —
+  org members, users already on Stripe — is REPORTED rather than silently
+  skipped, following 2026-07-24-migrate-free-to-new-allowance.sql; that report
+  first aborted the whole statement with ERROR 1271 (quota.source is
+  ascii_general_ci against utf8mb4 literals in a CASE), which would have made
+  the one thing telling an operator who was NOT granted the one thing that did
+  not run, so source is now CONVERTed explicitly.
+
+  tables/quota.sql IS RECONCILED BUT DELIBERATELY NOT LISTED. It had drifted
+  from the deployed shape (templates/factory/seed/yp.sql) badly enough to be
+  dangerous: PRIMARY KEY (domain_id), which allows only ONE row per domain when
+  org_provision routinely creates several and every ON DUPLICATE KEY UPDATE here
+  collides on UNIQUE(domain_id, payer_id); no id, ctime, mtime, source or
+  period_end; a 20 GB free seed the 2026-07 pricing rebuild replaced with 5 GB;
+  and it opened with DROP TABLE IF EXISTS, so applying it to a live database
+  wiped every paid entitlement on the server and cascaded quota_usage away with
+  it. It is now non-destructive in the yp.plan style. Not listed because nothing
+  in the live table needs to change — source and period_end already arrived via
+  2026-06-22-quota-entitlement-cols.sql, which is registered above.
+  tables/reward_claim.sql is likewise not re-listed: already registered, and it
+  picks up the new column from the same file.
+
+  Verified on a scratch DB built from the factory seed's quota shape — this box
+  has no reward data and its own yp.quota is a two-column relic, so nothing here
+  could be exercised in place. All eleven routines load clean. Fresh grant
+  writes 1826 days; a re-armed second completion adds no row and does not move
+  the term; an org member consumes no place and gets no row; a solo user's
+  stripe row is not clobbered; the cap awards the last place and answers
+  'missed' to the next; a lapsed reward falls back to 5 GB (disk_free returns
+  5000000000); get_quota and my_disk_limit emit the unlimited column; cancel
+  restores a genuine winner's original term and grants nothing to a
+  non-participant or a 'missed' user; the backfill produces correct per-user
+  terms and is idempotent across two runs.)
+  NEWLY LISTED, in dependency order:
+  yellow_page/patches/2026-07-29-reward-claim-completed-at.sql
+  yellow_page/functions/reward_personal_eligible.sql
+  yellow_page/procedures/reward/reward_grant_storage.sql
+  yellow_page/patches/2026-07-29-reward-backfill-grant.sql (appended last)
+
+  CHANGED, already registered — deliberately not re-listed:
+  yellow_page/procedures/reward/reward_claim_track.sql (CALLs the grant)
+  yellow_page/procedures/directory/get_quota.sql (both routines: expiry guard;
+    the PROCEDURE also emits the `unlimited` column media.js reads)
+  yellow_page/procedures/utils/disk_limit.sql (guard + unlimited column)
+  yellow_page/procedures/utils/disk_free.sql (guard — personal-FIRST, so it
+    matters most here)
+  yellow_page/procedures/directory/my_disk_limit.sql (guard + unlimited column)
+  yellow_page/procedures/subscription/payment_clear_entitlement.sql (re-grants)
+  yellow_page/procedures/adminpannel/get_org_quota.sql (excludes reward rows
+    from the domain-sum fallback: $.disk at 2^63-1 overflows a SIGNED BIGINT.
+    Mirrored in admin-dash-server, which had also fallen behind 083fe5e)
+  yellow_page/tables/reward_claim.sql (completed_at)
+  yellow_page/tables/quota.sql (reconciled with the deployed shape + made
+    non-destructive; nothing live needs to change — see above)
+
+2026-07-29 (reward slot cap — the claim-reward campaign mail promises "Limited
+  100 spots ONLY" and nothing enforced it: every invited user who followed the
+  CTA got the reward, however many had already finished. A slot is now
+  completed_count > 0, NOT status = 'done' — reward_claim_emailed re-arms a
+  finished user back to 'emailed' on a re-send, so counting 'done' rows would
+  hand that user's slot back and let the total drift past the limit.
+  reward_claim_track therefore stops being a pure report: posting 'done' is a
+  REQUEST for a slot, answered by the status on the row it returns. Each
+  statement is its own transaction, so two users finishing together would both
+  read 99 and both take slot 100 — the count and the award are serialised with
+  GET_LOCK rather than by holding a read lock over a table scan the way
+  SELECT ... FOR UPDATE would; failing to TAKE the lock refuses the award,
+  because granting on timeout is exactly the over-award the lock exists to
+  stop. 'missed' is the new terminal status for a user told the reward is gone,
+  ranked above 'started'/'dropped' so it sticks and below 'done' so no late
+  post can take a slot off a user who holds one; it joins the re-arm set, so
+  raising the limit and mailing again re-opens the flow for the people who were
+  turned away without handing back a slot they never had.
+
+  THE LIMIT IS READ INSIDE THE PROC, from sys_conf.reward_conf -> $.slots (100
+  when unset), and the SIGNATURE DELIBERATELY DID NOT CHANGE. It was briefly an
+  _limit parameter, and patching stage proved why that is wrong: three runtimes
+  there call this proc, all still on the previous build, and every one of them
+  failed with "Incorrect number of arguments" the moment the proc required the
+  extra argument. A schema patch must be able to land without waiting for a
+  server deploy. The configured value is regexp-tested before it is converted,
+  because CAST('abc' AS SIGNED) RAISES under strict mode and would abort a
+  completion the user had already earned; a malformed, absent, zero or negative
+  setting all fall back to 100.
+
+  reward_slots_used is a FUNCTION, not a procedure: both callers — the desk
+  gate in server-team and the dashboard counter in analytics-server — want one
+  number, and a CALL's own SELECT comes back as a raw multi-resultset that does
+  not parse into a row. tables/reward_claim.sql is NOT re-listed in the
+  manifest: it is already registered above and picks up its new column comments
+  from the same file, so a second entry would only replay it.
+
+  Verified on a scratch DB before shipping: 20 simultaneous completions against
+  a limit of 5 yield exactly 5 'done' and 15 'missed'. Applied by hand to the
+  local yp and, over ssh, to stage — where the deployed procs were diffed for
+  drift first (none) and backed up to ~/schema-backups/.)
+  yellow_page/patches/2026-07-29-reward-claim-missed-status.sql
+  yellow_page/functions/reward_slots_used.sql
+  yellow_page/procedures/reward/reward_claim_track.sql
+  yellow_page/procedures/reward/reward_claim_emailed.sql
+  yellow_page/tables/reward_claim.sql (comment only — status gains 'missed',
+    completed_count documents that > 0 holds a slot)
+
+2026-07-28 (manifest repair — the cross-hub chat migration shipped with none of
+  its files registered, so a manifest replay installed nothing: an existing DB
+  would keep the old mfs_move_all and never gain channel_migrate_log or
+  channel_migrate_moved_scope. Only brand-new signups had it, through the
+  factory templates. mfs_move_all was in fact never listed at all, predating
+  that change. Listed in dependency order — the log table first, then the
+  helper, then mfs_move_all, which CALLs the helper and must not land before
+  it exists. The one-shot common/patches/2026-07-26-channel-move-migrate.sql
+  is deliberately NOT listed: its DDL is the same CREATE TABLE IF NOT EXISTS
+  the table file already carries, and listing both would replay it twice on
+  every one of the media DBs.)
+  common/tables/channel_migrate_log.sql
+  common/procedures/channel/channel_migrate_moved_scope.sql
+  common/procedures/mfs/mfs_move_all.sql
+
+2026-07-28 (reward_claim.clicked_at — `status` holds only the CURRENT state and
+  the flow moves fast (clicked -> started -> dropped in seconds), so a click
+  that worked perfectly left no trace and the only way to tell whether the CTA
+  had been followed was to read nginx access logs. The timestamp makes the
+  stage observable and makes emailed -> clicked, the campaign click-through
+  rate, a number the dashboard can show. Stamped on the FIRST click of an
+  attempt only, so a duplicate post cannot move it; cleared by a re-arm, since
+  a returning user has to click again. Rows already past 'clicked' stay at 0 --
+  we cannot know when they clicked and a made-up time is worse than an honest
+  unknown.)
+  yellow_page/patches/2026-07-28-reward-claim-clicked-at.sql
+  yellow_page/tables/reward_claim.sql
+  yellow_page/procedures/reward/reward_claim_track.sql
+  yellow_page/procedures/reward/reward_claim_emailed.sql
+
+2026-07-27 (plan limits — two rows of the published pricing table were sold
+  but never enforced. Version history: the retention policy defaulted to a
+  hardcoded 30 days and the admin console only offered 30/60/90, so a Business
+  org could not get the year it pays for and a Team org once set to 90 kept 90
+  after downgrading; retention now defaults to and is capped by the plan's
+  $.history_length, and reports that ceiling so the console can offer the right
+  choices. Workspaces: desk.check_quota has always read $.private_hub /
+  $.share_hub, but no plan ever wrote them, so the cap was undefined and the
+  guard passed every time -- free accounts hold up to 32 hubs today. Both the
+  catalog and every already-granted entitlement row now carry the caps;
+  Business deliberately carries none, because absent means unlimited.)
+  yellow_page/procedures/organization/organisation_get_retention.sql
+  yellow_page/patches/2026-07-27-plan-workspace-caps.sql
+  yellow_page/tables/plan.sql
+
+2026-07-27 (being MAILED stops being the entitlement on its own: `clicked`
+  joins the status vocabulary between 'emailed' and 'started'. A user who was
+  sent the campaign and simply logs in without following the link now gets
+  nothing -- previously any desk visit by an emailed user opened the flow. Only
+  'clicked' and 'started' are eligible; 'emailed' means invited but not yet
+  arrived. A re-send re-arms to 'emailed', so a returning user has to click
+  again. Column-comment only on the table: 'clicked' fits varchar(16) and the
+  ranking lives in reward_claim_track. Existing 'emailed' rows are deliberately
+  NOT migrated -- we cannot know whether those people ever clicked, and
+  inventing a click would hand the flow to users who never asked for it.)
+  yellow_page/patches/2026-07-27-reward-claim-clicked-status.sql
+  yellow_page/tables/reward_claim.sql
+  yellow_page/procedures/reward/reward_claim_track.sql
+
+2026-07-27 (reward eligibility moves from the browser to this table. The desk
+  gate read localStorage, so "has this user finished" was per BROWSER: it did
+  not survive a device change, it accumulated a key per user on shared
+  machines, and clearing the table did nothing. The gate now asks the server
+  (SERVICE.reward.get_state), and eligibility is simply status IN
+  ('emailed','started'). A send to someone whose attempt already ENDED re-arms
+  them back to 'emailed' -- so re-sending the mail is a real reset -- while a
+  send mid-attempt only bumps the counter and never rewinds their step. The
+  re-arm would erase the fact that they ever finished, so completions are now
+  counted separately in completed_count, which no re-arm touches.)
+  yellow_page/patches/2026-07-27-reward-claim-completed-count.sql
+  yellow_page/tables/reward_claim.sql
+  yellow_page/procedures/reward/reward_claim_emailed.sql
+  yellow_page/procedures/reward/reward_claim_track.sql
+
+2026-07-27 (get_quota FUNCTION returned the raw quota JSON, whose allowance
+  key is $.disk. The PROCEDURE of the same name already aliases it AS storage,
+  but the FUNCTION is what feeds desk.get_env and therefore Visitor.quota() in
+  every client -- and every client reads `storage`. The account screen showed
+  a total of "0 B" with a dead usage bar, and diskFree() came out NaN, while
+  the used figure beside them was correct. Both return paths now emit
+  $.storage alongside $.disk.)
+  yellow_page/procedures/directory/get_quota.sql
+
+2026-07-27 (claim-reward campaign funnel — the flow tracked its progress in
+  localStorage only, so nothing knew who dropped and who finished. One row per
+  user; status and step advance by rank, so a re-send never resets someone who
+  already started and no late post can undo a completion.)
+  yellow_page/tables/reward_claim.sql
+  yellow_page/procedures/reward/reward_claim_track.sql
+  yellow_page/procedures/reward/reward_claim_emailed.sql
+
+2026-07-27 (manifest repair — a full replay left 58 DBs behind and scattered 7
+  silent failures. The scope-PK migration and its three _nid-aware procs were
+  never listed at all, so task_column still keys on (id) there and a column
+  created in one folder collides with another folder's row. Separately the
+  seven channel_file_thread procs were listed under hub/ while the files live
+  under common/: every line aborted its patch.js run, and since the runner
+  ignores per-line failures the misses scrolled past unnoticed. common/ is
+  also the right scope — these belong in every media DB, not just hubs.)
+  common/patches/alter_task_column_scope_pk.sql
+  common/procedures/task/task_column_get_v2.sql
+  common/procedures/task/task_column_update_v2.sql
+  common/procedures/task/task_column_delete_v2.sql
+  common/procedures/channel/channel_file_thread_info.sql
+  common/procedures/channel/channel_file_thread_ensure_root.sql
+  common/procedures/channel/channel_file_thread_post_touch.sql
+  common/procedures/channel/channel_file_thread_list_by_folder.sql
+  common/procedures/channel/channel_file_thread_list_messages.sql
+  common/procedures/channel/channel_file_thread_read_messages.sql
+  common/procedures/channel/channel_file_thread_remove_root.sql
+
+2026-07-26 (stripe webhook — a crashed reducer left its event row behind
+  with processed_at NULL, and the duplicate guard keyed on the row EXISTING,
+  so every Stripe retry was answered ok and the event was dropped for good.
+  Duplicate now means processed, or another delivery still inside a 120s
+  lock window; past that an unprocessed row is reclaimed.)
+  yellow_page/procedures/subscription/stripe_event_seen.sql
+
+2026-07-26 (admin console storage — member usage now includes personal "My
+  Drumee" spaces: uploads there are billed against the org quota but the
+  member/hub breakdowns only cursored type='hub' DBs, so the numbers never
+  moved after a personal upload)
+  yellow_page/procedures/adminpannel/get_org_user_storage.sql
+  yellow_page/procedures/adminpannel/get_org_user_storage_count.sql
+
+2026-07-26 (folder listing — subfolders took 3-10s to appear: pagination (45/page)
+  had no folder-first term, so directories could land on page 2+ behind the
+  files while the UI renders folders in the top section. Directories now order
+  before files at the paging level, and a 'mtime' sort (modified-newest-first,
+  IFNULL to ctime) is added for the new client default.)
+  common/procedures/mfs/mfs_show_node_by.sql
+
+2026-07-26 (secure share — cut one recipient off a link without killing the link:
+  additive denied_emails the gate refuses on. Deny-only, never widens access.)
+  yellow_page/patches/add_denied_emails_to_secure_share_token.sql
+  yellow_page/tables/secure_share_token.sql
+  yellow_page/procedures/secure_share/secure_share_deny_email.sql
+  yellow_page/procedures/secure_share/secure_share_info.sql
+  yellow_page/procedures/secure_share/secure_share_list.sql
+
+2026-07-26
+  yellow_page/patches/2026-07-26-entity-default-lang-en.sql
+  yellow_page/tables/entity.sql
+  yellow_page/procedures/directory/users_list.sql
+
+2026-07-24 (pricing migration follow-ups. Two gaps the first pricing patch left:
+  org rows already named 'team' kept the PRE-REBUILD per-seat allowance, because
+  that patch only rewrote rows whose plan was a retired NAME -- under the old
+  model 'team' was per seat and payment_apply_entitlement stored per-seat disk x
+  seats, typically a bare 50 GB, so those orgs read as Team while holding half
+  the storage the plan now grants, correcting only on their next renewal. And
+  'free' rows kept the old 20 GB, four times the new allowance. The org backfill
+  ONLY EVER RAISES -- disk comes from the active catalog row and applies solely
+  where the stored value is lower, so an org holding more keeps it (verified on
+  stage: 29 rows went 50 GB -> 100 GB, one legitimately on 250 GB untouched).
+  The free migration is the only one that REDUCES, so it is guarded by live
+  usage: a row is lowered only when the domain's actual_usage still fits 5 GB,
+  and accounts above it are listed by a trailing SELECT for a human decision
+  rather than silently pushed over quota -- on stage one of five such accounts
+  was storing 13 GB.)
+  yellow_page/patches/2026-07-24-backfill-org-team-disk.sql
+  yellow_page/patches/2026-07-24-migrate-free-to-new-allowance.sql
+
+2026-07-24 (pricing rebuild — the catalog moves to USD and the B2C `pro` tier
+  gives way to the B2B `team` tier. FREE $0/5GB solo, TEAM $29/100GB/<=10
+  members, BUSINESS $99/1TB/unlimited (sales-led, no Stripe price); yearly is
+  11 x monthly, so team $319 and business $1089. Sovereign is self-hosted and
+  sales-led, so it is not a SaaS entitlement and has no row. Team also stops
+  being per-seat: quota.$.disk is now the whole allowance and quota.$.seat is
+  the member CAP, so payment_apply_entitlement no longer multiplies by the
+  subscription quantity nor overwrites $.seat -- the catalog rows and that
+  procedure must move together or org disk goes wrong. `pro`, the add-ons
+  (pro_seat, storage_*) and every EUR row are DEACTIVATED, not deleted, so
+  subscription/renewal history still resolves its plan row; a Stripe price's
+  currency cannot be changed, hence new USD rows rather than an update. Legacy
+  hand-granted quota rows ('Pro', 'Drumee Plus', 'advanced') move onto the Team
+  entitlement, but only where source <> 'stripe', so nothing a customer is
+  paying for is rewritten.)
+  yellow_page/patches/2026-07-24-pricing-usd-team-business.sql
+  yellow_page/tables/plan.sql
+  yellow_page/procedures/subscription/payment_apply_entitlement.sql
+  yellow_page/procedures/subscription/payment_get_catalog.sql
+
+2026-07-24 (folder-chat notifications showed "Someone posted" with the viewer's
+  own avatar, and meeting start/end read the same; the teamchat rollup keyed on
+  the folder id so no author resolved. Carry the message author (author_id +
+  name) and a meeting_action (start/end, meeting takes priority over chat) so the
+  client shows "<user> posted / started / ended a meeting in <folder>" with the
+  right avatar. Additive columns only, read by name -> non-breaking.)
+  drumate/procedures/notification/notification_center_next.sql
+
+2026-07-23
+  drumate/procedures/notification/notification_center_next.sql
+
+2026-07-22
+  common/patches/alter_task_column_scope_pk.sql
+  common/tables/task_column.sql
+  common/procedures/task/task_column_get_v2.sql
+  common/procedures/task/task_column_update_v2.sql
+  common/procedures/task/task_column_delete_v2.sql
+  common/procedures/task/task_column_list.sql
+  common/procedures/task/task_column_create.sql
+  common/procedures/task/task_column_reorder.sql
+  common/procedures/task/task_update_status.sql
+
+2026-07-21
+  yellow_page/procedures/subscription/payment_get_org.sql
+
+2026-07-20
+  drumate/procedures/desk/desk_search.sql
+
+2026-07-20
+  yellow_page/procedures/contact/contact_storage_alert_unread.sql
+
+2026-07-18
+  yellow_page/tables/meeting_schedule.sql
+  yellow_page/procedures/meeting_schedule/meeting_schedule_upsert.sql
+  yellow_page/procedures/meeting_schedule/meeting_schedule_remove.sql
+  yellow_page/procedures/meeting_schedule/meeting_schedule_due.sql
+  yellow_page/procedures/meeting_schedule/meeting_schedule_mark_fired.sql
+
+2026-07-18
+  common/patches/alter_task_add_rank.sql
+
+2026-07-17
+  drumate/procedures/desk/desk_search.sql
+
+2026-07-15
+  common/patches/alter_task_comment_reaction_emoji_bin.sql
+  common/tables/task_comment_reaction.sql
+
+2026-07-15
+  yellow_page/procedures/adminpannel/get_org_quota.sql
+
+2026-07-15
+  yellow_page/procedures/contact/contact_task_mention_unread.sql
+  yellow_page/procedures/secure_share/secure_share_mark_open_seen.sql
+
+2026-07-13
+  yellow_page/procedures/subscription/payment_clear_entitlement.sql
+  yellow_page/procedures/subscription/stripe_event_delete.sql
+  yellow_page/procedures/subscription/payment_apply_entitlement.sql
+
+2026-07-13
+  yellow_page/procedures/adminpannel/pending_invites_by_domain.sql
+  yellow_page/procedures/adminpannel/member_list_stats.sql
+  yellow_page/procedures/adminpannel/get_org_user_storage.sql
+  hub/procedures/admin/hub_member_stats.sql
+
+2026-07-10
+  yellow_page/patches/2026-07-10-plan-pro-seat-rows.sql
+  drumate/patches/2026-07-10-file-thread-drumate.sql
+  common/procedures/channel/channel_file_thread_ensure_root.sql
+  common/procedures/channel/channel_file_thread_info.sql
+  common/procedures/channel/channel_file_thread_list_by_folder.sql
+  common/procedures/channel/channel_file_thread_list_messages.sql
+  common/procedures/channel/channel_file_thread_post_touch.sql
+  common/procedures/channel/channel_file_thread_read_messages.sql
+  common/procedures/channel/channel_file_thread_remove_root.sql
+  drumate/procedures/channel/channel_list_messages.sql
+  drumate/procedures/channel/channel_read_messages.sql
+  drumate/procedures/channel/channel_post_message.sql
+
+2026-07-10
+  yellow_page/procedures/adminpannel/get_workspace_storage_summary.sql
+  yellow_page/procedures/adminpannel/get_hub_stale_files.sql
+  yellow_page/procedures/adminpannel/get_user_storage_files.sql
+
+2026-07-10
+  common/tables/file_version.sql
+  common/procedures/mfs/versioning/file_version_create.sql
+  common/procedures/mfs/versioning/file_version_list.sql
+  common/procedures/mfs/versioning/file_version_get.sql
+  common/procedures/mfs/versioning/file_version_delete_old.sql
+  common/procedures/mfs/versioning/file_version_download.sql
+  common/procedures/mfs/versioning/file_version_purge.sql
+
+2026-07-10
+  yellow_page/patches/2026-07-10-plan-pro-seat-rows.sql
+
+2026-07-09
+  yellow_page/tables/plan.sql
+  yellow_page/procedures/subscription/payment_get_addon.sql
+  yellow_page/procedures/subscription/payment_apply_entitlement.sql
+  yellow_page/procedures/subscription/payment_get_subscription.sql
+
+2026-07-09
+  yellow_page/procedures/log/changelog_write.sql
+  yellow_page/procedures/adminpannel/get_org_storage_stats.sql
+  yellow_page/procedures/adminpannel/get_org_user_storage.sql
+  yellow_page/procedures/adminpannel/get_org_user_storage_count.sql
+  hub/procedures/admin/get_hub_user_storage.sql
+  common/procedures/channel/channel_search.sql
+
+2026-07-08
+  yellow_page/procedures/session/session_login_with_oauth.sql
+
+2026-07-08
+  common/patches/alter_action_log_add_invite_actions.sql
+  common/procedures/action_log/hub_get_audit_logs_window.sql
+  common/procedures/action_log/hub_get_audit_logs_count.sql
+  yellow_page/procedures/adminpannel/member_list_stats.sql
+  yellow_page/procedures/adminpannel/member_list_hubs_by_domain.sql
+  yellow_page/procedures/secure_share/secure_share_guest_events_by_domain.sql
+  yellow_page/procedures/secure_share/secure_share_guest_events_by_domain_count.sql
+  hub/procedures/admin/get_hub_user_storage.sql
+  yellow_page/procedures/adminpannel/get_org_user_storage.sql
+  common/patches/alter_task_add_duration.sql
+  common/procedures/task/task_create.sql
+  common/procedures/task/task_update.sql
+  common/procedures/task/task_list.sql
+  common/procedures/task/task_update_status.sql
+  common/procedures/task/task_set_assignees.sql
+
+2026-07-07
+  hub/procedures/channel/channel_list_messages.sql
+  yellow_page/procedures/adminpannel/member_list_stats.sql
+  yellow_page/procedures/adminpannel/pending_invites_by_domain.sql
+  yellow_page/procedures/adminpannel/get_org_user_storage.sql
+  yellow_page/procedures/adminpannel/get_org_storage_stats.sql
+  yellow_page/procedures/adminpannel/get_org_quota.sql
+  hub/procedures/admin/hub_member_stats.sql
+  yellow_page/patches/add_nid_to_mfs_changelog.sql
+  yellow_page/tables/mfs_changelog.sql
+  common/procedures/mfs/mfs_show_node_by.sql
+
+2026-07-06
+  common/procedures/mfs/mfs_show_node_by.sql
+
+2026-07-03
+  yellow_page/procedures/secure_share/secure_share_list_access_events.sql
+  yellow_page/procedures/secure_share/secure_share_guest_events_by_domain_count.sql
+  yellow_page/procedures/secure_share/secure_share_guest_events_by_domain.sql
+
+2026-07-02
+  yellow_page/procedures/adminpannel/member_save_workspace_roles.sql
+  hub/procedures/admin/hub_member_remove.sql
+  yellow_page/procedures/organization/organisation_get_retention.sql
+  yellow_page/procedures/organization/organisation_set_retention.sql
+  yellow_page/procedures/organization/organisation_list_retention.sql
+  yellow_page/procedures/organization/organisation_cache_version_history.sql
+  common/procedures/mfs/versioning/file_version_purge_expired.sql
+  common/procedures/mfs/versioning/get_hub_version_size.sql
+  yellow_page/procedures/contact/contact_log_activity.sql
+  yellow_page/procedures/contact/contact_task_assigned_unread.sql
+
+2026-06-30
+  drumate/procedures/activity_get_feed_all.sql
+  yellow_page/patches/add_creator_seen_at_to_secure_share_access_event.sql
+  yellow_page/procedures/secure_share/secure_share_open_feed.sql
+  yellow_page/procedures/secure_share/secure_share_mark_open_seen.sql
+  yellow_page/procedures/secure_share/secure_share_mark_all_open_seen.sql
+
+2026-06-29
+  drumate/procedures/notification/notification_center_next.sql
+  drumate/procedures/notification/notification_dismiss.sql
+  hub/procedures/channel/channel_list_notifications.sql
+
+2026-06-27
+  hub/procedures/channel/channel_export_messages.sql
+  hub/procedures/channel/channel_export_file_thread_messages.sql
+  hub/procedures/channel/channel_export_file_thread_list.sql
+  hub/procedures/channel/channel_export_count.sql
+  hub/procedures/channel/channel_export_file_thread_count.sql
+
+2026-06-26
+  drumate/procedures/activity_get_feed_all.sql
+
+2026-06-22
+  common/procedures/permission/permission_get_direct.sql
+  yellow_page/procedures/session/clear_session_priv_ceiling.sql
+  drumate/procedures/chat/chat_rooms.sql
+  drumate/procedures/chat/chat_room_info.sql
+
+2026-06-19
+  common/procedures/mfs/mfs_node_in_subtree.sql
+
+2026-06-18
+  yellow_page/patches/alter_cookie_priv_ceiling.sql
+  yellow_page/procedures/session/get_session_priv_ceiling.sql
+  yellow_page/procedures/session/set_session_priv_ceiling.sql
+  yellow_page/tables/cookie.sql
+
+2026-06-15
+  yellow_page/procedures/secure_share/secure_share_list_access_events.sql
+
+2026-06-14
+  yellow_page/procedures/secure_share/secure_share_log_access_event.sql
+  yellow_page/procedures/secure_share/secure_share_get_access_grant.sql
+  yellow_page/procedures/secure_share/secure_share_list_open_notifications.sql
+  yellow_page/patches/alter_secure_share_request_multi_level.sql
+  yellow_page/tables/secure_share_access_request.sql
+  yellow_page/procedures/secure_share/secure_share_create_access_request.sql
+  yellow_page/procedures/secure_share/secure_share_respond_to_access_request.sql
+
+2026-06-13
+  common/patches/alter_task_comments.sql
+  common/patches/alter_task_comment_threads_reactions.sql
+  common/procedures/task/task_comment_create.sql
+  common/procedures/task/task_comment_delete.sql
+  common/procedures/task/task_comment_list.sql
+  common/procedures/task/task_comment_react.sql
+  common/procedures/task/task_comment_update.sql
+  common/procedures/task/task_delete.sql
+  common/tables/task_comment_reaction.sql
+  common/tables/task_comment.sql
+
+2026-06-12
+  yellow_page/procedures/secure_share/secure_share_delete_access_events.sql
+  yellow_page/procedures/secure_share/secure_share_list_access_events.sql
+  yellow_page/procedures/secure_share/secure_share_list_requests.sql
+  yellow_page/procedures/secure_share/secure_share_log_access_event.sql
+  yellow_page/tables/secure_share_access_event.sql
+
+2026-06-11
+  yellow_page/patches/add_capabilities_to_secure_share_token.sql
+  yellow_page/patches/add_notify_on_open_to_secure_share_token.sql
+  yellow_page/patches/add_require_email_to_secure_share_token.sql
+  yellow_page/tables/secure_share_token.sql
+  yellow_page/procedures/secure_share/secure_share_create.sql
+  yellow_page/procedures/secure_share/secure_share_info.sql
+  yellow_page/procedures/secure_share/secure_share_list.sql
+
+2026-06-10
+  drumate/patches/add_entity_id_to_channel.sql
+  drumate/procedures/hubs/join_hub.sql
+
+2026-06-09
+  yellow_page/patches/v2_secure_share_schema.sql
+  yellow_page/procedures/secure_share/secure_share_create.sql
+  yellow_page/procedures/secure_share/secure_share_create_access_request.sql
+  yellow_page/procedures/secure_share/secure_share_get_access_grant.sql
+  yellow_page/procedures/secure_share/secure_share_increment_attempts.sql
+  yellow_page/procedures/secure_share/secure_share_info.sql
+  yellow_page/procedures/secure_share/secure_share_list.sql
+  yellow_page/procedures/secure_share/secure_share_respond_to_access_request.sql
+  yellow_page/tables/secure_share_access_request.sql
+  yellow_page/tables/secure_share_token.sql
+  yellow_page/procedures/drumate/drumate_update_profile.sql
+  yellow_page/procedures/session/otp/check.sql
+  yellow_page/procedures/session/secret/check.sql
+  yellow_page/procedures/session/secret/secret_check.sql
+
+2026-06-08
+  common/patches/cleanup_hub_only_sp_cruft.sql
+  common/patches/dryrun_check_hub_only_sp_cruft.sql
+  drumate/procedures/hubs/hubs.sql
+  drumate/procedures/hubs/join_hub.sql
+  drumate/procedures/hubs/show_hubs.sql
+  hub/procedures/members/hub_add_member.sql
+  yellow_page/procedures/session/session_signin.sql
+
+2026-06-07
+  yellow_page/procedures/token/token_hub_invite_set_status.sql
+
+2026-06-06
+  drumate/procedures/contact/contact_invite_refused_peer.sql
+  drumate/procedures/notification/notification_contact_refused.sql
+
+2026-06-05
+  yellow_page/procedures/token/token_get.sql
+
+2026-06-02
+  common/patches/alter_task_folder_scope_and_multi_assignee.sql
+  common/procedures/task/task_create.sql
+  common/procedures/task/task_delete.sql
+  common/procedures/task/task_list.sql
+  common/procedures/task/task_set_assignees.sql
+  common/procedures/task/task_update.sql
+  common/procedures/task/task_update_status.sql
+  common/tables/task_assignee.sql
+  common/tables/task.sql
+
+2026-06-01
+  drumate/procedures/chat/channel_read_messages.sql
+  hub/procedures/channel/channel_read_messages.sql
+
+2026-05-31
+  common/procedures/mfs/mfs_set_poster.sql
+
+2026-05-30
+  yellow_page/patches/add_password_hash_to_secure_share_token.sql
+  yellow_page/patches/add_active_socket_id_to_secure_share_token.sql
+  yellow_page/procedures/secure_share/secure_share_access_log.sql
+  yellow_page/procedures/secure_share/secure_share_create.sql
+  yellow_page/procedures/secure_share/secure_share_info.sql
+  yellow_page/procedures/secure_share/secure_share_revoke.sql
+
+2026-05-29
+  yellow_page/tables/oauth_accounts.sql
+
+2026-05-28
+  drumate/patches/migrate_permission_7_to_15.sql
+  hub/patches/migrate_permission_7_to_15.sql
+  hub/procedures/admin/folder_get_member_list.sql
+  hub/procedures/admin/hub_member_list.sql
+  hub/procedures/admin/hub_member_stats.sql
+  hub/procedures/members/hub_add_member.sql
+  hub/procedures/members/members_set_privilege.sql
+  templates/factory/drumate.sql
+  templates/factory/hub.sql
+
+2026-05-26
+  drumate/procedures/notification/notification_center.sql
+  yellow_page/patches/create_secure_share_token.sql
+  yellow_page/procedures/secure_share/secure_share_access_log.sql
+  yellow_page/procedures/secure_share/secure_share_create.sql
+  yellow_page/procedures/secure_share/secure_share_delete.sql
+  yellow_page/procedures/secure_share/secure_share_info.sql
+  yellow_page/procedures/secure_share/secure_share_list.sql
+  yellow_page/procedures/secure_share/secure_share_revoke.sql
+  yellow_page/tables/secure_share_token.sql
+
+2026-05-25
+  yellow_page/patches/2026-05-25-drop-migration-jobs.sql
+
+2026-05-23
+  yellow_page/patches/2026-05-23-gdrive-migration.sql
+  yellow_page/tables/oauth_accounts.sql
+  drumate/procedures/notification/notification_center.sql
+
+2026-05-21
+  drumate/patches/fix_informed_contacts.sql
+
+2026-05-20
+  yellow_page/procedures/drumate/drumate_update_profile.sql
+
+2026-05-19
+  templates/factory/drumate.sql
+  templates/factory/hub.sql
+  templates/factory/seed/yp.sql
+  yellow_page/procedures/conference/conference_invite.sql
+
+2026-05-18
+  drumate/procedures/notification/notification_center.sql
+  yellow_page/procedures/dmz/dmz_info.sql
+
+2026-05-17
+  yellow_page/procedures/adminpannel/member_list_drumates_by_domain.sql
+  common/procedures/action_log/hub_get_audit_logs_count.sql
+  common/procedures/action_log/hub_get_audit_logs_filtered.sql
+  common/procedures/action_log/hub_count_high_risk_actions.sql
+  common/procedures/action_log/hub_get_audit_logs_window.sql
+  drumate/procedures/notification/notification_center.sql
+  drumate/procedures/activity_get_log.sql
+  drumate/procedures/chat/chat_rooms.sql
+  drumate/procedures/tag.sql
+  yellow_page/procedures/move_user_to_free.sql
+  drumate/tables/mfs_dismissed.sql
+  drumate/procedures/mfs_dismiss_activity.sql
+
+2026-05-16
+  common/tables/task.sql
+  yellow_page/procedures/activity_publish.sql
+
+2026-05-15
+  drumate/patches/verify_contact_dismissed_at.sql
+  drumate/procedures/contact/my_contact_delete.sql
+
+2026-05-14
+  drumate/procedures/chat/contact_chat_rooms.sql
+  drumate/procedures/chat/p2p_delete_me.sql
+
+2026-05-13
+  drumate/procedures/contact/my_contact_email_in_use.sql
+  hub/procedures/channel/channel_notify_messages.sql
+  yellow_page/procedures/conference/conference_revoke.sql
+  yellow_page/triggers/disk_usage_sync_quota_cache.sql
+
+2026-05-12
+  common/procedures/action_log/hub_get_audit_logs_window.sql
+  common/procedures/permission/hub_count_admins.sql
+  drumate/procedures/chat/chat_rooms.sql
+  drumate/procedures/chat/p2p_get_message.sql
+  drumate/procedures/notification/notification_center.sql
+  drumate/procedures/notification/notification_hub_invites.sql
+  yellow_page/patches/cleanup_duplicate_hub_invites.sql
+  yellow_page/procedures/adminpannel/get_audit_stats.sql
+  yellow_page/procedures/adminpannel/get_security_signals.sql
+  yellow_page/procedures/contact/contact_log_activity.sql
+
+2026-05-11
+  hub/procedures/admin/hub_member_list.sql
+  hub/procedures/admin/hub_member_stats.sql
+  hub/procedures/members/hub_get_members_by_type.sql
+  yellow_page/procedures/adminpannel/member_list_workspaces.sql
+
+2026-05-08
+  drumate/procedures/activity_get_log.sql
+  drumate/procedures/contact_activity_dismiss.sql
+  drumate/procedures/mfs_mark_all_read.sql
+  drumate/procedures/notification/notification_dismiss.sql
+  drumate/procedures/notification/notification_read.sql
+  drumate/tables/contact.sql
+  drumate/patches/alter_contact_activity_add_dismissed_at.sql
+  drumate/patches/alter_contact_add_dismissed_at.sql
+  yellow_page/procedures/activity_publish.sql
+  yellow_page/tables/contact_activity.sql
+
+2026-05-07
+  common/procedures/mfs/mfs_manifest.sql
+  drumate/procedures/chat/chat_count_unread.sql
+  drumate/procedures/chat/contact-list.sql
+  drumate/procedures/desk/desk_search_by_index.sql
+  hub/patches/alter_channel_add_mention_ids.sql
+  hub/patches/alter_channel_sync_structure.sql
+  hub/procedures/channel/channel_post_message.sql
+  hub/tables/channel.sql
+  patches/yellow_page/table_quota.sql
+  yellow_page/procedures/directory/create_payment.sql
+  yellow_page/procedures/directory/create_plan.sql
+  yellow_page/procedures/directory/users_list.sql
+  yellow_page/procedures/drumate/drumate_update_domain.sql
+  yellow_page/procedures/session/secret/check.sql
+  yellow_page/procedures/session/secret/create.sql
+  yellow_page/tables/001_create_pseudo_entity.sql
+  yellow_page/tables/002_create_mfs_token.sql
+
+2026-05-06
+  common/tables/file_version.sql
+  common/procedures/mfs/versioning/file_version_delete_old.sql
+  common/procedures/mfs/versioning/file_version_download.sql
+  common/procedures/mfs/versioning/file_version_get.sql
+  common/procedures/mfs/versioning/file_version_list.sql
+  drumate/tables/p2p_channel.sql
+  drumate/tables/p2p_read.sql
+  drumate/tables/p2p_time.sql
+  drumate/procedures/chat/count_yet_read_next.sql
+  drumate/procedures/chat/p2p_acknowledge.sql
+  drumate/procedures/chat/p2p_delete_all.sql
+  drumate/procedures/chat/p2p_delete_me.sql
+  drumate/procedures/chat/p2p_list_messages.sql
+  drumate/procedures/chat/p2p_post_message.sql
+  hub/procedures/admin/get_hub_storage_stats.sql
+  hub/procedures/admin/get_hub_user_storage.sql
+  hub/procedures/channel/channel_post_message.sql
+  yellow_page/procedures/adminpannel/get_hub_audit_logs.sql
+
+2026-05-04
+  common/patches/alter_channel_sync_structure.sql
+  common/patches/alter_socket_add_mtime.sql
+  common/patches/alter_task_add_fields.sql
+  common/procedures/label/label_create.sql
+  common/procedures/label/label_delete.sql
+  common/procedures/label/label_list.sql
+  common/procedures/label/label_update.sql
+  common/procedures/task/task_create.sql
+  common/procedures/task/task_delete.sql
+  common/procedures/task/task_get_labels.sql
+  common/procedures/task/task_link_label.sql
+  common/procedures/task/task_list.sql
+  common/procedures/task/task_search_linkable_files.sql
+  common/procedures/task/task_unlink_label.sql
+  common/procedures/task/task_update.sql
+  common/procedures/task/task_update_assignee.sql
+  common/procedures/task/task_update_status.sql
+  common/tables/label.sql
+  common/tables/task.sql
+  common/tables/task_label.sql
+  drumate/procedures/notification/notification_center.sql
+
+2026-05-03
+  common/procedures/channel/channel_post_message.sql
+
+2026-05-02
+  common/patches/alter_action_log_add_actions.sql
+  common/procedures/action_log/hub_get_audit_logs_filtered.sql
+  drumate/procedures/chat/chat_rooms.sql
+  hub/procedures/admin/hub_member_list.sql
+  hub/procedures/admin/hub_member_remove.sql
+  hub/procedures/admin/hub_member_stats.sql
+  hub/procedures/channel/room_detail.sql
+  yellow_page/procedures/adminpannel/get_audit_stats.sql
+  yellow_page/procedures/adminpannel/get_org_storage_stats.sql
+  yellow_page/procedures/adminpannel/get_org_user_storage.sql
+  yellow_page/procedures/adminpannel/member_list_workspaces.sql
+  yellow_page/procedures/adminpannel/member_save_workspace_roles.sql
+
+2026-04-30
+  common/patches/alter_channel_add_mention_ids.sql
+  common/procedures/mfs/mfs_show_node_by.sql
+  common/procedures/mfs-trash/mfs_show_bin.sql
+  drumate/procedures/mfs_dismiss_activity.sql
+  drumate/procedures/mfs_get_activity_feed.sql
+  drumate/tables/mfs_dismissed.sql
+
+2026-04-28
+  common/procedures/channel/channel_list_by_file.sql
+  common/procedures/task/task_get_linked_files.sql
+  common/procedures/task/task_link_file.sql
+  common/procedures/task/task_unlink_file.sql
+  common/tables/common.sql
+  common/tables/task_file.sql
+
+2026-04-26
+  yellow_page/tables/workspace_invitation.sql
+
+2026-04-25
+  common/procedures/channel/channel_search.sql
+  drumate/procedures/desk/desk_recent_files.sql
+  drumate/procedures/notification/notification_bookmark_add.sql
+  drumate/procedures/notification/notification_bookmark_list.sql
+  drumate/procedures/notification/notification_bookmark_remove.sql
+  drumate/tables/notification_bookmark.sql
+
+2026-04-17
+  hub/procedures/permission/hub_get_workspace_admins.sql
+  yellow_page/procedures/adminpannel/member_device_list.sql
+  yellow_page/procedures/adminpannel/member_device_remove.sql
+  yellow_page/procedures/adminpannel/member_device_remove_all.sql
+  yellow_page/procedures/adminpannel/member_list.sql
+  yellow_page/procedures/adminpannel/member_list_hubs_by_domain.sql
+  yellow_page/procedures/adminpannel/member_list_stats.sql
+  yellow_page/tables/device.sql
+
+2026-04-13
+  common/tables/channel.sql
+  hub/procedures/channel/channel_list_messages.sql
+  hub/procedures/channel/channel_list_notifications.sql
+  hub/procedures/channel/channel_notify_messages.sql
+  hub/procedures/channel/channel_write.sql
+  patches/alter_channel_add_mention_ids.sql
+
+2026-04-10
+  common/procedures/mfs-trash/mfs_pre_trash.sql
+
+2026-04-08
+  common/procedures/mfs/mfs_list_all.sql
+
+2026-04-06
+  common/procedures/mfs/restore.sql
+
+2026-04-03
+  common/procedures/mfs/mfs_get_path.sql
+  common/tables/share_track.sql
+  hub/procedures/share/share_track_add.sql
+
+2026-04-02
+  templates/factory/seed/yp.sql
+  templates/firebase/tunnel.sql
+  templates/firebase/yp.sql
+
+2026-03-30
+  yellow_page/procedures/session/session_signin.sql
+
+2026-03-27
+  common/procedures/mfs/mfs_access_node.sql
+  templates/factory/drumate.sql
+  templates/factory/hub.sql
+  templates/factory/seed/mailserver.sql
+  templates/factory/seed/template.sql
+  templates/factory/seed/trash.sql
+  templates/factory/seed/utils.sql
+  yellow_page/procedures/mfs/mfs_get_autorized_node.sql
+  yellow_page/tables/mfs_authorized_node.sql
+
+2026-03-13
+  drumate/procedures/contact/my_contact_show_next.sql
+  yellow_page/procedures/guest/pending_invitation_delete_by_email.sql
+  yellow_page/procedures/guest/pending_invitation_get_by_email.sql
+  yellow_page/procedures/guest/share_guest_list_by_hub.sql
+  yellow_page/procedures/guest/yp_add_pending_invitation.sql
+  yellow_page/tables/pending_invitation.sql
+
+2026-03-09
+  common/procedures/mfs/mfs_create_node.sql
+
+2026-03-06
+  yellow_page/procedures/directory/get_db_name.sql
+  yellow_page/procedures/mfs/mfs_add_autorized_node.sql
+  yellow_page/procedures/mfs/mfs_cleanup_autorized_node.sql
+  yellow_page/procedures/utils/add_filecap.sql
+  yellow_page/tables/mfs_token.sql
+  yellow_page/tables/pseudo_entity.sql
+
+2026-03-05
+  yellow_page/procedures/guest/share_guest_delete_by_email.sql
+  yellow_page/procedures/guest/share_guest_get_by_email.sql
+
+2026-02-23
+  drumate/procedures/stats/count_chat_message.sql
+  drumate/procedures/stats/count_folders.sql
+  drumate/procedures/stats/count_media.sql
+  drumate/procedures/stats/count_notes.sql
+  yellow_page/procedures/drumate/count_team_folders.sql
+  yellow_page/procedures/drumate/count_user_contacts.sql
+  yellow_page/procedures/drumate/count_user_folders.sql
+  yellow_page/procedures/drumate/count_user_notes.sql
+
+2026-02-12
+  drumate/procedures/stats/count_contact.sql
+
+2026-02-11
+  drumate/procedures/log/show_login_log.sql
+  yellow_page/procedures/adminpannel/domain_expel_user.sql
+  yellow_page/procedures/drumate/show_login_log.sql
+
+2026-02-10
+  yellow_page/procedures/move_user_to_free.sql
+
+2026-02-09
+  drumate/procedures/contact/my_contact_mail_add.sql
+
+2026-02-03
+  drumate/procedures/contact/contact_search_by_domain_next.sql
+
+2026-02-02
+  yellow_page/procedures/admin/analytics.sql
+  yellow_page/procedures/admin/online_users.sql
+
+2026-01-30
+  common/procedures/migration/apply_trash_expiry_migration.sql
+  common/procedures/trash/mfs_get_expired_trash.sql
+  drumate/procedures/contact/my_contact.sql
+
+2026-01-29
+  common/procedures/mfs/mfs_restore_into.sql
+  common/procedures/mfs-trash/mfs_empty_trash.sql
+  drumate/procedures/contact/my_contact_exists.sql
+
+2026-01-28
+  common/procedures/mfs/mfs_wicket_home.sql
+  drumate/procedures/chat/acknowledge_message.sql
+  drumate/procedures/chat/list_message.sql
+  drumate/procedures/desk/desk_search.sql
+
+2026-01-22
+  common/tables/trash_media.sql
+
+2026-01-21
+  common/procedures/trash/empty_trash_for_hub.sql
+  common/procedures/trash/find_all_expired_trash.sql
+  yellow_page/procedures/trash/update_trash_last_run.sql
+
+2026-01-19
+  common/procedures/mfs/seo_index.sql
+  common/tables/seo_index.sql
+  drumate/procedures/seo/seo_search.sql
+
+2026-01-17
+  common/tables/seo_register.sql
+
+2026-01-16
+  common/procedures/mfs-trash/mfs_delete_trash.sql
+
+2026-01-15
+  drumate/procedures/desk/desk_build_index.sql
+  patches/drumate/procedures/add_fulltext_index_to_media_index.sql
+  patches/drumate/procedures/desk_build_index.sql
+  yellow_page/procedures/trash/get_trash_config.sql
+  yellow_page/procedures/trash/update_trash_config.sql
+  yellow_page/tables/migration_log.sql
+  yellow_page/tables/trash_expiry_config.sql
+
+2026-01-13
+  common/procedures/mfs/mfs_move_all.sql
+  hub/procedures/dmz/dmz_settings.sql
+  yellow_page/triggers/disk_usage_sync_quota_cache.sql
+
+2026-01-12
+  common/procedures/seo/seo_cleanup_batch.sql
+  common/procedures/seo/seo_cleanup_folder_recursive.sql
+  common/procedures/seo/seo_delete_index.sql
+  common/procedures/seo/seo_search_unified.sql
+  common/procedures/seo/seo_update_hub.sql
+
+2026-01-11
+  yellow_page/procedures/directory/get_quota.sql
+
+2026-01-10
+  hub/procedures/members/hub_get_members_by_type.sql
+  hub/procedures/members/remove_member.sql
+
+2026-01-08
+  yellow_page/procedures/directory/get_domain_usage.sql
+  yellow_page/procedures/directory/recalculate_domain_usage.sql
+  yellow_page/tables/quota_usage.sql
+
+2026-01-06
+  hub/procedures/members/hub_add_member.sql
+  yellow_page/procedures/drumate/drumate_update_profile.sql
+  yellow_page/procedures/session/secret/secret_check.sql
+  yellow_page/procedures/session/secret/secret_clear.sql
+  yellow_page/procedures/session/secret/secret_create.sql
+  yellow_page/procedures/session/session_check_cookie.sql
+  yellow_page/tables/payment.sql
+
+2026-01-05
+  yellow_page/procedures/directory/update_quota.sql
+
+2026-01-04
+  yellow_page/procedures/directory/create_quota.sql
+  yellow_page/procedures/directory/get_user.sql
+  yellow_page/procedures/session/session_login_otp.sql
+
+2026-01-01
+  common/procedures/mfs/mfs_node_summary.sql
+
+2025-12-29
+  yellow_page/procedures/drumate/drumate_create.sql
+  yellow_page/tables/plan.sql
+
+2025-12-19
+  yellow_page/procedures/domain/domain_grant.sql
+  yellow_page/procedures/session/session_login.sql
+  yellow_page/tables/quota.sql
+
+2025-12-18
+  drumate/procedures/activity_get_log.sql
+  drumate/procedures/mfs_mark_all_read.sql
+
+2025-12-12
+  drumate/procedures/desk_create_hub.sql
+
+2025-12-11
+  drumate/procedures/mfs_get_unread_count.sql
+  patches/drumate/procedures/fix_existing_users_mfs_ack.sql
+
+2025-12-10
+  drumate/procedures/desk/desk_disk_usage.sql
+
+2025-12-08
+  common/procedures/mfs/mfs_contact_summary.sql
+  common/procedures/mfs/mfs_node_info.sql
+  drumate/procedures/activity_get_folder_log.sql
+  drumate/procedures/contact/contact_summary.sql
+  yellow_page/procedures/session/session_login_with_oauth.sql
+
+2025-12-04
+  drumate/tables/mfs_ack.sql
+  yellow_page/procedures/contact/contact_log_activity.sql
+  yellow_page/tables/contact_activity.sql
+  yellow_page/tables/oauth_accounts.sql
+
+2025-12-03
+  drumate/procedures/desk/desk_my_wallpapers.sql
+
+2025-12-02
+  common/procedures/mfs/mfs_update_metadata.sql
+
+2025-11-30
+  drumate/procedures/mfs_acknowledge_file.sql
+
+2025-11-19
+  yellow_page/procedures/session_login_with_oauth.sql
+  yellow_page/tables/oauth_state.sql
+
+2025-11-17
+  yellow_page/procedures/mfs_token_cleanup.sql
+  yellow_page/procedures/mfs_token_create.sql
+  yellow_page/procedures/mfs_token_list.sql
+  yellow_page/procedures/mfs_token_revoke.sql
+  yellow_page/procedures/mfs_token_validate.sql
+  yellow_page/procedures/session/otp/check.sql
+  yellow_page/procedures/session/otp/create.sql
+  yellow_page/procedures/session/secret/check.sql
+  yellow_page/procedures/session/secret/create.sql
+  yellow_page/tables/otp.sql
+  yellow_page/tables/secret.sql
+
+2025-11-06
+  yellow_page/tables/002_create_oauth_state_table.sql

@@ -1,0 +1,73 @@
+#!/bin/bash
+# Write patches/manifest.txt from patches/changelog.txt for a given date range.
+# Files are ordered oldest-first so the patching engine applies foundational
+# changes before later ones.  Files under templates/ or missing from disk are
+# skipped.
+#
+# Usage:
+#   bin/update-manifest --start=YYYY-MM-DD [--end=YYYY-MM-DD]
+#
+# --start  first date to include (required)
+# --end    last date to include (default: today)
+
+script_dir="$(dirname "$(readlink -f "$0")")"
+base_dir="$(dirname "$script_dir")"
+changelog="$base_dir/patches/changelog.txt"
+manifest="$base_dir/patches/manifest.txt"
+
+start_date=""
+end_date=$(date +"%Y-%m-%d")
+
+for arg in "$@"; do
+  case $arg in
+    --start=*) start_date="${arg#*=}" ;;
+    --end=*)   end_date="${arg#*=}" ;;
+  esac
+done
+
+if [ -z "$start_date" ]; then
+  echo "Usage: $(basename "$0") --start=YYYY-MM-DD [--end=YYYY-MM-DD]" >&2
+  exit 1
+fi
+
+cd "$base_dir"
+
+# ── Collect entries from the date range ───────────────────────────────────────
+# Parse changelog (newest-first), emit "date<TAB>file" for every entry in
+# [start, end], sort ascending by date then path, dedup keeping oldest date.
+dated=$(awk -v start="$start_date" -v end="$end_date" '
+  /^[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]$/ {
+    cur = $0
+    active = (cur >= start && cur <= end)
+    next
+  }
+  /^  / && active {
+    f = substr($0, 3)
+    if (f !~ /^templates\//) print cur "\t" f
+  }
+' "$changelog" | sort -t$'\t' -k1,1 -k2,2 | awk -F'\t' '!seen[$2]++')
+
+if [ -z "$dated" ]; then
+  echo "No changelog entries between $start_date and $end_date" >&2
+  exit 1
+fi
+
+# ── Write manifest ────────────────────────────────────────────────────────────
+# Use a here-string (not a pipeline) so the while loop runs in the current
+# shell — avoids the subshell stdout-loss bug when while is the last pipe stage.
+file_paths=$(printf '%s\n' "$dated" | awk -F'\t' '{print $2}')
+
+tmp=$(mktemp /tmp/drumee.manifest.XXXXXX)
+while IFS= read -r file; do
+  [ -z "$file" ] && continue
+  if [ -f "$base_dir/$file" ]; then
+    printf '  %s\n' "$file" >> "$tmp"
+  else
+    echo "skip (not found): $file" >&2
+  fi
+done <<< "$file_paths"
+
+mv "$tmp" "$manifest"
+
+total=$(grep -c '[^[:space:]]' "$manifest")
+echo "Updated $manifest — $total entries (range: $start_date → $end_date)" >&2

@@ -1,0 +1,37 @@
+#!/bin/bash
+script_dir="$(dirname "$(readlink -f "$0")")"
+base_dir="$(dirname $script_dir)"
+tmpfile=/tmp/drumee.manifest.$$
+if [ -z $1 ]; then
+  git log --pretty=oneline -10
+  echo "Usage : $worker hash1 hash2"
+  exit 1
+fi
+
+rm -rf $base_dir/patches
+mkdir -p $base_dir/patches
+cd $base_dir/patches
+
+if [ -f manifest.txt ]; then
+  d=$(date +"%Y-%m-%d")
+  mkdir -p manifest-old
+  mv manifest.txt manifest-old/${d}.txt
+fi
+
+git diff --name-only $1 $2 | grep -E "\.sql$" > manifest.txt
+
+for i in $(cat manifest.txt); do 
+  dir=$(dirname $i); 
+  echo Writing manifest in $dir 
+  mkdir -p $dir
+  if [ -f "${base_dir}/$i" ]; then
+    if [[ $i =~ ^.+\.sql$ ]]; then
+      cp ${base_dir}/$i $dir/
+      echo selected $i
+      echo $i >> $tmpfile
+    fi
+  fi
+done
+if [ -f "${tmpfile}" ]; then
+  mv $tmpfile manifest.txt
+fi

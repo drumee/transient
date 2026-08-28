@@ -1,0 +1,28 @@
+CREATE TABLE IF NOT EXISTS `file_thread_lineage` (
+  `lineage_id` varchar(16) CHARACTER SET ascii COLLATE ascii_general_ci NOT NULL,
+  `original_hub_id` varchar(16) CHARACTER SET ascii COLLATE ascii_general_ci NOT NULL,
+  `original_file_nid` varchar(16) CHARACTER SET ascii COLLATE ascii_general_ci NOT NULL,
+  `original_thread_id` varchar(16) CHARACTER SET ascii COLLATE ascii_general_ci NOT NULL,
+  `current_hub_id` varchar(16) CHARACTER SET ascii COLLATE ascii_general_ci NOT NULL,
+  `current_file_nid` varchar(16) CHARACTER SET ascii COLLATE ascii_general_ci NOT NULL,
+  `current_thread_id` varchar(16) CHARACTER SET ascii COLLATE ascii_general_ci NOT NULL,
+  `holder_hub_id` varchar(16) CHARACTER SET ascii COLLATE ascii_general_ci DEFAULT NULL COMMENT 'Hub currently holding the file; NULL when the file is at its home hub',
+  `holder_file_nid` varchar(16) CHARACTER SET ascii COLLATE ascii_general_ci DEFAULT NULL COMMENT 'Node id of the file in the holding hub; NULL when the file is home',
+  `file_name` varchar(255) DEFAULT NULL COMMENT 'Filename as it was when the file left, for display while it is away',
+  `current_operation_id` varchar(16) CHARACTER SET ascii COLLATE ascii_general_ci DEFAULT NULL,
+  `last_transition_id` varchar(16) CHARACTER SET ascii COLLATE ascii_general_ci DEFAULT NULL,
+  `last_transition_reason` varchar(32) CHARACTER SET ascii COLLATE ascii_general_ci DEFAULT NULL,
+  `access_revision` bigint(20) unsigned NOT NULL DEFAULT 0,
+  `state` enum('active','moving','unavailable','conflict','failed','orphaned') NOT NULL DEFAULT 'active',
+  `created_by` varchar(16) CHARACTER SET ascii COLLATE ascii_general_ci NOT NULL,
+  `ctime` int(11) unsigned NOT NULL,
+  `mtime` int(11) unsigned NOT NULL,
+  PRIMARY KEY (`lineage_id`),
+  UNIQUE KEY `file_thread_lineage_position_uidx` (`current_hub_id`,`current_file_nid`),
+  UNIQUE KEY `file_thread_lineage_operation_uidx` (`current_operation_id`),
+  UNIQUE KEY `file_thread_lineage_transition_uidx` (`last_transition_id`),
+  KEY `file_thread_lineage_original_idx` (`original_hub_id`,`original_file_nid`),
+  KEY `file_thread_lineage_thread_idx` (`current_hub_id`,`current_thread_id`),
+  KEY `file_thread_lineage_state_idx` (`state`,`mtime`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
+  COMMENT='Server-owned current position and monotonic access revision for a moved file thread';

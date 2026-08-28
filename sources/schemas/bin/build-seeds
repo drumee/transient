@@ -1,0 +1,29 @@
+#!/bin/bash
+set -e
+script_dir=$(dirname $(readlink -f $0))
+schemas_dir=$(dirname $script_dir)
+if [ "$SEEDS_DIR" = "" ]; then
+  #SEEDS_DIR=$HOME/build/schemas/seeds/
+  build_dir=$schemas_dir/build/seeds/
+else
+  build_dir=$SEEDS_DIR
+fi
+
+if [ "$1" = "autoclean" ]; then
+  echo Removing existing $build_dir
+  rm -rf "$build_dir"
+fi
+
+mkdir -p "$build_dir"
+echo Building schemas seeds into $build_dir
+
+collation=$(mariadb -e "show variables like 'character_set_collations';"|tail -1)
+if [ "$collation" != "" ]; then
+  mariadb -e "set GLOBAL character_set_collations='utf8mb4=utf8mb4_general_ci'"
+fi
+
+mariabackup --backup --target-dir=$build_dir --user=root >/dev/null 2>/dev/null
+mariabackup --prepare --target-dir=$build_dir
+chown -R www-data:sudo $build_dir
+chmod -R g+r $build_dir
+find $build_dir -type d -exec chmod g+rx {} \;
