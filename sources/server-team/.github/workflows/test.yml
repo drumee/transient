@@ -1,0 +1,43 @@
+name: Test - secure-share regression
+
+# Runs standalone zero-dependency regressions on PRs into the mainline branches.
+# It does NOT touch the deploy pipeline (deploy.yml) and is not a required check
+# unless branch protection marks it so — a failure surfaces on the PR but never
+# blocks a deploy.
+#
+# Deliberately does NOT `npm install`: both test files need only the checked-out
+# source, and the secure-share behavioural tests self-skip when the private
+# @drumee/server-essentials dependency is absent. This runs on a stock
+# GitHub-hosted runner without private-registry auth.
+
+on:
+  pull_request:
+    branches: [test, preview, main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: test-secure-share-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  regression:
+    name: Secure-share session invariants
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Run secure-share session regression test
+        run: node offline/test/secure-share-session.test.js
+      - name: Run file-move result regression test
+        run: node offline/test/move-plan.test.js
+      - name: Run file-thread access event regression test
+        run: node offline/test/file-thread-access-events.test.js
+      - name: Run media name-search regression test
+        run: node offline/test/media-search-names.test.js
+      - name: Run factory projection-readiness regression test
+        run: node --test offline/test/factory-projection-readiness.test.js

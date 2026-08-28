@@ -1,0 +1,16 @@
+{
+  "services": {
+    "notify": {
+      "scope": "hub",
+      "permission": {
+        "src": "read"
+      }
+    },
+    "open": {
+      "scope": "hub",
+      "permission": {
+        "src": "read"
+      }
+    }
+  }
+}

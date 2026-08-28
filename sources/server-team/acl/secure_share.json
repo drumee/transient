@@ -1,0 +1,259 @@
+{
+  "modules": {
+    "private": "service/private/secure_share",
+    "public": ""
+  },
+  "services": {
+    "create": {
+      "doc": "Create a secure share token for a file or folder. v2: email is optional (omit for a public link). Sends an invitation email only when exactly one named recipient email is provided.",
+      "scope": "hub",
+      "permission": {
+        "src": "write",
+        "fast_check": "user_permission"
+      },
+      "log": true,
+      "params": {
+        "nid": {
+          "type": "string",
+          "required": true,
+          "doc": "Node ID of the file or folder to share"
+        },
+        "permission_level": {
+          "type": "string",
+          "required": false,
+          "default": "can_view",
+          "doc": "Legacy single access level: can_view, can_download, can_chat, can_edit. Derived from capabilities when that is provided."
+        },
+        "capabilities": {
+          "type": "array",
+          "required": false,
+          "doc": "v2 multi-select capability set granted to recipients, any of can_download, can_chat, can_edit. can_view is the implicit baseline. Source of truth when provided."
+        },
+        "allowed_emails": {
+          "type": "array",
+          "required": false,
+          "doc": "Optional list of allowed emails or @domain patterns that further restricts who may view. Leave empty to accept any email when require_email is set."
+        },
+        "require_email": {
+          "type": "boolean",
+          "required": false,
+          "default": false,
+          "doc": "When true, viewers must enter an email to access. Decoupled from allowed_emails — set without a list to require any email."
+        },
+        "notify_on_open": {
+          "type": "integer",
+          "required": false,
+          "default": 1,
+          "doc": "When 1 (default), the sender is notified in real time each time a recipient opens the share. Set 0 to suppress open notifications."
+        },
+        "days": {
+          "type": "integer",
+          "required": false,
+          "default": 0,
+          "doc": "Expiry in days, combined with hours. 0 means no expiry."
+        },
+        "hours": {
+          "type": "integer",
+          "required": false,
+          "default": 0,
+          "doc": "Expiry in hours, combined with days. 0 means no expiry."
+        },
+        "password": {
+          "type": "string",
+          "required": false,
+          "doc": "Optional password. Stored as salted PBKDF2-SHA512 hash — never in plain text."
+        }
+      },
+      "returns": {
+        "id":              { "type": "string",  "doc": "Unique share token" },
+        "link":            { "type": "string",  "doc": "Full share URL" },
+        "permission_level":{ "type": "string" },
+        "allowed_emails":  { "type": "array" },
+        "expiry_time":     { "type": "integer", "doc": "Unix timestamp, 0 = no expiry" }
+      },
+      "errors": [
+        { "code": "CREATE_FAILED", "message": "Token creation failed" },
+        { "code": "MISSING_PARAM", "message": "nid is required", "http_status": 400 }
+      ]
+    },
+    "access_list": {
+      "doc": "List all secure share tokens for a node including v2 fields (permission_level, allowed_emails). Same data as list, used by the v2 share panel.",
+      "scope": "hub",
+      "permission": {
+        "src": "write",
+        "fast_check": "user_permission"
+      },
+      "params": {
+        "nid": {
+          "type": "string",
+          "required": true,
+          "doc": "Node ID to list secure share tokens for"
+        }
+      }
+    },
+    "list_access_events": {
+      "doc": "List per-access-event rows for a node (one row per visit): recipient email, entered_at, last_seen_at and duration. Creator-scoped by the SP. Backs the v2 'View access list' table.",
+      "scope": "hub",
+      "permission": {
+        "src": "write",
+        "fast_check": "user_permission"
+      },
+      "params": {
+        "nid": {
+          "type": "string",
+          "required": true,
+          "doc": "Node ID to list access events for"
+        }
+      }
+    },
+    "revoke_recipient": {
+      "doc": "Revoke a single recipient's current access grant for a shared node (removes their hub permission grant). Re-requestable — does not blocklist the email. Also clears that recipient's access-event rows so they drop off the access list. Caller must be the share creator.",
+      "scope": "hub",
+      "permission": {
+        "src": "write",
+        "fast_check": "user_permission"
+      },
+      "log": true,
+      "params": {
+        "nid":   { "type": "string", "required": true,  "doc": "Node ID the share belongs to" },
+        "email": { "type": "string", "required": false, "doc": "Recipient email to revoke (from the access-list row)" },
+        "uid":   { "type": "string", "required": false, "doc": "Recipient user id, when known (from the access-list row actor_id)" }
+      }
+    },
+    "list": {
+      "doc": "List all secure share tokens created by the current user for a given node, including status (active / expired / revoked) and access counts.",
+      "scope": "hub",
+      "permission": {
+        "src": "write",
+        "fast_check": "user_permission"
+      },
+      "params": {
+        "nid": {
+          "type": "string",
+          "required": true,
+          "doc": "Node ID to list secure share tokens for"
+        }
+      }
+    },
+    "list_requests": {
+      "doc": "List pending secure-share access requests addressed to the current user (the share creator). Backs the sender notification-panel entries. Read-only; the SP filters by creator_id so callers only see their own pending requests.",
+      "scope": "hub",
+      "permission": {
+        "src": "read"
+      }
+    },
+    "list_open_notifications": {
+      "doc": "List recent share-open events across the current user's secure shares (creator), deduped per recipient, for the activity notification panel. Read-only; the SP filters by creator_id and notify_on_open.",
+      "scope": "hub",
+      "permission": {
+        "src": "read"
+      }
+    },
+    "mark_open_seen": {
+      "doc": "Mark a share-open notification (token + recipient) as seen by the creator so it leaves the Unread feed but still shows under Unread off and survives a reload. Scoped server-side to the caller's own shares.",
+      "scope": "hub",
+      "permission": {
+        "src": "write"
+      },
+      "log": true,
+      "params": {
+        "token_id": {
+          "type": "string",
+          "required": true,
+          "doc": "Share token id identifying the open-notification group"
+        },
+        "recipient_email": {
+          "type": "string",
+          "required": false,
+          "doc": "Recipient email of the group; omit for anonymous opens"
+        }
+      }
+    },
+    "set_notify_on_open": {
+      "doc": "Turn the sender's open-notification preference on or off for one of their own links, after the link has been created. notify_on_open was create-time only, so the panel's toggle could not persist. Scoped server-side to the caller's own shares; answers NOT_FOUND identically for an unknown token and someone else's token.",
+      "scope": "hub",
+      "permission": {
+        "src": "write"
+      },
+      "log": true,
+      "params": {
+        "token": {
+          "type": "string",
+          "required": true,
+          "doc": "Secure share token whose notification preference to change"
+        },
+        "notify_on_open": {
+          "type": "integer",
+          "required": true,
+          "doc": "1 to notify the sender each time a recipient opens the share, 0 to stop notifying. The access list keeps recording opens either way."
+        }
+      }
+    },
+    "revoke": {
+      "doc": "Revoke a secure share token (soft delete — sets revoked_at timestamp). Broadcasts a secure_share_revoked event via Redis to all hub socket connections so the recipient loses access instantly.",
+      "scope": "hub",
+      "permission": {
+        "src": "write"
+      },
+      "log": true,
+      "params": {
+        "token": {
+          "type": "string",
+          "required": true,
+          "doc": "Secure share token to revoke"
+        }
+      }
+    },
+    "revoke_email": {
+      "doc": "Cut one recipient off a secure share link while the link keeps working for everyone else. Adds the address to the token's deny list, which the DMZ gate refuses before any allow rule, drops that account's node-scoped grant, and pushes secure_share_revoked to that user's own sockets. Creator-scoped in the stored procedure. Access-event history is kept.",
+      "scope": "hub",
+      "permission": {
+        "src": "write"
+      },
+      "log": true,
+      "params": {
+        "token": {
+          "type": "string",
+          "required": true,
+          "doc": "Secure share token the recipient came through"
+        },
+        "email": {
+          "type": "string",
+          "required": true,
+          "doc": "Recipient email to cut off this link"
+        }
+      }
+    },
+    "delete": {
+      "doc": "Hard-delete a secure share token. Only succeeds when the token is already revoked or expired — active tokens are rejected.",
+      "scope": "hub",
+      "permission": {
+        "src": "write"
+      },
+      "log": true,
+      "params": {
+        "token": {
+          "type": "string",
+          "required": true,
+          "doc": "Token to permanently delete. Must already be revoked or expired."
+        }
+      }
+    },
+    "respond_to_access_request": {
+      "doc": "Approve or deny a pending secure share access request. Caller must be the share creator. Notifies the guest socket and broadcasts to hub members in real time.",
+      "scope": "hub",
+      "permission": {
+        "src": "write"
+      },
+      "log": true,
+      "params": {
+        "request_id":    { "type": "string", "required": true,  "doc": "ID of the access request to respond to" },
+        "action":        { "type": "string", "required": true,  "doc": "approve or deny" },
+        "granted_level": { "type": "string", "required": false, "doc": "Access level to grant — required when action is approve. can_view, can_download, can_chat, or can_edit" }
+      },
+      "returns": {
+        "status": { "type": "string", "doc": "APPROVED, DENIED, INVALID_ACTION, INVALID_LEVEL, or INVALID_REQUEST" }
+      }
+    }
+  }
+}

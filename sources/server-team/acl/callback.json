@@ -1,0 +1,41 @@
+{
+  "services": {
+    "check_out_success": {
+      "doc": "Stripe Checkout success return. UX-only: redirects the browser to the desk. Entitlement is applied by the payment.webhook service; the FE plan updates via the WS payment.plan_updated event.",
+      "scope": "hub",
+      "permission": {
+        "src": "read",
+        "fast_check": "public-api"
+      },
+      "params": {
+        "session_id": {
+          "type": "string",
+          "required": false,
+          "doc": "Stripe checkout session ID appended by Stripe on redirect. Not used (kept for URL compatibility)."
+        }
+      }
+    },
+    "check_out_cancel": {
+      "doc": "Stripe Checkout cancel return. UX-only: redirects the browser to the desk.",
+      "scope": "hub",
+      "permission": {
+        "src": "read",
+        "fast_check": "public-api"
+      },
+      "params": {}
+    },
+    "portal_return": {
+      "doc": "Stripe Billing Portal return. UX-only same-site bounce: redirects the browser to the desk so the SameSite=Strict session cookie survives the cross-site return (avoids apparent logout).",
+      "scope": "hub",
+      "permission": {
+        "src": "read",
+        "fast_check": "public-api"
+      },
+      "params": {}
+    }
+  },
+  "modules": {
+    "private": "service/callback",
+    "public": "service/callback"
+  }
+}

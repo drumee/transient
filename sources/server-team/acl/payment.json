@@ -1,0 +1,206 @@
+{
+  "services": {
+    "catalog": {
+      "scope": "hub",
+      "permission": {
+        "src": "owner"
+      },
+      "params": {}
+    },
+    "checkout": {
+      "scope": "hub",
+      "permission": {
+        "src": "owner"
+      },
+      "params": {
+        "period": {
+          "type": "string",
+          "required": true
+        },
+        "plan": {
+          "type": "string",
+          "required": false
+        },
+        "seats": {
+          "type": "integer",
+          "required": false,
+          "default": 1
+        },
+        "entity_type": {
+          "type": "string",
+          "required": false
+        },
+        "bundle": {
+          "type": "string",
+          "required": false
+        },
+        "ident": {
+          "type": "string",
+          "required": false,
+          "doc": "Org subdomain label (TEAM bootstrap: no organisation yet)"
+        },
+        "org_name": {
+          "type": "string",
+          "required": false,
+          "doc": "Organisation display name (TEAM bootstrap)"
+        },
+        "supersede": {
+          "type": "string",
+          "required": false,
+          "doc": "Set when the caller deliberately replaces the plan they already hold. Lifts the already-subscribed refusal; the webhook cancels the replaced subscription once this one is paid."
+        },
+        "defer": {
+          "type": "string",
+          "required": false,
+          "doc": "With supersede, for a same-plan cycle switch: the new subscription starts (trial_end) when the current one expires instead of replacing it immediately; the webhook lets the old one run out (cancel_at_period_end)."
+        },
+        "promo_code": {
+          "type": "string",
+          "required": false,
+          "doc": "MKT outreach partner code (Iris/Theo/…). Reserved in YP before Stripe Checkout; applies trial_days + percent_off coupon."
+        }
+      }
+    },
+    "validate_org_ident": {
+      "doc": "Pre-checkout validation of the TEAM org subdomain (ident). Bootstrap exception: scope hub/owner because the payer has no org-domain privilege yet.",
+      "scope": "hub",
+      "permission": {
+        "src": "owner"
+      },
+      "params": {
+        "ident": {
+          "type": "string",
+          "required": true,
+          "doc": "Subdomain label to validate"
+        }
+      }
+    },
+    "preview_coupon": {
+      "scope": "hub",
+      "permission": {
+        "src": "owner"
+      },
+      "params": {
+        "promo_code": {
+          "type": "string",
+          "required": true,
+          "doc": "MKT outreach partner code to preview (read-only: no redemption is reserved)."
+        },
+        "plan": {
+          "type": "string",
+          "required": false,
+          "doc": "Plan the shopper is buying — the code may be locked to one plan."
+        }
+      }
+    },
+    "subscription_status": {
+      "scope": "hub",
+      "permission": {
+        "src": "owner"
+      },
+      "params": {}
+    },
+    "portal": {
+      "scope": "hub",
+      "permission": {
+        "src": "owner"
+      },
+      "params": {}
+    },
+    "cancel_subscription": {
+      "scope": "hub",
+      "permission": {
+        "src": "owner"
+      },
+      "params": {}
+    },
+    "resume_subscription": {
+      "scope": "hub",
+      "permission": {
+        "src": "owner"
+      },
+      "params": {}
+    },
+    "change_plan": {
+      "doc": "Plan/cycle switch on the caller's existing subscription (Team <-> Business). Price swap + metadata rewrite on the live Stripe subscription; never a second checkout.",
+      "scope": "hub",
+      "permission": {
+        "src": "owner"
+      },
+      "params": {
+        "plan": {
+          "type": "string",
+          "required": true
+        },
+        "period": {
+          "type": "string",
+          "required": true
+        }
+      }
+    },
+    "checkout_result": {
+      "scope": "hub",
+      "permission": {
+        "src": "owner"
+      },
+      "params": {
+        "session_id": {
+          "type": "string",
+          "required": true
+        }
+      }
+    },
+    "webhook": {
+      "scope": "hub",
+      "permission": {
+        "src": "read",
+        "fast_check": "public-api"
+      },
+      "method": "receive",
+      "params": {
+        "stripe-signature": {
+          "type": "string",
+          "required": true
+        },
+        "raw_body": {
+          "type": "string",
+          "required": true
+        }
+      },
+      "errors": [
+        {
+          "code": "WEBHOOK_ERROR",
+          "http_status": 400
+        }
+      ]
+    },
+    "over_limit_state": {
+      "doc": "Downgrade over-limit: fresh evaluation of the caller's org — recomputes usage/seats vs the current entitlement, persists the two flags and returns state + exact overage numbers for the popup/banner. Any signed-in member may read (the read-only banner is shown to everyone).",
+      "scope": "hub",
+      "permission": {
+        "src": "read"
+      },
+      "params": {}
+    },
+    "over_limit_dismiss": {
+      "doc": "Downgrade over-limit: snooze the owner/admin popup for the CALLING user only, server-side (never localStorage). Cleared automatically when the org returns within limits.",
+      "scope": "hub",
+      "permission": {
+        "src": "read"
+      },
+      "params": {}
+    },
+    "upgrade_nudge_state": {
+      "doc": "Upgrade nudges: asks whether THIS member gets an upsell popup right now (storage 70/80/90%, seats 70/90%, workspace age 14/30d). The server owns both suppression rules -- once per threshold per workspace and a shared daily cap, in yp organisation.metadata.$.upgrade_nudge -- and a granted answer is already marked shown, so the client renders it and writes nothing back. Any signed-in member may ask (the popups go to all members).",
+      "scope": "hub",
+      "permission": {
+        "src": "read"
+      },
+      "params": {}
+    }
+  },
+  "modules": {
+    "private": "service/private/payment",
+    "public": "service/public/stripe_webhook"
+  }
+}

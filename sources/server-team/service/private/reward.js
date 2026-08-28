@@ -1,0 +1,282 @@
+/**
+ * Claim-reward campaign tracking.
+ *
+ * The reward onboarding flow (ui-team builtins/widget/reward-flow) kept all of
+ * its progress in localStorage, so nothing outside that one browser knew who
+ * finished and who walked away. `track` is the single write the widget makes,
+ * fired on each step transition and on the terminal outcomes.
+ *
+ * The row is the caller's own — uid comes from the session, never from the
+ * request — and yp.reward_claim_track advances status/step by rank, so a
+ * duplicated or out-of-order post is harmless.
+ *
+ * Read side: analytics-server reward_tracking().
+ */
+const { Entity } = require('@drumee/server-core');
+const { Cache, toArray } = require('@drumee/server-essentials');
+// Live updates for the dashboard's Claim reward tracking table. Same shape as
+// desk.js's use of _referral_live: fire-and-forget, never throws.
+const { pushRewardLive } = require('./_reward_live');
+
+const CAMPAIGN = 'free-storage';
+/**
+ * How many users the campaign can ever reward, when nothing is configured.
+ *
+ * The campaign promises a limited number of places ("Limited 100 spots ONLY"
+ * in the mail), so the flow has to CLOSE once they are gone rather than keep
+ * handing out a reward that no longer exists.
+ *
+ * Overridable through the `reward_conf` sysconf ({"slots": N}) so the number
+ * can be raised for a second wave without a redeploy. Both this service and
+ * analytics-server fall back to the same literal, so an unprovisioned key
+ * means 100 everywhere rather than "no limit" in one place and 100 in another.
+ */
+const SLOTS = 100;
+/**
+ * Statuses that open the flow.
+ *
+ * 'emailed' is deliberately NOT here. Being on the recipient list is an
+ * invitation, not an entitlement — the user has to follow the campaign link.
+ * Without that distinction anyone who was mailed got the walkthrough on their
+ * next login whether or not they ever clicked, which is the step this closes.
+ *
+ * 'left' IS here, and that is what makes going away recoverable. It is written
+ * for an exit nobody confirmed — a refresh, a closed tab — and a refresh cannot
+ * be told apart from a close at unload time, so treating it as terminal would
+ * let one stray F5 cost someone a prize they were three clicks from claiming.
+ * They resume from `step`, on any device.
+ *
+ * 'dropped' is NOT here, and the difference between the two is the point.
+ * Leaving is not refusing. A user who presses "Drop anyway" on the confirmation
+ * has answered the offer, and asking again at their next login — and every
+ * login after that — is not a recovery, it is nagging. For a while both exits
+ * wrote one status, so making the accidental one recoverable silently made the
+ * deliberate one non-binding too; that is the bug the two statuses close.
+ *
+ * The funnel still records the abandon: yp.reward_claim_track ranks 'left'
+ * BELOW 'started', so coming back and reaching a card step clears it by itself
+ * and the dashboard stops calling an active user gone.
+ *
+ * Genuinely terminal states (done, missed) stay out; a later send re-arms the
+ * row to 'emailed', so a returning user has to click again before they are
+ * eligible.
+ */
+const OPEN = new Set(['clicked', 'started', 'left']);
+/** States the client may report. 'clicked' is posted by the desk when it finds
+ *  campaign-arrival evidence relayed through login; the rest come from the
+ *  widget. 'emailed' is NOT here: it is seeded at send time by analytics-server
+ *  and must never be claimable by a browser, or anyone could invite themselves.
+ *
+ *  'missed' IS claimable, but reporting it can only ever cost the caller: it is
+ *  how the widget says "I showed this user the sold-out screen and they
+ *  dismissed it", and the proc's rank order keeps it under 'done', so a user
+ *  who already holds a slot cannot post their way out of it.
+ *
+ *  'dropped' is the same shape of claim: the user pressed "Drop anyway" on the
+ *  confirmation, which is the one place they say outright that they do not want
+ *  this. It costs the caller — it is terminal and keeps them out of OPEN — so
+ *  like 'missed' there is nothing to gain by forging it. Kept distinct from
+ *  'left', which merely means they went away: see the OPEN docblock above. */
+const STATUS = new Set(['clicked', 'started', 'left', 'dropped', 'done', 'missed']);
+const STEPS = ['step1', 'step2', 'step3'];
+
+class __reward extends Entity {
+
+  /**
+   * How many users this campaign may reward, for the GATE's purposes.
+   *
+   * The award itself does not go through here: reward_claim_track reads the
+   * same `reward_conf` key in SQL, so the cap holds whatever this service
+   * believes. This copy only decides whether to offer the flow, and the worst a
+   * disagreement can do is offer a walkthrough that the completion then
+   * refuses — which is the case the sold-out screen already exists to handle.
+   *
+   * Read per call rather than cached on the instance: sysconf can change under
+   * a running server, and this is one JSON parse on a path that runs at most
+   * twice per session.
+   */
+  _slotLimit() {
+    try {
+      const n = Number(JSON.parse(Cache.getSysConf('reward_conf') || '{}').slots);
+      return Number.isFinite(n) && n > 0 ? Math.floor(n) : SLOTS;
+    } catch (e) {
+      return SLOTS;
+    }
+  }
+
+  /**
+   * Are all the campaign's slots gone?
+   *
+   * A DB failure answers YES. Everywhere else in this service the safe default
+   * is "no reward": get_state already treats an unreachable server as
+   * ineligible, and opening a flow whose prize may not exist is the one outcome
+   * worth avoiding — the user would walk three steps to be turned away at the
+   * end.
+   */
+  async _slotsFull() {
+    try {
+      // Read through await_query with an explicit alias rather than await_func:
+      // the same toArray(...)[0] shape get_state below already relies on, and it
+      // does not depend on how a bare `select fn()` unwraps.
+      const row = toArray(await this.yp.await_query(
+        `SELECT reward_slots_used() AS claimed`
+      ))[0];
+      const claimed = Number(row && row.claimed);
+      return !Number.isFinite(claimed) || claimed >= this._slotLimit();
+    } catch (e) {
+      this.warn('[reward] slot count failed', e && e.message);
+      return true;
+    }
+  }
+
+  /**
+   * Can the caller actually HOLD the prize?
+   *
+   * The reward is 5 years of unlimited storage written as a personal yp.quota
+   * row. Every entitlement resolver is tenant-first: for a user covered by an
+   * organisation's entitlement the org row wins and a personal row is never
+   * read, so the grant would not be a smaller prize — it would be no prize,
+   * silently.
+   *
+   * Answered by yp.reward_personal_eligible rather than reimplemented here.
+   * The same function backs reward_claim_track's award decision and
+   * reward_grant_storage's write, so the gate cannot promise something the
+   * completion then refuses. When the rule lived in two places it immediately
+   * drifted: the grant refused while the award went through, and org members
+   * consumed one of the campaign's limited places for nothing.
+   *
+   * A DB failure answers NO, matching _slotsFull below — offering a flow whose
+   * prize may not exist is the outcome worth avoiding.
+   */
+  async _canHoldReward() {
+    try {
+      const row = toArray(await this.yp.await_query(
+        `SELECT reward_personal_eligible(?) AS ok`, this.uid
+      ))[0];
+      return Number(row && row.ok) === 1;
+    } catch (e) {
+      this.warn('[reward] eligibility check failed', e && e.message);
+      return false;
+    }
+  }
+
+  /**
+   * Should the desk open the claim-reward flow for the caller, and where.
+   *
+   * This is the gate. It used to be `reward_flow_done` in localStorage, which
+   * made "has this user finished" a fact about a BROWSER: it did not follow the
+   * user to another device, it grew a key per user on a shared machine, and no
+   * amount of clearing the table could reset it. Here the row IS the answer.
+   *
+   * A missing row means this user was never mailed, so they are not eligible —
+   * that alone is what stops a second person on a shared browser from being
+   * handed someone else's campaign.
+   *
+   * Being invited is not enough: the caller also has to be able to HOLD the
+   * prize. It is a personal yp.quota entitlement, and a user covered by an
+   * organisation's entitlement would have it written and never read
+   * (_canHoldReward). Those users are turned away here, not walked through the
+   * flow and quietly given nothing.
+   *
+   * `step` is the furthest card step reached, so a user who wandered off
+   * resumes where they were, on any device. Only sent when eligible; a
+   * terminal row has nothing to resume.
+   *
+   * CAPPED is eligibility with the prize gone. The campaign is limited to
+   * `reward_conf.slots` users, and once they are taken an invited user gets the
+   * sold-out screen instead of the walkthrough — they were promised something,
+   * so they are told, rather than silently seeing nothing like a user who was
+   * never mailed. `step` is deliberately blanked: there is nothing to resume
+   * into, and a capped run has one screen.
+   *
+   * Capped OUTRANKS resume on purpose. A user who was half-way through
+   * yesterday and comes back after the cap closed is stopped here, rather than
+   * being walked through three steps and refused at the end. That leaves the
+   * refusal in reward_claim_track for the only case the gate cannot catch —
+   * someone already mid-flow, in an open browser, when the last slot goes.
+   */
+  async get_state() {
+    const row = toArray(await this.yp.await_query(
+      `SELECT status, step FROM reward_claim WHERE uid=?`, this.uid
+    ))[0];
+    // Invited AND able to hold the prize. The second half turns away users
+    // already covered by an org entitlement, before Step 1 rather than at the
+    // end — the same reason `capped` is decided here: nobody should walk a
+    // three-step walkthrough to be handed nothing.
+    const invited = !!(row && OPEN.has(row.status));
+    const eligible = invited && await this._canHoldReward();
+    const capped = eligible && await this._slotsFull();
+    this.output.data({
+      eligible: eligible ? 1 : 0,
+      capped: capped ? 1 : 0,
+      step: (!capped && eligible && row.step) || '',
+    });
+  }
+
+  /**
+   * Record the caller's progress in the claim-reward flow.
+   *
+   * Unknown values are rejected rather than stored: the funnel is only useful
+   * if every row reads as one of the known states, and the widget is the only
+   * caller, so anything else is a bug or a poke at the endpoint.
+   *
+   * Reporting 'done' is a REQUEST for one of the campaign's limited slots, not
+   * a statement of fact — reward_claim_track awards it under a lock, or writes
+   * 'missed' when the cap has closed. `granted` carries that answer back so the
+   * widget knows whether to show Congratulations or the sold-out screen, and it
+   * is the SERVER's answer: the browser cannot count slots, and two users
+   * finishing together would both think they won.
+   *
+   * The row is read back with await_query rather than taken from the proc's own
+   * trailing SELECT, which comes back as a raw multi-resultset and does not
+   * parse into a row (same reason as survey.js).
+   */
+  async track() {
+    const status = String(this.input.need('status') || '').trim();
+    if (!STATUS.has(status)) {
+      return this.output.data({ ok: false, error: 'invalid status' });
+    }
+    // Step is optional — 'dropped' is posted without one when the user quits
+    // from a transient state, and the proc keeps whatever it already had.
+    const step = String(this.input.use('step', '') || '').trim();
+    const campaign = String(this.input.use('campaign', CAMPAIGN) || CAMPAIGN).trim();
+
+    // No limit argument: the proc reads sys_conf.reward_conf itself, so this
+    // signature never changes and a schema patch can land without waiting for a
+    // server deploy. Passing it made the two repos deploy in lockstep — the
+    // moment the proc required the extra argument, every runtime still on the
+    // previous build failed with "Incorrect number of arguments".
+    await this.yp.await_proc(
+      'reward_claim_track',
+      this.uid,
+      campaign || CAMPAIGN,
+      status,
+      STEPS.includes(step) ? step : ''
+    );
+
+    // Only a completion can be refused, so only a completion pays for the
+    // read-back. Anything else is granted by definition.
+    let granted = 1;
+    if (status === 'done') {
+      const row = toArray(await this.yp.await_query(
+        `SELECT status, completed_count FROM reward_claim WHERE uid=?`, this.uid
+      ))[0];
+      granted = row && row.completed_count > 0 ? 1 : 0;
+    }
+
+    // Tell any open analytics dashboard the row moved. AFTER the write and
+    // after the read-back, so what the board re-reads is the settled row and
+    // not one still being decided — a 'done' that the cap refuses is a 'missed'
+    // by the time this fires, and pushing before the read would race the board
+    // into showing the wrong one.
+    //
+    // Not awaited and never able to throw: the row is already committed, and
+    // the user's answer must not wait on an analytics message (see
+    // _reward_live.js).
+    pushRewardLive(this, this.uid, status);
+
+    this.output.data({ ok: true, status, step, granted });
+  }
+}
+
+module.exports = __reward;
