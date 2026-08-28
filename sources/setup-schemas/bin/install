@@ -1,0 +1,115 @@
+#!/bin/bash
+set +e
+script_dir=$(dirname $(readlink -f $0))
+base_dir=$(dirname $script_dir)
+cd $script_dir
+
+echo "Confuring Drumee Schemas"
+source /etc/drumee/drumee.sh
+mkdir -p /tmp/drumee
+chown -R $DRUMEE_SYSTEM_USER:$DRUMEE_SYSTEM_GROUP /tmp/drumee/
+
+service mariadb stop
+if [ "$DRUMEE_DB_DIR" = "" ];then
+  DRUMEE_DB_DIR=/srv/db
+fi
+
+run_dir=${DRUMEE_DB_DIR}/run
+if [ -d "$run_dir" ]; then
+  orig=${DRUMEE_DB_DIR}/orig/$(date +%Y-%m-%d)
+  mkdir -p ${DRUMEE_DB_DIR}/orig
+  if [ -d "$orig" ]; then
+    rm -rf $orig
+  fi
+  mv $run_dir $orig
+fi
+
+chmod 750 $DRUMEE_DB_DIR 
+chown -R mysql:mysql $DRUMEE_DB_DIR
+mkdir -p $run_dir
+
+#Ensure db server to log here, whatever OS log style
+mysql_dir=/var/log/mysql
+mkdir -p $mysql_dir
+touch $mysql_dir/error.log
+chown -R mysql:mysql $mysql_dir
+
+log=/var/log/drumee/seeds.log
+date > $log
+
+echo Extracting schemas seeds
+tar -xf /var/tmp/drumee/seeds.tgz --checkpoint=.50 --one-top-level=seeds
+echo
+echo Copying schemas seeds
+# Fail loud on the seed restore — the whole install is worthless without it, and
+# under `set +e` a missing mariabackup or a failed copy-back used to be swallowed
+# silently (empty DB, MariaDB won't start, populate can't connect).
+command -v mariabackup >/dev/null 2>&1 || { echo "FATAL: mariabackup not found — install the 'mariadb-backup' package" | tee -a ${log} >&2; exit 1; }
+if ! mariabackup --copy-back --target-dir=$script_dir/seeds >> ${log} 2>>${log}; then
+  echo "FATAL: seed restore (mariabackup --copy-back) failed — see ${log}" >&2; exit 1
+fi
+
+echo Preparing db from $run_dir                                                  
+chmod 750 $run_dir                                                               
+chown -R mysql:mysql $run_dir                                                    
+
+# Ensure permission is properly set
+permission=$(stat $run_dir | grep "750")
+
+if [ "$permission" = "" ]; then
+  echo Updating permission
+  find  $DRUMEE_DB_DIR -type d -exec chmod u+rwx {} \;
+  find  $DRUMEE_DB_DIR -type d -exec chmod g+rx {} \;
+  find  $DRUMEE_DB_DIR -type f -exec chmod g+r {} \;
+  find  $DRUMEE_DB_DIR -type f -exec chmod u+rw {} \;
+fi 
+
+service mariadb start
+
+# The seed is a physical snapshot carrying the system tables of whatever MariaDB
+# produced it, which need not be the server now running (Trixie ships 11.8). Debian
+# notices the mismatch and runs mariadb-upgrade on its own schedule — and that
+# rewrites mysql.proc, the very table populate.js hammers while loading the
+# routines. When the two overlap they deadlock outright:
+#
+#   thread A  DROP FUNCTION ...   holds a shared MDL on mysql.proc, waits for a
+#                                 table-level write lock
+#   thread B  ALTER TABLE proc    queued for an EXCLUSIVE MDL, ahead of A
+#
+# Neither can yield, and because lock_wait_timeout defaults to 86400 the install
+# does not fail — it hangs for 24 hours looking like a slow restore, with the log
+# stopped on an innocuous "Loading ... .sql" line.
+#
+# Running the upgrade to completion HERE removes the race by ordering rather than
+# by luck: once it returns, nothing else is left to contend for those tables.
+if command -v mariadb-upgrade >/dev/null 2>&1; then
+  echo "Upgrading system tables to the running server version"
+  mariadb-upgrade --force >> ${log} 2>&1 \
+    || echo "WARNING: mariadb-upgrade reported errors — see ${log}" >&2
+fi
+
+mariadb -e "CREATE OR REPLACE USER '$DRUMEE_SYSTEM_USER'@'localhost' IDENTIFIED VIA unix_socket"
+mariadb -e "GRANT ALL PRIVILEGES ON *.* TO '$DRUMEE_SYSTEM_USER'@'localhost'"
+
+collation=$(mariadb -e "show variables like 'character_set_collations';"|tail -1)
+if [ "$collation" != "" ]; then
+  mariadb -e "set GLOBAL character_set_collations='utf8mb4=utf8mb4_general_ci'"
+fi
+
+cd $base_dir
+# populate.js creates the system accounts, stocks the factory pool and writes the
+# RSA keys — fatal if it fails (don't let `set +e` mark a half-empty DB "done").
+node populate.js || { echo "FATAL: populate.js failed — DB not fully initialized" >&2; exit 1; }
+chown -R $DRUMEE_SYSTEM_USER:$DRUMEE_SYSTEM_GROUP $DRUMEE_ROOT
+chown -R $DRUMEE_SYSTEM_USER:$DRUMEE_SYSTEM_GROUP $DRUMEE_DATA_DIR
+chown -R $DRUMEE_SYSTEM_USER:$DRUMEE_SYSTEM_GROUP $DRUMEE_RUNTIME_DIR/tmp
+echo "Drumee Schemas setup is now completed!"
+
+echo "An email is being sent to $ADMIN_EMAIL"
+sleep 10
+node bin/acknowledge.js
+
+# Apply patches schemas, if any
+if [ -x /var/lib/drumee/patches/patch-from-manifest ]; then
+  /var/lib/drumee/patches/patch-from-manifest
+fi
