@@ -31,3 +31,7 @@
 | Marketplace callback/security boundary | `CRITICAL` | Anonymous ACL endpoints rely on JWT/HMAC and MFS permission checks in service code; preserve service-specific policy |
 | Marketplace unregistered payment code | `HIGH` | `service/lib/payment.js` lacks mapped ACL, schema and Stripe dependency; do not treat it as live behavior without runtime evidence |
 | Static onboarding accidentally reintroduced | `LOW` | Source is retained only by baseline immutability; target distributions must not package it |
+| ACL catalogs without implementation mapping | `HIGH` | Phase 1 found `acl/{block,menu,ops,wicket,ws}.json` without `modules`; characterization freezes the set, but live reachability is unresolved (`tests/compatibility/acl/catalog.test.js`) |
+| ACL service without source permission | `HIGH` | Phase 1 found `desk.set_online_status` lacks `permission.src`; live authorization behavior must be recorded before dispatcher changes |
+| Secure-share public implementation ambiguity | `CRITICAL` | `acl/secure_share.json` declares an empty public module path; its anonymous/current routing and policy behavior require live characterization |
+| Baseline harness not yet run live | `CRITICAL` | Safe contract/unit/deployment checks pass, but provisioning, MariaDB/MFS, observable ACL, browser WM/Finder and full self-host scenarios require the disposable reference environment (`12-compatibility-harness.md`) |
