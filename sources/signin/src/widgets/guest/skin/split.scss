@@ -1,0 +1,386 @@
+// Split view — Figma 1602:76966: redacted file grid (left) + private chat panel
+// (right), with the "Content Restricted" card centred over the grid.
+
+.signin-guest {
+  // The bottom padding is clearance for the fixed conversion banner (40px padding
+  // + 74px bar), so the panels — and the chat input at their bottom edge — are
+  // never covered by it. The frame's 96px assumes a banner that only overlays
+  // empty space.
+  &__split {
+    width: 100%;
+    flex: 1 1 auto;
+    min-height: 0;
+    padding: 0 32px 160px;
+    box-sizing: border-box;
+    justify-content: center;
+  }
+
+  &__split-inner {
+    width: 100%;
+    max-width: 1376px;
+    max-height: 600px;
+    align-items: stretch;
+  }
+
+  // ---- Left: redacted file grid ----
+  &__files {
+    flex: 1 1 auto;
+    min-width: 0;
+    position: relative;
+    overflow: hidden;
+    border-radius: 8px 0 0 8px;
+    background-color: #f2f2f7;
+    align-items: stretch;
+  }
+
+  &__files-bar {
+    flex: 0 0 auto;
+    height: 56px;
+    padding: 0 24px;
+    box-sizing: border-box;
+    background-color: rgba(0, 0, 0, 0.05);
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  &__dots {
+    align-items: center;
+    gap: 8px;
+  }
+
+  &__dot {
+    width: 12px;
+    height: 12px;
+    flex: 0 0 auto;
+    border-radius: 12px;
+    background-color: #aeaeb2;
+  }
+
+  &__views {
+    align-items: center;
+    gap: 16px;
+  }
+
+  &__view-grid {
+    width: 10.5px;
+    height: 10.5px;
+    flex: 0 0 auto;
+    background: url('../assets/view-grid.svg') no-repeat center / contain;
+  }
+
+  &__view-list {
+    width: 10.5px;
+    height: 7px;
+    flex: 0 0 auto;
+    background: url('../assets/view-list.svg') no-repeat center / contain;
+  }
+
+  // Decoration standing in for content the visitor may NOT see: blurred, faded,
+  // and inert. The skeleton also marks it aria-hidden.
+  &__grid {
+    width: 100%;
+    padding: 32px;
+    box-sizing: border-box;
+    flex-wrap: wrap;
+    align-items: flex-start;
+    align-content: flex-start;
+    gap: 32px;
+    filter: blur(6px);
+    opacity: 0.4;
+    pointer-events: none;
+    user-select: none;
+  }
+
+  &__tile {
+    width: calc((100% - 96px) / 4);
+    flex: 0 0 auto;
+    box-sizing: border-box;
+    align-items: center;
+    gap: 12px;
+  }
+
+  &__tile-art {
+    width: 100%;
+    aspect-ratio: 1 / 1;
+    border-radius: 8px;
+    background-color: #d1d1d6;
+    align-items: center;
+    justify-content: center;
+  }
+
+  &__tile-ico {
+    flex: 0 0 auto;
+
+    &.folder {
+      width: 30px;
+      height: 24px;
+      background: url('../assets/tile-folder.svg') no-repeat center / contain;
+    }
+
+    &.file {
+      width: 24px;
+      height: 30px;
+      background: url('../assets/tile-file.svg') no-repeat center / contain;
+    }
+
+    &.image {
+      width: 27px;
+      height: 27px;
+      background: url('../assets/tile-image.svg') no-repeat center / contain;
+    }
+  }
+
+  &__tile-label {
+    height: 12px;
+    flex: 0 0 auto;
+    border-radius: 12px;
+    background-color: rgba(200, 196, 215, 0.2);
+
+    &.w1 {
+      width: 122px;
+    }
+
+    &.w2 {
+      width: 92px;
+    }
+
+    &.w3 {
+      width: 138px;
+    }
+  }
+
+  // ---- The gate: "Content Restricted" ----
+  // Sits ~40px above true centre, as in the frame.
+  &__card {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    transform: translate(-50%, calc(-50% - 40px));
+    z-index: 2;
+    width: 450px;
+    max-width: calc(100% - 64px);
+    padding: 33px;
+    box-sizing: border-box;
+    gap: 8px;
+    align-items: center;
+    text-align: center;
+    background-color: #ffffff;
+    border: 1px solid rgba(71, 69, 84, 0.15);
+    border-radius: 12px;
+    box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
+  }
+
+  // The sprite build strips app-eye-off's fill, so the glyph inherits and would
+  // paint black. `fill` here inherits into the <use> shadow tree; a `svg path`
+  // selector cannot reach inside it. `color` covers a future currentColor build.
+  &__card-ico {
+    width: 44px;
+    height: 37px;
+    flex: 0 0 auto;
+    color: #d65f59;
+    fill: #d65f59;
+
+    svg {
+      width: 100%;
+      height: 100%;
+    }
+  }
+
+  &__card-title {
+    font-family: var(--font-bold);
+    font-weight: 600;
+    font-size: 20px;
+    line-height: 1.1;
+    color: #0b0a21;
+    justify-content: center;
+  }
+
+  &__card-text {
+    align-items: center;
+    max-width: 384px;
+  }
+
+  &__card-line {
+    font-size: 14px;
+    line-height: 1.4;
+    color: #84848c;
+    text-align: center;
+    justify-content: center;
+  }
+
+  // ---- Right: private chat panel ----
+  &__chat {
+    flex: 0 0 auto;
+    width: 362px;
+    box-sizing: border-box;
+    overflow: hidden;
+    background-color: #f2f2f7;
+    border-left: 1px solid rgba(0, 0, 0, 0.05);
+    border-radius: 0 8px 8px 0;
+    box-shadow: 0 1px 11px 0 rgba(0, 0, 0, 0.13);
+    align-items: stretch;
+  }
+
+  &__chat-head {
+    flex: 0 0 auto;
+    padding: 16px 16px 17px;
+    box-sizing: border-box;
+    border-bottom: 1px solid rgba(0, 0, 0, 0.05);
+    align-items: center;
+  }
+
+  // Figma uses Geist Mono here; fall back through the platform mono stack.
+  &__chat-title {
+    font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace);
+    font-weight: 600;
+    font-size: 10px;
+    line-height: 1;
+    letter-spacing: 0.4px;
+    text-transform: uppercase;
+    color: #0b0a21;
+  }
+
+  &__chat-body {
+    flex: 1 1 auto;
+    min-height: 0;
+    padding: 16px;
+    box-sizing: border-box;
+    overflow: hidden;
+    align-items: stretch;
+  }
+
+  // Same treatment as the file grid: blurred, inert, aria-hidden.
+  &__chat-msgs {
+    width: 100%;
+    gap: 16px;
+    align-items: stretch;
+    filter: blur(8px);
+    pointer-events: none;
+    user-select: none;
+  }
+
+  &__msg {
+    width: 100%;
+
+    &.out {
+      align-items: flex-end;
+    }
+
+    &.in {
+      align-items: flex-start;
+      gap: 4px;
+    }
+  }
+
+  // `display: block` on purpose: the bubble carries inline markup (the underlined
+  // filename span), which must flow with the surrounding text rather than becoming
+  // a sibling flex item.
+  &__bubble {
+    display: block;
+    width: 100%;
+    max-width: 320px;
+    padding: 12px;
+    box-sizing: border-box;
+    font-size: 12px;
+    line-height: 1.4;
+
+    &.out {
+      background-color: #d65f59;
+      color: #e4e3ff;
+      border-radius: 16px 0 16px 16px;
+    }
+
+    &.in {
+      background-color: #ffffff;
+      color: #0b0a21;
+      border-radius: 0 16px 16px 16px;
+    }
+  }
+
+  &__msg-author {
+    font-family: var(--font-bold);
+    font-weight: 700;
+    font-size: 10px;
+    line-height: 1.4;
+    color: #0b0a21;
+  }
+
+  &__msg-time {
+    padding-top: 4px;
+    font-size: 8px;
+    line-height: 1.4;
+    color: #84848c;
+  }
+
+  &__msg-system {
+    width: 100%;
+    max-width: 220px;
+    margin: 0 auto;
+    padding: 4px 8px;
+    box-sizing: border-box;
+    border-radius: 12px;
+    background-color: rgba(0, 0, 0, 0.05);
+    font-size: 8px;
+    line-height: 1.4;
+    color: #000000;
+    text-align: center;
+    justify-content: center;
+  }
+
+  // Not a Skeletons.Entry on purpose — an anonymous visitor must not be given a
+  // field that looks live but goes nowhere.
+  &__chat-input {
+    flex: 0 0 auto;
+    padding: 16px;
+    box-sizing: border-box;
+    background-color: #f2f2f7;
+  }
+
+  &__chat-field {
+    width: 100%;
+    padding: 10px 12px;
+    box-sizing: border-box;
+    border-radius: 8px;
+    background-color: #ffffff;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+  }
+
+  &__chat-field-left {
+    align-items: center;
+    gap: 4px;
+    min-width: 0;
+  }
+
+  &__chat-clip {
+    width: 13px;
+    height: 14px;
+    flex: 0 0 auto;
+    background: url('../assets/paperclip.svg') no-repeat center / contain;
+  }
+
+  &__chat-placeholder {
+    font-size: 10px;
+    line-height: 1.4;
+    color: #aeaeb2;
+    white-space: nowrap;
+  }
+
+  &__chat-send {
+    width: 14.25px;
+    height: 12px;
+    flex: 0 0 auto;
+    background: url('../assets/send.svg') no-repeat center / contain;
+  }
+}
+
+.signin-guest__bubble.out .signin-guest__bubble-file {
+  color: #ffffff;
+  text-decoration: underline;
+}
+
+.signin-guest__bubble.in .signin-guest__bubble-file {
+  color: #d65f59;
+  text-decoration: underline;
+}

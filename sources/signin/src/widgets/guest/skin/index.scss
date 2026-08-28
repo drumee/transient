@@ -1,0 +1,196 @@
+@use '@drumee/ui-styles/src/mixins';
+@use 'nav';
+@use 'header';
+@use 'split';
+@use 'external';
+@use 'banner';
+
+// Guest landing page for anonymous visitors — Figma node 1602:76946
+// ("Guest Landing Page (Viral) Restricted", 1440x1024).
+//
+// Colours are literal here, matching the rest of the signin skins. They map to the
+// Figma tokens: Grey/20 #f2f2f7, Grey/40 #d1d1d6, Grey/60 #aeaeb2, Grey/70 #84848c,
+// Primary/100 #0b0a21, Primary/50 #433cc5, Primary/10 #e4e3ff,
+// Signal/Restricted #d65f59.
+//
+// The logo, header folder, card eye-off and banner bolt come from the icon sprite
+// (Skeletons.Button.Svg) and are styled as inline <svg>. The remaining glyphs are
+// exported Figma assets under ../assets, inlined by webpack's url-loader.
+
+.signin-guest {
+  &__ui {
+    width: 100%;
+    min-height: 100vh;
+    overflow-x: hidden;
+    overflow-y: auto;
+    box-sizing: border-box;
+    background-color: #f2f2f7;
+    color: #0b0a21;
+    font-family: var(--font-main);
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    justify-content: flex-start;
+  }
+
+  &__page {
+    width: 100%;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    position: relative;
+  }
+
+  // Header + split view. Grows so the sticky banner sits at the bottom of the
+  // viewport even when the page is shorter than the screen.
+  &__body {
+    width: 100%;
+    flex: 1 1 auto;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+  }
+}
+
+// ---- Responsive ----------------------------------------------------------
+// The Figma frame is desktop-only (1440). Below it: 3 columns, then the chat
+// panel is dropped and the grid halves, then the header/banner stack.
+
+@media (max-width: 1199px) {
+  .signin-guest__tile {
+    width: calc((100% - 64px) / 3);
+  }
+
+  // Eight tiles over three columns leaves a ragged two-tile last row; keep 3x2.
+  .signin-guest__tile:nth-child(n + 7) {
+    display: none;
+  }
+}
+
+@media (max-width: 1023px) {
+  .signin-guest__nav-links,
+  .signin-guest__chat {
+    display: none;
+  }
+
+  .signin-guest__files {
+    border-radius: 8px;
+  }
+
+  .signin-guest__grid {
+    gap: 20px;
+    padding: 20px;
+  }
+
+  // The chat panel is gone, so the file panel is full width — three columns keeps
+  // the tiles a sane size (two would be ~400px each on a tablet).
+  .signin-guest__tile {
+    width: calc((100% - 40px) / 3);
+  }
+
+  // Trim to two rows. All eight tiles at fewer columns would be rows of scrolling
+  // filler, and a tall panel pushes the centred card down behind the banner.
+  .signin-guest__tile:nth-child(n + 7) {
+    display: none;
+  }
+
+  // Clearance for the fixed banner, which is taller here (it stacks into two rows).
+  .signin-guest__split {
+    padding: 0 20px 200px;
+  }
+
+  .signin-guest__header {
+    padding: 20px;
+  }
+
+  .signin-guest__banner {
+    padding: 20px 16px;
+  }
+
+  // Two rows: [icon + headline] over [social proof + CTA]. Stacking every element
+  // into one column made the bar ~240px tall, which on a phone covers the card it
+  // is meant to sit below.
+  .signin-guest__banner-bar {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 12px;
+    padding: 16px;
+  }
+
+  .signin-guest__banner-left {
+    align-items: center;
+    gap: 12px;
+  }
+
+  .signin-guest__banner-right {
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+  }
+
+  .signin-guest__banner-headline {
+    font-size: 15px;
+    line-height: 20px;
+  }
+}
+
+@media (max-width: 599px) {
+  // Two columns, and a 2x2 grid — three would leave ~110px tiles.
+  .signin-guest__tile {
+    width: calc((100% - 20px) / 2);
+  }
+
+  .signin-guest__tile:nth-child(n + 5) {
+    display: none;
+  }
+
+  .signin-guest__nav-inner {
+    padding: 12px 16px;
+    gap: 12px;
+  }
+
+  .signin-guest__nav-logo {
+    width: 128px;
+    height: 26px;
+  }
+
+  .signin-guest__header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 12px;
+  }
+
+  .signin-guest__header-title {
+    font-size: 20px;
+  }
+
+  .signin-guest__card {
+    padding: 24px 20px;
+  }
+
+  // Drop the social proof and give the CTA the full width — at this size the two
+  // side by side leave the button too narrow to read as the primary action.
+  .signin-guest__banner-subline {
+    display: none;
+  }
+
+  .signin-guest__banner-cta {
+    width: 100%;
+  }
+}
+
+// The host tags the page with [data-device] independently of the viewport width
+// (emulators, tablets reporting a wide inner width), so mirror the two structural
+// drops. Same hook the other signin skins use.
+.signin-guest__ui[data-device="mobile"] {
+  .signin-guest__nav-links,
+  .signin-guest__chat {
+    display: none;
+  }
+
+  .signin-guest__files {
+    border-radius: 8px;
+  }
+}

@@ -1,0 +1,899 @@
+// EXTERNAL (shared) workspace view — Figma 1602:77081.
+//
+// The accent is Signal/Link share #ffa8dc throughout, where the internal layout
+// uses Signal/Restricted #d65f59. Everything here is scoped under
+// [data-scope="external"] so the two layouts cannot bleed into each other.
+
+.signin-guest__ui[data-scope="external"] {
+  // Shared workspaces recolour the header tile from red to pink.
+  .signin-guest__header-tile {
+    background-color: rgba(255, 168, 220, 0.15);
+  }
+
+  .signin-guest__header-tile-ico {
+    color: #ffa8dc;
+    fill: #ffa8dc;
+  }
+
+  .signin-guest__header-link {
+    width: 16px;
+    height: 16px;
+    flex: 0 0 auto;
+    color: #0b0a21;
+    fill: #0b0a21;
+
+    svg {
+      width: 100%;
+      height: 100%;
+    }
+  }
+}
+
+.signin-guest {
+  // ---- The window card ----
+  &__ext {
+    width: 100%;
+    max-width: 1376px;
+    max-height: 600px;
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow: hidden;
+    border-radius: 8px;
+    background-color: #f2f2f7;
+    box-shadow: 0 1px 11px 0 rgba(0, 0, 0, 0.13);
+    align-items: stretch;
+  }
+
+  // ---- Title bar ----
+  // Mirrors ui-team's real folder window: .window-folder-topbar__container
+  // (builtins/window/folder/skin/index.scss) — 61px tall, 0 21.9px padding,
+  // Grey/30 background. The var() names are the host app's own, so the plugin
+  // tracks its theme; the fallbacks are the light-theme values so the page still
+  // renders correctly outside the app.
+  &__ext-bar {
+    flex: 0 0 auto;
+    height: 61px;
+    padding: 0 21.9px;
+    box-sizing: border-box;
+    background-color: var(--normal-bg-80, #e5e5ea);
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  &__ext-bar-left {
+    align-items: center;
+    gap: 12px;
+    min-width: 0;
+  }
+
+  &__ext-bar-ico {
+    width: 20px;
+    height: 16px;
+    flex: 0 0 auto;
+    color: #ffa8dc;
+    fill: #ffa8dc;
+
+    svg {
+      width: 100%;
+      height: 100%;
+    }
+  }
+
+  &__ext-bar-title {
+    font-family: var(--font-bold);
+    font-weight: 600;
+    font-size: 16px;
+    line-height: 24px;
+    color: #0b0a21;
+    white-space: nowrap;
+  }
+
+  &__ext-bar-badge {
+    flex: 0 0 auto;
+    padding: 4px 8px;
+    border-radius: 2px;
+    background-color: #ffa8dc;
+    font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace);
+    font-weight: 600;
+    font-size: 10px;
+    line-height: 1;
+    letter-spacing: 0.4px;
+    text-transform: uppercase;
+    color: #b43481;
+    white-space: nowrap;
+  }
+
+  // Inert window controls — a guest cannot act on any of them, so they read as
+  // chrome: no pointer, no hover.
+  &__ext-bar-right {
+    align-items: center;
+    gap: 13px;
+    flex: 0 0 auto;
+    pointer-events: none;
+  }
+
+  // Header controls: link, settings, zoom, close — all bare 20px glyphs, as the
+  // folder window's __control-icon / zoom / close cluster renders them.
+  &__ext-bar-btn {
+    width: 20px;
+    height: 20px;
+    flex: 0 0 auto;
+    color: var(--normal-fg-20);
+    fill: var(--normal-fg-20);
+
+    svg {
+      width: 100%;
+      height: 100%;
+    }
+  }
+
+  // Minimize is text (U+2212), matching .window-folder__minimize-btn.
+  &__ext-bar-minimize {
+    width: 20px;
+    height: 20px;
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 18px;
+    line-height: 1;
+    color: var(--normal-fg-10, #0b0a21);
+  }
+
+  // ---- Tabs ----
+  // Mirrors .window-folder__tab-bar-wrapper / -tabs / -item. The active tab is
+  // outlined in the area accent, which for a shared workspace is --area-share.
+  &__ext-tabs {
+    flex: 0 0 auto;
+    padding: 8px 16px 8.5px;
+    box-sizing: border-box;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    background-color: var(--normal-bg-90, #f2f2f7);
+    border-bottom: 1px solid var(--border-muted, rgba(0, 0, 0, 0.2));
+    pointer-events: none;
+  }
+
+  &__ext-tab-group {
+    flex: 1 1 auto;
+    align-items: center;
+    gap: 16px;
+    min-width: 0;
+  }
+
+  &__ext-tab {
+    flex: 0 0 auto;
+    height: 32px;
+    min-width: 84px;
+    padding: 8px 16px;
+    box-sizing: border-box;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    border: 1px solid transparent;
+    border-radius: 6px;
+    background-color: rgba(0, 0, 0, 0.05);
+    font-family: "Geist", var(--font-bold), sans-serif;
+    font-size: 12px;
+    font-weight: 700;
+    line-height: 1;
+    color: var(--normal-fg-10, #0b0a21);
+    white-space: nowrap;
+
+    &.active {
+      border-color: var(--area-share, #ffa8dc);
+    }
+  }
+
+  &__ext-tab-icon {
+    width: 16px;
+    height: 16px;
+    flex: 0 0 16px;
+    color: currentColor;
+
+    svg {
+      width: 16px;
+      height: 16px;
+      display: block;
+      fill: currentColor;
+    }
+  }
+
+  &__ext-tab-label {
+    display: inline-flex;
+    align-items: center;
+    line-height: 1;
+    pointer-events: none;
+  }
+
+  // ---- Content: file explorer | conversation ----
+  &__ext-content {
+    flex: 1 1 auto;
+    min-height: 0;
+    align-items: stretch;
+  }
+
+  &__ext-files {
+    flex: 1 1 auto;
+    min-width: 0;
+    align-items: stretch;
+    background-color: #f2f2f7;
+  }
+
+  // Mirrors .window-folder__filter-bar / __filter-tab-main: an underline in the
+  // area accent marks the active type, not a pill.
+  &__ext-filters {
+    flex: 0 0 auto;
+    gap: 24px;
+    padding: 8px 24px 8.5px;
+    box-sizing: border-box;
+    align-items: center;
+    justify-content: space-between;
+    background: var(--normal-bg-90, #f2f2f7);
+    border-bottom: 1px solid var(--border-default, #d1d1d6);
+    pointer-events: none;
+  }
+
+  &__ext-filter-tabs {
+    flex: 1 1 auto;
+    align-items: center;
+    gap: 24px;
+    min-width: 0;
+  }
+
+  // "+ New" + the list/grid toggle, right-aligned — fileFilterControls.
+  &__ext-file-controls {
+    flex: 0 0 auto;
+    align-items: center;
+    gap: 12px;
+  }
+
+  // "+ New" pill — the folder toolbar's .window-button__label-button verbatim
+  // (folder/skin/index.scss __new-ctrl): 30px tall, min-width 82, radius 8,
+  // Inter 500 14/16 on #b2adfa. Note the lavender is #b2adfa, NOT the page's
+  // pink share accent — this control keeps the app's own action colour.
+  &__ext-new-ctrl {
+    flex: 0 0 auto;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    height: 30px;
+    min-height: 30px;
+    min-width: 82px;
+    padding: 0 14px;
+    box-sizing: border-box;
+    border: 0;
+    border-radius: 8px;
+    background-color: #b2adfa;
+    font-family: "Inter", sans-serif;
+    font-weight: 500;
+    font-size: 14px;
+    line-height: 16px;
+    color: #0b0a20;
+    text-align: center;
+    white-space: nowrap;
+  }
+
+  &__ext-new-ico {
+    width: 14px;
+    height: 14px;
+    flex: 0 0 14px;
+    color: currentColor;
+    fill: currentColor;
+
+    svg {
+      width: 100%;
+      height: 100%;
+      display: block;
+      fill: currentColor;
+    }
+  }
+
+  &__ext-new-label {
+    font-weight: 500;
+  }
+
+  // Segmented list/grid control — .window-folder-topbar__view-toggle: a 60x30
+  // white pill of two 30x30 halves, the active half filled #b2adfa. The check
+  // glyph the shared skeleton emits stays hidden; the fill alone signals
+  // selection, exactly as the folder window does it.
+  &__ext-view-toggle {
+    display: inline-flex;
+    align-items: stretch;
+    width: 60px;
+    height: 30px;
+    flex: 0 0 60px;
+    border: 0;
+    border-radius: 8px;
+    background-color: #fff;
+    box-shadow: none;
+    overflow: hidden;
+    box-sizing: border-box;
+  }
+
+  &__ext-view-seg {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 30px;
+    height: 30px;
+    flex: 0 0 30px;
+    gap: 0;
+    padding: 0;
+    border: 0;
+    box-sizing: border-box;
+    background-color: #fff;
+    color: #65656c;
+
+    svg {
+      fill: currentColor;
+    }
+  }
+
+  &__ext-view-check {
+    display: none;
+  }
+
+  &__ext-view-glyph {
+    width: 14px;
+    height: 14px;
+    flex-shrink: 0;
+
+    svg { width: 100%; height: 100%; display: block; }
+  }
+
+  &__ext-filter {
+    flex: 0 0 auto;
+    min-height: 24px;
+    padding: 0 0 4px;
+    align-items: center;
+    justify-content: center;
+    border-bottom: 2px solid transparent;
+    background: transparent;
+    font-family: "Geist", var(--font-bold), sans-serif;
+    font-size: 13px;
+    line-height: 1;
+    color: var(--normal-fg-10, #0b0a21);
+    white-space: nowrap;
+
+    &.active {
+      border-bottom-color: var(--area-share, #ffa8dc);
+    }
+  }
+
+  // Scrolls, but without a visible bar: the grid sits inside the window card and
+  // a track down its edge cuts across the card's rounded corner. Wheel, trackpad,
+  // touch and keyboard all still work — only the bar is hidden, so `overflow`
+  // stays `auto` rather than becoming `hidden`.
+  &__ext-grid {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow: auto;
+    padding: 26.28px;
+    box-sizing: border-box;
+    gap: 26.28px;
+    align-items: stretch;
+    scrollbar-width: none;        // Firefox
+    -ms-overflow-style: none;     // legacy Edge / IE
+
+    &::-webkit-scrollbar {        // Chrome, Safari, current Edge
+      width: 0;
+      height: 0;
+      display: none;
+    }
+  }
+
+  &__ext-folder-row,
+  &__ext-file-row {
+    width: 100%;
+    flex-wrap: wrap;
+    gap: 24px;
+    align-items: flex-start;
+    align-content: flex-start;
+  }
+
+  // ---- Folder tile ----
+  &__ext-folder {
+    width: 120px;
+    flex: 0 0 auto;
+    align-items: center;
+    gap: 8px;
+  }
+
+  &__ext-folder-art {
+    width: 99px;
+    height: 79.5px;
+    align-items: center;
+    justify-content: center;
+  }
+
+  &__ext-folder-ico {
+    width: 99px;
+    height: 79.5px;
+    color: #ffa8dc;
+    fill: #ffa8dc;
+
+    svg {
+      width: 100%;
+      height: 100%;
+    }
+  }
+
+  &__ext-folder-name {
+    width: 100%;
+    font-size: 14px;
+    line-height: 1.4;
+    color: #65656c;
+    text-align: center;
+    justify-content: center;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  // ---- File tile ----
+  &__ext-file {
+    width: 120px;
+    flex: 0 0 auto;
+    align-items: stretch;
+  }
+
+  // Mirrors .media-grid__background (builtins/media/grid/skin/container.scss):
+  // a square card, tinted with --grid-card-bg, clipped so a preview can never
+  // spill past the corner radius.
+  &__ext-file-art {
+    width: 100%;
+    aspect-ratio: 1 / 1;
+    flex: 0 0 auto;
+    position: relative;
+    overflow: hidden;
+    border-radius: var(--grid-card-radius, 8px);
+    background: var(--grid-card-bg, rgba(0, 0, 0, 0.05));
+    align-items: center;
+    justify-content: center;
+  }
+
+  // The file's own rendered preview — the grid's `.preview-content`: absolutely
+  // filling the card so the background-image has a box, cover-cropped, and
+  // clipped to the same radius. Documents crop to the top so the title stays
+  // readable; photos crop to centre. Mirrors media/grid/skin/container.scss.
+  &__ext-file-poster {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    background-size: cover;
+    background-repeat: no-repeat;
+    background-position: center;
+    border-radius: var(--grid-card-radius, 8px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+
+    &.document {
+      background-position: top;
+    }
+  }
+
+  // The audio record-disc. The grid drops this artwork straight into
+  // media-grid__background with no wrapper and no class of its own, so it
+  // renders at the size baked into the file (64x64) and is centred by the
+  // card. Nothing here recolours it — the disc carries its own gradients.
+  &__ext-file-disc {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+
+    svg {
+      display: block;
+    }
+  }
+
+  // Play badge over a video poster: smaller than the file glyph, white with a
+  // soft shadow so it stays legible on a dark or a light frame.
+  &__ext-file-play {
+    width: 40px;
+    height: 40px;
+    flex: 0 0 auto;
+    color: #ffffff;
+    fill: #ffffff;
+    filter: drop-shadow(0 2px 6px rgba(0, 0, 0, 0.45));
+    opacity: 0.95;
+
+    svg {
+      width: 100%;
+      height: 100%;
+      fill: currentColor;
+    }
+  }
+
+  // Figma tints each file kind differently; the sprite glyphs paint with
+  // currentColor / an inherited fill, so `color` + `fill` both get set.
+  // .preview-icon: --grid-icon-file (60px) in --grid-color-icon-file (purple).
+  // The real grid paints every non-image type in that one colour rather than a
+  // per-type tint, so drop the per-kind rules that used to sit below.
+  &__ext-file-ico {
+    width: var(--grid-icon-file, 60px);
+    height: var(--grid-icon-file, 60px);
+    flex: 0 0 auto;
+    color: var(--grid-color-icon-file, #847eff);
+    fill: var(--grid-color-icon-file, #847eff);
+
+    svg {
+      width: 100%;
+      height: 100%;
+      fill: currentColor;
+    }
+  }
+
+  // .media-grid__meta-row: 32px single-line baseline, 8px above, filename and
+  // kebab on the top line, date beneath.
+  // Extension badge — the grid's `.preview-icon.extension`, used for a .txt or
+  // any document whose extension has no icon of its own. The markup comes from
+  // the host's Template.SvgText: a document outline in --primary-400 with the
+  // label on a --primary-600 chip laid across it. Both colours are baked into
+  // that markup; the only thing CSS supplies is the size and the label's fill,
+  // which flips white so it reads on the chip.
+  &__ext-file-ext {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    max-width: 100%;
+  }
+
+  &__ext-file-ext-svg {
+    width: var(--grid-icon-file, 60px);
+    height: var(--grid-icon-file, 60px);
+    fill: var(--grid-color-icon-file, #847eff);
+
+    text {
+      fill: var(--grid-color-icon-extension, #ffffff);
+    }
+  }
+
+  // .media-grid__meta-row: a column, 8px above, 2px between the name line and
+  // the date. min-height keeps a one-line tile on the 32px baseline; max-height
+  // is what a two-line name plus the date comes to.
+  &__ext-file-meta {
+    width: 100%;
+    min-height: var(--grid-meta-row-h, 32px);
+    max-height: var(--grid-meta-row-h-max, 64px);
+    padding-top: 8px;
+    box-sizing: border-box;
+    justify-content: flex-start;
+    gap: 2px;
+  }
+
+  // .media-grid__meta-row-top: the name and the kebab on one line.
+  &__ext-file-meta-top {
+    width: 100%;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 4px;
+  }
+
+  // .filename inside the meta row: wraps to at most TWO lines and breaks a long
+  // word rather than clipping the name to one. Matches the grid, which shows
+  // "command-line-github-errors.docx" over two lines where this used to cut it
+  // to "command-line-g…".
+  &__ext-file-name {
+    min-width: 0;
+    flex: 1 1 auto;
+    text-align: left;
+    font-family: "Geist", sans-serif;
+    font-weight: 600;
+    font-size: 12px;
+    line-height: 1.4;
+    color: var(--grid-color-name, #0b0a21);
+    overflow: hidden;
+    white-space: normal;
+    word-break: break-word;
+    overflow-wrap: anywhere;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    -webkit-box-orient: vertical;
+    max-height: calc(12px * 1.4 * 2);
+    text-overflow: ellipsis;
+  }
+
+  &__ext-file-kebab {
+    width: 2px;
+    height: 8px;
+    flex: 0 0 auto;
+    margin: 0 4px;
+    color: #65656c;
+    fill: #65656c;
+
+    svg {
+      width: 100%;
+      height: 100%;
+    }
+  }
+
+  // .media-grid__date
+  // .media-grid__date — the 2px above it comes from the meta row's gap.
+  &__ext-file-date {
+    width: 100%;
+    font-family: "Geist", sans-serif;
+    font-weight: 400;
+    font-size: 10px;
+    line-height: 1.4;
+    color: var(--grid-color-meta, #65656c);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  // ---- Conversation panel ----
+  &__ext-chat {
+    flex: 0 0 auto;
+    width: 362px;
+    min-width: 202px;
+    box-sizing: border-box;
+    background-color: #f2f2f7;
+    border-left: 1px solid rgba(0, 0, 0, 0.05);
+    align-items: stretch;
+  }
+
+  &__ext-chat-head {
+    flex: 0 0 auto;
+    padding: 16px 16px 17px;
+    box-sizing: border-box;
+    border-bottom: 1px solid rgba(0, 0, 0, 0.05);
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+  }
+
+  // 3-dot then search, as chatHeaderBar orders them.
+  &__ext-chat-actions {
+    flex: 0 0 auto;
+    align-items: center;
+    gap: 8px;
+    pointer-events: none;
+  }
+
+  // .window__chat-header-btn: a compact 24px hit box around a 16px glyph.
+  &__ext-chat-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    flex: 0 0 auto;
+    border-radius: 4px;
+    color: var(--normal-fg-10, #0b0a21);
+    fill: var(--normal-fg-10, #0b0a21);
+
+    svg { width: 16px; height: 16px; display: block; }
+  }
+
+  // .window__chat-header-title: Geist 14 regular, NORMAL case. The folder
+  // window overrides the shared mono/uppercase section label here for exactly
+  // this header, so "Team Chat" reads as words, not a caps tag.
+  &__ext-chat-title {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-family: "Geist", sans-serif;
+    font-size: 14px;
+    font-weight: 400;
+    line-height: 1.4;
+    letter-spacing: 0;
+    text-transform: none;
+    color: var(--normal-fg-10, #0b0a21);
+  }
+
+  &__ext-chat-body {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow: auto;
+    padding: 16px;
+    box-sizing: border-box;
+    gap: 16px;
+    align-items: stretch;
+  }
+
+  // A message row: avatar column, then the author/bubble/time stack. Every
+  // message here is someone else's, so they all read as incoming.
+  &__ext-msg {
+    width: 100%;
+    align-items: flex-start;
+    gap: 10px;
+  }
+
+  // The author's picture, as a background so a missing or slow image leaves a
+  // neutral circle rather than a broken-image glyph.
+  &__ext-msg-avatar {
+    flex: 0 0 auto;
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    background-color: var(--normal-bg-80, #e5e5ea);
+    background-size: cover;
+    background-position: center;
+    background-repeat: no-repeat;
+  }
+
+  &__ext-msg-main {
+    flex: 1 1 auto;
+    min-width: 0;
+    align-items: flex-start;
+    gap: 4px;
+  }
+
+  &__ext-msg-author {
+    font-family: "Geist", sans-serif;
+    font-weight: 600;
+    font-size: 12px;
+    line-height: 1.4;
+    color: var(--normal-fg-10, #0b0a21);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 100%;
+  }
+
+  // display:block so the inline filename span flows with the text instead of
+  // becoming a sibling flex item.
+  &__ext-bubble {
+    display: block;
+    width: auto;
+    max-width: 240px;
+    padding: 12px;
+    box-sizing: border-box;
+    font-size: 12px;
+    line-height: 1.4;
+    color: #0b0a21;
+
+    // White, with the square corner at the top left where the bubble meets the
+    // author's name.
+    &.out,
+    &.in {
+      background-color: #ffffff;
+      border-radius: 0 16px 16px 16px;
+    }
+  }
+
+  &__ext-msg-time {
+    padding-top: 2px;
+    font-size: 10px;
+    line-height: 1.4;
+    text-align: left;
+    color: #84848c;
+  }
+
+  // ---- Composer (inert: a guest has no session to post with) ----
+  &__ext-composer {
+    flex: 0 0 auto;
+    padding: 16px;
+    box-sizing: border-box;
+    background-color: #f2f2f7;
+    pointer-events: none;
+  }
+
+  &__ext-composer-field {
+    width: 100%;
+    padding: 12px 14px;
+    box-sizing: border-box;
+    border: 1px solid var(--border-default, #e5e5ea);
+    border-radius: 12px;
+    background-color: #ffffff;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+  }
+
+  &__ext-composer-right {
+    flex: 0 0 auto;
+    align-items: center;
+    gap: 10px;
+  }
+
+  &__ext-composer-emoji {
+    width: 18px;
+    height: 18px;
+    flex: 0 0 auto;
+    color: #84848c;
+    fill: #84848c;
+
+    svg {
+      width: 100%;
+      height: 100%;
+      display: block;
+    }
+  }
+
+  &__ext-composer-left {
+    flex: 1 1 auto;
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
+  }
+
+  &__ext-composer-clip {
+    width: 18px;
+    height: 18px;
+    flex: 0 0 auto;
+    color: #aeaeb2;
+    fill: #aeaeb2;
+
+    svg {
+      width: 100%;
+      height: 100%;
+    }
+  }
+
+  &__ext-composer-placeholder {
+    font-size: 12px;
+    line-height: 1.4;
+    color: #aeaeb2;
+    white-space: nowrap;
+  }
+
+  &__ext-composer-send {
+    width: 18px;
+    height: 18px;
+    flex: 0 0 auto;
+    color: #847eff;
+    fill: #847eff;
+
+    svg {
+      width: 100%;
+      height: 100%;
+    }
+  }
+}
+
+// Active half — list when data-state="1", grid otherwise (the default, and what
+// this page renders). Same selector shape as the folder window's rule.
+.signin-guest__ext-view-toggle[data-state="1"] .signin-guest__ext-view-seg.list,
+.signin-guest__ext-view-toggle:not([data-state="1"]) .signin-guest__ext-view-seg.grid {
+  background-color: #b2adfa;
+  color: #65656c;
+}
+
+.signin-guest__ext-bubble.out .signin-guest__ext-bubble-file {
+  color: #0b0a21;
+  text-decoration: underline;
+}
+
+.signin-guest__ext-bubble.in .signin-guest__ext-bubble-file {
+  color: #b43481;
+  text-decoration: underline;
+}
+
+// ---- Responsive ----
+// The window is one card, so the split collapses rather than the panel dropping.
+@media (max-width: 1023px) {
+  .signin-guest__ext-chat {
+    display: none;
+  }
+
+  .signin-guest__ext-grid {
+    padding: 16px;
+    gap: 16px;
+  }
+}
+
+@media (max-width: 599px) {
+  .signin-guest__ext-bar-right,
+  .signin-guest__ext-filters {
+    display: none;
+  }
+
+  .signin-guest__ext-folder,
+  .signin-guest__ext-file {
+    width: calc((100% - 16px) / 2);
+  }
+
+  .signin-guest__ext-folder-art,
+  .signin-guest__ext-folder-ico {
+    width: 100%;
+    height: 64px;
+  }
+}

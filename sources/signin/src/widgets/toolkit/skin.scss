@@ -1,0 +1,285 @@
+@use "@drumee/ui-styles/src/mixins";
+
+@mixin signin-main {
+  &__ui {
+    width: 100vw;
+    height: 100vh;
+    align-content: center;
+    align-items: center;
+    justify-content: center;
+    color: rgb(52, 52, 58);
+    overflow: auto;
+    font-family: var(--font-main);
+    flex-wrap: wrap;
+    padding: var(--spacer-7) var(--spacer-7);
+    position: relative;
+
+    &::before {
+      content: "";
+      position: absolute;
+      bottom: -200px;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 885px;
+      height: 727px;
+      background: radial-gradient(
+        ellipse at center,
+        rgba(177, 172, 255, 0.35) 0%,
+        transparent 70%
+      );
+      pointer-events: none;
+      z-index: 0;
+    }
+
+    &[data-device="mobile"] {
+      padding: var(--spacer-5) var(--spacer-4);
+      // Fill the viewport at minimum (so the page background never collapses
+      // to content height and leaves an unpainted band below on tall tablet
+      // screens), but still grow + scroll when the form is taller than the
+      // viewport. `height: auto` was the root cause of the iPad break.
+      min-height: 100vh;
+      // Centre the card horizontally (it was pinned left on iPad); keep the
+      // vertical flow top-anchored so a form taller than the screen scrolls
+      // from the top instead of being clipped.
+      align-content: center;
+      align-items: center;
+      justify-content: flex-start;
+      justify-items: center;
+    }
+  }
+
+  &__main {
+    justify-content: start;
+    align-items: center;
+    width: 100%;
+    max-width: 520px;
+    gap: 20px;
+    background-color: var(--white);
+    padding: 24px 40px;
+    border-radius: 12px;
+    position: relative;
+    z-index: 1;
+    border: 1px solid var(--border-default);
+
+    &[data-device="mobile"] {
+      top: 0;
+      padding: var(--spacer-7);
+    }
+  }
+
+  &__header {
+    width: 100%;
+    gap: 12px;
+  }
+
+  &__header-top {
+    width: 100%;
+    justify-content: space-between;
+    align-items: center;
+  }
+
+  &__logo {
+    &-container {
+      align-items: end;
+      gap: var(--spacer-2);
+    }
+
+    &-content {
+      width: 48px;
+      height: 48px;
+      align-content: center;
+      justify-content: start;
+      align-items: start;
+
+      svg {
+        width: 100%;
+        height: 100%;
+        color: rgb(67, 60, 197);
+      }
+    }
+
+    &-text {
+      font-family: var(--font-bold);
+      font-size: 30px;
+      color: var(--primary-90);
+      letter-spacing: -0.3px;
+      font-weight: bold;
+    }
+  }
+
+  &__progress-bar {
+    gap: 8px;
+    align-items: center;
+  }
+
+  &__progress-step {
+    flex: 1;
+    height: 6px;
+    max-width: 61px;
+    border-radius: 12px;
+    background: rgba(89, 80, 255, 0.1);
+    transition: background 0.3s ease;
+
+    &.active {
+      background: rgb(89, 80, 255);
+    }
+  }
+
+  &__text-container {
+    width: 100%;
+    gap: var(--spacer-2);
+  }
+
+  &__title {
+    font-family: var(--font-bold);
+    font-size: 32px;
+    line-height: 35px;
+    font-weight: 600;
+    color: rgb(67, 60, 197);
+  }
+
+  &__tips {
+    font-family: var(--font-main);
+    font-size: 16px;
+    line-height: 22px;
+    color: rgb(101, 101, 108);
+  }
+
+  &__message {
+    font-family: var(--font-main);
+    font-size: 14px;
+    line-height: 22px;
+    text-align: center;
+    letter-spacing: 1px;
+    color: rgb(101, 101, 108);
+
+    span {
+      font-family: var(--font-bold);
+      cursor: pointer;
+    }
+  }
+}
+
+@mixin signin-button {
+  &__buttons {
+    gap: var(--spacer-4);
+    width: 100%;
+  }
+
+  &__button-main {
+    height: 56px;
+    opacity: 1;
+    gap: var(--spacer-4);
+    border-radius: 4px;
+    padding: 16px 24px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    align-items: center;
+    position: relative;
+
+    &[data-haptic="1"] {
+      opacity: 0.8;
+      pointer-events: none;
+
+      .btn,
+      .icon.svg-wrapper {
+        visibility: hidden;
+      }
+
+      .spinner {
+        display: block;
+      }
+    }
+
+    &.primary {
+      padding-right: 6px;
+      justify-content: center;
+      grid-template-columns: 1fr;
+      background: rgb(67, 60, 197);
+      color: #ffffff;
+      align-content: center;
+      flex-wrap: wrap;
+      border-radius: 4px;
+      font-family: var(--font-medium);
+      font-weight: 600;
+      font-size: 16px;
+
+      &:hover {
+        background: rgb(89, 80, 255);
+        box-shadow: 0 4px 16px rgba(89, 80, 255, 0.4);
+      }
+
+      .icon.svg-wrapper {
+        height: 40px;
+        width: 40px;
+        color: rgb(67, 60, 197);
+        background-color: white;
+        border-radius: 50%;
+        padding: 10px;
+      }
+    }
+
+    &.full-width {
+      width: 100%;
+    }
+
+    &.secondary {
+      justify-content: center;
+      background-color: rgba(89, 80, 255, 0.1);
+      border: none;
+      border-radius: 8px;
+      color: rgb(67, 60, 197);
+
+      &:hover {
+        background-color: rgba(89, 80, 255, 0.15);
+      }
+
+      .icon.svg-wrapper {
+        height: 28px;
+        width: 28px;
+        color: rgb(52, 52, 58);
+        border-radius: 50%;
+        padding: 4px;
+      }
+
+      &.full-width {
+        width: 100%;
+      }
+    }
+
+    svg {
+      width: 100%;
+      height: 100%;
+    }
+  }
+
+  &__button.btn {
+    width: auto;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    line-height: 20px;
+    font-size: 16px;
+    font-family: var(--font-medium);
+  }
+
+  &__button.spinner {
+    display: none;
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 20px;
+    height: 20px;
+    margin: -10px 0 0 -10px;
+    border: 2px solid rgba(255, 255, 255, 0.3);
+    border-top-color: currentColor;
+    border-radius: 50%;
+    animation: signin-spin 0.8s linear infinite;
+  }
+}
+
+@keyframes signin-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}

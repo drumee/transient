@@ -1,0 +1,338 @@
+@use '../../toolkit/skin' as *;
+
+// OTP card spec follows the "Unlock Activity Insights" Figma popup
+// (file g5V3PjhNMf5bHlsHMvV17w, node 100:53094) — the same design used by the
+// settings otp-gate modal. The signin app does not bundle the toolkit's base
+// dtk_otp skin reliably, so the full card styling is owned here, scoped under
+// .signin-router__ui (higher specificity than the base .dtk-otp rules).
+$otp-font: var(--font-main);
+
+.signin-router {
+  &__ui {
+    width: 100vw;
+    height: 100vh;
+    overflow: auto;
+    // Gradient page background per Figma (node 5-73985): a light grey base with
+    // a soft brand-purple glow rising from the bottom-centre.
+    background-color: #f2f2f7;
+    background-image: radial-gradient(
+      120% 62% at 50% 116%,
+      rgba(89, 80, 255, 0.45) 0%,
+      rgba(89, 80, 255, 0.12) 34%,
+      rgba(242, 242, 247, 0) 68%
+    );
+    background-repeat: no-repeat;
+    background-attachment: fixed;
+    // The router root centres the single card on the page.
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    box-sizing: border-box;
+
+    // The card: a single bordered, rounded container wrapping the OTP widget
+    // and the back-to-sign-in link. This is the only visible surface — the
+    // dtk_otp's own __main card styling is neutralised below.
+    .signin-router__card {
+      position: relative;
+      flex: 0 0 auto;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 16px;
+      width: 450px;
+      max-width: calc(100vw - 32px);
+      padding: 32px;
+      background: #ffffff;
+      border: 1px solid rgba(0, 0, 0, 0.06);
+      border-radius: 12px;
+      box-shadow: 0 1px 11px 0 rgba(0, 0, 0, 0.13),
+        0 25px 50px -12px rgba(0, 0, 0, 0.25);
+      font-family: $otp-font;
+    }
+
+    // Transparent wrapper inside the card — no longer a card itself.
+    .dtk-otp__ui {
+      width: 100%;
+      height: auto;
+      flex: 0 0 auto;
+      background: transparent;
+      justify-content: center;
+      align-items: center;
+      align-content: center;
+      padding: 0;
+      gap: 16px;
+      font-family: $otp-font;
+    }
+
+    // __main is now just the OTP content stack — the card chrome lives on
+    // .signin-router__card, so strip the white box/shadow/border/padding here.
+    .dtk-otp__main {
+      position: relative;
+      flex: 0 0 auto;
+      top: 0;
+      width: 100%;
+      padding: 0;
+      gap: 16px;
+      justify-content: center;
+      align-items: center;
+      text-align: center;
+      background: transparent;
+      border: none;
+      border-radius: 0;
+      box-shadow: none;
+      font-family: $otp-font;
+    }
+
+    // Center every stacked row inside the card.
+    .dtk-otp__header,
+    .dtk-otp__logo-container,
+    .dtk-otp__text-container,
+    .dtk-otp__message,
+    .dtk-otp__digits,
+    .dtk-otp__tips,
+    .dtk-otp__resend {
+      width: 100%;
+      justify-content: center;
+      align-items: center;
+      text-align: center;
+    }
+
+    .dtk-otp__header {
+      gap: 12px;
+    }
+
+    // Heading.
+    .dtk-otp__title {
+      font-family: $otp-font;
+      font-weight: 600;
+      font-size: 20px;
+      line-height: 1.1;
+      color: #0b0a21;
+      text-align: center;
+    }
+
+    // Body / "sent to" message.
+    .dtk-otp__message,
+    .dtk-otp__message-text {
+      font-family: $otp-font;
+      font-weight: 400;
+      font-size: 14px;
+      line-height: 1.4;
+      color: #65656c;
+      text-align: center;
+    }
+
+    // Six 44×44 square digit cells.
+    .dtk-otp__digits {
+      width: 100%;
+      height: auto;
+      gap: 8px;
+      justify-content: center;
+      align-items: center;
+      flex-wrap: nowrap;
+    }
+
+    .dtk-otp__digit {
+      // flex: 0 0 auto stops the flex row from stretching the cells into
+      // wide rectangles; locked to a 44×44 square to match the spec.
+      flex: 0 0 auto;
+      box-sizing: border-box;
+      width: 44px;
+      height: 44px;
+      min-width: 44px;
+      padding: 0;
+      aspect-ratio: 1 / 1;
+      border-radius: 8px;
+      border: 1px solid var(--border-strong, #c7c7cc);
+      transition: border-color 120ms ease, background-color 120ms ease;
+
+      input {
+        width: 100%;
+        height: 100%;
+        padding: 0;
+        border-radius: 8px;
+        font-family: $otp-font;
+        font-size: 20px;
+        font-weight: 600;
+        line-height: 1;
+        text-align: center;
+        vertical-align: middle;
+        color: #0b0a21;
+      }
+
+      &:focus-within {
+        border-color: #433cc5;
+        background: #f4e7ff;
+      }
+    }
+
+    // Error / transient note line below the inputs.
+    .dtk-otp__tips {
+      flex-wrap: wrap;
+
+      &-text {
+        width: 100%;
+        font-family: $otp-font;
+        font-weight: 400;
+        font-size: 14px;
+        line-height: 1.4;
+        text-align: center;
+        justify-content: center;
+
+        &[data-error="1"] {
+          color: var(--red-500);
+          font-weight: 600;
+          cursor: pointer;
+        }
+      }
+    }
+
+    .dtk-otp__resend {
+      flex-wrap: wrap;
+      gap: 12px;
+
+      &-text {
+        width: 100%;
+        font-family: $otp-font;
+        font-weight: 400;
+        font-size: 14px;
+        line-height: 1.4;
+        text-align: center;
+        color: #65656c;
+        justify-content: center;
+
+        &.resend {
+          color: #433cc5;
+          font-weight: 600;
+          cursor: pointer;
+        }
+      }
+    }
+
+    // Resend in flight: the router sets data-resending="1" on the widget root
+    // while otp.send is pending. Lock the link and swap the label for a
+    // spinner so the user gets immediate feedback and can't double-send.
+    [data-resending="1"] .dtk-otp__resend {
+      pointer-events: none;
+    }
+
+    [data-resending="1"] .dtk-otp__resend-text.resend {
+      position: relative;
+      color: transparent;
+
+      &::after {
+        content: "";
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        width: 14px;
+        height: 14px;
+        margin: -7px 0 0 -7px;
+        border: 2px solid rgba(67, 60, 197, 0.3);
+        border-top-color: #433cc5;
+        border-radius: 50%;
+        animation: dtk-otp-spin 0.6s linear infinite;
+      }
+    }
+
+    // Verify in flight: the router wraps the dtk_otp verify POST and sets
+    // data-submitting="1" on the widget root while yp.login_top is checked.
+    // Lock the inputs and resend link, dim the entered digits, and spin a
+    // loader over them so the code can't be edited or double-submitted.
+    [data-submitting="1"] {
+      .dtk-otp__resend {
+        pointer-events: none;
+        opacity: 0.5;
+      }
+
+      .dtk-otp__digits {
+        pointer-events: none;
+        position: relative;
+
+        .dtk-otp__digit {
+          opacity: 0.45;
+        }
+
+        &::after {
+          content: "";
+          position: absolute;
+          top: 50%;
+          left: 50%;
+          width: 20px;
+          height: 20px;
+          margin: -10px 0 0 -10px;
+          border: 2px solid rgba(67, 60, 197, 0.3);
+          border-top-color: #433cc5;
+          border-radius: 50%;
+          animation: dtk-otp-spin 0.6s linear infinite;
+        }
+      }
+    }
+
+    @media (max-width: 560px) {
+      .signin-router__card {
+        width: calc(100vw - 24px);
+        padding: 24px;
+      }
+
+      .dtk-otp__digit {
+        width: 38px;
+        height: 38px;
+
+        input {
+          font-size: 18px;
+        }
+      }
+    }
+  }
+
+  // "← Back to sign in" link, inside the card but outside the dtk_otp widget.
+  // A hairline divider separates it from the OTP content above. Mirrors the
+  // onboarding "Skip this step" link treatment.
+  &__backlink-row {
+    flex: 0 0 auto;
+    width: 100%;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    padding-top: 16px;
+    border-top: 1px solid rgba(0, 0, 0, 0.06);
+  }
+
+  &__backlink {
+    font-family: $otp-font;
+    font-weight: 600;
+    font-size: 16px;
+    line-height: 24px;
+    color: #65656c;
+    text-align: center;
+    cursor: pointer;
+    padding: 12px 24px;
+    border-radius: 4px;
+    transition: color 120ms ease;
+
+    &:hover {
+      color: #433cc5;
+    }
+  }
+}
+
+html[data-theme="dark"] .signin-router__ui .signin-router__card {
+  background: var(--normal-bg-elevated, #1b1b1f);
+  border-color: rgba(255, 255, 255, 0.08);
+}
+
+html[data-theme="dark"] .signin-router__ui .signin-router__backlink-row {
+  border-top-color: rgba(255, 255, 255, 0.08);
+}
+
+@keyframes dtk-otp-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.signin {
+  @include signin-button;
+}

@@ -1,0 +1,78 @@
+// Workspace header — Figma 1602:76948.
+
+.signin-guest {
+  &__header {
+    width: 100%;
+    max-width: 1440px;
+    margin: 0 auto;
+    padding: 24px 32px;
+    box-sizing: border-box;
+    flex: 0 0 auto;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    flex-wrap: wrap;
+  }
+
+  &__header-left {
+    align-items: center;
+    gap: 12px;
+    min-width: 0;
+  }
+
+  &__header-tile {
+    width: 40px;
+    height: 40px;
+    flex: 0 0 auto;
+    border-radius: 8px;
+    background-color: rgba(214, 95, 89, 0.2);
+    align-items: center;
+    justify-content: center;
+  }
+
+  // folder-header paints with currentColor, so `color` is enough to tint it to the
+  // restricted red.
+  &__header-tile-ico {
+    width: 20px;
+    height: 16px;
+    flex: 0 0 auto;
+    color: #d65f59;
+
+    svg {
+      width: 100%;
+      height: 100%;
+    }
+  }
+
+  &__header-titles {
+    align-items: flex-start;
+    min-width: 0;
+  }
+
+  &__header-title {
+    font-family: var(--font-bold);
+    font-weight: 600;
+    font-size: 24px;
+    line-height: 1.1;
+    color: #0b0a21;
+    word-break: break-word;
+  }
+
+  &__header-subline {
+    align-items: center;
+    gap: 8px;
+    margin-top: 2px;
+  }
+
+  &__header-lock {
+    width: 16px;
+    height: 16px;
+    flex: 0 0 auto;
+    background: url('../assets/header-lock.svg') no-repeat center / contain;
+  }
+
+  &__header-sublabel {
+    font-size: 17px;
+    color: #0b0a21;
+  }
+}

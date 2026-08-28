@@ -1,0 +1,490 @@
+@use '@drumee/ui-styles/src/mixins';
+@use 'terms-and-conditions';
+@use 'cross-signin';
+@use '../../toolkit/skin' as *;
+
+.signin-form {
+  @include signin-main;
+
+  &__buttons,
+  &__form {
+    gap: var(--spacer-4);
+    width: 100%;
+  }
+
+  &__entry-main {
+    width: 100%;
+    gap: 6px;
+  }
+
+  &__entry-label {
+    font-size: 12px;
+    font-family: var(--font-medium);
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    color: rgb(101, 101, 108);
+  }
+
+  &__entry-row {
+    width: 100%;
+    height: 45px;
+    background: rgba(0, 0, 0, 0.05);
+    border: none;
+    border-radius: 4px;
+    padding: 0 12px;
+    align-items: center;
+    gap: 8px;
+    transition: border-color 0.2s;
+    overflow: hidden;
+
+    &:focus-within {
+      box-shadow: 0 0 0 1px rgb(89, 80, 255);
+    }
+  }
+
+  &__entry-ico {
+    width: 20px;
+    height: 20px;
+    flex-shrink: 0;
+    color: rgb(101, 101, 108);
+
+    svg {
+      width: 100%;
+      height: 100%;
+    }
+  }
+
+  &__entry-input {
+    flex: 1;
+    width: 100%;
+    height: 100%;
+    border: none;
+    outline: none;
+    display: flex;
+    align-items: center;
+
+    &[data-status="error"] {
+      .signin-form__entry-row {
+        border-color: rgb(214, 78, 73);
+      }
+    }
+
+    input {
+      width: 100%;
+      height: 43px;
+      background: transparent;
+      border: none;
+      outline: none;
+      color: rgb(52, 52, 58);
+      font-size: 15px;
+      line-height: 43px;
+      font-family: var(--font-main);
+      padding: 0;
+      margin: 0;
+      box-sizing: border-box;
+      vertical-align: middle;
+
+      &::placeholder {
+        color: rgb(101, 101, 108);
+        line-height: 43px;
+      }
+
+      &:focus {
+        border: none;
+        outline: none;
+        box-shadow: none;
+      }
+
+      &:-webkit-autofill,
+      &:-webkit-autofill:hover,
+      &:-webkit-autofill:focus,
+      &:-webkit-autofill:active {
+        -webkit-text-fill-color: rgb(52, 52, 58) !important;
+        -webkit-box-shadow: 0 0 0 1000px rgba(0, 0, 0, 0.05) inset !important;
+        box-shadow: 0 0 0 1000px rgba(0, 0, 0, 0.05) inset !important;
+        background-color: transparent !important;
+        background-image: none !important;
+        transition: background-color 5000s ease-in-out 0s;
+        caret-color: rgb(52, 52, 58);
+        border-radius: 0;
+      }
+    }
+
+    .entry-reminder__icon {
+      right: 5px;
+      position: absolute;
+    }
+
+    .entry-box,
+    .entry-wrapper,
+    [class*="entry"] {
+      border: none;
+      outline: none;
+      box-shadow: none;
+      background: transparent;
+    }
+  }
+
+  &__entry-eye-toggle {
+    width: 21px;
+    height: 21px;
+    flex-shrink: 0;
+    cursor: pointer;
+    color: rgb(101, 101, 108);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-right: 2px;
+    transition: color 0.2s;
+
+    svg {
+      width: 100%;
+      height: 100%;
+    }
+
+    &:hover {
+      color: rgb(67, 60, 197);
+    }
+
+    &[data-state="1"] {
+      color: rgb(67, 60, 197);
+    }
+  }
+
+  &__links {
+    width: 100%;
+    justify-content: center;
+    align-items: center;
+    gap: 6px;
+  }
+
+  &__text {
+    font-family: var(--font-main);
+    font-size: 14px;
+    line-height: 20px;
+    color: rgb(52, 52, 58);
+    font-weight: 600;
+
+    &.link {
+      font-family: var(--font-medium);
+      color: rgb(89, 80, 255);
+      cursor: pointer;
+      transition: color 0.2s;
+
+      &:hover {
+        color: rgb(67, 60, 197);
+      }
+    }
+  }
+
+  &__separator {
+    width: 100%;
+    height: auto;
+    font-family: var(--font-main);
+    font-size: 12px;
+    line-height: 20px;
+    color: rgb(52, 52, 58);
+    gap: var(--spacer-5);
+
+    &::before,
+    &::after {
+      content: " ";
+      flex: 1;
+      height: 1px;
+      background: rgba(71, 69, 84, 0.2);
+      margin: auto 0;
+      border: none;
+    }
+  }
+
+  &__forgot-row {
+    width: 100%;
+    justify-content: flex-end;
+    align-items: center;
+    margin-top: -2px;
+  }
+
+  &__forgot-link {
+    font-family: var(--font-main);
+    font-size: 12px;
+    line-height: 1.4;
+    color: rgb(52, 52, 58);
+    text-decoration: underline;
+    cursor: pointer;
+    transition: color 0.2s;
+
+    &:hover {
+      color: rgb(67, 60, 197);
+    }
+  }
+
+  &__back-link {
+    font-family: var(--font-medium);
+    font-size: 14px;
+    line-height: 20px;
+    color: rgb(89, 80, 255);
+    cursor: pointer;
+    transition: color 0.2s;
+
+    &:hover {
+      color: rgb(67, 60, 197);
+    }
+  }
+
+  // ---- Forgot-password view ("Enter Email") ----
+  &__forgot {
+    align-items: center;
+    text-align: center;
+    background-color: #ffffff;
+    box-shadow: 0 8px 32px rgba(11, 10, 33, 0.06);
+  }
+
+  &__forgot-head {
+    align-items: center;
+    gap: 32px;
+    width: 100%;
+  }
+
+  &__forgot-field {
+    width: 100%;
+    gap: 8px;
+  }
+
+  &__forgot-logo {
+    align-items: center;
+    justify-content: center;
+    flex: 0 0 auto;
+  }
+
+  &__forgot-logo-icon {
+    width: 72px;
+    height: 60px;
+    color: #433CC5;
+
+    svg {
+      width: 100%;
+      height: 100%;
+    }
+  }
+
+  &__forgot-title {
+    font-family: var(--font-bold);
+    font-weight: 600;
+    font-size: 32px;
+    line-height: 1.1;
+    color: rgb(67, 60, 197);
+    text-align: center;
+    width: 100%;
+    justify-content: center;
+  }
+
+  &__forgot-actions {
+    width: 100%;
+    align-items: center;
+    gap: 16px;
+
+    .signin__button-main {
+      width: 100%;
+    }
+  }
+
+  &__error-container {
+    width: 100%;
+    height: auto;
+    align-content: center;
+    flex-wrap: wrap;
+    gap: 10px;
+    justify-content: center;
+  }
+
+  &__error-content {
+    color: rgb(214, 78, 73);
+    font-family: var(--font-main);
+    font-size: 12px;
+    line-height: 22px;
+    text-align: center;
+  }
+
+  // "Email not verified. Verify email →" — same visual language as the
+  // "Don't have an account? Start free →" row (reuses __text / __text.link).
+  &__verify-row {
+    width: 100%;
+    align-items: center;
+    justify-content: center;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+
+  &__terms-container {
+    width: 100%;
+    justify-content: center;
+    align-items: center;
+    gap: var(--spacer-5);
+    flex-direction: row;
+    display: flex;
+  }
+
+  &__terms-link {
+    font-size: 12px;
+    font-family: var(--font-medium);
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    color: rgb(101, 101, 108);
+    cursor: pointer;
+    transition: color 0.2s;
+
+    &:hover {
+      color: rgb(52, 52, 58);
+    }
+  }
+
+  &__terms-dot {
+    font-size: 12px;
+    color: rgb(101, 101, 108);
+  }
+
+  &__wrapper {
+    width: 100%;
+    max-width: 520px;
+    align-items: center;
+    gap: 0;
+  }
+
+  // ---- Check-inbox view (shown after submitting the forgot form) ----
+  &__check-inbox {
+    align-items: center;
+    text-align: center;
+    gap: 32px;
+    padding: 33px;
+    background-color: #ffffff;
+    border: 1px solid rgba(0, 0, 0, 0.05);
+    border-radius: 12px;
+    box-shadow: 0 1px 11px rgba(0, 0, 0, 0.13);
+  }
+
+  &__inbox-icon {
+    width: 72px;
+    height: 73px;
+    padding: 12px;
+    border-radius: 100px;
+    background-color: rgba(89, 80, 255, 0.1);
+    align-items: center;
+    justify-content: center;
+    flex: 0 0 auto;
+  }
+
+  &__envelope {
+    width: 24px;
+    height: 24px;
+    color: rgb(89, 80, 255);
+    fill: rgb(89, 80, 255);
+
+    svg {
+      width: 100%;
+      height: 100%;
+      color: rgb(89, 80, 255);
+      fill: rgb(89, 80, 255);
+    }
+  }
+
+  &__inbox-heading {
+    align-items: center;
+    text-align: center;
+    gap: 12px;
+    width: 306px;
+    max-width: 100%;
+  }
+
+  &__inbox-title {
+    font-family: var(--font-bold);
+    font-weight: 600;
+    font-size: 32px;
+    line-height: 1.1;
+    color: rgb(67, 60, 197);
+    width: 100%;
+    justify-content: center;
+  }
+
+  &__inbox-subtext {
+    align-items: center;
+    text-align: center;
+    gap: 4px;
+    width: 100%;
+  }
+
+  &__inbox-sent {
+    font-family: var(--font-main);
+    font-weight: 400;
+    font-size: 18px;
+    line-height: 1.4;
+    color: #000000;
+    width: 100%;
+    justify-content: center;
+  }
+
+  &__inbox-email {
+    font-family: var(--font-bold);
+    font-weight: 600;
+    font-size: 20px;
+    line-height: 1.1;
+    color: rgb(52, 52, 58);
+    width: 100%;
+    word-break: break-word;
+    justify-content: center;
+  }
+
+  &__inbox-footer {
+    align-items: center;
+    text-align: center;
+    width: 100%;
+  }
+
+  &__inbox-note {
+    font-family: var(--font-main);
+    font-weight: 400;
+    font-size: 14px;
+    line-height: 1.4;
+    color: rgb(52, 52, 58);
+    width: 100%;
+    justify-content: center;
+  }
+
+  &__inbox-actions {
+    gap: 12px;
+    width: 100%;
+
+    .signin__button-main {
+      width: 100%;
+    }
+
+    // Resend on cooldown: the label shows the countdown, so hide the icon
+    // and make the button read as disabled.
+    .signin__button-main[data-counting="1"] {
+      pointer-events: none;
+      opacity: 0.6;
+
+      .icon {
+        display: none;
+      }
+    }
+
+    // Resend permanently disabled: the reset was already completed in another
+    // tab (welcome/reset success), so there's nothing left to resend.
+    .signin__button-main[data-disabled="1"] {
+      pointer-events: none;
+      opacity: 0.6;
+    }
+
+    // Resend (primary): plain white glyph, not the default white-circle icon.
+    .signin__button-main.primary .icon.svg-wrapper {
+      width: 24px;
+      height: 24px;
+      padding: 0;
+      border-radius: 0;
+      background: none;
+      background-color: transparent;
+      color: #ffffff;
+      fill: #ffffff;
+    }
+  }
+}

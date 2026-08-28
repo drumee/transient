@@ -1,0 +1,110 @@
+// Sticky bottom conversion banner — Figma 1602:77020.
+
+.signin-guest {
+  // Pinned to the bottom of the viewport, overlaying the page — the frame has it
+  // `absolute bottom-0` and reserves room with the split view's bottom padding
+  // (see split.scss). `sticky` would drop it below the fold whenever the grid is
+  // taller than the screen, which is the common case.
+  &__banner {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 3;
+    flex: 0 0 auto;
+    padding: 40px;
+    box-sizing: border-box;
+    justify-content: center;
+  }
+
+  &__banner-bar {
+    width: 100%;
+    max-width: 1360px;
+    padding: 17px 32px;
+    box-sizing: border-box;
+    border: 1px solid rgba(255, 255, 255, 0.05);
+    border-radius: 12px;
+    background-image: linear-gradient(to right, #6c5ce7 0%, #6c5ce7 50%, #2900a0 100%);
+    align-items: center;
+    justify-content: space-between;
+    gap: 24px;
+  }
+
+  &__banner-left {
+    align-items: center;
+    gap: 16px;
+    min-width: 0;
+  }
+
+  &__banner-tile {
+    width: 40px;
+    height: 40px;
+    flex: 0 0 auto;
+    border-radius: 8px;
+    background-color: rgba(0, 0, 0, 0.2);
+    align-items: center;
+    justify-content: center;
+  }
+
+  // The source ships fill="white" but the sprite build strips it, so set `fill`
+  // (which inherits into the <use> shadow tree) or the bolt paints black on purple.
+  &__banner-tile-ico {
+    width: 16px;
+    height: 20px;
+    flex: 0 0 auto;
+    color: var(--white);
+    fill: var(--white);
+
+    svg {
+      width: 100%;
+      height: 100%;
+    }
+  }
+
+  &__banner-headline {
+    font-family: var(--font-bold);
+    font-weight: 600;
+    font-size: 18px;
+    line-height: 24px;
+    color: #ffffff;
+  }
+
+  &__banner-right {
+    flex: 0 0 auto;
+    align-items: center;
+    gap: 24px;
+  }
+
+  &__banner-subline {
+    font-family: var(--font-bold);
+    font-weight: 600;
+    font-size: 14px;
+    line-height: 20px;
+    color: #ffffff;
+  }
+
+  &__banner-cta {
+    flex: 0 0 auto;
+    height: 40px;
+    padding: 0 24px;
+    box-sizing: border-box;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 4px;
+    background-color: #ffffff;
+    font-family: var(--font-bold);
+    font-weight: 600;
+    font-size: 14px;
+    line-height: 20px;
+    color: #433cc5;
+    text-align: center;
+    white-space: nowrap;
+    cursor: pointer;
+    transition: background-color 0.2s;
+  }
+}
+
+.signin-guest__banner-cta:hover {
+  background-color: #e4e3ff;
+}

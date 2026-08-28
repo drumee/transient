@@ -1,0 +1,111 @@
+// Top app bar — Figma 1602:77032.
+
+.signin-guest {
+  &__nav {
+    position: sticky;
+    top: 0;
+    z-index: 4;
+    width: 100%;
+    flex: 0 0 auto;
+    justify-content: center;
+    background-color: rgba(242, 242, 247, 0.92);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+  }
+
+  &__nav-inner {
+    width: 100%;
+    max-width: 1440px;
+    padding: 16px 32px;
+    box-sizing: border-box;
+    align-items: center;
+    justify-content: space-between;
+    gap: 24px;
+  }
+
+  // Sprite mark + wordmark. The mark keeps the sprite's own brand purple
+  // (logo-upload carries a baked #b251fb fill) so it matches the logo everywhere
+  // else in the app.
+  &__nav-logo {
+    height: 32px;
+    flex: 0 0 auto;
+    align-items: end;
+    gap: 4px;
+  }
+
+  // The sprite build strips logo-upload's own fill, so the mark inherits — `fill`
+  // is what reaches the <use> shadow tree, `color` only helps if a path opts in via
+  // fill="currentColor". Both are set so either sprite build colours it.
+  // --primary-50 comes from the host app (ui-team revamp.scss), hence the fallback
+  // for a standalone signin build.
+  &__nav-logo-ico {
+    width: 40px;
+    height: 32px;
+    flex: 0 0 auto;
+    color: var(--primary-50, #433cc5);
+    fill: var(--primary-50, #433cc5);
+
+    svg {
+      width: 100%;
+      height: 100%;
+    }
+  }
+
+  &__nav-logo-text {
+    font-family: var(--font-bold);
+    font-weight: 600;
+    font-size: 26px;
+    letter-spacing: -0.5px;
+    color: #0b0a21;
+  }
+
+  &__nav-links {
+    align-items: center;
+    gap: 32px;
+  }
+
+  &__nav-link {
+    align-items: center;
+    text-decoration: none;
+    cursor: pointer;
+  }
+
+  &__nav-link-label {
+    font-family: var(--font-bold);
+    font-weight: 600;
+    font-size: 14px;
+    line-height: 20px;
+    color: #0b0a21;
+    white-space: nowrap;
+    transition: color 0.2s;
+  }
+
+  &__nav-actions {
+    align-items: center;
+    gap: 20px;
+    flex: 0 0 auto;
+  }
+
+  &__nav-join {
+    padding: 6px 24px;
+    border-radius: 4px;
+    background-color: #433cc5;
+    font-family: var(--font-bold);
+    font-weight: 600;
+    font-size: 14px;
+    line-height: 20px;
+    color: #ffffff;
+    text-align: center;
+    white-space: nowrap;
+    cursor: pointer;
+    transition: background-color 0.2s;
+  }
+}
+
+.signin-guest__nav-link:hover .signin-guest__nav-link-label {
+  color: #433cc5;
+}
+
+.signin-guest__nav-join:hover {
+  background-color: #2f28a8;
+}

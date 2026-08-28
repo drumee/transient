@@ -1,0 +1,64 @@
+const { resolve } = require("path");
+
+module.exports = function (basedir) {
+  a = {
+    rules: [{
+      test: /\.(sa|sc|c)ss$/,
+
+      use: [
+        'style-loader',
+        //MiniCssExtractPlugin.loader,
+        {
+          loader: 'css-loader',
+          options: {
+            sourceMap: true,
+            importLoaders: 1
+          },
+        }, {
+          loader: 'postcss-loader',
+          options: {
+            sourceMap: true, // Show resource full path
+          }
+        }, {
+          loader: 'sass-loader',
+          options: {
+            sourceMap: true,
+            sassOptions: {
+              sourceMap: true,
+              sourceMapEmbed: true,
+              includePaths: [
+                resolve(basedir, 'node_modules')
+              ]
+            }
+          }
+        }
+      ],
+    }, {
+      test: /\.coffee$/,
+      use: ["coffee-loader"],
+    }, {
+      test: /\.(png|jpg|gif|jpeg)$/,
+      use: ["file-loader"]
+    }, {
+      test: /(\.woff|\.woff2|\.ttf|\.eot|\.svg)($|\?.*$)/,
+      use: ['url-loader']
+    }, {
+      test: /\.wasm$/,
+      type: 'webassembly/async',
+    }, {
+      test: /babel(.*)\.js?$/,
+      use: ['babel-loader']
+    }, {
+      test: /\.(txt|text)$/i,
+      use: ['raw-loader']
+    }, {
+      test: /\.tpl$/,
+      use: ['underscore-template-loader']
+    }, {
+      test: /\.tsx?$/,
+      use: 'ts-loader',
+      exclude: /node_modules/,
+    }],
+  };
+  return a;
+};
