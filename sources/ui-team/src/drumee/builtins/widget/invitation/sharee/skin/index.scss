@@ -1,0 +1,99 @@
+@use 'mixins/drumee';
+
+.invitation-sharee {
+  &__ui {
+    width: 100%;
+
+    &:hover {
+      background-color: var(--default-bg-hover); //#879BFF;
+      color: var(--default-text-hover); //var(--ewhite);
+
+      // border-radius:4px;
+      .settings,
+      .delete,
+      .view {
+        visibility: visible;
+        color: var(--ewhite);
+      }
+
+      & .note-reader {
+        color: var(--default-text-hover); //var(--ewhite);
+      }
+    }
+  }
+  
+  &__main {
+    align-items: center;
+    @include drumee.typo($color: var(--default-text-color), $size: 14px, $line: 36px, $weight: 400);
+    cursor: pointer;
+  }
+
+  &__container {
+    align-items: center;
+    @include drumee.typo($color: var(--default-text-color), $size: 14px, $line: 36px, $weight: 400);
+    cursor: pointer;
+  }
+
+  &__profile {
+    &.avatar {
+      width: 29px; //27px; //26px;
+      height: 29px; //27px; //26px;
+      margin-top: auto;
+      margin-bottom: auto;
+      background-size: cover;
+      background-repeat: no-repeat;
+      background-position: 50% 50%;
+      background-color: var(--default-user-icon); // #D8D8D8;
+      border-radius: 15px;
+
+      //overflow: hidden;
+      &.public {
+        padding: 6px;
+        color: var(--egrey-2f);
+        background-color: white;
+        border: 1px solid #D8D8D8;
+      }
+    }
+  }
+
+  &__label {
+    width: 166px;
+    padding: 0 0 0 14px;
+    @include drumee.overflow-text;
+
+    .inner {
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+  }
+
+  &__icon {
+    width: 14px;
+    height: 14px;
+    color: var(--default-icon-neutral);
+    // visibility: hidden;
+    cursor: pointer;
+    margin-right: 16px;
+
+    &.settings {
+      margin-left: auto;
+
+      &[data-editable="0"] {
+        display: none;
+        pointer-events: none;
+      }
+
+      svg {
+        position: absolute;
+      }
+    }
+
+    &.delete {
+      &[data-editable="0"] {
+        display: none;
+        pointer-events: none;
+      }
+    }
+  }
+}

@@ -1,0 +1,116 @@
+@use "sass:meta";
+@use 'mixins/drumee';
+@use '../wm/skin/wm-main.scss';
+
+.dmz-router {
+  --dmz-footer-background: #5a70d5;
+  --dmz-btn-open-desk-color: #18AC73;
+  --dmz-default-background: var(--default-background);
+  --dmz-default-block-background: var(--default-block-background);
+
+  /**text**/
+  --dmz-default-text-color: var(--default-text-color);
+  --dmz-secondary-text-color: var(--secondary-text-color);
+  --dmz-default-text-reverse: var(--default-text-reverse);
+  --dmz-default-text-placeholder: var(--default-text-placeholder);
+  --dmz-default-text-title: var(--default-text-title);
+  --dmz-footer-title-color: #FDD835;
+  --dmz-backgroundless-text-hover: var(--backgroundless-text-hover);
+
+  /**icon**/
+  --dmz-icon-valid: #18A3AC-- --dmz-icon-invalid: #fd635b-- --dmz-default-icon-neutral: var(--default-icon-neu--ral);
+  --dmz-default-icon-reverse: var(--default-icon-rev--rse);
+  --dmz-default-thinline-icon-hover: var(--default-t--inline-icon-hover); //close icon
+  --dmz-default-icon-success: var(--default-icon-suc--ess);
+  --dmz-default-icon-hover: $core-default-icon-hover--
+    /**border**/
+    --dmz-default-action-btn-border-color: #FFFFFF;
+  --dmz-default-border-error: var(--default-border-error);
+
+}
+
+@include meta.load-css('popup');
+
+.dmz-router {
+  font-family: var(--font-main);
+
+  &__ui {
+    height: 100vh;
+    width: 100%;
+    position: absolute;
+
+  }
+
+  &__main,
+  &__container {
+    height: 100%;
+    width: 100%;
+  }
+
+  &__container {
+    overflow: hidden;
+    justify-content: center;
+    align-content: center;
+    align-items: center;
+  }
+
+
+  &__note {
+    @include drumee.typo($size: 16px, $line: 18px, $color: var(--default-text-reverse));
+    text-align: center;
+  }
+}
+
+.dmz {
+  @include meta.load-css('../../welcome/skin/supported-browsers.scss');
+
+  &-supported-browsers {
+    &__container {
+      position: absolute;
+      background-color: var(--default-bg-block);
+      z-index: 2000;
+    }
+
+    &__info {
+      display: none;
+      visibility: hidden;
+    }
+  }
+
+  &__logo {
+    &-wrapper {
+      align-items: center;
+      justify-content: flex-end;
+      max-width: 250px;
+      width: 24%;
+
+      &[data-device="mobile"] {
+        padding-bottom: 15px;
+        left: 0px;
+        display: none;
+      }
+    }
+
+    &-container {
+      width: 100%;
+      height: 100%;
+      justify-content: center;
+      padding: 5px;
+    }
+
+    &-item {
+      background-position: center center;
+      background-repeat: no-repeat;
+      background-size: contain;
+      margin-left: 20px;
+      height: 45px;
+      width: 45px;
+      border-radius: 3px;
+
+      &[data-device="mobile"] {
+        margin-left: 10px;
+      }
+    }
+  }
+
+}

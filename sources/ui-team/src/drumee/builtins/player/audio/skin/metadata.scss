@@ -1,0 +1,58 @@
+@use "mixins/drumee";
+
+.player-audio {
+  &-metadata {
+    &__main,
+    &__info-wrapper,
+    &__cover {
+      height: 100%;
+      width: 100%;
+    }
+
+    &__cover {
+      align-items: center;
+      justify-content: center;
+    }
+
+    &__music-info {
+      width: 100%;
+      padding: var(--spacer-2) 0;
+    }
+
+    &__icon {
+      &.music-icon {
+        color: var(--normal-fg-10);
+        height: 48px;
+        width: 48px;
+      }
+
+      &.image-smart.music-cover {
+        height: 120px;
+        width: 120px;
+        padding: 5px;
+      }
+    }
+
+    &__note {
+      @include drumee.typo($size: 16px, $color: var(--default-text-reverse));
+      bottom: 5px;
+      padding: 5px 5px 5px 20px;
+
+      &.name {
+        @include drumee.typo(
+          $size: 13px,
+          $line: 15px,
+          $color: var(--normal-fg-10)
+        );
+      }
+
+      &.artist-name {
+        @include drumee.typo(
+          $size: 11px,
+          $line: 13px,
+          $color: var(--normal-fg-10)
+        );
+      }
+    }
+  }
+}

@@ -1,0 +1,209 @@
+@use "mixins/drumee";
+@use "../../skin/topbar.scss";
+
+.editor-markdown {
+  &__ui {
+    overflow: visible;
+    border-radius: var(--corner-radius-5);
+    min-width: 600px;
+    min-height: 400px;
+
+    // Mobile full-bleed under the desk's 44px mobile topbar. The
+    // previous rule pinned the markdown editor to a 360×500 floating
+    // dialog with a translateX(-50%) which left it overflowing on
+    // 430px phones. Use the shared recipe so it matches the rest of
+    // the mobile window family (folder, note proper).
+    @include drumee.mobile-fullscreen-window($top: 44px);
+  }
+
+  &-topbar {
+    &__container {
+      width: 100%;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    &__action {
+      align-items: center;
+      align-items: center;
+      position: absolute;
+      height: 100%;
+      width: calc(50% - 100px);
+    }
+
+    &__buttons {
+      overflow: visible;
+      gap: var(--spacer-4);
+      align-items: center;
+
+      .tooltips {
+        position: absolute;
+        white-space: nowrap;
+        margin-top: 16px;
+        left: 50%;
+        transform: translateX(-50%);
+      }
+    }
+  }
+
+  &__header {
+    width: 100%;
+    background: var(--normal-bg-80);
+    border-radius: var(--corner-radius-5) var(--corner-radius-5) 0 0;
+    padding: var(--spacer-4) var(--spacer-6);
+
+    &[data-header="0"] {
+      display: none;
+    }
+  }
+
+  &__main {
+    width: 100%;
+    height: 100%;
+    align-items: center;
+    overflow: visible;
+    border: 1px solid var(--border-default);
+    border-radius: var(--corner-radius-5);
+  }
+
+  &__header {
+    overflow: visible;
+  }
+
+  &__body {
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    border-radius: 0 0 var(--corner-radius-5) var(--corner-radius-5);
+  }
+
+  &__acknowledgement-container {
+    color: var(--normal-fg-10);
+    &:hover {
+      color: var(--normal-fg-20);
+    }
+
+    &[data-state="0"] {
+      display: none;
+    }
+  }
+
+  &__viewer {
+    width: 100%;
+    max-height: 100%;
+    height: 100%;
+    overflow: auto;
+    padding: 10px;
+    @include drumee.typo(
+      $size: 13px,
+      $line: 18px,
+      $weight: 300,
+      $color: var(--default-text-color)
+    );
+
+    &--outer {
+      display: flex;
+      flex: 1;
+      border-left: solid rebeccapurple;
+      max-height: 100%;
+      overflow: auto;
+
+      &[data-position="right"] {
+        border-left: 1px solid rebeccapurple;
+        border-top: none;
+      }
+
+      &[data-position="bottom"] {
+        border-top: 1px solid rebeccapurple;
+        border-left: none;
+      }
+    }
+
+    &[data-position="bottom"] {
+      border-left: none;
+    }
+
+    h1 {
+      @include drumee.typo(
+        $size: 30px,
+        $line: 1.2,
+        $color: var(--default-text-color)
+      );
+    }
+
+    h2 {
+      @include drumee.typo(
+        $size: 26px,
+        $line: 1.2,
+        $color: var(--default-text-color)
+      );
+    }
+
+    h3 {
+      @include drumee.typo(
+        $size: 22px,
+        $line: 1.2,
+        $color: var(--default-text-color)
+      );
+    }
+
+    h4 {
+      @include drumee.typo(
+        $size: 18px,
+        $line: 1.2,
+        $color: var(--default-text-color)
+      );
+    }
+
+    h5 {
+      @include drumee.typo(
+        $size: 16px,
+        $line: 1.2,
+        $color: var(--default-text-color)
+      );
+    }
+  }
+
+  &__editor {
+    width: 100%;
+    height: 100%;
+    padding: var(--spacer-5);
+    overflow: auto;
+
+    &--outer {
+      flex: 1;
+      height: 100%;
+      max-height: 100%;
+      overflow: auto;
+      background-color: var(--normal-bg-90);
+    }
+
+    .text-editable {
+      width: 100%;
+      height: 100%;
+      padding: 15px 10px 10px 15px;
+      outline: 0px solid transparent;
+
+      * {
+        white-space: break-spaces;
+        overflow-wrap: break-word;
+      }
+
+      img {
+        max-width: 100%;
+        max-height: 100%;
+      }
+    }
+
+    textarea {
+      width: 100%;
+      height: 100%;
+      border: 1px solid var(--neutral-800);
+      background-color: var(--normal-bg-90);
+      border-radius: var(--corner-radius-5);
+      padding: var(--spacer-8);
+      resize: none;
+      color: var(--normal-fg-10);
+    }
+  }
+}

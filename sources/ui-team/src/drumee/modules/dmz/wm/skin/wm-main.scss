@@ -1,0 +1,479 @@
+/** ================================================================== *
+#   Copyright Xialia.com  2011-2016
+#   FILE : src/drumee/modules/dmz/wm/skin/wm-main.scss
+#   TYPE : DMZ window-manager grid styles — mirrors
+#          builtins/window/skin/group/body/main.scss adapted for `.dmz-wm`
+# ===================================================================**/
+@use "mixins/drumee.scss";
+
+.dmz-wm {
+  &__ui {
+    background: transparent;
+    // Fill the flex cell (.dmz__files-panel), NOT the viewport. The old
+    // `calc(100vh - 30px)` + `margin:auto` sized the file area off the viewport, so
+    // in the 3:1 split (files + conversation, Figma 3.1) the grid floated/detached
+    // from its column. height:100% keeps it inside its flex cell.
+    height: 100%;
+    width: 100%;
+  }
+
+  &.dmz {
+    position: relative;
+    background-color: transparent;
+    box-shadow: none;
+  }
+
+  &__main {
+    width: 100%;
+    height: 100%;
+    position: relative;
+    background-color: var(--normal-bg-90);
+
+    &[data-device="mobile"] {
+      min-width: 305px;
+    }
+  }
+
+  &__content-main {
+    width: 100%;
+    height: 100%;
+  }
+
+  /* Filter bar — based on window-folder__filter-bar: centered row on a
+     --normal-bg-90 surface with a visible --border-default divider. */
+  &__filter-bar {
+    align-items: center;
+    gap: 24px;
+    padding: 8px 24px 8.5px;
+    color: var(--normal-fg-10);
+    border-bottom: 1px solid var(--border-default, #d1d1d6);
+    background: var(--normal-bg-90);
+  }
+
+  // Based on window-folder__filter-tab-main: underline tab (transparent 2px
+  // bottom border that fills on active). The sharebox accent override below
+  // pins the active colour to --sb-pink (= share area) for the share context.
+  &__filter-tab {
+    align-items: center;
+    justify-content: center;
+    border-bottom: 2px solid transparent;
+    background: transparent;
+    cursor: pointer;
+    @include drumee.typo($size: 13px, $line: 1, $weight: 700, $color: var(--normal-fg-10));
+
+    .note-content {
+      @include drumee.typo($size: 13px, $line: 1, $weight: 700, $color: var(--normal-fg-10));
+      cursor: pointer;
+    }
+
+    &[data-radiotoggle="on"],
+    &[data-state="1"] {
+      padding-bottom: 6px;
+      border-bottom-color: var(--area-share);
+      @include drumee.typo($size: 13px, $line: 1, $weight: 800, $color: var(--normal-fg-10));
+
+      .note-content {
+        @include drumee.typo($size: 13px, $line: 1, $weight: 800, $color: var(--normal-fg-10));
+      }
+    }
+  }
+
+  // Active underline tracks the bar's area (mirror window-folder).
+  &__filter-bar[data-area="personal"] &__filter-tab[data-state="1"],
+  &__filter-bar[data-area="personal"] &__filter-tab[data-radiotoggle="on"] {
+    border-bottom-color: var(--area-personal);
+  }
+
+  &__filter-bar[data-area="share"] &__filter-tab[data-state="1"],
+  &__filter-bar[data-area="share"] &__filter-tab[data-radiotoggle="on"],
+  &__filter-bar[data-area="dmz"] &__filter-tab[data-state="1"],
+  &__filter-bar[data-area="dmz"] &__filter-tab[data-radiotoggle="on"] {
+    border-bottom-color: var(--area-share);
+  }
+
+  &__filter-bar[data-area="public"] &__filter-tab[data-state="1"],
+  &__filter-bar[data-area="public"] &__filter-tab[data-radiotoggle="on"] {
+    border-bottom-color: var(--area-public);
+  }
+
+  /* File grid */
+  &__icons {
+    &-container {
+      width: 100%;
+      height: 100%;
+    }
+  }
+
+  &__icons-list {
+    // Based on window-folder window__icons-list: top-LEFT aligned grid (was
+    // centered) so a partly-filled grid sits at the top-left of the panel.
+    align-content: flex-start;
+    align-items: flex-start;
+    display: flex;
+    flex-flow: column;
+    height: 100%;
+    justify-content: flex-start;
+    justify-items: flex-start;
+    width: 100%;
+
+    & .smart-container {
+      align-content: flex-start;
+      align-items: flex-start;
+      justify-content: flex-start;
+      justify-items: flex-start;
+      padding: 24px;
+    }
+
+    &.desk-content {
+      margin: 0 auto;
+
+      &.icons-list {
+        z-index: 1000;
+        height: 100%;
+        width: 100%;
+        // Cap to the flex cell, not the viewport (was calc(100vh - 190px), which
+        // overflowed the column in the 3:1 split). Internal scroll stays via overflow.
+        max-height: 100%;
+
+        &[data-type="evaluation"]::after {
+          @include drumee.license-trial();
+          @include drumee.typo(
+            $size: 22px,
+            $line: 1.3,
+            $color: var(--default-text-title)
+          );
+          transform: none;
+          bottom: 0;
+          width: 100%;
+        }
+      }
+    }
+
+    & .media-grid .filename {
+      font-size: 12px;
+      min-height: 23px;
+    }
+  }
+
+  &__icons-scroll {
+    // Based on window-folder window__icons-scroll: top-left grid sized by the
+    // shared --grid-* tokens (cell-w / file & folder cell-h / gap) instead of the
+    // old centered, hardcoded 120/121 px grid.
+    align-content: flex-start;
+    align-items: flex-start;
+    justify-content: flex-start;
+    display: grid;
+    grid-template-columns: repeat(auto-fill, var(--grid-cell-w));
+    grid-auto-rows: var(--grid-cell-h-file);
+    gap: var(--grid-gap);
+    min-height: 100px;
+    padding: 24px;
+    margin: 0;
+    min-width: 0;
+
+    // Section partitioning. The share grid is now opted into the 3-tier
+    // partition (see window/utils.js usesPartition); _doPartition flips the
+    // scroll to a flex column of .folder-section / .file-section grids. The
+    // global section base lives in desk/wm/skin (not loaded on the share page),
+    // so declare it self-sufficiently here: each section is its own top-aligned
+    // grid, file rows taller than folder rows, and never flex-grow (the
+    // framework sets inline flex-grow:1 which would stretch a short section).
+    .workspace-section,
+    .folder-section,
+    .file-section {
+      display: grid;
+      align-content: start;
+      align-items: start;
+      justify-items: start;
+      grid-template-columns: repeat(auto-fill, var(--grid-cell-w));
+      gap: var(--grid-gap);
+      width: 100%;
+      flex: 0 0 auto !important;
+    }
+
+    .workspace-section,
+    .folder-section {
+      grid-auto-rows: var(--grid-cell-h-folder);
+    }
+
+    // Match the desk (fd6): a long folder/workspace name truncates to a SINGLE
+    // line + ellipsis instead of wrapping to a 2nd line the compact 144px cell
+    // clips (Lexis 2026-07-13, fd1/fd2/fd7). filename.scss renders the label as
+    // a 2-line -webkit-box; override to the desk's plain single-line truncation
+    // (white-space:nowrap + ellipsis). Target the label by its filetype class so
+    // it applies regardless of the partition/section wrapping. DMZ share only.
+    .filename.folder,
+    .filename.hub {
+      display: block;
+      -webkit-line-clamp: unset;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-height: none;
+    }
+
+    .file-section {
+      grid-auto-rows: var(--grid-cell-h-file);
+    }
+
+    // Shares have no workspace (hub) tier — hide the empty section so it adds
+    // no gap above the folders.
+    .workspace-section:empty,
+    .folder-section:empty,
+    .file-section:empty {
+      display: none;
+    }
+
+    &.smart-container {
+      height: calc(100% - 1rem);
+      width: 100%;
+    }
+
+    // List (row) view — toggled by the topbar view control (data-view-mode set
+    // in sharebox _toggleFilesLayout). In row mode the media items re-render as
+    // full-width media-row items (table rows), so the scroll becomes a single
+    // column that stacks them (mirrors window-folder's row layout).
+    &[data-view-mode="row"] {
+      grid-template-columns: 1fr;
+      grid-auto-rows: min-content;
+
+      .workspace-section,
+      .folder-section,
+      .file-section {
+        grid-template-columns: 1fr;
+        grid-auto-rows: min-content;
+      }
+
+      .media-row__ui,
+      .media-grid__ui {
+        width: 100%;
+        max-width: 100%;
+      }
+    }
+
+    &[data-device="mobile"] {
+      grid-template-columns: repeat(auto-fill, 160px);
+      grid-gap: 0.5rem;
+      grid-template-rows: repeat(auto-fill, 125px);
+    }
+
+    & .media-grid__ui {
+      // Lock cell width only (mirror window-folder); per-section grid-auto-rows
+      // owns the height so folder + file rows coexist without stretching.
+      width: var(--grid-cell-w);
+      max-width: var(--grid-cell-w);
+
+      & .filename {
+        @include drumee.typo(
+          $line: 14px,
+          $size: 14px,
+          $color: var(--default-text-color)
+        );
+        border-radius: var(--border-radius-bottom);
+        cursor: pointer;
+        left: 0px;
+        max-height: 31px;
+        overflow: hidden;
+        padding: 2px 12px;
+        position: absolute;
+        text-align: center;
+        text-overflow: ellipsis;
+        width: 100%;
+
+        
+
+        &.image,
+        &.video {
+          background: linear-gradient(
+            180deg,
+            hsla(0, 0%, 100%, 0.2),
+            hsla(0, 0%, 100%, 0.9)
+          );
+        }
+      }
+    }
+
+    /* Popup folder windows: tighter 90px tiles + 0.75 scale (mirrors reference) */
+    &:not(.window-manager__icons-scroll):has(.folder-section) {
+      .folder-section,
+      .file-section {
+        padding: 16px 24px 8px;
+        gap: 16px;
+
+       
+      }
+
+      
+
+    
+    }
+  }
+
+  &__warning {
+    transform: translate(-50%, 50%);
+  }
+
+  /* DMZ-specific overlays (kept from previous implementation) */
+  &__windows-layer {
+    overflow: visible;
+    position: fixed;
+    height: 0;
+    left: 0;
+    top: 0;
+    width: 0;
+    // A file-viewer window (svg/image/doc) is a positioned child here with an
+    // inline z-index, but that only stacks WITHIN this layer's context. Without a
+    // z-index on the layer itself it stays at the flex level of the conversation
+    // panel (.dmz__chat-panel), which — being later in the DOM — painted OVER the
+    // viewer, so the chat composer bled across an open doc (j17). Lift the whole
+    // layer above the chat panel so viewers cleanly overlay it.
+    z-index: 1000;
+
+    &[data-device="mobile"] {
+      width: 100%;
+      height: 100%;
+    }
+  }
+
+  &__wrapper-modal {
+    top: 0;
+    left: 0;
+    position: fixed;
+    align-items: center;
+    justify-content: center;
+    // Above the viewer layer (1000) so the create-folder dialog / spinner stay on
+    // top even when a file viewer is open.
+    z-index: 2000;
+
+    // data-state="open" = the spinner overlay; data-mode="create-folder" = the
+    // add-folder dialog (set by __dmz_wm.onUiEvent "add-folder"). Both need the
+    // full-viewport centered backdrop so the dialog isn't an unstyled inline form.
+    &[data-state="open"],
+    &[data-mode="create-folder"] {
+      width: 100%;
+      height: 100%;
+      background: var(--transparency-container-overlay);
+      right: 0;
+      bottom: 0;
+    }
+
+    .drumee-spinner {
+      width: 150px;
+      height: 150px;
+      background: var(--default-bg);
+      top: calc(50% - 75px);
+      left: calc(50% - 75px);
+      border-radius: var(--border-radius);
+      padding: 20px;
+
+      .root-node {
+        position: absolute;
+      }
+    }
+  }
+}
+
+/* Sharebox-scoped active filter tab — pink underline (Figma) */
+.dmz-sharebox .dmz-wm__filter-tab[data-radiotoggle="on"],
+.dmz-sharebox .dmz-wm__filter-tab[data-state="1"] {
+  background-color: transparent;
+  border-bottom: 2px solid var(--sb-pink);
+  border-radius: 0;
+  color: var(--sb-text);
+}
+
+/* Create-folder dialog. The shared create-folder-dialog skeleton (opened by
+   __dmz_wm into the wrapper-modal) uses the ui's family prefix → dmz-wm__create-folder-*.
+   That CSS only existed for window-folder, so in the share the form rendered as
+   unstyled inline elements (oversized close cross, fields bleeding into the grid).
+   Port the window-folder card styling onto the dmz-wm family — same theme vars,
+   so it's dark-mode safe and matches the desk dialog. */
+.dmz-wm {
+  &__create-folder-dialog {
+    width: 360px;
+    background: var(--normal-bg-90);
+    border-radius: 12px;
+    overflow: hidden;
+    box-shadow: 0 1px 11px rgba(0, 0, 0, 0.13);
+  }
+
+  &__create-folder-header {
+    align-items: flex-start;
+    justify-content: space-between;
+    border-bottom: 1px solid rgba(0, 0, 0, 0.05);
+    padding: 24px 24px 25px;
+  }
+
+  &__create-folder-heading {
+    gap: 4px;
+  }
+
+  &__create-folder-title {
+    @include drumee.typo($size: 18px, $line: 24px, $weight: 600, $color: var(--normal-fg-10));
+  }
+
+  &__create-folder-subtitle {
+    @include drumee.typo($size: 12px, $line: 17px, $weight: 400, $color: var(--normal-fg-20));
+  }
+
+  &__create-folder-close {
+    height: 24px;
+    width: 14px;
+    color: var(--normal-fg-10);
+    padding: 0;
+    cursor: pointer;
+
+    svg {
+      width: 14px;
+      height: 14px;
+    }
+  }
+
+  &__create-folder-content {
+    gap: 16px;
+    padding: 24px;
+  }
+
+  &__create-folder-label {
+    @include drumee.typo($size: 12px, $line: 14px, $weight: 600, $color: var(--normal-fg-10));
+  }
+
+  &__create-folder-entry {
+    width: 100%;
+
+    input {
+      min-height: 41px;
+      padding: 12px;
+      border: 0;
+      border-radius: 8px;
+      background: var(--normal-bg-elevated);
+      @include drumee.typo($size: 12px, $line: 17px, $weight: 400, $color: var(--normal-fg-20));
+    }
+  }
+
+  &__create-folder-footer {
+    padding: 0 24px 24px;
+  }
+
+  &__create-folder-button {
+    width: 100%;
+    padding: 8px 24px;
+    border-radius: 4px;
+    text-align: center;
+    cursor: pointer;
+    align-items: center;
+    justify-content: center;
+    @include drumee.typo($size: 14px, $line: 20px, $weight: 600, $color: #ffffff);
+
+    .note-content {
+      width: 100%;
+      text-align: center;
+      justify-content: center;
+    }
+
+    &.primary {
+      background: #433cc5;
+    }
+  }
+}
+

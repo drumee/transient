@@ -1,0 +1,407 @@
+/* 
+  player/document/skin/document.scss
+*/
+// @import 'slider-pro.css';
+// @import 'slider-pro.scss';
+@use "mixins/drumee.scss";
+
+.player-document {
+  &__ui {
+    background-color: var(--multimedia-player-doc-bg);
+    width: 100%;
+
+    &[data-device="mobile"] {
+      height: calc(100vh - 44px) !important;
+      height: calc(100dvh - 44px) !important;
+      left: 0 !important;
+      max-height: calc(100vh - 44px);
+      max-height: calc(100dvh - 44px);
+      max-width: 100vw;
+      min-width: 0 !important;
+      top: 0 !important;
+      transform: none !important;
+      width: 100vw !important;
+    }
+
+    // Edit-mode geometry is owned by JS (initSize/toggleZoom). Don't cap width
+    // here — a max-width would clamp the JS-maximized editor regardless.
+    &[data-mode="edit"] {
+      max-width: none;
+    }
+  }
+
+  // True browser fullscreen (doc-fullscreen button / Fullscreen API). The UA
+  // :fullscreen rule is overridden by the JS-set inline width/height/top/left,
+  // so force the element to fill the screen.
+  &__ui:fullscreen,
+  &__ui:-webkit-full-screen {
+    width: 100% !important;
+    height: 100% !important;
+    max-width: none !important;
+    max-height: none !important;
+    top: 0 !important;
+    left: 0 !important;
+    border-radius: 0;
+  }
+
+  &__main {
+    height: 100%;
+    min-height: 300px;
+    min-width: 300px;
+    width: 100%;
+  }
+
+  // Header action icons need a positioning context so their hover tooltip
+  // (an absolutely-positioned bubble) anchors under the button.
+  .window-button__icon-button {
+    position: relative;
+  }
+
+  // Edit switch — label + track + sliding knob.
+  //
+  // The label names what the switch governs, so it does not change between
+  // states; `data-active` says whether the editor is on, and the knob's
+  // position is what tells the two apart.
+  &-topbar__mode {
+    align-items: center;
+    cursor: pointer;
+    display: flex;
+    gap: var(--spacer-3);
+    white-space: nowrap;
+
+    // Decoration must never be the click target. Every LETC view binds its
+    // own onclick and that handler stops propagation before dispatching, so
+    // a click landing on the label or the knob would be swallowed there and
+    // never reach the row that carries the service.
+    &-label,
+    &-track,
+    &-knob {
+      pointer-events: none;
+    }
+
+    &-label {
+      @include drumee.typo($size: 12px, $line: 16px, $color: var(--normal-fg-10));
+      // drumee.typo() maps only 300/400/500/700 onto a family and emits no
+      // `font-weight`, so 600 has to be set directly.
+      font-weight: 600;
+    }
+
+    &-track {
+      align-items: center;
+      background-color: var(--normal-fg-40, #a8a8ae);
+      border-radius: 999px;
+      display: flex;
+      flex-shrink: 0;
+      height: 24px;
+      padding: 3px;
+      transition: background-color 0.15s ease;
+      width: 42px;
+    }
+
+    &-knob {
+      background-color: var(--white, #fff);
+      border-radius: 50%;
+      height: 18px;
+      transition: transform 0.15s ease;
+      width: 18px;
+    }
+
+    &:hover &-track {
+      background-color: var(--normal-fg-30, #96969c);
+    }
+
+    // Editing: track lights up and the knob slides right.
+    &[data-active="1"] &-track {
+      background-color: var(--primary-50, #433cc5);
+    }
+
+    &[data-active="1"] &-knob {
+      transform: translateX(18px);
+    }
+  }
+
+  // The shared topbar widget sizes its action row for 24px icon buttons.
+  // The document actions are taller — the primary ones carry 4px/8px
+  // padding — so let the row take its content's height rather than
+  // overflow a fixed 24px. The tooltips also have to escape the row.
+  .drumee-topbar__actions {
+    height: auto;
+    overflow: visible;
+  }
+
+  // While the progress bar is up — first load, every reload, and every
+  // Edit <-> Preview switch — the header actions all act on a document that
+  // is not there yet, so they go inert. Close is exempt: a stuck or slow
+  // load must always be dismissable.
+  //
+  // Derived from the progress part's own `data-state` rather than a second
+  // flag of our own. Six call sites flip that state directly (initProgess,
+  // message, _hideEditorProgress, onFetchProgress, nextPages, checkPreview),
+  // and a parallel flag would drift from at least one of them. Matching only
+  // `="1"` also covers the `hide()` path, which writes "closed", not 0.
+  //
+  // The flag sits on an ancestor, not on the row's children, so it survives
+  // `updateMenu()` re-feeding `.drumee-topbar__actions` on every mode change.
+  &:has(.player-document__progress-container[data-state="1"]) {
+    .drumee-topbar__actions > *:not(.close) {
+      opacity: 0.4;
+      // The only enforcement: these controls are divs carrying an onclick,
+      // not focusable buttons, so there is no keyboard path around it.
+      pointer-events: none;
+    }
+  }
+
+  &__tooltips {
+    position: absolute;
+    top: calc(100% + 6px);
+    left: 50%;
+    transform: translateX(-50%);
+    white-space: nowrap;
+    padding: 6px 8px;
+    border-radius: var(--border-radius);
+    background-color: var(--background-tooltips);
+    box-shadow: var(--drumee-shadow-box);
+    z-index: 1000;
+    pointer-events: none;
+    @include drumee.typo(
+      $size: 12px,
+      $line: 14px,
+      $weight: 400,
+      $color: var(--default-text-tooltips)
+    );
+  }
+
+  &__progress {
+    &-container {
+      transition-property: opacity;
+      transition-duration: 0.2s;
+      position: absolute;
+      top: 132px;
+      left: 0;
+      width: 100%;
+      height: auto;
+      min-height: 3px;
+      // background-color: rgba(0, 0, 0, 0.6);
+      z-index: 2000;
+      justify-content: flex-start;
+      display: flex;
+      margin: 0 10px 0 0;
+
+      &[data-state="0"] {
+        opacity: 0;
+        z-index: 0;
+      }
+    }
+
+    &-bar {
+      position: absolute;
+      height: 5px;
+      width: 0;
+      transition: width 0.5s;
+      background-color: var(--primary-500);
+      z-index: 1;
+    }
+
+    &-container[data-loading="indeterminate"] {
+      overflow: hidden;
+
+      .player-document__progress-bar {
+        width: 30%;
+        will-change: transform;
+        animation: player-document-indeterminate 1.4s ease-in-out infinite;
+      }
+    }
+
+    &-text {
+      position: absolute;
+      @include drumee.typo(
+        $color: var(--default-text-color),
+        $size: 14px,
+        $line: 15px,
+        $weight: 300
+      );
+      top: 10px;
+      left: 0;
+      width: 100%;
+      z-index: 2;
+      padding: 10px;
+      text-align: center;
+      justify-content: center;
+    }
+  }
+
+  &__error {
+    padding: 20px;
+    text-align: center;
+    @include drumee.typo(
+      $color: var(--default-text-error),
+      $size: 16px,
+      $line: 24px,
+      $weight: 300
+    );
+  }
+
+  &__list {
+    height: 100%;
+    max-height: 100%;
+    overflow-y: visible;
+    width: 100%;
+
+    .list-smart__container {
+      height: 100%;
+      padding: var(--spacer-4);
+    }
+
+    & .list-smart__container::-webkit-scrollbar {
+      width: 7px !important;
+    }
+  }
+
+  &__control {
+    bottom: 60px;
+    height: 40px;
+    position: absolute;
+    right: 20px;
+    width: 40px;
+
+    .play-btn {
+      background-color: rgba(255, 255, 255, 0.8);
+      border-radius: 50%;
+      color: #18a3ac;
+      cursor: pointer;
+
+      &[data-state="1"] {
+        padding: 10px !important;
+      }
+    }
+  }
+
+  &__loading {
+    @include drumee.typo(
+      $color: var(--default-text-color),
+      $size: 18px,
+      $line: 42px,
+      $weight: 300
+    );
+    align-content: center;
+    align-items: center;
+    height: 100%;
+    justify-content: center;
+    justify-items: center;
+    text-align: center;
+  }
+
+  &__overlay {
+    background-color: var(--transparency-container-overlay);
+    height: 100%;
+    width: 100%;
+    position: absolute;
+    top: 0;
+    left: 0;
+    padding: 10px;
+    z-index: 10;
+    align-items: center;
+    align-content: center;
+    justify-content: center;
+  }
+
+  &-new-content-popup {
+    &__container {
+      justify-content: space-evenly;
+      width: 100%;
+      max-width: 400px;
+      padding: 30px;
+      background-color: white;
+      border-radius: 5px;
+    }
+
+    &__note {
+      @include drumee.typo(
+        $size: 14px,
+        $line: 1.3,
+        $color: var(--default-text-color)
+      );
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      margin-bottom: 10px;
+    }
+
+    &__buttons-wrapper {
+      justify-content: center;
+      width: 100%;
+      max-width: 300px;
+      margin: 0 auto;
+    }
+
+    &__button {
+      height: 25px;
+      width: auto;
+      justify-content: center;
+      align-items: center;
+      margin-right: 5%;
+      margin-top: 5px;
+      text-align: center;
+      border-radius: var(--border-radius);
+      cursor: pointer;
+      min-width: 75px;
+
+      &.cancel {
+        @include drumee.typo($size: 12px, $color: var(--btn-rollback-text));
+        border: 1px solid var(--btn-rollback-border);
+        border-radius: var(--corner-radius-5);
+
+        &:hover {
+          border: 2px solid var(--btn-rollback-border-hover);
+          color: var(--btn-rollback-text-hover);
+        }
+      }
+
+      &.confirm {
+        @include drumee.typo(
+          $size: 12px,
+          $line: 14px,
+          $color: var(--btn-commit-text)
+        );
+        background-color: var(--primary-500);
+        border: 1px solid var(--btn-commit-border);
+        border-radius: var(--corner-radius-5);
+
+        &:hover {
+          background-color: var(--primary-600);
+          border-color: var(--btn-commit-border-hover);
+        }
+      }
+    }
+  }
+}
+
+@media (max-width: 650px) {
+  .player-document {
+    &__ui {
+      height: calc(100vh - 44px) !important;
+      height: calc(100dvh - 44px) !important;
+      left: 0 !important;
+      max-height: calc(100vh - 44px);
+      max-height: calc(100dvh - 44px);
+      max-width: 100vw;
+      min-width: 0 !important;
+      top: 0 !important;
+      transform: none !important;
+      width: 100vw !important;
+    }
+
+    &__main {
+      min-width: 0;
+    }
+  }
+}
+
+@keyframes player-document-indeterminate {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(333%);
+  }
+}

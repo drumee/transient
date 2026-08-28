@@ -1,0 +1,145 @@
+@use "mixins/drumee";
+
+.window {
+  &-breadcrumbs {
+    &__main {
+      width: 80px;
+      height: 100%;
+      position: absolute;
+
+      .menu-topic-trigger {
+        margin: 12px 0;
+      }
+
+      .menu-topic-items {
+        &__wrapper {
+
+          margin-top: -6px;
+          padding: 6px;
+        }
+      }
+    }
+
+    &__container {
+      height: 28px;
+      left: 0;
+      position: absolute;
+      border: 0;
+      width: 100%;
+      bottom: 0;
+      // gap: var(--spacer-3);
+      padding-left: var(--spacer-5);
+
+      &[data-state="1"] {
+        pointer-events: auto;
+        opacity: 1;
+      }
+
+      &[data-state="0"] {
+        display: none;
+      }
+    }
+
+    &__wrapper {
+      padding: 0 14px;
+      align-items: center;
+    }
+
+    &__icon {
+      color: var(--default-icon-reverse);
+      cursor: pointer;
+
+      &[data-state="0"] {
+        display: none;
+      }
+    }
+
+    &__arrow {
+      transform: rotate(180deg);
+      padding: 4px !important;
+    }
+
+    &__item {
+      cursor: pointer;
+      max-width: 180px;
+      white-space: nowrap;
+      color: var(--neutral-300);
+      align-content: center;
+      flex-wrap: wrap;
+      overflow: hidden;
+
+      &:after {
+        content: "/";
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+      }
+
+      &--filename {
+        font-size: 14px;
+        align-content: start;
+        align-items: center;
+        width: auto;
+        max-width: 160px;
+        @include drumee.overflow-text;
+      }
+
+      .inner {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      &:hover,
+      &:last-child {
+        & .filename {
+          color: var(--neutral-50);
+        }
+      }
+
+      &:last-child {
+        &:after {
+          content: "";
+        }
+
+      }
+    }
+
+    &__roll {
+      overflow: visible;
+      z-index: 1000;
+      min-width: 110px;
+      max-width: 200px;
+      width: auto;
+      height: auto;
+      max-height: 250px;
+      background: var(--default-bg);
+      border-radius: var(--border-radius);
+      box-shadow: var(--drumee-shadow-box);
+      padding: 10px 0;
+
+      &:before {
+        content: "";
+        position: absolute;
+        top: -4px;
+        left: 16px;
+        width: 8px;
+        height: 8px;
+        background-color: var(--default-bg);
+        transform: rotate(45deg);
+        box-shadow: var(--shadow-before);
+      }
+
+      &:after {
+        content: "";
+        position: absolute;
+        width: 100%;
+        height: 10px;
+        top: 0;
+        left: 0;
+        background: var(--default-bg);
+        border-radius: var(--default-border-radius-top);
+      }
+    }
+  }
+}

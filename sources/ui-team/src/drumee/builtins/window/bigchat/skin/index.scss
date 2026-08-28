@@ -1,0 +1,266 @@
+// @use "sass:meta";
+@use "mixins/drumee";
+@use "layout";
+@use "breadcrumbs";
+@use "search";
+@use "menu";
+@use "overlay-wrapper";
+
+.window-bigchat {
+  &__ui {
+    background-color: inherit;
+    &[data-device="mobile"] {
+      width: 360px !important;
+      height: 500px !important;
+      left: 50% !important;
+      transform: translateX(-50%) translateY(15%);
+    }
+  }
+
+  &__main {
+    background-color: var(--normal-bg-90);
+  }
+
+  &__container {
+    background-color: inherit;
+  }
+
+  &__body {
+    height: 100% !important;
+    margin: 0 auto;
+    min-height: auto !important;
+    min-width: auto !important;
+    overflow: hidden;
+    width: 100% !important;
+    border-radius: 0 0 24px 24px;
+
+    &.window__body {
+      padding: 0;
+    }
+  }
+
+  &__header {
+    background-color: var(--bigchat-header-bg);
+    border-bottom: none;
+  }
+
+  &-topbar {
+    &__container {
+      justify-content: space-between;
+      padding: 0 var(--spacer-8);
+      &[data-device="mobile"] {
+        gap: var(--spacer-4);
+        justify-content: center;
+      }
+    }
+
+    &__content {
+      align-items: center;
+      &[data-device="mobile"] {
+        height: auto;
+      }
+    }
+
+    &__title-wrapper {
+      gap: var(--spacer-4);
+      align-items: center;
+    }
+
+    &__name-wrapper {
+      gap: var(--spacer-4);
+    }
+
+    &__subtitle-wrapper {
+      gap: var(--spacer-4);
+      color: white;
+      &.contacts {
+        padding-right: var(--spacer-4);
+        border-right: 1px solid var(--neutral-400);
+      }
+      &[data-device="mobile"] {
+        display: none;
+      }
+    }
+
+    &__content {
+      & .title {
+        align-items: center;
+        @include drumee.typo(
+          $size: 32px,
+          $line: 16px,
+          $color: var(--default-text-reverse)
+        );
+      }
+    }
+
+    &__menu {
+      align-items: center;
+      padding: 0 var(--spacer-4) 0 var(--spacer-5);
+      z-index: 1;
+    }
+
+    &__icon {
+      &.contact_add {
+        color: var(--default-icon-reverse);
+        cursor: pointer;
+        height: 24px;
+        padding: 2.5px;
+        width: 24px;
+
+        &:hover {
+          color: var(--default-icon-hover);
+        }
+      }
+
+      &.breadcrumb-icon {
+        color: var(--default-icon-reverse);
+        height: 22px;
+        margin-top: 10px;
+        padding: 3px;
+        width: 22px;
+      }
+    }
+    &__trigger-wrapper {
+      align-items: center;
+      gap: var(--spacer-4);
+      color: white;
+      background-color: var(--neutral-950);
+      padding: var(--spacer-4) var(--spacer-6);
+      border-radius: var(--corner-radius-5);
+      cursor: pointer;
+    }
+  }
+
+  &__max-view {
+    height: 100%;
+    width: 100%;
+
+    & .tags-list {
+      background: var(--default-block-background);
+      border-radius: var(--border-radius-left);
+    }
+
+    .widget-tag__note.title {
+      color: var(--bigchat-default-text-title);
+    }
+  }
+
+  &__chat_note {
+    height: 17px;
+    width: 17px;
+    margin-right: 10px;
+    color: var(--egrey-89);
+  }
+
+  &__shareroom-wrapper {
+    align-items: center;
+    cursor: pointer;
+    font-size: 14px;
+    justify-content: start;
+    padding-bottom: 5px;
+    padding-left: 4px;
+    padding-top: 5px;
+    margin: 1px 0.5px 0 0;
+    height: 35px;
+    @include drumee.typo(
+      $size: 14px,
+      $line: 16px,
+      $color: var(--bigchat-special-share-room-color)
+    );
+
+    &[data-active="active"],
+    &[data-radio="on"],
+    &:hover {
+      background: var(--default-background-hover);
+
+      color: var(--default-text-hover) !important;
+
+      & .addressbook-widget-tag-item__container {
+        color: var(--default-text-hover) !important;
+      }
+
+      & .addressbook-widget-tag-item__name {
+        @include drumee.overflow-text;
+
+        /*white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;*/
+      }
+    }
+  }
+
+  &.adressbook-widget-tag__note.title {
+    @include drumee.typo(
+      $size: 15px,
+      $line: 16px,
+      $color: var(--bigchat-default-text-title)
+    );
+  }
+
+  &__separator {
+    background: var(--default-separator);
+    height: 1px;
+    margin: 3px 0 0;
+  }
+
+  &__max-content {
+    background: var(--normal-bg-90);
+    height: 100%;
+    justify-content: center;
+    overflow: hidden;
+    width: 100%;
+    padding-bottom: var(--spacer-4);
+  }
+
+  &__sharechat_notify[data-state="0"] {
+    visibility: hidden;
+  }
+
+  &-no-discussion {
+    &__content {
+      justify-content: center;
+    }
+
+    &__wrapper {
+      align-items: center;
+    }
+
+    &__item {
+      padding: 5px 0;
+    }
+
+    &__note {
+      @include drumee.typo(
+        $size: 16px,
+        $line: 30px,
+        $color: var(--tertiary-text-color)
+      );
+      height: 100%;
+      justify-content: center;
+      min-width: 35px;
+      max-width: 280px;
+      text-align: center;
+
+      &.click-text {
+        text-transform: lowercase;
+      }
+
+      &.no-discussion {
+        padding-bottom: 5px;
+      }
+    }
+
+    &__icon {
+      &.no-discussion-icon {
+        border-radius: var(--border-radius-small);
+        border: 1px solid var(--border-no-discussion);
+        box-sizing: border-box;
+        color: var(--default-icon-neutral);
+        height: 25px;
+        margin: 2px 5px 0 5px;
+        padding: 5px;
+        width: 25px;
+      }
+    }
+  }
+}

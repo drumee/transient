@@ -1,0 +1,135 @@
+// NOTE: This file is @include-commented out in skin/index.scss (line 10) and is NOT loaded
+// for the media-grid widget. Badge size + per-variant color rules have been replaced by
+// token-driven .folder-badge--* modifiers in container.scss (Phase 03). Do not re-enable
+// the .icon size overrides here — they conflict with --grid-icon-folder-badge token sizing.
+.media-grid.hub {
+  .icon {
+    width: 25px;
+    height: 25px;
+    position: absolute;
+    top: 20px; //21px;
+    right: 0;
+    left: 0;
+    //margin: -3px auto;
+    margin: 0 auto;
+    fill: var(--default-icon-reverse); //var(--ewhite);
+
+    &.private {
+      padding: 3px;
+      top: 24px;
+    }
+
+    &.share {
+      //   padding: 1px;
+      width: 37px;
+      height: 37px;
+      top: 18px; //14px;
+    }
+  }
+
+  &:hover {
+    &:before {
+      height: 0;
+    }
+  }
+
+  &.public {
+    background-color: var(--website-main);
+    border-radius: var(--border-radius); //6px;
+
+    .media-form__input input {
+      background-color: #45b4bb;
+      color: var(--ewhite);
+    }
+
+    &:before {
+      content: " ";
+      position: absolute;
+      top: 0;
+      right: 0;
+      border-top: 13px solid var(--website-main-light);
+      border-left: 13px solid transparent;
+      border-right: 13px solid var(--website-main-light);
+      border-radius: 0 6px 0 0;
+      height: 0;
+      width: 62px;
+    }
+  }
+
+  &.dmz,
+  &.share {
+    background-color: var(--sharebox-main);
+    border-radius: var(--border-radius);
+
+    .media-form__input input {
+      background-color: #dd820b;
+      color: var(--default-text-reverse);
+    }
+
+    &:before {
+      content: " ";
+      position: absolute;
+      top: 0;
+      right: 0;
+      border-top: 13px solid var(--sharebox-main-light);
+      border-left: 13px solid transparent;
+      border-right: 13px solid var(--sharebox-main-light);
+      border-radius: 0 6px 0 0;
+      height: 0;
+      width: 62px;
+    }
+  }
+
+  &.private {
+    background-color: var(--teamroom-main);
+
+    .media-form__input input {
+      background-color: #c05ed0;
+      color: var(--default-text-reverse);
+    }
+
+    &:before {
+      content: " ";
+      position: absolute;
+      top: 0;
+      right: 0;
+      border-top: 13px solid var(--teamroom-main-light);
+      border-left: 13px solid transparent;
+      border-right: 13px solid var(--teamroom-main-light);
+      border-radius: 0 6px 0 0;
+      height: 0;
+      width: 62px;
+    }
+  }
+}
+
+
+// MOUSE HOVER
+.media-grid.hub {
+  &[data-hover="on"] {
+    .media__container:after {
+      content: " ";
+      width: calc(100% - 12px);
+      height: calc(100% - 25px);
+      border: 1px dashed white;
+      position: absolute;
+      top: 19px;
+      left: 6px;
+      border-radius: 2px;
+      display: block;
+    }
+
+    &.public {
+
+      .media-form__input input {
+        background-color: #45b4bb;
+      }
+    }
+
+    &.private {
+      .media-form__input input {
+        background-color: #c05ed0;
+      }
+    }
+  }
+}

@@ -1,0 +1,42 @@
+@use "mixins/drumee";
+
+.desk-workspace {
+  &__ui {
+    gap: var(--spacer-3);
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow: hidden;
+    width: 100%;
+  }
+
+  &__list {
+    height: 100%;
+    min-height: 0;
+    overflow-y: auto;
+    width: 100%;
+  }
+
+  &__item {
+    align-items: center;
+    gap: var(--spacer-2);
+    padding: var(--spacer-3);
+    cursor: pointer;
+    transition: background 0.2s;
+    border-radius: var(--corner-radius-2);
+
+    &:hover {
+      background: var(--neutral-300);
+    }
+
+    &[active="1"] {
+      background: var(--neutral-700);
+    }
+
+    &-status {
+      width: var(--spacer-3);
+      height: var(--spacer-3);
+      background: var(--green-400);
+      border-radius: 50%;
+    }
+  }
+}

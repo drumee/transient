@@ -1,0 +1,39 @@
+@use "mixins/drumee";
+
+.media-grid {
+  &__helper-wrapper {
+    width: 90px;
+    height: 75px;
+    opacity: 1;
+    overflow: visible;
+    transform: scale(0.75);
+    // Must stay below `.desk-module__settings-main-slot` (1500); jQuery UI
+    // appends the helper to <body> so it competes at the root context.
+    z-index: 1450;
+    box-shadow: none;
+    background-color: transparent;
+    @include drumee.typo($line: 14px, $size: 11px, $color: var(--default-text-color));
+
+    &.deleting {
+      background-color: var(--default-bg);
+      transform: scale(1);
+
+      &:after,
+      &:before {
+        display: none;
+      }
+
+      svg.icon,
+      .media-deletion-wrapper,
+      .media-checkbox-wrapper,
+      .media-sharing-wrapper,
+      .media-grid__remove {
+        display: none;
+      }
+    }
+
+    .media-grid__remove {
+      display: none;
+    }
+  }
+}

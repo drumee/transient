@@ -1,0 +1,128 @@
+@use 'mixins/drumee';
+
+.account-apps {
+
+  &__ui {
+    height: 100%;
+    width: 100%;
+    height: 100%;
+    align-items: center;
+    justify-items: center;
+    display:flex;
+    flex-direction:column;
+  }
+
+  &__main,
+  &__content {
+    width: 100%;
+    height: 100%;
+    align-items: center;
+    justify-items: center;
+  }
+
+  &__others{
+    flex-direction: row;
+    flex-wrap: wrap;
+    width: 100%;
+  }
+
+  &__content {
+    height: auto;
+    max-width:600px;
+  }
+
+  &__platforms{
+    width: 100%;
+  }
+  
+  &__status {
+    align-items: center;
+    justify-content: flex-start;
+    height: 60px;
+    width: 100%;
+  }
+
+  &__container {
+    background: var(--default-bg);
+    height: 100%;
+    justify-content: center;
+    width: 100%;
+  }
+
+  &__items {
+    height: 100%;
+    // height: calc(100% - 75px);
+    justify-content: center;
+    width: calc(100% - 20px);
+  }
+
+
+
+  // css for popup buttons - do not remove
+  &__buttons-wrapper {
+    justify-content: space-around;
+    height: 60px;
+    width: 100%;
+    padding: 5px 30px;
+    &.others{
+      width:50%;
+    }
+    & .button {
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      height: 100%;
+      width: auto; 
+      border-radius: 4px;
+      overflow: hidden;
+      cursor: pointer;
+      &:hover {
+        border:2px solid var(--btn-rollback-border-hover);
+        color: var(--btn-rollback-text-hover);   
+      }
+      &.download, &.others{
+        @include drumee.typo( $size: 16px, $line: 16px, $color: var(--btn-commit-text));
+        background:var(--account-color-basic-plan);
+      }
+      &.show{
+        @include drumee.typo($size: 16px, $line: 16px, $color: var(--btn-rollback-text)); 
+        background:var(--account-color-offer-banner);
+      }
+    }
+
+  }
+
+  &__button-cancel {
+    @include drumee.typo($size: 16px, $line: 16px, $color: var(--btn-rollback-text)); 
+    border: 1px solid var(--btn-rollback-border-hover);
+    border-radius: var(--border-radius);
+    min-width: 150px; 
+    height: 40px;
+    padding: 2px 5px;
+
+    &:hover {
+      border:2px solid var(--btn-rollback-border-hover);
+      color: var(--btn-rollback-text-hover);   
+    }
+  }
+
+  &__icon {
+    height: 140px; 
+    width: 140px; 
+    color: var(--account-color-offer-banner);   
+    margin: 10px auto;
+  }
+
+  &__button {
+    @include drumee.typo( $size: 16px, $line: 16px, $color: var(--btn-commit-text));
+    background-color: var(--btn-commit-background);
+    border-radius: var(--border-radius);
+    height: 40px; 
+    min-width: 180px;
+
+    &:hover {
+      border: 2px solid var(--btn-commit-border-hover);
+      background-color: var(--btn-commit-background-hover);
+    }
+  }
+}

@@ -1,0 +1,144 @@
+/** ================================================================== *
+#   Copyright Xialia.com  2011-2020
+#   FILE : /src/drumee/builtins/player/video/skin/index.scss
+#   TYPE : Component style
+# ===================================================================**/
+@use "mixins/drumee";
+@import "openplayer.css";
+
+.player-video {
+
+  // While the loading spinner is up, the header actions all act on media that
+  // is not there yet, so they go inert. Close is exempt: a stuck or slow load
+  // must always be dismissable. Mirrors the document player's rule.
+  //
+  // Derived from the spinner's own markup rather than a flag of our own:
+  // `spinner(1)` appends `.drumee-loading` to the player root and `spinner(0)`
+  // removes it (ui-core addons/backbone/view/utils.js), so presence IS the
+  // loading state and every existing call site is covered for free.
+  //
+  // The hook sits on the root, not on the row's children, so it survives the
+  // action row being re-fed.
+  &:has(> .drumee-loading) {
+    .drumee-topbar__actions > *:not(.close) {
+      opacity: 0.4;
+      // The only enforcement: these controls are divs carrying an onclick,
+      // not focusable buttons, so there is no keyboard path around it.
+      pointer-events: none;
+    }
+  }
+  display: flex;
+  width: 100%;
+  height: 100%;
+  // No max-height: it would cap the inline height jQuery UI resizable sets,
+  // blocking vertical resize. Viewport bounds are enforced in JS.
+
+  &__ui {
+    // Deliberately NOT `overflow: hidden`, and video was the only player
+    // that set it. It clipped the topbar's gear menu at the window edge —
+    // submenus open outward and simply vanished — while buying nothing:
+    // the video surface is already clipped by `.player__container`, which
+    // carries the bottom corner radius for every player.
+    width: 100%;
+    height: 100%;
+  }
+
+  &__main {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    width: 100%;
+  }
+
+  // Drag handle. The window is dragged by this header (see
+  // player/interact.js `setupInteract`, handle `.player__header`).
+  //
+  // The header is now the shared topbar widget, so this treatment moved off
+  // the old `-topbar__control` wrapper — which no longer exists — and onto
+  // the widget's action row. It keeps the video player's round, blurred
+  // buttons, which read against the black video surface where the widget's
+  // flat 24px icons would not.
+  .drumee-topbar__actions {
+    cursor: move;
+
+    .icon {
+      width: 32px;
+      height: 32px;
+      padding: 0;
+      border-radius: 50%;
+      backdrop-filter: blur(4px);
+      color: var(--normal-fg-10);
+      transition: background-color 0.15s ease;
+      cursor: pointer;
+
+      svg {
+        width: 20px;
+        height: 20px;
+      }
+
+      &:hover {
+        color: var(--normal-fg-20);
+      }
+    }
+  }
+
+  &__video {
+    background-color: var(--multimedia-player-vdo-bg, #000);
+    width: 100%;
+    height: 100%;
+    // Preserve aspect ratio: portrait/landscape videos no longer stretch to fill.
+    object-fit: contain;
+    border-radius: var(--corner-radius-2);
+  }
+
+  
+
+  /* OpenPlayer brand alignment */
+  .op-player {
+    font-family: "Roboto-Light", sans-serif;
+    width: 100%;
+    height: 100%;
+  }
+
+  input[type="range"].op-controls__volume--input,
+  input[type="range"].op-controls__progress--seek {
+    top: -8px;
+  }
+
+  .op-player__play {
+    border-width: 16px 0 16px 28px;
+    height: 32px;
+  }
+
+  .op-player__play:hover {
+    border-color: transparent transparent transparent var(--grid-color-icon-file);
+  }
+
+  .op-player__loader {
+    border-top: 4px solid var(--grid-color-icon-file);
+  }
+
+  .op-controls .op-controls__progress--played,
+  .op-controls .op-controls__volume--display,
+  .op-controls .op-controls__captions--on:before {
+    color: var(--grid-color-icon-file);
+  }
+
+  .op-controls input[type="range"],
+  .op-controls progress {
+    height: 4px;
+  }
+
+  .op-controls .op-controls__progress--seek.error {
+    background: linear-gradient(
+      -45deg,
+      var(--grid-color-icon-file) 25%,
+      transparent 25%,
+      transparent 50%,
+      var(--grid-color-icon-file) 50%,
+      var(--grid-color-icon-file) 75%,
+      transparent 75%,
+      transparent
+    );
+  }
+}

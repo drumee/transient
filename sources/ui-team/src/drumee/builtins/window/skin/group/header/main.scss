@@ -1,0 +1,154 @@
+@use "mixins/drumee";
+
+.window {
+  &__header {
+    border-radius: var(--corner-radius-5) var(--corner-radius-5) 0 0;
+    align-content: center;
+    flex-wrap: wrap;
+    padding: var(--spacer-4) var(--spacer-6);
+  }
+
+  &-topbar {
+    &__container {
+      border-radius: var(--default-border-radius-top);
+      width: 100%;
+      align-content: center;
+      flex-wrap: wrap;
+
+      &[data-device="mobile"] {
+        min-width: 305px;
+        height: 140px;
+      }
+
+      &.personnal {
+        background-color: var(--folder-main);
+      }
+    }
+
+    &__copy-link-ack {
+      position: absolute;
+      width: 320px;
+      height: 200px;
+      padding: 10px;
+      z-index: 1000000;
+      top: 42px;
+      left: calc(50% - 160px);
+      box-shadow: 0px 0px 31px 0 rgba(0, 0, 0, 0.4);
+      border-radius: var(--corner-radius-3);
+      background-color: white;
+      // Drumee brand indigo (#433cc5) — matches the mascot above it and the
+      // sidebar logo. Inherited by the acknowledge Note, which sets no colour
+      // of its own. NOT --primary-500: revamp.scss declares two --primary-*
+      // scales in the same :root and the later (lilac) one wins, so that token
+      // resolved to #b251fb. --primary-purple-50 holds the same value as the
+      // first scale's --primary-50 and has no duplicate overriding it.
+      color: var(--primary-purple-50);
+    }
+
+    &__action {
+      z-index: 1000;
+
+      &--container {
+        position: absolute;
+        width: 42px;
+        height: 44px;
+
+        &[data-state="1"] {
+          margin-left: 35px;
+        }
+      }
+
+      &--icon {
+        width: 12px;
+        color: var(--default-text-reverse);
+        height: 12px;
+        margin: auto 15px;
+        cursor: pointer;
+
+        &:hover {
+          color: var(--default-icon-hover);
+        }
+      }
+    }
+
+    &__title {
+      width: 100%;
+      justify-content: space-between;
+      align-items: center;
+
+      &[data-device="mobile"] {
+        flex-direction: column;
+        padding: var(--spacer-6) var(--spacer-9);
+      }
+
+      .name {
+        align-items: center;
+        @include drumee.typo(
+          $size: 16px,
+          $line: 24px,
+          $weight: 400,
+          $color: var(--normal-fg-10)
+        );
+        @include drumee.overflow-text;
+
+        .inner {
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+
+        &[data-device="mobile"] {
+          font-size: 20px;
+        }
+      }
+    }
+
+    &__control {
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      .icon {
+        width: 20px;
+        height: 20px;
+        color: var(--normal-fg-10);
+        &:hover {
+          color: var(--normal-fg-20);
+        }
+      }
+    }
+  }
+}
+
+@media (max-width: 650px) {
+  .window {
+    &__header {
+      padding: var(--spacer-2) var(--spacer-3);
+    }
+
+    &-topbar {
+      &__container {
+        height: auto;
+        min-height: 44px;
+        min-width: 0 !important;
+        width: 100%;
+
+        &[data-device="mobile"] {
+          height: auto;
+          min-width: 0;
+        }
+      }
+
+      &__title {
+        min-width: 0;
+
+        &[data-device="mobile"] {
+          padding: var(--spacer-3);
+        }
+
+        .name {
+          min-width: 0;
+        }
+      }
+    }
+  }
+}

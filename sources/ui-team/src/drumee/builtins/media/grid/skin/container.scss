@@ -1,0 +1,411 @@
+.media-grid {
+
+  /** In case workspaces are nested within personal folders, show tips*/
+  &__areas {
+    z-index: 102;
+    justify-content: space-between;
+    max-width: 44px;
+    height: 13px;
+    position: absolute;
+    left: 15px;
+    top: 52px;
+
+    .child {
+      height: 100%;
+    }
+  }
+
+  &__container {
+    width: 100%;
+    height: 100%;
+    gap: var(--spacer-3);
+    justify-content: center;
+    position: relative; // anchor for badge absolute positioning
+
+    /* Folder/hub cells stack: shape on top, label in flow beneath.
+       Allows the label to wrap to 2 lines (Figma spec) without spilling
+       into the next row. File cells use a separate card+meta-row layout
+       so they don't need this column flow. */
+    &.folder,
+    &.hub {
+      flex-direction: column;
+      align-items: center;
+      justify-content: flex-start;
+
+      .folder-shape {
+        height: 100%;
+        width: 105%;
+      }
+
+      .badge {
+        // Inside .media-grid__folder-art (position: relative). Keep the badge
+        // on the folder body after scaling the art closer to the cell width.
+        bottom: 11px;
+        left: 14px;
+      }
+    }
+
+    /* Wrapper added by template/folder/index.js around shape + badge so
+       badge absolute-positioning is anchored to the folder-shape area
+       (not the whole cell). Aspect ratio matches Figma 99x79.5. The cell is
+       120px wide; 116px makes the folder/workspace art read close to full-cell
+       width while leaving a little hover/selection breathing room. */
+    .media-grid__folder-art {
+      position: relative;
+      width: calc(var(--grid-cell-w) - 4px);
+      max-width: 100%;
+      aspect-ratio: 99 / 79.5;
+      max-height: 93px;
+      flex: 0 0 auto;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .folder-shape {
+      width: 105%;
+      height: 100%;
+      fill: #885EFF;
+
+      &.personal {
+        fill: var(--area-personal);
+      }
+
+      &.public {
+        fill: var(--area-public);
+      }
+
+      &.share {
+        fill: var(--area-share);
+      }
+
+      &.private {
+        fill: var(--area-private);
+      }
+    }
+
+    .badge {
+      position: absolute;
+      width: var(--grid-icon-folder-badge);
+      height: var(--grid-icon-folder-badge);
+      bottom: 24px;
+      left: 8px;
+      // Glyph rendered WHITE on top of the colored folder shape. Folder color
+      // already varies by area (see .folder-shape variants); the badge sits
+      // above and only needs visual contrast — white wins over per-variant
+      // tinting that clashed with --area-private (#eb6159), --area-share, etc.
+      color: var(--grid-color-folder-badge);
+      fill: currentColor;
+      // Subtle white drop-shadow approximates Figma's dropShadow on the badge
+      // and keeps the glyph readable on light folder shades (linkshare pink).
+      filter: drop-shadow(0 1px 1.5px rgba(0, 0, 0, 0.32));
+    }
+
+    &[data-over="over"] {
+      &:after {
+        display: block;
+      }
+
+      border-radius: var(--corner-radius-3);
+      border: 1px dashed var(--primary-500);
+
+      &.document,
+      &.image,
+      &.other,
+      &.video {
+        &:after {
+          border: 1px dashed var(--primary-500);
+        }
+      }
+    }
+
+    &[data-status="locked"] {
+      opacity: 0.6;
+    }
+
+    &.preload {
+      background-color: var(--primary-500);
+    }
+
+    &[data-hover="on"] {
+      z-index: 100;
+
+      .media-form__input {
+        height: 20px;
+        bottom: 0;
+
+        input {
+          line-height: 20px;
+          min-height: 20px;
+        }
+      }
+    }
+
+    &[data-icontype="vector"] {
+      .preview {
+        display: none;
+      }
+    }
+
+    &[data-icontype="vignette"] {
+
+      &:before,
+      &:after {
+        display: none;
+      }
+    }
+
+    & .drumee-loading-wrapper {
+      left: 55%;
+      top: 90%;
+    }
+  }
+
+  &__content {
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-start;
+    align-items: center;
+    width: 100%;
+    height: 100%;
+
+    .preview-container {
+      // Fill the parent card so image previews + centered icons both have
+      // a non-zero box. preview-content (image bg) fills via absolute inset
+      // below; preview-icon centers via flex.
+      position: relative;
+      width: 100%;
+      height: 100%;
+      flex: 1 1 auto;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: var(--grid-card-radius);
+      overflow: hidden;
+
+      &.image,
+      &.web,
+      &.vector,
+      &.video {
+        background-color: transparent;
+      }
+    }
+
+    .preview-content {
+      // Image preview — fills preview-container via absolute inset so
+      // background-image: url(...) actually has a non-zero render box.
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      background-size: cover;
+      background-repeat: no-repeat;
+      background-position: center;
+      border-radius: var(--grid-card-radius);
+
+      &.video {
+        // Center the play badge over the video poster.
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+
+      &.vector {
+        background-color: var(--neutral-500);
+      }
+
+      // Document posters (PDF first page) crop to the top so the title stays
+      // visible, unlike photos which crop to center.
+      &.document {
+        background-position: top;
+      }
+    }
+
+    .preview-icon {
+      fill: var(--grid-color-icon-file);
+      width: var(--grid-icon-file);
+      height: var(--grid-icon-file);
+
+      &.video {
+        // Centered play badge: smaller than the file-icon size, white with a
+        // soft shadow so it stays legible on any video poster (dark or light).
+        width: 40px;
+        height: 40px;
+        fill: #ffffff;
+        filter: drop-shadow(0 2px 6px rgba(0, 0, 0, 0.45));
+        opacity: 0.95;
+      }
+
+      &.document,
+      &.extension {
+        // The extension variant renders an SVG with a file-shape path AND a
+        // text label (e.g. "pdf", "dsc"). Shape stays purple; text flips
+        // white for contrast (was inheriting purple → invisible on shape).
+        fill: var(--grid-color-icon-file);
+
+        text {
+          fill: var(--grid-color-icon-extension);
+        }
+      }
+
+      &.schedule {
+        fill: var(--special-schedule-icon);
+      }
+
+      &.dmz {
+        // top-positioning fallback for legacy DMZ overlay icon
+      }
+    }
+  }
+
+  /* Figma-aligned card wrapper (119x119 rounded, semi-transparent bg) */
+  &__background {
+    width: 100%;
+    aspect-ratio: 1 / 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--grid-card-bg);
+    border-radius: var(--grid-card-radius);
+    overflow: hidden;
+    position: relative;
+    flex: 0 0 auto;
+
+    /* When the inner preview is a real image background, hide the card tint */
+    &:has(.preview-content[style*="background-image"]) {
+      background: transparent;
+    }
+  }
+
+  /* Meta row beneath the card (filename + kebab + date).
+     Figma single-line baseline = 32px; allow grow up to 56px when filename
+     wraps to 2 lines so date never gets clipped. */
+  &__meta-row {
+    width: 100%;
+    min-height: var(--grid-meta-row-h);
+    max-height: var(--grid-meta-row-h-max);
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-start;
+    gap: 2px;
+    padding-top: 8px;
+    box-sizing: border-box;
+
+    &-top {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      width: 100%;
+      gap: 4px;
+    }
+  }
+
+  &__date {
+    font-family: "Geist", sans-serif;
+    font-weight: 400;
+    font-size: 10px;
+    line-height: 1.4;
+    color: var(--grid-color-meta);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  /* When filename lives inside the new meta-row, override the legacy
+     absolute-positioned filename rule (filename.scss). filename.scss loads
+     AFTER container.scss in skin/index.scss; bump specificity by chaining
+     .media-grid + .media-grid__meta-row + .filename so this rule wins
+     against `.media-grid .filename { position: absolute }`.
+     Allow up to 2 lines (line-clamp 2) before truncating. */
+  &.media-grid &__meta-row .filename,
+  & &__meta-row .filename {
+    position: static;
+    bottom: auto;
+    width: auto;
+    padding: 0;
+    background: transparent;
+    border-radius: 0;
+    text-align: left;
+    flex: 1 1 auto;
+    font-family: "Geist", sans-serif;
+    font-weight: 600;
+    font-size: 12px;
+    line-height: 1.4;
+    color: var(--grid-color-name);
+    overflow: hidden;
+    white-space: normal;
+    word-break: break-word;
+    overflow-wrap: anywhere;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    max-height: calc(12px * 1.4 * 2); // 2 lines × line-height
+    text-overflow: ellipsis;
+  }
+
+  &__meta-row .media-context-menu__trigger {
+    flex: 0 0 auto;
+    margin-left: 4px;
+    margin-top: 2px;
+  }
+}
+
+// Mobile: file/document title in meta-row gets the same size + padding
+// treatment as folder/workspace labels in filename.scss — 14-16px and
+// lateral padding so titles stay aligned under the card icon, not
+// stretched edge-to-edge of the grid cell. Desktop (>480px) keeps the
+// Figma 12px recipe.
+@media (max-width: 480px) {
+  .media-grid {
+    // Folder/hub cells: keep the overlay anchor capped to the same scaled
+    // desktop width so the badge/kebab stay on the visible folder corners
+    // while fluid mobile columns grow wider than the art.
+    &__container {
+      &.folder,
+      &.hub {
+        .media-grid__folder-art {
+          max-width: calc(var(--grid-cell-w) - 4px);
+          margin-inline: auto;
+        }
+
+        // Push the two overlays into the folder corners on mobile.
+        .badge {
+          left: 10px;
+        }
+
+        .media-context-menu__folder-trigger {
+          right: 8px;
+        }
+      }
+    }
+
+    &__meta-row {
+      padding-left: var(--spacer-5);
+      padding-right: var(--spacer-5);
+    }
+
+    &.media-grid &__meta-row .filename,
+    & &__meta-row .filename {
+      font-size: 14px;
+      max-height: calc(14px * 1.4 * 2);
+    }
+
+    &__date {
+      font-size: 12px;
+    }
+
+    // Cap the square file-card frame. Desktop design assumes ~120px
+    // cards (aspect-ratio 1/1 fills --grid-cell-w). On mobile with
+    // 2-col fluid cells (~190-280px wide) the frame stretches to a
+    // huge 190+px square, and total card height (frame + 8gap + meta)
+    // overflows `grid-auto-rows: --grid-cell-h-file` (184px) → cards
+    // visually overlap each other vertically. Lock frame to ~140px
+    // and center inside the cell; matches the folder icon cap pattern
+    // at line ~59 (.media-grid__folder-art { max-height: 79.5px }).
+    &__background {
+      max-width: 140px;
+      max-height: 140px;
+      margin-inline: auto;
+    }
+  }
+}

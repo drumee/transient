@@ -1,0 +1,765 @@
+@use "mixins/drumee";
+
+.invite-popup {
+  /* All interactive Notes: inner div must not intercept clicks */
+  &__role-select > *,
+  &__role-option > *,
+  &__close > *,
+  &__row-remove > *,
+  &__chip-remove > *,
+  &__add-role > *,
+  &__send-btn > *,
+  &__suggestion-item > *,
+  &__workspace-option > * {
+    pointer-events: none !important;
+  }
+
+  &__ui {
+    width: 450px;
+    // The popup is fed into Wm.__wrapperModal, which is a flex-centered
+    // full-inset box with `overflow: clip` — so a card wider than the viewport
+    // is CUT, not scrolled to. This guard is what keeps that from happening,
+    // and it needs no breakpoint: 450px already fits from 514px up, so the
+    // clamp only engages on the narrow screens that need it.
+    max-width: calc(100vw - 32px);
+    background-color: var(--normal-bg-90, #f1f1f5);
+    border: 1px solid rgba(0, 0, 0, 0.06);
+    border-radius: 6px;
+    box-shadow: 0 12px 32px 0 rgba(0, 0, 0, 0.16);
+    z-index: 99998;
+
+    &[data-state="0"] {
+      display: none;
+    }
+  }
+
+  &__container {
+    padding: 24px;
+    gap: 16px;
+    // The card can never be taller than the viewport it is centered in: 8
+    // workspace rows on a 700px-tall screen made it 1346px, and __wrapper-modal
+    // clips rather than scrolls, so Send ended up unreachable. 32px matches the
+    // max-width guard on __ui, keeping an even margin on all four edges. dvh
+    // where supported (mobile chrome collapses), vh as the fallback.
+    max-height: calc(100vh - 32px);
+    max-height: calc(100dvh - 32px);
+
+    // ── Responsive ────────────────────────────────────────────────────
+    // Width is handled once, by the max-width guard on __ui above. What is
+    // left for the small screens is this container's own breathing room:
+    // 24px of padding on a 328px-wide card leaves 280px of usable row,
+    // which is what made the workspace row's select and role chips crowd.
+    //
+    // DELIBERATELY no max-height / overflow-y here. The email, workspace
+    // and role dropdowns are `position: absolute; top: calc(100% + 4px)`
+    // on their own rows and are MEANT to spill past this container's
+    // bottom edge — the reward flow unions them into its spotlight cutout
+    // for exactly that reason (reward-flow/index.js POPUP_OVERFLOW). A
+    // scroll container here would clip them on precisely the screens this
+    // block is for.
+
+    // Mobile, emitted twice the way mixins/responsive.scss does it:
+    // Visitor.device() only answers "mobile" below 801px, so the attribute
+    // is absent in the DevTools emulator and on a landscape phone, and the
+    // viewport query below is the fallback. ui-core puts both
+    // `invite-popup` and `invite-popup__ui` on the widget root (letc.js
+    // addClass) — __ui is the name the rest of this file uses for it.
+    //
+    // The attribute can also fire on a 768px tablet with a mobile UA. That
+    // is why __ui keeps its 450px width there rather than stretching, and
+    // why this branch — being the more specific of the two — deliberately
+    // wins over the tablet padding below in that overlap: a client that
+    // calls itself mobile is taken at its word.
+    .invite-popup__ui[data-device="mobile"] & {
+      padding: 16px;
+      gap: 12px;
+    }
+
+    @media (max-width: 650px) {
+      padding: 16px;
+      gap: 12px;
+    }
+
+    // Tablet — the 768–1024px band on a coarse pointer, the same band and
+    // the same `pointer: coarse` test the desk sidebar uses to tell a
+    // tablet from a resized desktop window. A 450px card has room to spare
+    // at these widths, so this is only a modest step down from desktop.
+    @media (min-width: 768px) and (max-width: 1024px) and (pointer: coarse) {
+      padding: 20px;
+    }
+  }
+
+  &__header {
+    align-items: center;
+    justify-content: space-between;
+    width: 100%;
+  }
+
+  &__title {
+    @include drumee.typo(
+      $size: 20px,
+      $weight: 700,
+      $line: 28px,
+      $color: var(--normal-fg-10)
+    );
+    font-family: "Manrope", var(--font-bold);
+  }
+
+  &__close {
+    width: 20px;
+    height: 20px;
+    cursor: pointer;
+    color: var(--normal-fg-50);
+    transition: color 0.2s;
+
+    svg {
+      width: 100%;
+      height: 100%;
+      fill: currentColor;
+    }
+
+    &:hover {
+      color: var(--normal-fg-10);
+    }
+  }
+
+  &__description {
+    @include drumee.typo(
+      $size: 14px,
+      $weight: 400,
+      $line: 19.6px,
+      $color: var(--normal-fg-50)
+    );
+  }
+
+  &__field-label {
+    @include drumee.typo(
+      $size: 12px,
+      $weight: 600,
+      $line: 14.88px,
+      $color: var(--normal-fg-10)
+    );
+    margin-top: 4px;
+  }
+
+  &__field-error {
+    @include drumee.typo(
+      $size: 12px,
+      $weight: 400,
+      $line: 16px,
+      $color: var(--error, #d74e49)
+    );
+    margin-top: -8px;
+
+    &[data-state="0"] {
+      display: none;
+    }
+  }
+
+  &__email-row {
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px;
+    padding: 6px 0;
+    border-bottom: 1px solid rgba(0, 0, 0, 0.12);
+    min-height: 32px;
+    // Chips are `display: contents`, so every recipient is a direct flex child
+    // here and wraps onto a new line — twenty invitees made this row alone
+    // taller than the card. ~3 wrapped lines, then it scrolls.
+    //
+    // An explicit cap rather than a flex share: this row sits inside
+    // __email-field, not directly in __container, so the card's max-height
+    // cannot shrink it.
+    //
+    // Safe to scroll: the email dropdown (__suggestions) is a SIBLING of this
+    // row under __email-field, not a descendant, so it is not inside this
+    // scroll box and cannot be clipped by it. The two dropdowns raised from the
+    // workspace rows are NOT siblings — see __workspaces.
+    max-height: 96px;
+    overflow-y: auto;
+  }
+
+  &__chips {
+    // `!important` overrides the framework's `.box[data-flow="x"] { display: flex }`.
+    display: contents !important;
+  }
+
+  &__chip {
+    align-items: center;
+    gap: 4px;
+    padding: 4px 8px;
+    background-color: rgba(89, 80, 255, 0.12);
+    border-radius: 4px;
+    @include drumee.typo(
+      $size: 12px,
+      $weight: 500,
+      $line: 16px,
+      $color: var(--active-border, #5950ff)
+    );
+
+    &-remove {
+      cursor: pointer;
+      color: currentColor;
+      font-size: 14px;
+      line-height: 1;
+
+      .inner {
+        pointer-events: none;
+      }
+    }
+  }
+
+  &__email-input {
+    flex: 1;
+    min-width: 160px;
+
+    input {
+      background: transparent;
+      border: none;
+      outline: none;
+      width: 100%;
+      @include drumee.typo(
+        $size: 12px,
+        $weight: 400,
+        $line: 16.8px,
+        $color: var(--normal-fg-10)
+      );
+
+      &::placeholder {
+        color: var(--normal-fg-50);
+      }
+    }
+  }
+
+  /* Suggestions dropdown */
+  // Anchor for the floating suggestions list (see skeleton __email-field).
+  &__email-field {
+    position: relative;
+  }
+
+  &__suggestions {
+    // Floats over the dialog rather than sitting in the column: in flow it
+    // pushed the workspace row and Send button down on every match, so the
+    // dialog jumped while typing.
+    position: absolute;
+    top: calc(100% + 4px);
+    left: 0;
+    right: 0;
+    z-index: 20;
+    visibility: hidden;
+    pointer-events: none;
+    background-color: var(--white);
+    border: 1px solid rgba(0, 0, 0, 0.06);
+    border-radius: 8px;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.12);
+    max-height: 220px;
+    overflow-y: auto;
+    padding: 4px 0;
+
+    &[data-state="1"] {
+      visibility: visible;
+      pointer-events: auto;
+    }
+  }
+
+  &__suggestion-item {
+    padding: 8px 12px;
+    cursor: pointer;
+    align-items: center;
+    gap: 8px;
+    @include drumee.typo($size: 13px, $color: var(--normal-fg-10));
+
+    .inner {
+      pointer-events: none;
+    }
+
+    &:hover,
+    &[data-state="1"] {
+      background-color: var(--default-bg-hover, #f5f5fa);
+    }
+  }
+
+  // Name and address are separate elements (the address cannot be bracketed
+  // into the name — Note content is sanitized as innerHTML and <addr> would be
+  // stripped as an unknown tag). The address is the thing being picked, so it
+  // never truncates away: the name yields space first.
+  &__suggestion-item-name {
+    flex: 0 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    // Explicit: drumee.typo's $weight argument emits nothing.
+    font-weight: 500;
+  }
+
+  &__suggestion-item-email {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    @include drumee.typo($size: 12px, $color: var(--normal-fg-50));
+  }
+
+  /* Workspace + role rows */
+  &__workspaces {
+    gap: 8px;
+    // Absorbs whatever the card's max-height cannot fit. `min-height: 0`
+    // overrides the flex default of `min-height: auto`, which refuses to shrink
+    // a child below its content — without it the rows push straight through the
+    // cap instead of scrolling.
+    //
+    // No min-height FLOOR and no max-height: the list keeps its natural size
+    // until the card actually runs out of room, so a one-row form is one row
+    // tall. An earlier attempt floored this at 88px and left a visibly empty
+    // box under the single row.
+    min-height: 0;
+    overflow-y: auto;
+
+    // `overflow` clips absolutely-positioned descendants whether or not
+    // anything is scrolling, and the workspace/role dropdowns are exactly that
+    // — anchored at `top: calc(100% + 4px)` inside these rows. Without this
+    // escape the role picker was invisible even on a ONE-ROW form: not a
+    // long-list edge case, the ordinary path.
+    //
+    // So while either dropdown is open, stop being a scroll container. The list
+    // is not being scrolled at that moment anyway — the user is picking from
+    // the menu. `data-state="1"` is the widget's own open flag (index.js
+    // toggles it on both boxes), and :has() is already used this way in the wm
+    // dock skin.
+    //
+    // Caveat: if the list HAD been scrolled, dropping to `overflow: visible`
+    // discards the scroll offset, so a long list jumps back to the top when a
+    // menu opens.
+    &:has(.invite-popup__role-options[data-state="1"]),
+    &:has(.invite-popup__workspace-suggestions[data-state="1"]) {
+      overflow: visible;
+    }
+  }
+
+  &__workspace-row {
+    align-items: flex-start;
+    gap: 8px;
+    width: 100%;
+  }
+
+  &__workspace-cell {
+    flex: 1;
+    position: relative;
+    min-width: 0;
+  }
+
+  &__role-cell {
+    position: relative;
+    flex-shrink: 0;
+    width: 110px;
+    min-width: 0;
+  }
+
+  &__row-remove {
+    @include drumee.typo(
+      $size: 16px,
+      $weight: 300,
+      $color: var(--normal-fg-50)
+    );
+    flex-shrink: 0;
+    margin-top: 4px;
+    cursor: pointer;
+    transition:
+      color 0.15s,
+      background 0.15s;
+    line-height: 1;
+    text-align: center;
+    // Enlarge the hit target so the × is easy to click. The glyph stays
+    // 16px; padding + min-width/height push the click area to a 28px
+    // square. Border-radius lets us add a subtle hover background.
+    padding: 6px;
+    min-width: 28px;
+    min-height: 28px;
+    box-sizing: border-box;
+    border-radius: 6px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+
+    .inner {
+      pointer-events: none;
+    }
+
+    &:hover {
+      color: var(--error, #d74e49);
+      background: rgba(0, 0, 0, 0.04);
+    }
+  }
+
+  &__workspace-input {
+    background-color: var(--normal-bg-elevated);
+    border-radius: 6px;
+    padding: 8px 12px;
+    height: 36px;
+    width: 100%;
+
+    input {
+      background: transparent;
+      border: none;
+      outline: none;
+      width: 100%;
+      @include drumee.typo(
+        $size: 12px,
+        $weight: 400,
+        $line: 16.8px,
+        $color: var(--normal-fg-10)
+      );
+
+      &::placeholder {
+        color: var(--normal-fg-50);
+      }
+    }
+  }
+
+  &__workspace-suggestions {
+    // `display: none` while closed, not visibility alone. These are absolutely
+    // positioned inside __workspaces, which now scrolls, and a merely-invisible
+    // box still counts toward that box's scrollable overflow — the closed role
+    // menu is 139px, which put a scrollbar on a one-row list. !important for
+    // the same reason __chips needs it: the framework's
+    // `.box[data-flow="y"] { display: flex }` matches with equal specificity,
+    // which is why visibility was reached for in the first place.
+    display: none !important;
+    visibility: hidden;
+    pointer-events: none;
+    position: absolute;
+    top: calc(100% + 4px);
+    left: 0;
+    width: 100%;
+    background-color: var(--normal-bg-elevated);
+    border-radius: 8px;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.12);
+    max-height: 180px;
+    overflow-y: auto;
+    padding: 4px 0;
+    z-index: 99999;
+    padding: 8px;
+
+    &[data-state="1"] {
+      display: flex !important;
+      visibility: visible;
+      pointer-events: auto;
+    }
+  }
+
+  &__workspace-option {
+    padding: 8px 12px;
+    border-radius: 4px;
+    cursor: pointer;
+    @include drumee.typo($size: 12px, $color: var(--normal-fg-10));
+
+    .inner {
+      pointer-events: none;
+    }
+
+    &:hover {
+      background-color: var(--normal-bg-40);
+    }
+  }
+
+  &__role-select {
+    @include drumee.typo(
+      $size: 12px,
+      $weight: 400,
+      $line: 36px,
+      $color: var(--normal-fg-50)
+    );
+    background-color: rgba(0, 0, 0, 0.06);
+    border-radius: 6px;
+    padding: 0 12px;
+    height: 36px;
+    width: 100%;
+    cursor: pointer;
+    box-sizing: border-box;
+    align-items: center;
+    gap: 8px;
+  }
+
+  &__role-select-label {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    line-height: 36px;
+
+    .inner {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      line-height: 36px;
+    }
+  }
+
+  &__role-caret {
+    flex-shrink: 0;
+    width: 12px;
+    height: 12px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    margin-bottom: 2px;
+
+    svg {
+      width: 12px;
+      height: 12px;
+      fill: var(--normal-fg-50);
+    }
+  }
+
+  &__role-options {
+    // `display: none` while closed, not visibility alone. These are absolutely
+    // positioned inside __workspaces, which now scrolls, and a merely-invisible
+    // box still counts toward that box's scrollable overflow — the closed role
+    // menu is 139px, which put a scrollbar on a one-row list. !important for
+    // the same reason __chips needs it: the framework's
+    // `.box[data-flow="y"] { display: flex }` matches with equal specificity,
+    // which is why visibility was reached for in the first place.
+    display: none !important;
+    visibility: hidden;
+    pointer-events: none;
+    position: absolute;
+    top: calc(100% + 4px);
+    right: 0;
+    min-width: 130px;
+    background-color: var(--white);
+    border-radius: 8px;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.12);
+    padding: 4px 0;
+    z-index: 99999;
+    // The hover description card sits OUTSIDE the menu box — don't clip it.
+    overflow: visible;
+
+    &[data-state="1"] {
+      display: flex !important;
+      visibility: visible;
+      pointer-events: auto;
+    }
+  }
+
+  // Single-select rows (no checkbox): the selected role is shown with the
+  // same background-tint highlight the workspace-settings role menu uses,
+  // so both selectors read identically.
+  &__role-option {
+    @include drumee.typo(
+      $size: 12px,
+      $weight: 400,
+      $line: 16.8px,
+      $color: var(--normal-fg-10)
+    );
+    display: flex;
+    align-items: center;
+    position: relative;
+    padding: 8px 12px;
+    cursor: pointer;
+
+    .inner {
+      pointer-events: none;
+    }
+
+    &:hover {
+      background-color: var(--default-bg-hover, #f5f5fa);
+    }
+
+    &[data-checked="1"] {
+      background-color: rgba(89, 80, 255, 0.12);
+      color: var(--active-border, #5950ff);
+      font-weight: 500;
+    }
+
+    // Hover description ("Can only View", …) injected by the framework
+    // `tooltips` prop — a small card on the RIGHT of the hovered row
+    // (user decision 2026-07-20), vertically centered. max-width keeps
+    // ~4-5 words per line so the longer descriptions wrap to two lines
+    // instead of one long strip.
+    .role-option-tooltip {
+      position: absolute;
+      left: calc(100% + 10px);
+      top: 50%;
+      transform: translateY(-50%);
+      white-space: normal;
+      width: max-content;
+      max-width: 180px;
+      pointer-events: none;
+      padding: 6px 10px;
+      border-radius: 6px;
+      background-color: var(--normal-fg, #2f2f36);
+      color: var(--white, #fff);
+      font-size: 12px;
+      font-weight: 400;
+      line-height: 16px;
+      box-shadow: 0 4px 14px rgba(0, 0, 0, 0.18);
+      z-index: 100000;
+    }
+  }
+
+  &__role-text {
+    @include drumee.typo(
+      $size: 12px,
+      $weight: 400,
+      $line: 16.8px,
+      $color: var(--normal-fg-50)
+    );
+    display: block;
+    flex: 1 1 0;
+    min-width: 0;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  &__role-chevron {
+    width: 12px;
+    height: 12px;
+    flex-shrink: 0;
+    color: var(--normal-fg-50);
+
+    svg {
+      width: 100%;
+      height: 100%;
+      fill: currentColor;
+    }
+  }
+
+  &__add-role {
+    @include drumee.typo(
+      $size: 12px,
+      $weight: 400,
+      $line: 16.8px,
+      $color: var(--normal-fg-50)
+    );
+    cursor: pointer;
+    margin-top: -4px;
+
+    .inner {
+      pointer-events: none;
+    }
+
+    &:hover {
+      color: var(--active-border, #5950ff);
+    }
+  }
+
+  &__send-btn {
+    @include drumee.typo(
+      $size: 14px,
+      $weight: 600,
+      $line: 20px,
+      $color: var(--white)
+    );
+    background-color: var(--active-border, #5950ff);
+    border-radius: 6px;
+    padding: 12px 24px;
+    text-align: center;
+    cursor: pointer;
+    transition:
+      opacity 0.2s,
+      background-color 0.2s;
+    margin-top: 8px;
+
+    .inner {
+      pointer-events: none;
+      width: 100%;
+      text-align: center;
+    }
+
+    &:hover {
+      opacity: 0.92;
+    }
+
+    &[data-state="0"] {
+      background-color: var(--normal-fg-50);
+      cursor: not-allowed;
+      pointer-events: none;
+      opacity: 0.6;
+    }
+
+    // While hub.invite is in flight: show a spinner alongside the label —
+    // the spinner is part of the button, the "Send Invitation" text stays.
+    &[data-loading="1"] {
+      pointer-events: none;
+      cursor: not-allowed;
+      opacity: 0.6;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+
+      &::before {
+        content: "";
+        width: 16px;
+        height: 16px;
+        flex-shrink: 0;
+        border: 2px solid rgba(255, 255, 255, 0.45);
+        border-top-color: var(--white);
+        border-radius: 50%;
+        animation: invite-popup-send-spin 0.6s linear infinite;
+      }
+
+      .inner {
+        width: auto;
+      }
+    }
+  }
+}
+
+@keyframes invite-popup-send-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+// ── Mobile backdrop ─────────────────────────────────────────────────────
+// This popup is fed into Wm.__wrapperModal (desk/index.js and
+// widget/settings/hub both do), and invite-popup/index.js opts that host INTO
+// the app's frosted glass by setting data-overlay="blur" on it. On a phone the
+// backdrop should instead be the desk's flat scrim — the same
+// var(--overlay-bg) + blur(6px) that .desk-module__overlay uses behind the
+// mobile drawer — so every mobile overlay surface matches.
+//
+// So this has to out-specify that opt-in rather than fill a gap. The
+// wrapper-modal element carries BOTH the family and group classes
+// (wm/skeleton: `${family}__wrapper-modal ${group}__wrapper-modal`), and glass
+// is included for both `.window-manager__wrapper-modal[data-overlay="blur"]`
+// (wm/skin) and `.window__wrapper-modal[data-overlay="blur"]`
+// (window/skin/window.scss). Doubling the class here takes this to (0,5,0),
+// clear of both and independent of stylesheet load order.
+//
+// CRITICAL — this rule belongs in THIS file, not in the skin of whichever
+// widget shares the host. Webpack injects a widget's stylesheet only when that
+// widget loads (`static initClass() { require("./skin") }`), so the rule has to
+// ship in the chunk that is guaranteed to be present whenever this popup is on
+// screen: its own. It previously lived in media/form/skin next to the
+// create-workspace dialog's identical rule, and was therefore absent from the
+// page unless that unrelated dialog had also been opened — the backdrop stayed
+// frosted for exactly that reason.
+//
+// Global (not nested) because the element being restyled is desk chrome this
+// widget does not own, and :has() keeps it to this popup — the wrapper also
+// hosts the create-workspace dialog, permission_*, window_info and
+// request_access, which must keep the glass.
+//
+// Emitted twice, as mixins/responsive.scss does it: Visitor.device() only
+// answers "mobile" below 801px, so the attribute is absent in the DevTools
+// emulator and on a landscape phone.
+.window-manager__wrapper-modal.window-manager__wrapper-modal[data-device="mobile"][data-state="open"]:has(
+    .invite-popup__container
+  ) {
+  @include drumee.scrim-overlay;
+}
+
+@media (max-width: 650px) {
+  .window-manager__wrapper-modal.window-manager__wrapper-modal[data-state="open"]:has(
+      .invite-popup__container
+    ) {
+    @include drumee.scrim-overlay;
+  }
+}

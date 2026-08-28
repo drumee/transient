@@ -1,0 +1,22 @@
+@use "sass:meta";
+@use 'button/close.scss' as *;
+@use 'button/submit.scss' as *;
+@use 'container/small.scss' as *;
+@use './bg-settings';
+
+.dialog {
+  &__button {
+    @include desk-close-btn;
+    @include desk-submit-btn;
+  }
+
+  &__container {
+    @include desk-container-small;
+  }
+
+  &__wrapper {
+    &--modal {
+      left: 50%;
+    }
+  }
+}

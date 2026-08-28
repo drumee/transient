@@ -1,0 +1,107 @@
+@use "mixins/drumee";
+
+.chat-room {
+  &-menu {
+    &__dropdown {
+      left: 20px;
+      top: 1px;
+    }
+
+    &__wrapper {
+      &[data-state="1"] {
+        & .trigger-icon {
+          color: var(--default-icon-active);
+        }
+      }
+
+      & .menu-topic-items {
+        background-color: var(--normal-bg-90);
+        border-radius: var(--border-radius);
+        box-shadow: var(--drumee-container-dropdown);
+        margin-top: 0px;
+        min-width: 162px;
+
+        &__wrapper {
+          border-radius: var(--border-radius);
+          left: -179px;
+          padding: 10px;
+          top: 31px !important;
+        }
+      }
+    }
+
+    &__icon {
+      align-items: center;
+      color: var(--default-icon-neutral);
+      cursor: pointer;
+
+      svg {
+        fill: var(--normal-fg-10);
+      }
+
+      &.trigger-icon {
+        color: inherit;
+        height: 24px;
+        opacity: 0.45;
+        padding: 3.5px;
+        right: 25px;
+        top: 3px;
+        width: 22.5px;
+      }
+
+      &:hover {
+        color: var(--default-icon-hover);
+      }
+    }
+
+    &__items {
+      width: 100%;
+      padding: var(--spacer-2);
+      gap: var(--spacer-3);
+    }
+
+    &__item {
+      cursor: pointer;
+      padding: var(--spacer-3);
+      border-radius: var(--corner-radius-1);
+
+      &:hover {
+        background-color: var(--default-background-hover);
+        color: var(--normal-fg-10);
+
+        & .chat-room-menu__note {
+          color: var(--default-text-hover);
+        }
+
+        & svg {
+          fill: var(--default-icon-reverse);
+        }
+      }
+    }
+
+    &__note {
+      padding-top: 0px;
+      @include drumee.typo(
+        $size: 12px,
+        $weight: 300,
+        $line: 14px,
+        $color: var(--normal-fg-10)
+      );
+
+      &.coming-soon {
+        @include drumee.typo(
+          $size: 12px,
+          $weight: 300,
+          $line: 14px,
+          $color: var(--default-text-inactive)
+        );
+        opacity: 0.5;
+      }
+
+      &.copy-card {
+        margin-top: -12px;
+        padding-top: 20px;
+      }
+    }
+  }
+}

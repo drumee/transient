@@ -1,0 +1,412 @@
+@use "mixins/drumee";
+
+.settings-member {
+  &__item {
+    align-items: center;
+    display: flex;
+    gap: var(--spacer-5);
+    padding: var(--spacer-4) var(--spacer-5);
+    transition: background-color 120ms ease;
+    width: 100%;
+    box-sizing: border-box;
+    overflow: visible;
+    border-radius: var(--corner-radius-2);
+
+    &:last-child {
+      border-bottom: none;
+    }
+
+    &:hover {
+      background-color: var(--primary-20);
+    }
+  }
+
+  &__avatar {
+    background-color: var(--normal-fg-10);
+    border-radius: 100% !important;
+    height: 40px;
+    min-width: 40px;
+    width: 40px;
+    flex-shrink: 0;
+  }
+
+  &__info {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    gap: var(--spacer-2);
+    min-width: 0;
+  }
+
+  &__name {
+    color: var(--normal-fg-10);
+    font-size: 14px;
+    font-style: normal;
+    font-weight: 700;
+    line-height: 22px;
+    letter-spacing: 0.14px;
+    @include drumee.overflow-text;
+  }
+
+  &__email {
+    color: var(--Neutral-600, #8c929c);
+    font-size: 14px;
+    font-style: normal;
+    font-weight: 400;
+    line-height: 22px;
+    letter-spacing: 0.14px;
+    @include drumee.overflow-text;
+  }
+
+  &__permission {
+    align-items: center;
+    display: flex;
+    justify-content: flex-end;
+    min-width: 100px;
+    flex-shrink: 0;
+    position: relative;
+    overflow: visible;
+  }
+
+  &__permission-trigger {
+    display: flex;
+    align-items: center;
+    gap: var(--spacer-3);
+    cursor: pointer;
+    padding: var(--spacer-2) var(--spacer-3);
+    transition: background-color 120ms ease;
+    border-radius: var(--corner-radius-1);
+
+    &:hover {
+      background-color: var(--normal-fg-20);
+    }
+
+    &__arrow-down {
+      transform: rotate(180deg);
+      color: var(--default-text-neutral);
+    }
+  }
+
+  &__permission-label {
+    color: var(--normal-fg-20);
+    font-size: 14px;
+    font-style: normal;
+    font-weight: 400;
+    line-height: 22px;
+    /* 157.143% */
+    letter-spacing: 0.14px;
+    white-space: nowrap;
+
+    &:hover {
+      color: var(--normal-fg-10);
+    }
+  }
+
+  &__permission-chevron {
+    color: var(--default-text-neutral);
+    flex-shrink: 0;
+
+    svg {
+      width: 16px;
+      height: 16px;
+    }
+  }
+
+  &__arrow-down,
+  &__arrow-pages {
+    color: #afb3bb;
+    flex-shrink: 0;
+    transform: rotate(90deg);
+    transition: transform 200ms ease;
+
+    svg {
+      width: 16px;
+      height: 16px;
+      color: #afb3bb;
+    }
+  }
+
+  // Rotate arrow when dropdown is open
+  // Menu-topic with permission-dropdown class will have data-state attribute
+  &__permission-dropdown {
+    &[data-state="1"],
+    &[data-state="open"] {
+      .menu-topic-trigger .settings-member__arrow-down,
+      .settings-member__permission-trigger .settings-member__arrow-down {
+        transform: rotate(270deg);
+      }
+    }
+  }
+
+  // Alternative selector for menu-topic element
+  .menu-topic {
+    &[data-state="1"],
+    &[data-state="open"] {
+      .settings-member__arrow-down {
+        transform: rotate(270deg);
+      }
+    }
+  }
+
+  &__permission-menu-items {
+    background: var(--ewhite);
+    border-radius: 8px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+    min-width: 180px;
+    padding: 4px;
+    margin-top: 4px;
+    z-index: 200;
+    overflow: visible;
+  }
+
+  &__permission-menu-item-wrapper {
+    width: 100%;
+    cursor: pointer;
+
+    &:hover {
+      .settings-member__permission-menu-item {
+        background-color: var(--default-bg-hover);
+      }
+    }
+
+    &.active {
+      .settings-member__permission-menu-item {
+        background-color: var(--primary-100);
+        font-weight: 400;
+        color: var(--primary-600);
+      }
+    }
+  }
+
+  &__permission-menu-item {
+    padding: 10px 12px;
+    border-radius: 6px;
+    height: 40px;
+    cursor: pointer;
+    transition: background-color 120ms ease;
+    width: 100%;
+    @include drumee.typo(
+      $color: var(--default-text-color),
+      $size: 14px,
+      $weight: 400
+    );
+
+    svg {
+      display: none;
+    }
+
+    &:hover {
+      background-color: var(--default-bg-hover);
+    }
+
+    &.active {
+      background-color: var(--primary-100);
+      font-weight: 400;
+      color: var(--primary-600);
+    }
+  }
+
+  // Ensure menu topic overlay is not clipped by list containers
+  .menu-topic-items__wrapper,
+  .menu-topic-items {
+    overflow: visible !important;
+    position: absolute;
+    z-index: 200;
+  }
+
+  // ── Role dropdown ─────────────────────────────────────────────
+  &__role-dropdown {
+    flex-shrink: 0;
+    position: relative;
+  }
+
+  &__role-trigger {
+    align-items: center;
+    background-color: rgba(255, 255, 255, 0.1);
+    border-radius: var(--corner-radius-1);
+    cursor: pointer;
+    display: flex;
+    gap: var(--spacer-3);
+    padding: 6px 10px;
+    transition: background-color 120ms ease;
+    white-space: nowrap;
+
+    &:hover {
+      background-color: rgba(255, 255, 255, 0.16);
+    }
+  }
+
+  &__role-label {
+    color: var(--normal-fg-10);
+    font-size: 13px;
+    font-weight: 500;
+    line-height: 20px;
+  }
+
+  &__role-chevron {
+    flex-shrink: 0;
+
+    svg {
+      color: var(--normal-fg-20);
+      height: 14px;
+      width: 14px;
+    }
+  }
+
+  &__role-menu {
+    background-color: var(--primary-purple-90, #1b1b2e);
+    border-radius: var(--corner-radius-2);
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4);
+    min-width: 150px;
+    padding: 6px;
+  }
+
+  &__role-option {
+    align-items: center;
+    border-radius: var(--corner-radius-1);
+    cursor: pointer;
+    display: flex;
+    justify-content: space-between;
+    padding: 10px 12px;
+    transition: background-color 120ms ease;
+
+    &:hover {
+      background-color: rgba(255, 255, 255, 0.08);
+    }
+
+    &[data-state="1"] {
+      background-color: rgba(255, 255, 255, 0.08);
+      .option-radio {
+        border-color: var(--primary-40);
+        box-shadow:
+          inset 0 0 0 4px var(--primary-purple-90, #1b1b2e),
+          inset 0 0 0 8px var(--primary-40);
+      }
+    }
+  }
+
+  &__role-option-label {
+    color: var(--normal-fg-10);
+    font-size: 14px;
+    font-weight: 400;
+    line-height: 20px;
+  }
+
+  &__role-option-radio {
+    border: 1.5px solid rgba(255, 255, 255, 0.35);
+    border-radius: 50%;
+    flex-shrink: 0;
+    height: 16px;
+    width: 16px;
+
+    // &.active {
+    //   border-color: var(--primary-40);
+    //   box-shadow: inset 0 0 0 4px var(--primary-purple-90, #1b1b2e),
+    //     inset 0 0 0 8px var(--primary-40);
+    // }
+  }
+
+  // ── Delete button ──────────────────────────────────────────────
+  &__delete-btn {
+    cursor: pointer;
+    flex-shrink: 0;
+    opacity: 0.6;
+    transition: opacity 120ms ease;
+
+    svg {
+      color: var(--error-500, #ef4444);
+      height: 18px;
+      width: 18px;
+    }
+
+    &:hover {
+      opacity: 1;
+    }
+  }
+
+  &-permission {
+    &__section {
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    &__title {
+      font-size: 16px;
+      font-weight: 600;
+      color: var(--neutral-900, #222732);
+      margin-bottom: 4px;
+    }
+
+    &__items {
+      display: flex;
+      flex-direction: row;
+      gap: 12px;
+      align-items: flex-start;
+      width: 100%;
+    }
+
+    &__item-wrapper {
+      flex: 1;
+      display: flex;
+      align-items: center;
+      min-width: 0; // Allow flex items to shrink below their content size
+    }
+
+    &__item {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      width: 100%;
+    }
+
+    &__note {
+      font-size: 14px;
+      color: var(--neutral-900, #222732);
+      cursor: pointer;
+
+      &:hover {
+        color: var(--neutral-900, #222732);
+      }
+    }
+
+    &__checkbox {
+      cursor: pointer;
+      flex-shrink: 0;
+
+      svg {
+        width: 20px;
+        height: 20px;
+        border: 1px solid var(--neutral-300, #d1d5db);
+        border-radius: 5px;
+        background-color: var(--ewhite);
+        transition: all 120ms ease;
+      }
+
+      // Checkbox with white background when checked
+      &[data-state="1"],
+      &.selected {
+        svg {
+          padding: 3px;
+          background-color: var(--primary-600, #7c3aed);
+          border: 1px solid var(--white, #ffffff);
+          color: var(--white, #ffffff);
+        }
+      }
+
+      &[data-state="0"] {
+        svg {
+          background-color: var(--ewhite);
+          border-radius: 5px;
+          border: 1px solid var(--neutral-300, #d1d5db);
+          color: transparent;
+        }
+      }
+    }
+
+    &__note {
+      font-size: 14px;
+      color: var(--neutral-900, #222732);
+    }
+  }
+}

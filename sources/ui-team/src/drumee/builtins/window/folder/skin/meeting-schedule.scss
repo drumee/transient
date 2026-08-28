@@ -1,0 +1,778 @@
+// Meeting-tab schedule view. Pinned to the light design like the call chrome.
+@use "mixins/drumee";
+
+.window-folder {
+  &__meeting-schedule {
+    width: 100%;
+    height: 100%;
+    min-height: 0;
+    background: #ffffff;
+  }
+
+  // ── Toolbar ─────────────────────────────────────────────────────────────
+  &__meeting-sched-toolbar {
+    flex-shrink: 0;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 12px 16px;
+    flex-wrap: nowrap !important;
+  }
+
+  &__meeting-sched-toolbar-left,
+  &__meeting-sched-toolbar-right {
+    align-items: center;
+    gap: 16px;
+    flex-wrap: nowrap !important;
+  }
+
+  // Anchors the mini-calendar dropdown under the range label.
+  &__meeting-sched-toolbar-left {
+    position: relative;
+  }
+
+  &__meeting-sched-nav {
+    align-items: center;
+    gap: 4px;
+    padding: 4px 6px;
+    border-radius: 71px;
+    background: rgba(0, 0, 0, 0.05);
+  }
+
+  &__meeting-sched-nav-btn {
+    display: flex;
+    width: 26px;
+    height: 26px;
+    padding: 6px;
+    border-radius: 50%;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    color: #0b0a21;
+
+    svg {
+      width: 14px;
+      height: 14px;
+      fill: currentColor;
+    }
+
+    &.next svg {
+      transform: rotate(180deg);
+    }
+
+    &:hover {
+      background: rgba(0, 0, 0, 0.08);
+    }
+  }
+
+  &__meeting-sched-nav-today {
+    padding: 2px 6px;
+    cursor: pointer;
+    @include drumee.typo($size: 14px, $line: 20px, $weight: 600, $color: #0b0a21);
+
+    &:hover {
+      opacity: 0.7;
+    }
+  }
+
+  &__meeting-sched-label-wrap {
+    align-items: center;
+    gap: 6px;
+    padding: 4px;
+    border-radius: 6px;
+    cursor: pointer;
+
+    &:hover {
+      background: rgba(0, 0, 0, 0.05);
+    }
+
+    &[data-open="1"] .window-folder__meeting-sched-label-caret {
+      transform: rotate(180deg);
+    }
+  }
+
+  &__meeting-sched-label {
+    @include drumee.typo($size: 15px, $line: 20px, $weight: 600, $color: #0b0a21);
+    white-space: nowrap;
+  }
+
+  &__meeting-sched-label-caret {
+    display: flex;
+    width: 14px;
+    height: 14px;
+    color: #0b0a21;
+    align-items: center;
+    justify-content: center;
+    // Purely visual — clicks must reach the wrap's picker-toggle service.
+    pointer-events: none;
+
+    svg {
+      width: 12px;
+      height: 12px;
+      fill: currentColor;
+    }
+  }
+
+  // ── Mini-calendar dropdown (caret next to the range label) ──────────────
+  &__meeting-sched-picker {
+    position: absolute;
+    top: calc(100% + 6px);
+    left: 0;
+    z-index: 120;
+    width: 264px;
+    padding: 12px;
+    border-radius: 8px;
+    border: 1px solid rgba(0, 0, 0, 0.08);
+    background: #ffffff;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+  }
+
+  &__meeting-sched-picker-head {
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 8px;
+  }
+
+  &__meeting-sched-picker-month {
+    @include drumee.typo($size: 14px, $line: 20px, $weight: 600, $color: #0b0a21);
+  }
+
+  &__meeting-sched-picker-nav {
+    display: flex;
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    color: #0b0a21;
+
+    svg {
+      width: 12px;
+      height: 12px;
+      fill: currentColor;
+    }
+
+    &.next svg {
+      transform: rotate(180deg);
+    }
+
+    &:hover {
+      background: rgba(0, 0, 0, 0.06);
+    }
+  }
+
+  &__meeting-sched-picker-dows,
+  &__meeting-sched-picker-week {
+    flex-wrap: nowrap !important;
+  }
+
+  &__meeting-sched-picker-dow {
+    flex: 1;
+    justify-content: center;
+    padding: 2px 0;
+    @include drumee.typo($size: 11px, $line: 16px, $weight: 600, $color: #84848c);
+  }
+
+  &__meeting-sched-picker-day {
+    flex: 1;
+    height: 30px;
+    align-items: center;
+    justify-content: center;
+    border-radius: 6px;
+    cursor: pointer;
+    @include drumee.typo($size: 13px, $line: 18px, $weight: 400, $color: #0b0a21);
+
+    &:hover {
+      background: rgba(0, 0, 0, 0.06);
+    }
+
+    &[data-in="0"] {
+      color: #c7c7cc;
+    }
+
+    // Current selection: the anchor week (weekly) / anchor day (monthly).
+    &[data-sel="1"] {
+      background: rgba(89, 80, 255, 0.12);
+      color: var(--primary-40, #5950ff);
+      font-weight: 600;
+    }
+
+    &[data-today="1"] {
+      font-weight: 700;
+    }
+  }
+
+  // ── Weekly / Monthly toggle ─────────────────────────────────────────────
+  &__meeting-sched-toggle {
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
+    user-select: none;
+  }
+
+  &__meeting-sched-toggle-label {
+    @include drumee.typo($size: 14px, $line: 20px, $weight: 400, $color: #84848c);
+    // Bigger, easy-to-hit target.
+    padding: 4px 6px;
+    cursor: pointer;
+    user-select: none;
+  }
+
+  // `daily` highlights WEEKLY on purpose. The switch has two positions and
+  // daily is a drill-down of the week (same hourly grid, nDays = 1), so it is
+  // the weekly side of the toggle, not a third state. Without this the daily
+  // view lit NEITHER label — which read as a broken control the moment a narrow
+  // panel started defaulting to daily (see _applyScheduleBreakpoint).
+  //
+  // The knob needs no rule: only [data-view="monthly"] moves it, so daily
+  // already leaves it in the weekly position.
+  &__meeting-sched-toggle[data-view="weekly"] &__meeting-sched-toggle-label.weekly,
+  &__meeting-sched-toggle[data-view="daily"] &__meeting-sched-toggle-label.weekly,
+  &__meeting-sched-toggle[data-view="monthly"] &__meeting-sched-toggle-label.monthly {
+    color: #0b0a21;
+    font-weight: 600;
+  }
+
+  &__meeting-sched-toggle-switch {
+    width: 36px;
+    height: 20px;
+    border-radius: 10px;
+    background: #d1d1d6;
+    align-items: center;
+    padding: 2px;
+    flex-shrink: 0;
+    transition: background 0.15s ease;
+  }
+
+  &__meeting-sched-toggle-knob {
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: #ffffff;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
+    transition: transform 0.15s ease;
+    // Purely visual — let clicks on the knob reach the switch's toggle service.
+    pointer-events: none;
+  }
+
+  &__meeting-sched-toggle[data-view="monthly"] &__meeting-sched-toggle-knob {
+    transform: translateX(16px);
+  }
+
+  // ── CTAs ────────────────────────────────────────────────────────────────
+  &__meeting-sched-start-btn {
+    display: flex;
+    box-sizing: border-box;
+    align-items: center;
+    gap: 8px;
+    height: 36px;
+    padding: 0 14px;
+    border-radius: 8px;
+    background: rgba(0, 0, 0, 0.05);
+    cursor: pointer;
+    flex-shrink: 0;
+    color: #0b0a21;
+    transition: background 0.15s ease;
+
+    svg {
+      width: 18px;
+      height: 18px;
+      flex-shrink: 0;
+      fill: currentColor;
+    }
+
+    .note-content {
+      @include drumee.typo($size: 14px, $line: 20px, $weight: 600, $color: #0b0a21);
+      white-space: nowrap;
+
+      section {
+        white-space: nowrap;
+      }
+    }
+
+    &:hover {
+      background: rgba(0, 0, 0, 0.08);
+    }
+
+    // Loading: set on click until the meeting window is live. Swap the camera
+    // icon for a spinner and block further clicks.
+    &[data-loading="1"] {
+      pointer-events: none;
+      opacity: 0.7;
+
+      svg {
+        display: none;
+      }
+
+      &::before {
+        content: "";
+        width: 16px;
+        height: 16px;
+        flex-shrink: 0;
+        border-radius: 50%;
+        border: 2px solid currentColor;
+        border-top-color: transparent;
+        animation: window-folder-meeting-start-spin 0.8s linear infinite;
+      }
+    }
+
+    // Joined: the user is in the live meeting. Lock the button and paint it as
+    // the active brand state (label swapped to "Joined" in _setMeetingJoined);
+    // restored to the idle look once the meeting window closes.
+    &[data-joined="1"] {
+      pointer-events: none;
+      background: var(--primary-40, #5950ff);
+      color: #ffffff;
+
+      .note-content {
+        color: #ffffff;
+      }
+    }
+  }
+
+  &__meeting-sched-schedule-btn {
+    display: flex;
+    box-sizing: border-box;
+    align-items: center;
+    justify-content: center;
+    height: 36px;
+    padding: 0 20px;
+    border-radius: 8px;
+    background: var(--primary-40, #5950ff);
+    cursor: pointer;
+    flex-shrink: 0;
+    @include drumee.typo($size: 14px, $line: 20px, $weight: 600, $color: #ffffff);
+
+    .note-content {
+      white-space: nowrap;
+    }
+
+    &:hover {
+      background: var(--primary-50, #433cc5);
+    }
+  }
+
+  // ── Grid shell ──────────────────────────────────────────────────────────
+  &__meeting-sched-grid {
+    flex: 1;
+    min-height: 0;
+    padding: 0 16px 16px;
+  }
+
+  // Day header row
+  &__meeting-sched-days {
+    flex-shrink: 0;
+    flex-wrap: nowrap !important;
+
+    &--month {
+      border-left: 1px solid rgba(0, 0, 0, 0.05);
+    }
+  }
+
+  &__meeting-sched-corner {
+    width: 85px;
+    flex-shrink: 0;
+    border: 1px solid rgba(0, 0, 0, 0.05);
+    border-right: none;
+  }
+
+  &__meeting-sched-day {
+    flex: 1;
+    min-width: 0;
+    padding: 12px;
+    gap: 2px;
+    border: 1px solid rgba(0, 0, 0, 0.05);
+    border-left: none;
+
+    &[data-today="1"] .window-folder__meeting-sched-day-num {
+      color: var(--primary-40, #5950ff);
+    }
+  }
+
+  &__meeting-sched-day-num {
+    @include drumee.typo($size: 18px, $line: 24px, $weight: 600, $color: #0b0a21);
+  }
+
+  &__meeting-sched-day-name {
+    @include drumee.typo($size: 14px, $line: 20px, $weight: 400, $color: #65656c);
+  }
+
+  // Scrollable hour rows
+  &__meeting-sched-body {
+    flex: 1;
+    min-height: 0;
+    position: relative; // anchors the empty-range hint
+    overflow-y: auto;
+    overflow-x: hidden;
+
+    &--month {
+      overflow: hidden;
+    }
+  }
+
+  &__meeting-sched-row {
+    flex-shrink: 0;
+    height: 72px; // must match HOUR_PX in skeleton/meeting-schedule.js
+    flex-wrap: nowrap !important;
+  }
+
+  &__meeting-sched-hour {
+    width: 85px;
+    flex-shrink: 0;
+    align-items: center;
+    justify-content: flex-start;
+    padding-top: 12px;
+    border: 1px solid rgba(0, 0, 0, 0.05);
+    border-top: none;
+    border-right: none;
+    background: #ffffff;
+  }
+
+  &__meeting-sched-hour-label {
+    @include drumee.typo($size: 14px, $line: 20px, $weight: 400, $color: #65656c);
+  }
+
+  &__meeting-sched-cell {
+    flex: 1;
+    min-width: 0;
+    position: relative;
+    border: 1px solid rgba(0, 0, 0, 0.05);
+    border-top: none;
+    border-left: none;
+    background: #ffffff;
+
+    // Dashed half-hour divider.
+    &::after {
+      content: "";
+      position: absolute;
+      left: 0;
+      right: 0;
+      top: 50%;
+      border-top: 1px dashed rgba(0, 0, 0, 0.2);
+      pointer-events: none;
+    }
+  }
+
+  // Month view
+  &__meeting-sched-week {
+    flex: 1;
+    min-height: 90px;
+    flex-wrap: nowrap !important;
+  }
+
+  // A busy day used to overflow the week row and get clipped by the month
+  // body — scroll the day cell instead so every meeting stays reachable.
+  &__meeting-sched-mcell {
+    flex: 1;
+    min-width: 0;
+    min-height: 0;
+    overflow-y: auto;
+    padding: 8px 10px;
+    gap: 2px;
+    border: 1px solid rgba(0, 0, 0, 0.05);
+    border-top: none;
+    border-left: none;
+    background: #ffffff;
+
+    &::-webkit-scrollbar {
+      width: 4px;
+    }
+
+    &::-webkit-scrollbar-thumb {
+      border-radius: 2px;
+      background: rgba(0, 0, 0, 0.18);
+    }
+
+    &:first-child {
+      border-left: 1px solid rgba(0, 0, 0, 0.05);
+    }
+
+    &[data-off="1"] .window-folder__meeting-sched-mnum {
+      color: #d1d1d6;
+    }
+
+    &[data-today="1"] .window-folder__meeting-sched-mnum {
+      color: var(--primary-40, #5950ff);
+    }
+  }
+
+  &__meeting-sched-mnum {
+    flex-shrink: 0; // stays put when the day cell scrolls
+    @include drumee.typo($size: 14px, $line: 20px, $weight: 600, $color: #0b0a21);
+  }
+
+  // ── Scheduled-meeting cards (Figma "schedule card") ──────────────────────
+  // Weekly: absolutely positioned inside its start-hour cell, sized by
+  // duration; z-index lifts it above the later-painted sibling cells.
+  // `height` / `min-height` / `left` / `width` come from the skeleton (time and
+  // overlap lane). Hovering lifts the card and lets it grow past its slot so a
+  // short meeting can show its full title and agenda.
+  &__meeting-sched-card {
+    position: absolute;
+    left: 2px;
+    right: 2px;
+    z-index: 1;
+    overflow: hidden;
+    box-sizing: border-box;
+    padding: 4px 8px;
+    border-radius: 0 4px 4px 0;
+    background: rgba(89, 80, 255, 0.08);
+    border-left: 3px solid var(--primary-40, #5950ff);
+    cursor: pointer;
+
+    &:hover {
+      background: rgba(89, 80, 255, 0.16);
+      // Above neighbouring cards while expanded (they sit at z-index 1).
+      z-index: 6;
+      // The skeleton sets `height` inline; !important is what lets the card
+      // grow to its content. `min-height` (also inline) keeps the slot size.
+      height: auto !important;
+      overflow: visible;
+      box-shadow: 0 6px 16px rgba(11, 10, 33, 0.18);
+    }
+  }
+
+  &__meeting-sched-card-title {
+    // Never shrinks → the title stays visible and the description clips instead.
+    flex: 0 0 auto;
+    padding-right: 22px; // clear of the hover join button
+    pointer-events: none; // clicks fall through to the card (it carries the nid)
+    // drumee.typo emits no font-weight (maps weight→font-family only) — set it here.
+    @include drumee.typo($size: 14px, $line: 18px, $color: #0b0a21);
+    font-weight: 700;
+    // One line while the card is at slot size (matches the CARD_TITLE_PX the
+    // skeleton budgets); the hover state below releases it.
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  // Line count + max-height are set inline from the card's real height, so only
+  // whole lines ever render — no half-clipped last line.
+  &__meeting-sched-card-desc {
+    flex: 0 1 auto;
+    min-height: 0;
+    pointer-events: none;
+    margin-top: 1px;
+    @include drumee.typo($size: 11px, $line: 14px, $weight: 400, $color: #65656c);
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    overflow-wrap: anywhere;
+  }
+
+  // Hover reveals the text the slot-sized card had to cut: the title wraps and
+  // the description un-clamps. Both override inline styles set by the skeleton.
+  &__meeting-sched-card:hover &__meeting-sched-card-title {
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
+  &__meeting-sched-card:hover &__meeting-sched-card-desc {
+    -webkit-line-clamp: unset !important;
+    max-height: none !important;
+    display: block;
+  }
+
+  // Hover-revealed. When hidden it must NOT capture clicks (opacity:0 still
+  // receives them) or its corner swallows clicks meant to open the meeting.
+  &__meeting-sched-card-join {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    position: absolute;
+    top: 2px;
+    right: 2px;
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    background: var(--primary-40, #5950ff);
+    color: #ffffff;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.12s ease;
+
+    svg {
+      width: 12px;
+      height: 12px;
+      fill: currentColor;
+    }
+  }
+
+  &__meeting-sched-card:hover &__meeting-sched-card-join {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  // Half-hour click zones stacked inside each cell (:00 / :30). Sit under the
+  // cards (which are position:absolute); hover hints they're clickable.
+  &__meeting-sched-slot {
+    flex: 1;
+    min-height: 0;
+    cursor: pointer;
+
+    &:hover {
+      background: rgba(89, 80, 255, 0.05);
+    }
+  }
+
+  // Monthly: a compact line per meeting inside the day cell.
+  &__meeting-sched-mcard {
+    flex-shrink: 0; // don't squash the line list when the day cell scrolls
+    margin-top: 2px;
+    padding: 2px 6px;
+    border-radius: 4px;
+    background: rgba(89, 80, 255, 0.08);
+    border-left: 3px solid var(--primary-40, #5950ff);
+    cursor: pointer;
+    @include drumee.typo($size: 12px, $line: 15px, $color: #0b0a21);
+    font-weight: 600;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+
+    &:hover {
+      background: rgba(89, 80, 255, 0.16);
+    }
+  }
+
+  // ── Narrow window: wrap the toolbar, scroll the week grid horizontally ───
+  // Keyed on the folder window's own inline width (container query), not the
+  // viewport — this is a floating/splittable panel, so @media would miss a
+  // narrow window on a wide screen (see [[windowed-panel-responsive]]). The
+  // 700px breakpoint matches the folder skin's own compact threshold.
+  @container window-folder-w (max-width: 700px) {
+    &__meeting-sched-toolbar {
+      flex-wrap: wrap !important;
+      gap: 12px 8px;
+      padding: 12px;
+      // The base rule pins the two groups apart with `space-between`, which is
+      // right for one wide row and wrong for every other case: on a wrapped
+      // line holding a single group it degrades to flex-start. Measured at
+      // 390px — the nav group sat at centre x=143 against a bar centre of 196,
+      // i.e. 53px off, hugging the left edge with dead space to its right.
+      //
+      // `center` is applied per LINE, which is all this needs: the two groups
+      // stack across effectively the whole compact range, and a lone group on
+      // its own line is exactly what `center` centres.
+      //
+      // Nothing here forces `flex: 1 1 100%`, because nothing has to — the
+      // groups already wrap on their own. Measured: they need 693px of inner
+      // width to share a line (nav 261 + gap 8 + controls 424), so they only
+      // ever would between 693 and 700px, a 7px slice of the range. Adding the
+      // basis would buy nothing and would stack them by decree instead of by
+      // fit, which is worse the day one of the groups gets shorter.
+      justify-content: center;
+    }
+
+    &__meeting-sched-toolbar-left,
+    &__meeting-sched-toolbar-right {
+      flex-wrap: wrap !important;
+      gap: 8px 12px;
+      // Same reasoning one level in: these groups wrap internally too (the
+      // right one carries the toggle plus both CTAs), and their own children
+      // were left-aligned inside a row that spans the bar.
+      //
+      // Safe for the mini-calendar dropdown, which is `position: absolute;
+      // left: 0` against `-toolbar-left` (`position: relative`): centring moves
+      // the anchor box but the popup stays pinned to its left edge, and at
+      // 264px wide it still clears a 390px window from wherever that lands.
+      justify-content: center;
+    }
+
+    // Give the Weekly/Monthly toggle its own line so the two CTAs pair up on
+    // the next one.
+    //
+    // Without this the right group wrapped wherever it happened to run out of
+    // room, which split the pair at exactly the widths that matter most —
+    // measured: 390px and 430px both produced [toggle, "Start a Meeting"] on
+    // one line and "Schedule" stranded alone below it. (320px already paired
+    // them, purely because the toggle did not fit beside Start there — the
+    // right result by accident, which is what made this look fine on the
+    // narrowest phone and wrong on the common one.)
+    //
+    // The pair costs 235px together (Start 137 + gap 12 + Schedule 86), so it
+    // clears even the 296px of inner width a 320px window leaves. Nothing
+    // needs a media query below this one.
+    &__meeting-sched-toggle {
+      flex: 1 1 100%;
+      justify-content: center;
+    }
+
+    &__meeting-sched-schedule-btn,
+    &__meeting-sched-start-btn {
+      padding: 0 14px;
+      // Never let the pair be broken up by shrinking instead of wrapping.
+      flex: 0 0 auto;
+    }
+
+    // The 8-column week grid can't fit a phone — let it scroll sideways rather
+    // than crush the columns. Header + rows share one min-width so they track.
+    &__meeting-sched-grid {
+      padding: 0 0 12px;
+      overflow-x: auto;
+    }
+
+    &__meeting-sched-days,
+    &__meeting-sched-body {
+      min-width: 620px;
+    }
+
+    // ...but NOT the single-day or month grids, which are the two views that
+    // actually fit here.
+    //
+    // The `--day` pair is load-bearing, not defensive: daily and weekly share
+    // every other class (weeklyGrid renders both), so without the modifier ONE
+    // day column inherited the seven-column floor and scrolled sideways at
+    // 390px — measured, and exactly the thing switching to daily is meant to
+    // prevent.
+    //
+    // The month grid is 7 narrow columns of day numbers, which stays readable
+    // at a phone width; the weekly grid needs the floor only because its
+    // columns carry meeting cards with titles, where a month cell carries a
+    // date and a one-line chip.
+    &__meeting-sched-days--day,
+    &__meeting-sched-body--day,
+    &__meeting-sched-days--month,
+    &__meeting-sched-body--month {
+      min-width: 0;
+    }
+
+    // Tighten the day cells so seven of them fit without the date colliding
+    // with its chips: the desktop 8/10px padding alone eats 140px of a 390px
+    // window across the row.
+    &__meeting-sched-mcell {
+      padding: 4px 3px;
+      gap: 1px;
+    }
+
+    &__meeting-sched-mnum {
+      font-size: 12px;
+      line-height: 16px;
+    }
+
+    // The chip keeps its left rule as the only colour cue and drops the
+    // horizontal padding — at a 7th of a phone width, padding is most of the
+    // cell and the title is what has to survive.
+    &__meeting-sched-mcard {
+      padding: 1px 3px;
+      border-left-width: 2px;
+      font-size: 11px;
+      line-height: 14px;
+    }
+
+    // Week rows get shorter with their contents, so a month does not need a
+    // full page of scrolling to see the last week.
+    &__meeting-sched-week {
+      min-height: 64px;
+    }
+  }
+}
+
+@keyframes window-folder-meeting-start-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}

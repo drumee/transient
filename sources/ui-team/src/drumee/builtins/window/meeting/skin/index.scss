@@ -1,0 +1,203 @@
+@use "builtins/webrtc/skin/meeting-shell" as *;
+
+.window-meeting {
+  @include meeting-shell;
+}
+
+.window__message-container {
+  position: absolute;
+  background-color: var(--normal-bg-80);
+  padding: var(--spacer-5);
+  width: 300px;
+  color: #0b0a21;
+  border-radius: var(--corner-radius-3);
+  align-items: center;
+  top: 40px;
+  transform: translateX(50%);
+  right: 50%;
+  gap: var(--spacer-3);
+  // Informational only (e.g. "waiting for attendees") — never let it capture
+  // clicks meant for the controls/dashboard around it. The denied-state
+  // variant below re-enables clicks for its close button.
+  pointer-events: none;
+}
+
+// Solo-call preview overlay: when join() fails (denied / network / device),
+// window/meeting/index.js sets data-denied="1" on __ui. Expand the
+// message-container to cover the body so it reads like a normal 1-person
+// call view — avatar centered, name + denial text below, X in the corner.
+.window-meeting__ui[data-denied="1"] {
+  .window__message-container {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    top: 0;
+    right: auto;
+    transform: none;
+    // Denied state is interactive (avatar + close X) — restore clicks.
+    pointer-events: auto;
+    background: #f2f2f7;
+    border-radius: 0;
+    padding: 0;
+    gap: var(--spacer-4);
+    justify-content: center;
+    align-items: center;
+  }
+
+  .message-close-x {
+    position: absolute;
+    top: var(--spacer-4);
+    right: var(--spacer-4);
+    width: 28px;
+    height: 28px;
+    padding: 6px;
+    border-radius: 50%;
+    cursor: pointer;
+    color: #84848c;
+    background: var(--normal-bg-80);
+    box-sizing: border-box;
+    z-index: 2;
+
+    svg {
+      width: 14px;
+      height: 14px;
+    }
+
+    &:hover {
+      background-color: var(--normal-bg-70);
+      color: #0b0a21;
+    }
+  }
+
+  .message-avatar {
+    width: 96px;
+    height: 96px;
+    border-radius: 50%;
+    overflow: hidden;
+    flex-shrink: 0;
+  }
+
+  .message-name {
+    font-size: 16px;
+    font-weight: 600;
+    color: #0b0a21;
+  }
+
+  .message-text {
+    font-size: 13px;
+    color: #84848c;
+    text-align: center;
+    line-height: 1.4;
+    max-width: 320px;
+    padding: 0 var(--spacer-5);
+  }
+}
+// Control lock — the in-topbar controls are shown but inert during two phases
+// where operating camera/mic/screen/hand/chat/people/fullscreen is meaningless:
+//   1. Startup, before the local user joins the conference —
+//      window/meeting/index.js sets data-starting-up="1" on __ui until
+//      onLocalUserJoined.
+//   2. A late joiner catching an in-progress screen share, while the presenter
+//      layout loads — room `_setShellPreparing` sets data-preparing="1" on
+//      __shell until the shared screen's first frame (onRemoteScreenStart).
+// Both dim + block the controls; the Leave button is exempted below so there's
+// always an escape hatch.
+.window-meeting__ui[data-starting-up="1"] .window-meeting__in-topbar-controls > *,
+.window-meeting__shell[data-preparing="1"] .window-meeting__in-topbar-controls > * {
+  pointer-events: none;
+  opacity: 0.45;
+}
+
+// Escape hatch: Leave stays fully interactive during both locked phases. Same
+// specificity as the rule above but ordered after it, so it wins.
+.window-meeting__ui[data-starting-up="1"] .window-meeting__leave-btn,
+.window-meeting__shell[data-preparing="1"] .window-meeting__leave-btn {
+  pointer-events: auto;
+  opacity: 1;
+}
+
+// Control loading — while a camera / mic / screen-share toggle's async work is
+// in flight, window/meeting/index.js flags data-loading="1" on the camera or
+// mic pill (or the screen-share button). Block clicks and overlay a spinner on
+// the primary toggle icon (the ".accept" button inside a pill, or the screen
+// button itself), dimming the icon underneath. Reuses the meeting shell's
+// load-spin keyframe (emitted by the meeting-shell mixin include).
+.window-meeting__ctrl-pill[data-loading="1"],
+.window-meeting__ctrl-btn.screen[data-loading="1"] {
+  pointer-events: none;
+}
+
+.window-meeting__ctrl-pill[data-loading="1"] .ctrl-button.accept,
+.window-meeting__ctrl-btn.screen[data-loading="1"] {
+  position: relative;
+
+  svg {
+    opacity: 0.25;
+  }
+
+  &::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    margin: auto;
+    width: 16px;
+    height: 16px;
+    border: 2px solid var(--default-icon-neutral, #89929e);
+    border-top-color: transparent;
+    border-radius: 50%;
+    animation: window-meeting-load-spin 0.8s linear infinite;
+    pointer-events: none;
+    z-index: 3;
+  }
+}
+
+.window__dialog-overlay {
+  &[data-state="open"] {
+    height: 100%;
+    top: 0;
+    border-radius: 0;
+  }
+}
+
+// Join/leave toast: slide up from below, hold, fade out in place. Total
+// duration matches PARTY_TOAST_MS in window/meeting/index.js, which removes
+// the element just as the fade completes.
+@keyframes window-meeting-party-toast {
+  0% {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  10% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  80% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+}
+
+// Floating reaction: rise from the tile bottom, hold, then fade out at the top.
+@keyframes window-meeting-reaction-rise {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, 10px) scale(0.6);
+  }
+  12% {
+    opacity: 1;
+    transform: translate(-50%, 0) scale(1);
+  }
+  70% {
+    opacity: 1;
+    transform: translate(-50%, -150px) scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: translate(-50%, -220px) scale(1.1);
+  }
+}

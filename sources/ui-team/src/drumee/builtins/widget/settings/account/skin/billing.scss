@@ -1,0 +1,175 @@
+@use "sass:meta";
+@use "mixins/drumee";
+@use "../../skin" as *;
+
+.settings-account-billing {
+  &__header {
+    &.main {
+      padding: 20px;
+      background-color: var(--neutral-200);
+      align-items: center;
+      justify-content: space-around;
+      width: 400px;
+      border-radius: 12px;
+    }
+  }
+
+  &.main {
+    gap: 30px;
+  }
+
+  &__tabs-trigger {
+    &.main {
+      background-color: var(--neutral-200);
+      align-items: center;
+      justify-content: space-around;
+      height: 42px;
+      border-radius: var(--corner-radius-3);
+      display: flex;
+      padding: var(--spacer-1) var(--spacer-6);
+      align-items: center;
+      gap: var(--spacer-5);
+      max-width: 400px;
+    }
+
+    &.item {
+      cursor: pointer;
+      display: flex;
+      padding: var(--spacer-3) var(--spacer-4);
+      justify-content: center;
+      align-items: center;
+      gap: var(--spacer-5);
+      text-align: center;
+      font-size: 12px;
+      font-weight: 500;
+      line-height: 18px;
+      letter-spacing: -0.132px;
+      border-radius: var(--corner-radius-2);
+
+      &[data-state="1"] {
+        background-color: white;
+        color: var(--neutral-900);
+      }
+    }
+
+    &.discount {
+      margin-left: 4px;
+      color: lightgreen;
+      font-weight: 600;
+    }
+  }
+
+  &__content {
+    &.main {
+      grid-template-columns: repeat(2, 1fr);
+      gap: 20px;
+    }
+
+    &.item {
+      border: 1px solid var(--neutral-300);
+      border-radius: 12px;
+      padding: 20px;
+      gap: 20px;
+    }
+
+    &.header {
+      gap: 10px;
+    }
+
+    &.title {
+      color: var(--neutral-900);
+
+      font-weight: 600;
+      font-size: 20px;
+    }
+
+    &.subtitle {
+      font-weight: 600;
+      color: var(--neutral-900);
+
+      font-size: 14px;
+    }
+
+    &.description {
+      color: var(--neutral-600);
+      font-size: 14px;
+    }
+
+    &.button {
+      justify-content: center;
+      align-items: center;
+      border: 1px solid var(--neutral-300);
+      border-radius: 12px;
+      padding: 6px;
+
+      &.primary {
+        color: white;
+        background-color: black;
+      }
+
+      &.secondary {
+        color: black;
+      }
+    }
+
+    &.features {
+      gap: 20px;
+
+      &.__item {
+        gap: 10px;
+        align-items: center;
+      }
+
+      &.icon {
+        width: 16px;
+        height: 16px;
+      }
+
+      &.description {
+        font-size: 13px;
+        padding-bottom: 4px;
+        color: var(--neutral-600);
+      }
+    }
+
+    &.popular-badge {
+      background-color: var(--primary-500);
+      color: white;
+      border-radius: 24px;
+      align-items: center;
+      justify-content: center;
+      position: absolute;
+      padding: 10px;
+      top: -14px;
+      left: 50%;
+      font-size: 10px;
+      transform: translateX(-50%);
+    }
+  }
+
+  &__footer {
+    &.main {
+      gap: 20px;
+      background-color: var(--neutral-200);
+      padding: 20px;
+      border-radius: 12px;
+    }
+
+    &.header {
+      font-weight: 600;
+      font-size: 20px;
+    }
+
+    &.title {
+      font-weight: 600;
+      margin-right: 10px;
+    }
+
+    &.email {
+      cursor: pointer;
+      text-decoration: underline;
+      color: var(--primary-500);
+      margin-left: 10px;
+    }
+  }
+}

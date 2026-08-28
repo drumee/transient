@@ -1,0 +1,139 @@
+@use 'mixins/drumee';
+
+.account-data-deletion-otp {
+  &__main {
+    margin: 20px 0;
+  }
+
+  &__tips {
+    justify-content: center;
+    height: 40px;
+    @include drumee.typo($size: 16px, $line: 26px, $color: var(--default-text-color), $weight: 300);
+
+    &[data-error="1"] {
+      color: var(--default-text-error);
+    }
+  }
+
+  &__row {
+    justify-content: space-around;
+  }
+
+  &__code {
+    height: 40px;
+    width: 140px;
+    margin: 0 auto;
+    padding-top: 15px;
+
+    & input {
+      background-color: transparent;
+      border-bottom: 1px solid var(--default-entry-border-bottom);
+      border-radius: 0px;
+      width: 100%;
+      margin-left: 0px;
+      @include drumee.typo($size: 16px, $line: 19px, $color: var(--default-text-color));
+
+      &::placeholder {
+
+        @include drumee.typo($size: 16px, $weight: 300, $line: 19px, $color: var(--default-text-placeholder));
+      }
+
+      &:focus {
+        border-color: var(--eblue);
+        outline: none;
+
+        @include drumee.placeholder-input {
+          @include drumee.typo($size: 16px, $weight: 400, $line: 19px, $color: var(--focus-text-placeholder));
+        }
+      }
+    }
+  }
+
+  &__no-code {
+
+    @include drumee.typo($size: 16px, $line: 18px, $color: var(--default-text-color), $weight: 300);
+    justify-content: center;
+    justify-items: center;
+    transition: height 1s;
+    overflow: hidden;
+    margin-top: 20px;
+
+    &[data-mode="closed"] {
+      height: 0;
+    }
+
+    &[data-mode="open"] {
+      height: 40px;
+    }
+  }
+
+  &__btn {
+    outline: none;
+    cursor: pointer;
+    justify-content: center;
+    border-radius: var(--border-radius);
+    @include drumee.typo($size: 13px, $line: 18px, $color: var(--btn-rollback-text), $weight: 300);
+    color: var(--btn-rollback-text);
+    background-color: var(--btn-rollback-background);
+    border: 1px solid var(--btn-rollback-border);
+
+    &:hover {
+      border: 2px solid var(--btn-rollback-border-hover);
+      color: var(--btn-rollback-text-hover);
+    }
+
+    &.go {
+      width: 70px;
+      color: var(--btn-commit-text);
+      background-color: var(--btn-commit-background);
+    }
+
+    &[data-role="commit"] {
+      color: var(--btn-commit-text);
+      background-color: var(--btn-commit-background);
+      border-color: var(--btn-commit-border);
+
+      &:hover {
+        border-color: 1px solid var(--btn-commit-border-hover);
+      }
+    }
+
+    &[data-state="0"] {
+      opacity: 0.5;
+      pointer-events: none;
+    }
+  }
+
+  &__note {
+    &.sent {
+      position: absolute;
+      transition: height 1s;
+      overflow: hidden;
+      transition: height 1s;
+
+      &[data-mode="closed"] {
+        height: 0;
+      }
+
+      &[data-mode="open"] {
+        width: 30px;
+        height: 30px;
+      }
+
+      svg {
+        width: 100%;
+        height: 100%;
+      }
+    }
+  }
+
+  &__message {
+    .l-1 {
+      @include drumee.typo($size: 12px, $line: 18px, $color: var(--btn-rollback-text), $weight: 300);
+    }
+
+    .l-2 {
+      @include drumee.typo($size: 12px, $line: 18px, $color: var(--default-text-caution), $weight: 400);
+    }
+  }
+}

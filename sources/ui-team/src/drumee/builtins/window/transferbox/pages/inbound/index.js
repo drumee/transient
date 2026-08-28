@@ -1,0 +1,58 @@
+/* ==================================================================== *
+*   Copyright Xialia.com  2011-2020
+*   FILE : src/drumee/builtins/window/transferbox/pages/inbound/index.js
+*   TYPE : Component
+* ==================================================================== */
+
+/// <reference path="../../../../../../../@types/index.d.ts" />
+
+const __uploader = require('socket/uploader');
+const __progress  = require('libs/template/progress'); 
+
+class ___inbound_page extends LetcBox {
+
+  /**
+   * @param {object} opt
+  */
+  initialize (opt ={}) {
+    // @ts-ignore
+    require('./skin');
+    super.initialize(opt);
+    this.viewInstance = this.mget('viewInstance')
+    this._view        = this.mget('view')
+    this.importResponse = {}
+    this.declareHandlers();
+  }
+  
+  /**
+   * @param {any} child
+   * @param {any} pn
+  */
+  onPartReady (child, pn) { return null }
+
+  /**
+   * 
+   */
+  onDomRefresh() {
+    this.feed(require('./skeleton').default(this));
+  }
+
+  
+  /**
+   * @param {LetcBox} cmd
+   * @param {any} args
+   */
+  onUiEvent (cmd, args = {}) {
+    const service = args.service || cmd.get(_a.service) || cmd.get(_a.name);
+
+    switch(service) {
+      case _a.none:
+        return;
+      
+      default:
+    }
+  }
+}
+
+
+module.exports = ___inbound_page

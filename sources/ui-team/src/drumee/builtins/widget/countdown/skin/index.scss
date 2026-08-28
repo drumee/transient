@@ -1,0 +1,26 @@
+
+@use 'mixins/drumee';
+
+.countdown-timer {
+  &__ui {
+    align-items: center;
+    background-color: inherit;
+    display: flex;
+  }
+
+  &__main,
+  &__container {
+    height: 100%;
+    width: 100%;
+    justify-content: center;
+    align-items: center;
+  }
+
+  &__container {
+    padding: 2px;
+  }
+
+  &__counter {
+    @include drumee.typo($size: inherit, $line: inherit, $color: inherit);
+  }
+}

@@ -1,0 +1,1312 @@
+@use "sass:meta";
+@use "mixins/drumee";
+
+@keyframes widget-chat-typing-bounce {
+  0%,
+  80%,
+  100% {
+    opacity: 0.3;
+    transform: translateY(0);
+  }
+  40% {
+    opacity: 1;
+    transform: translateY(-3px);
+  }
+}
+
+@include meta.load-css("attachment");
+@include meta.load-css("message-options");
+@include meta.load-css("reply-message");
+
+.widget-chat {
+  &__ui {
+    height: 100%;
+    width: 100%;
+    // Anchor for the absolute-positioned __drag-drop-wrapper overlay.
+    // Without this, the overlay (width/height 100%) escapes to the
+    // nearest positioned ancestor and overflows the chat panel.
+    position: relative;
+  }
+
+  &__main {
+    height: 100%;
+  }
+
+  &__body {
+    height: 100%;
+    overflow-x: hidden;
+    padding-bottom: 5px;
+
+    .no-content {
+      align-items: center;
+      height: 100%;
+      justify-content: center;
+      width: 100%;
+      color: var(--normal-fg-10);
+    }
+  }
+
+  // Empty state for a support conversation that has not started yet. Inherits
+  // the centring from .no-content above; adds the two-line invitation.
+  &__support-empty {
+    gap: 6px;
+    padding: 0 32px;
+    text-align: center;
+  }
+
+  &__support-empty-title {
+    @include drumee.typo($size: 15px, $color: var(--normal-fg-10));
+    font-weight: 600;
+  }
+
+  &__support-empty-text {
+    @include drumee.typo($size: 13px, $line: 1.5, $color: var(--normal-fg-50));
+    max-width: 32ch;
+  }
+
+  &__container {
+    height: 100%;
+    width: 100%;
+
+    .drumee-spinner {
+      width: 30px;
+      height: 30px;
+    }
+  }
+
+  /** Used to cache profile image*/
+  &__avatar-cache {
+    display: none !important;
+    height: 0 !important;
+    overflow: hidden;
+  }
+
+  &__chat-content {
+    height: 100%;
+    overflow: hidden;
+    width: 100%;
+
+    .drumee-spinner {
+      height: 50px;
+      margin: auto;
+      top: 40%;
+      width: 50px;
+      z-index: 9999;
+    }
+  }
+
+  &__chat-content-inner {
+    flex: 1;
+    min-height: 0;
+    overflow: hidden;
+    position: relative;
+    width: 100%;
+  }
+
+  &__scope-chip-bar {
+    align-items: center;
+    flex-shrink: 0;
+    justify-content: center;
+    padding: 10px 12px;
+    width: 100%;
+
+    &[data-state="0"] {
+      display: none;
+    }
+  }
+
+  &__scope-chip-pill {
+    align-items: center;
+    background: var(--egrey-e8, #dde2e8);
+    border-radius: 9999px;
+    gap: 6px;
+    max-width: calc(100% - 16px);
+    padding: 5px 8px 5px 14px;
+
+    @include drumee.typo(
+      $line: 18px,
+      $size: 13px,
+      $color: var(--default-text-color)
+    );
+  }
+
+  &__scope-chip-label {
+    max-width: 320px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  &__scope-chip-clear {
+    cursor: pointer;
+    flex-shrink: 0;
+    height: 14px;
+    width: 14px;
+
+    svg,
+    use,
+    path {
+      fill: var(--default-text-color, #2f2f2f);
+      stroke: var(--default-text-color, #2f2f2f);
+    }
+
+    &:hover {
+      svg,
+      use,
+      path {
+        fill: var(--default-text-error, #ea4d44);
+        stroke: var(--default-text-error, #ea4d44);
+      }
+    }
+  }
+
+  // Hide messenger input footer while a file scope is active; clearing the
+  // scope (close button on chip) restores normal chat composing.
+  [data-scoped-hidden="1"] {
+    display: none !important;
+  }
+
+  &__button-scroll {
+    position: absolute;
+    @include drumee.typo(
+      $line: 14px,
+      $size: 12px,
+      $color: var(--default-icon-reverse)
+    );
+    border: 1px solid var(--default-icon-active);
+    display: none;
+    flex-direction: row;
+    justify-content: center;
+    align-content: center;
+    justify-items: center;
+    align-items: center;
+    border-radius: var(--border-radius);
+    top: calc(100% - 32px);
+    left: calc(50% - 60px);
+    min-width: 180px;
+    background-color: var(--special-tag-note-chat);
+    padding: 6px;
+    cursor: pointer;
+
+    &[data-state="1"] {
+      display: flex;
+    }
+
+    &[data-state="0"] {
+      display: none;
+    }
+
+    &-icon {
+      margin-left: 12px;
+      height: 12px;
+      width: 12px;
+    }
+
+    &-note {
+      align-items: center;
+    }
+
+    &[data-count="0"] {
+      &::before {
+        display: none;
+      }
+    }
+
+    &::before {
+      content: attr(data-count);
+      margin-right: 12px;
+    }
+  }
+
+  // Ephemeral typing indicator, drawn as an incoming-message bubble (Figma
+  // 2370-70205): typer avatar + white bubble with three animated dots. Rendered
+  // as an in-flow row (NOT an overlay) — it lives at the top of the footer
+  // wrapper, so it occupies its own strip just above the input and pushes the
+  // message list up when a peer types, reading as the last incoming item at the
+  // bottom of the conversation. Toggled via data-state.
+  &__typing-indicator {
+    align-items: flex-end;
+    gap: 6px;
+    padding: 4px 12px 8px;
+    &[data-state="0"] {
+      display: none;
+    }
+
+    &[data-state="1"] {
+      display: flex;
+    }
+  }
+
+  // Avatar slot — fed a Skeletons.UserProfile of the current typer.
+  &__typing-avatar {
+    flex-shrink: 0;
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    overflow: hidden;
+
+    & > * {
+      width: 100%;
+      height: 100%;
+    }
+  }
+
+  // White message bubble holding the dots (incoming-message corner: flat-ish
+  // bottom-left, matching the avatar side).
+  &__typing-bubble {
+    align-items: center;
+    padding: 10px 12px;
+    border-radius: 16px 16px 16px 4px;
+    background-color: var(--white);
+    box-shadow:
+      0 10px 15px -3px rgba(0, 0, 0, 0.08),
+      0 4px 6px -4px rgba(0, 0, 0, 0.08);
+  }
+
+  &__typing-dots {
+    align-items: center;
+    gap: 4px;
+    flex-shrink: 0;
+  }
+
+  &__typing-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background-color: var(--primary-40); // #5950ff (Figma Primary/40)
+    animation: widget-chat-typing-bounce 1.2s infinite ease-in-out;
+
+    &:nth-child(2) {
+      animation-delay: 0.2s;
+    }
+
+    &:nth-child(3) {
+      animation-delay: 0.4s;
+      background-color: var(--primary-purple-20); // #b1adff (Figma Primary/20)
+    }
+  }
+
+  &__messages {
+    height: inherit;
+    width: 100%;
+    @include drumee.typo(
+      $line: 16px,
+      $size: 14px,
+      $color: var(--default-text-color)
+    );
+
+    & .smart-container {
+      height: 100%;
+      // Bottom-anchor the thread so a short conversation (e.g. a brand-new
+      // folder chat with a single message) rests just above the input instead
+      // of clinging to the top. Clinging to the top clipped the reaction
+      // hover-bar, which floats at translateY(-100%) ABOVE the first bubble and
+      // had no head-room there.
+      display: flex;
+      flex-direction: column;
+      // Children MUST keep their natural height. The chat item sets an explicit
+      // min-height:38px, which overrides flexbox's default min-height:auto
+      // shrink-protection — so without this, once the thread overflows, flexbox
+      // squeezes every message down toward 38px and the taller (multi-line)
+      // bubbles overflow their box and overlap the next message.
+      & > * {
+        flex-shrink: 0;
+      }
+      // Auto top-margin pushes the first real message down only while there is
+      // free space; once messages overflow it collapses to 0, so the scroll
+      // height / scroll-restore math (folder getChatScrollElement) is untouched.
+      // Scoped to a message item so the load spinner and the empty placeholder
+      // keep their own centring.
+      & > .widget-chatItem:first-child {
+        margin-top: auto;
+      }
+    }
+
+    &[data-area="personal"] {
+      background-color: transparent;
+    }
+  }
+
+  &__message-options-wrapper {
+    display: none !important;
+    height: 100%;
+    min-height: 65px;
+    padding-bottom: 10px;
+  }
+
+  &__main[data-state="1"] {
+    .widget-chat__message-options-wrapper {
+      display: flex !important;
+      flex-direction: column;
+    }
+    .widget-chat__messenger-wrapper {
+      display: none !important;
+    }
+  }
+
+  &__messenger-wrapper {
+    // Match the Figma "Chat Input" frame (272:49274;3806:43659): 12px
+    // vertical / 16px horizontal padding. The previous 24px-all
+    // produced ~48px of vertical padding alone, making the input area
+    // ~84px tall.
+    padding: 12px 16px;
+    background: var(--normal-bg);
+    width: 100%;
+    position: relative;
+  }
+
+  &__messenger {
+    // Remove all focus/active borders in chat input
+    .rich-text,
+    .lib-messenger__content,
+    .lib-messenger__container,
+    .lib-messenger__main,
+    .note-content {
+      &:focus,
+      &:active,
+      &:focus-within,
+      &:focus-visible {
+        outline: none !important;
+        border: none !important;
+        box-shadow: none !important;
+      }
+    }
+
+    .lib-messenger__ui {
+      height: auto;
+      min-width: 0;
+    }
+
+    .lib-messenger__main {
+      background-color: transparent;
+      height: auto;
+      min-width: 0;
+    }
+
+    .lib-messenger__container {
+      align-items: center;
+      background-color: rgba(0, 0, 0, 0.05);
+      border: none;
+      border-radius: 8px;
+      padding: 8px 12px;
+      gap: 5px;
+      height: auto;
+      min-height: 32px;
+      box-sizing: border-box;
+      min-width: 0;
+      width: 100%;
+    }
+
+    .lib-messenger__content {
+      background-color: transparent;
+      border-radius: 0;
+      flex: 1 1 auto;
+      height: auto;
+      min-width: 0;
+      max-width: 100%;
+      overflow: visible;
+
+      .note-content {
+        padding: 0;
+        min-height: 28px;
+        max-height: 96px;
+        overflow-y: auto;
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+        word-break: break-word;
+        font-size: 14px;
+        line-height: 1.4;
+        color: var(--normal-fg-10);
+        outline: none;
+        border: none;
+        box-shadow: none;
+
+        &:focus,
+        &:active {
+          outline: none;
+          border: none;
+          box-shadow: none;
+        }
+
+        &::before {
+          color: var(--normal-fg-50);
+        }
+
+        &::-webkit-scrollbar {
+          width: 3px;
+        }
+        &::-webkit-scrollbar-track {
+          background: transparent;
+        }
+        &::-webkit-scrollbar-thumb {
+          background: var(--border-strong);
+          border-radius: 3px;
+        }
+      }
+    }
+
+    .lib-messenger__container {
+      &:focus-within,
+      &:focus,
+      &:active {
+        outline: none;
+        border: none;
+        box-shadow: none;
+      }
+    }
+
+    .lib-messenger__icon.submit {
+      margin: 0;
+      padding: 0;
+      width: auto;
+      height: auto;
+      flex-shrink: 0;
+
+      svg {
+        width: 14px;
+        height: 12px;
+        fill: var(--normal-fg-10);
+        padding: 0;
+        margin: 0;
+      }
+    }
+
+    .lib-messenger__icon.attach,
+    .lib-messenger__icon.emoji {
+      flex: 0 0 auto;
+    }
+  }
+
+  &__drag-drop-wrapper {
+    background: var(--default-bg);
+    // box-sizing:border-box so the 10px padding is INCLUDED in 100% width.
+    // Without it, width:100% + padding adds 20px outside the parent and
+    // the right edge (dashed border) is clipped by the chat panel's overflow.
+    box-sizing: border-box;
+    display: none !important;
+    height: 100%;
+    padding: 10px;
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    z-index: 99999;
+  }
+
+  &__drag-drop {
+    align-items: center;
+    border-radius: var(--border-radius);
+    border: 1px dashed var(--egreen);
+    box-sizing: border-box;
+    display: flex;
+    height: inherit;
+    justify-content: center;
+    width: inherit;
+
+    & .note-content {
+      height: 38px;
+      min-width: 140px;
+      @include drumee.typo(
+        $line: 19px,
+        $size: 16px,
+        $weight: 300,
+        $color: var(--egreen)
+      );
+    }
+  }
+
+  &__action-buttons {
+    margin-bottom: -2px;
+    width: 100%;
+  }
+
+  &__message-count {
+    align-items: center;
+    height: 100%;
+    justify-content: center;
+    width: 100%;
+  }
+
+  &__icon {
+    &.delete-icon {
+      color: var(--btn-caution-border);
+      height: 11px;
+      margin-right: 10px;
+      width: 13px;
+    }
+
+    &:hover {
+      color: var(--btn-caution-border-hover);
+    }
+  }
+
+  &__note {
+    &.counter {
+      padding: 3px 0 4px 0;
+      @include drumee.typo(
+        $size: 12px,
+        $line: 20px,
+        $weight: 300,
+        $color: var(--default-text-color)
+      );
+    }
+  }
+
+  &__desk-picker.dialog__wrapper[data-state="open"] {
+    background: var(--default-bg);
+    border-top: 2px solid var(--drumee-orange, #fa8540);
+    box-shadow: 0 -2px 10px rgba(0, 0, 0, 0.12);
+    display: flex !important;
+    flex-direction: column;
+    flex-shrink: 0;
+    height: 260px;
+    overflow: hidden;
+    width: 100%;
+  }
+
+  &__desk-picker-panel {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  &__desk-picker-header {
+    align-items: center;
+    background: var(--default-bg);
+    border-bottom: 1px solid var(--normal-bg-10, #eee);
+    flex-shrink: 0;
+    padding: 10px 14px;
+
+    &.widget-chat__desk-picker-header {
+      .widget-chat__desk-picker-title {
+        font-size: 13px;
+        font-weight: 600;
+      }
+    }
+  }
+
+  &__desk-picker-title {
+    font-size: 13px;
+    font-weight: 600;
+  }
+
+  &__desk-picker-list {
+    flex: 1;
+    min-height: 80px;
+    overflow-y: auto;
+
+    .list-smart__container {
+      > * {
+        cursor: pointer;
+        display: block;
+        overflow: hidden;
+        padding: 9px 14px;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+
+        &:hover {
+          background: var(--normal-bg-10, #f5f5f5);
+        }
+      }
+    }
+  }
+
+  &__desk-picker-cancel {
+    background: var(--default-bg);
+    border-top: 1px solid var(--normal-bg-10, #eee);
+    color: var(--drumee-red, #e53935);
+    cursor: pointer;
+    display: block;
+    flex-shrink: 0;
+    font-size: 13px;
+    font-weight: 500;
+    padding: 10px 14px;
+    text-align: center;
+
+    &:hover {
+      background: var(--normal-bg-10, #f5f5f5);
+    }
+  }
+
+  &__ack-wrapper {
+    bottom: 5px;
+    height: 100%;
+    margin-bottom: 0;
+    margin-right: auto;
+    max-height: 50px;
+    padding-left: 4px;
+    position: absolute;
+    width: calc(100% - 5px);
+    z-index: 50001 !important;
+
+    & .preset-acknowledge {
+      &__main {
+        background-color: var(--dgc-chat-ack-bg);
+        border-radius: var(--border-radius);
+        padding: 10px 40px;
+      }
+
+      &__container {
+        height: 100%;
+        justify-content: center;
+        margin: 0;
+        padding: 0;
+        width: 100%;
+
+        & .icon {
+          height: 18px;
+          left: 11px;
+          margin-left: -5px;
+          position: absolute;
+          width: 18px;
+        }
+
+        & .note-reader {
+          padding-left: 25px;
+          margin-top: auto;
+          margin-bottom: auto;
+          @include drumee.typo(
+            $size: 14px,
+            $line: 14px,
+            $weight: 300,
+            $color: var(--tertiary-text-color)
+          );
+        }
+      }
+    }
+
+    & .preset-acknowledge-error {
+      &__main {
+        background-color: var(--dgc-chat-ack-bg);
+        border-radius: var(--border-radius);
+        padding: 18px 40px;
+      }
+
+      &__container {
+        height: 100%;
+        justify-content: center;
+        margin: 0;
+        padding: 0;
+        width: 100%;
+
+        & .icon {
+          height: 18px;
+          margin-left: -5px;
+          position: absolute;
+          width: 18px;
+          color: var(--dgc-chat-error-ack-icon-color);
+        }
+
+        & .note-reader {
+          @include drumee.typo(
+            $size: 14px,
+            $line: 14px,
+            $weight: 300,
+            $color: var(--dgc-chat-error-ack-text-color)
+          );
+          margin-bottom: auto;
+          margin-top: auto;
+          padding-left: 25px;
+        }
+      }
+    }
+  }
+
+  &__buttons-wrapper {
+    align-items: center;
+    height: 100%;
+    justify-content: center;
+    width: 100%;
+
+    & .button {
+      align-items: center;
+      border-radius: var(--border-radius);
+      height: 26px;
+      justify-content: center;
+      margin: 0 2%;
+      max-width: 93px;
+      min-width: 93px;
+      width: 100%;
+    }
+
+    // Forward + Delete + Cancel share one pill geometry (Figma node 2308-115864):
+    // auto width so the "(N)" count fits, 24/6 padding, radius 4 — so all three
+    // buttons match in width/height. These overrides share the `.button` rule's
+    // specificity above and are declared after it, so they win. Cancel keeps its
+    // own outline colours (&__button-cancel); only its size aligns here.
+    & .button-confirm,
+    & .button-delete,
+    & .button-cancel {
+      border-radius: 4px;
+      height: auto;
+      max-width: none;
+      min-width: 0;
+      padding: 6px 24px;
+      width: auto;
+    }
+
+    & .button-confirm:hover,
+    & .button-delete:hover {
+      // Darken on hover without changing the box (no border swap) so the bar
+      // doesn't shift.
+      filter: brightness(0.93);
+    }
+  }
+
+  &__button-confirm {
+    // Forward — filled indigo (Figma Primary/50 #433cc5), white Geist SemiBold.
+    background-color: var(--primary-50);
+    border: none;
+    justify-content: center;
+    @include drumee.typo(
+      $size: 14px,
+      $line: 20px,
+      $weight: 600,
+      $color: var(--white)
+    );
+
+    &:hover {
+      border: none;
+      color: var(--white);
+    }
+  }
+
+  &__button-delete {
+    // Delete (For me / For all) — filled red (Figma Signal/Error #d74e49).
+    background-color: var(--signal-error);
+    border: none;
+    justify-content: center;
+    @include drumee.typo(
+      $size: 14px,
+      $line: 20px,
+      $weight: 600,
+      $color: var(--white)
+    );
+
+    &:hover {
+      border: none;
+      color: var(--white);
+
+      svg {
+        color: var(--white);
+      }
+    }
+
+    &[data-active="no"] {
+      cursor: not-allowed !important;
+      opacity: 0.4;
+    }
+  }
+
+  &__button-cancel {
+    border: 1px solid var(--btn-rollback-border);
+    justify-content: center;
+    // Match Forward/Delete typography (14/20) so all three buttons are the same
+    // height — the geometry override in &__buttons-wrapper aligns padding/width,
+    // but height is driven by line-height, so it must match too. Cancel keeps its
+    // outline colours (secondary action).
+    @include drumee.typo(
+      $size: 14px,
+      $line: 20px,
+      $color: var(--btn-rollback-text)
+    );
+    width: 100%;
+
+    &:hover {
+      border: 2px solid var(--btn-rollback-border-hover);
+      color: var(--btn-rollback-text-hover);
+    }
+  }
+
+  &_read-only-msg {
+    align-items: center;
+    background: hsla(0, 0%, 78.4%, 0.5); //rgba(137, 146, 158, 0.2);
+    height: 40px;
+    justify-content: center;
+    @include drumee.typo(
+      $size: 12px,
+      $color: var(--secondary-text-color)
+    ); //$weight:300,
+  }
+
+  // File mention dropdown
+  &__mention-dropdown {
+    display: none;
+    position: absolute;
+    bottom: calc(100% + 8px);
+    // Half the chat width, centered above the input. White card surface; text
+    // colors below are pinned to the Figma constants so it stays readable on
+    // white in both themes.
+    left: 50%;
+    transform: translateX(-50%);
+    width: 50%;
+    min-width: min(260px, 100%);
+    max-width: 100%;
+    max-height: 220px;
+    overflow-y: auto;
+    background: var(--white);
+    border: 1px solid var(--border-muted);
+    border-radius: 8px;
+    margin-bottom: 4px;
+    padding: 6px 0;
+    z-index: 1000;
+    box-shadow: var(--shadow-top-tiny);
+
+    &::-webkit-scrollbar {
+      width: 4px;
+    }
+    &::-webkit-scrollbar-track {
+      background: transparent;
+    }
+    &::-webkit-scrollbar-thumb {
+      background: var(--border-strong);
+      border-radius: 4px;
+    }
+
+    &[data-state="open"] {
+      display: flex;
+      flex-direction: column;
+    }
+
+    &[data-state="closed"] {
+      display: none;
+    }
+
+    // Section label ("Mention files" / "People") — Figma Grey/80, 12px, no caps.
+    // 16px left padding aligns the label with the row content (8px row margin +
+    // 8px row padding).
+    .mention-section-header {
+      padding: 4px 16px;
+      font-size: 12px;
+      line-height: 1.4;
+      color: var(--tertiary-grey-80);
+      flex-shrink: 0;
+      pointer-events: none;
+
+      .note-content {
+        color: inherit;
+      }
+    }
+
+    // Row (file or contact). Figma: rounded 8px pill, 8px padding, inset 8px from
+    // the dropdown edges; active/hovered row gets a brand-tinted (10%) fill.
+    .mention-item {
+      padding: 8px;
+      margin: 0 8px;
+      border-radius: 8px;
+      cursor: pointer;
+      align-items: center;
+      gap: 8px;
+      transition: background 0.15s;
+      flex-shrink: 0;
+      display: flex;
+
+      &:hover,
+      &[data-active="1"] {
+        background: color-mix(in srgb, var(--primary-purple-40) 10%, transparent);
+      }
+
+      * {
+        pointer-events: none;
+      }
+    }
+
+    .mention-item__icon {
+      width: 32px;
+      height: 28px;
+      flex-shrink: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--normal-fg-20);
+      overflow: hidden;
+
+      .preview-container,
+      .preview-content,
+      .media-grid__folder-art {
+        width: 32px;
+        height: 28px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        border-radius: 4px;
+        background-position: center;
+        background-size: cover;
+        background-repeat: no-repeat;
+      }
+
+      .preview-content {
+        position: static;
+      }
+
+      .preview-icon {
+        width: 24px;
+        height: 24px;
+        flex-shrink: 0;
+      }
+
+      .preview-icon.extension {
+        width: 28px;
+        height: 28px;
+      }
+
+      .media-grid__folder-art {
+        aspect-ratio: auto;
+      }
+
+      .folder-shape,
+      svg:not(.preview-icon) {
+        width: 28px;
+        height: 24px;
+        max-width: 28px;
+        max-height: 24px;
+        flex-shrink: 0;
+      }
+
+      .folder-shape {
+        fill: var(--area-private);
+
+        &.personal {
+          fill: var(--area-personal);
+        }
+        &.private {
+          fill: var(--area-private);
+        }
+        &.share,
+        &.dmz {
+          fill: var(--area-share);
+        }
+        &.public {
+          fill: var(--area-public);
+        }
+        &.inner-folder {
+          fill: var(--area-private);
+        }
+      }
+
+      &.personal .folder-shape.inner-folder {
+        fill: var(--area-personal);
+      }
+      &.private .folder-shape.inner-folder {
+        fill: var(--area-private);
+      }
+      &.share .folder-shape.inner-folder,
+      &.dmz .folder-shape.inner-folder {
+        fill: var(--area-share);
+      }
+      &.public .folder-shape.inner-folder {
+        fill: var(--area-public);
+      }
+    }
+
+    .mention-item__avatar {
+      width: 22px;
+      height: 22px;
+      flex-shrink: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+
+      .mention-item__avatar-img {
+        width: 100%;
+        height: 100%;
+        border-radius: 50%;
+        object-fit: cover;
+      }
+    }
+
+    .mention-item__name {
+      font-size: 12px;
+      color: var(--primary-purple-100);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      flex: 1;
+      min-width: 0;
+
+      .note-content {
+        color: inherit;
+      }
+    }
+
+    // Single-select cue on file rows (Figma "single select"): grey empty ring by
+    // default, filled purple ring on the active/hovered row. Visual only — the
+    // click still inserts the mention and closes the dropdown.
+    .mention-item__radio {
+      width: 14px;
+      height: 14px;
+      flex-shrink: 0;
+      box-sizing: border-box;
+      border: 1.5px solid var(--tertiary-grey-60);
+      border-radius: 50%;
+      position: relative;
+      transition: border-color 0.15s;
+    }
+
+    .mention-item:hover .mention-item__radio,
+    .mention-item[data-active="1"] .mention-item__radio {
+      border-color: var(--primary-purple-40);
+
+      &::after {
+        content: "";
+        position: absolute;
+        inset: 2px;
+        border-radius: 50%;
+        background: var(--primary-purple-40);
+      }
+    }
+  }
+}
+
+.widget-chat {
+  &[data-dragging="1"] {
+    & .widget-chat__drag-drop-wrapper {
+      display: flex !important;
+    }
+  }
+}
+
+.window-bigchat,
+.window-channel {
+  &[data-over="off"] {
+    & .widget-chat__drag-drop-wrapper {
+      display: none !important;
+    }
+  }
+
+  &[data-over="on"] {
+    & .widget-chat__drag-drop-wrapper {
+      display: flex !important;
+    }
+  }
+}
+
+// Shared window chat column layout
+.window__chat-panel {
+  box-sizing: border-box;
+  flex: 0 1 300px;
+  width: 250px;
+  min-width: 200px;
+  max-width: 250px;
+  display: flex;
+  flex-direction: column;
+  border-left: 1px solid var(--border-muted);
+  background-color: var(--normal-bg-90);
+  overflow: hidden;
+
+  &[data-active="0"] {
+    display: none;
+  }
+
+  .widget-chat__ui {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+  }
+
+  .widget-chat__main {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    flex: 1;
+    height: auto;
+  }
+
+  .widget-chat__container {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    flex: 1;
+    height: 100%;
+  }
+
+  .widget-chat__body {
+    flex: 1;
+    min-height: 0;
+    height: auto;
+    padding: 16px;
+    gap: 16px;
+    scrollbar-width: thin;
+    scrollbar-color: var(--normal-bg-100) transparent;
+
+    &::-webkit-scrollbar {
+      width: 4px;
+    }
+
+    &::-webkit-scrollbar-track {
+      background: transparent;
+    }
+
+    &::-webkit-scrollbar-thumb {
+      background-color: var(--normal-bg-100);
+      border-radius: 4px;
+    }
+  }
+
+  .widget-chatItem__ui {
+    margin-top: 16px;
+    padding: 0;
+  }
+
+  // One avatar per incoming message: the img-based template avatar (which
+  // carries the username tooltip). Hide own avatar AND the duplicate
+  // UserProfile (Skeletons.UserProfile → .user-profile) that buildContent
+  // appends for share messages.
+  .widget-chatItem__profile.me,
+  .widget-chatItem__profile.user-profile {
+    display: none !important;
+  }
+
+  // Show the sender's name inline at the top of each incoming message.
+  .widget-chatItem__username-container {
+    display: block;
+    padding-bottom: 2px;
+  }
+
+  // Gap only takes effect for incoming rows (own rows have no avatar child).
+  .widget-chatItem__message-container {
+    gap: 8px;
+  }
+
+  .widget-chatItem__message-content {
+    gap: 4px;
+  }
+
+  .widget-chatItem__name {
+    width: auto;
+    max-width: none;
+    @include drumee.typo(
+      $size: 10px,
+      $weight: 700,
+      $line: 1.4,
+      $color: var(--normal-fg-10)
+    );
+  }
+
+  .widget-chatItem__conversation-content {
+    padding: 12px;
+    @include drumee.typo(
+      $size: 13px,
+      $line: 1.4,
+      $weight: 400,
+      $color: var(--normal-fg-10)
+    );
+  }
+
+  .widget-chatItem__message-date {
+    // Muted grey timestamp (#84848c), slightly enlarged (was 8px / dark fg-10).
+    @include drumee.typo(
+      $size: 11px,
+      $line: 1.4,
+      $weight: 400,
+      $color: var(--normal-fg-50)
+    );
+  }
+
+  .widget-chat_chat_footer {
+    box-sizing: border-box;
+    display: flex;
+    flex-direction: column;
+    flex-shrink: 0;
+    margin-top: auto;
+    // Positioning context for the typing indicator, which floats just above
+    // this footer (the input) via bottom: calc(100% + …).
+    position: relative;
+    width: 100%;
+    min-width: 0;
+    gap: 0;
+    padding: 0;
+
+    .widget-chat-reply__wrapper {
+      // Top-align the quote and stop the column from shrinking it: as a flex
+      // child it defaults to flex-shrink:1, so the messenger (flex-shrink:0
+      // below) squeezed this down to ~1 line and overflow:hidden clipped the
+      // preview. flex-shrink:0 + height:auto lets it hug its 2-line content.
+      align-items: flex-start;
+      flex-shrink: 0;
+      height: auto;
+      max-height: none;
+      overflow: visible;
+    }
+
+    .widget-chat__messenger-wrapper {
+      width: 100%;
+      min-width: 0;
+      border-top: none;
+      flex-shrink: 0;
+    }
+
+    .widget-chat__message-options-wrapper {
+      width: 100%;
+      min-width: 0;
+    }
+  }
+}
+
+.window__chat-label {
+  display: flex;
+  align-items: center;
+  gap: var(--spacer-6);
+  padding: var(--spacer-4) var(--spacer-6);
+  color: var(--normal-fg-10);
+  flex-shrink: 0;
+  border-bottom: 1px solid var(--border-muted);
+
+  .note-content {
+    color: inherit;
+  }
+}
+
+.window__chat-widget {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.window__split-body[data-tab="chat"] {
+  .window__chat-panel {
+    flex: 1;
+    width: 100%;
+    min-width: 0;
+    max-width: none;
+    border-left: none;
+  }
+}
+
+html[data-theme="dark"] {
+  .widget-chat__scope-chip-pill {
+    background: var(--egrey-3f, #3f3f3f);
+    color: var(--default-text-reverse, #ffffff);
+  }
+
+  .widget-chat__scope-chip-label {
+    color: var(--default-text-reverse, #ffffff);
+  }
+
+  .widget-chat__scope-chip-clear {
+    svg,
+    use,
+    path {
+      fill: var(--default-text-reverse, #ffffff) !important;
+      stroke: var(--default-text-reverse, #ffffff) !important;
+    }
+
+    &:hover {
+      svg,
+      use,
+      path {
+        fill: var(--eorange-light, #f99b64) !important;
+        stroke: var(--eorange-light, #f99b64) !important;
+      }
+    }
+  }
+}
+
+.lib-messenger__wrapper-popup.dialog__wrapper[data-state="open"] {
+  box-shadow: var(--drumee-shadow-box);
+  min-height: 180px;
+  width: 280px;
+}

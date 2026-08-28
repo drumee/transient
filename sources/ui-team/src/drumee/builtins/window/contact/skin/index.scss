@@ -1,0 +1,130 @@
+@use "mixins/drumee.scss";
+
+.window-contact {
+  &__ui {
+    width: 572px;
+    left: calc(50vw - 286px);
+    top: 85px;
+    &[data-device="mobile"] {
+      width: 360px !important;
+      height: 500px !important;
+      left: 50% !important;
+      transform: translateX(-50%) translateY(15%);
+    }
+  }
+  &__header {
+    &.window__header {
+      border-bottom: none;
+      background-color: var(
+        --ab-header-bg
+      ); //var(--bigchat-header-bg); // #18a3ac
+    }
+
+    &-title {
+      align-items: center;
+      @include drumee.typo(
+        $size: 18px,
+        $line: 24px,
+        $weight: 400,
+        $color: var(--default-text-reverse)
+      );
+
+      .icon {
+        position: relative;
+        right: 0px;
+      }
+    }
+
+    &-control {
+      .icon {
+        color: var(--default-icon-reverse); //var(--ewhite);
+      }
+    }
+  }
+
+  &__main {
+    min-height: 250px;
+    height: 100%;
+    align-items: center;
+    align-content: center;
+    justify-items: center;
+    justify-content: center;
+  }
+
+  &__container {
+    & .acknowledge-box {
+      padding-bottom: 27px;
+      margin: auto;
+
+      &.icon {
+        padding-bottom: 35px;
+      }
+    }
+  }
+
+  &__icon {
+    &.icon_success {
+      color: var(--default-icon-success); //#18ac72;
+      height: 26px;
+      margin: auto;
+      width: 36px;
+    }
+  }
+
+  &__note {
+    @include drumee.typo(
+      $size: 18px,
+      $weight: 300,
+      $line: 26px,
+      $color: var(--default-text-color)
+    );
+
+    &.input-content {
+      color: var(--secondary-text-color); //#4A90E2;
+    }
+  }
+
+  &__buttons-wrapper {
+    margin: auto;
+    padding-top: 15px;
+  }
+
+  &__button-cancel,
+  &__button-confirm {
+    @include drumee.typo($size: 16px, $line: 20px);
+    justify-content: center;
+    align-items: center;
+    padding: 8px;
+    height: 35px;
+    width: 115px;
+  }
+
+  &__button-cancel {
+    min-width: 150px;
+    height: 40px;
+    padding: 2px 5px;
+    @include drumee.typo($size: 16px, $line: 16px, $color: var(--btn-rollback-text));
+    border: 1px solid var(--btn-rollback-border);
+    border-radius: var(--corner-radius-max);
+
+    &:hover {
+      border: 2px solid var(--primary-500);
+      color: var(--btn-rollback-text-hover);
+    }
+  }
+
+  &__button-confirm {
+    background-color: var(--primary-500);
+    min-width: 180px;
+    height: 40px;
+    @include drumee.typo($size: 16px, $line: 16px, $color: var(--btn-commit-text));
+    border: 0px;
+    border-radius: var(--corner-radius-max);
+
+    &:hover {
+      border: 2px solid var(--primary-500);
+      background-color: var(--primary-600);
+    }
+  }
+
+}

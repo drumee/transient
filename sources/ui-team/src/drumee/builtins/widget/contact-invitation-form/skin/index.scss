@@ -1,0 +1,248 @@
+/** ================================================================== *
+#   Copyright Xialia.com  2011-2021
+#   FILE : /src/drumee/builtins/widget/contact-invitation-form/skin/index.scss
+#   TYPE : Style Component
+# ===================================================================**/
+@use "mixins/drumee";
+
+.contact-invitationForm {
+  &__ui {
+    height: 100%;
+    width: 100%;
+    align-items: center;
+    align-content: center;
+    justify-content: center;
+    justify-items: center;
+    display: flex;
+    flex-direction: column;
+  }
+
+  &__main {
+    align-items: center;
+    height: 100%;
+    overflow: auto;
+    width: 100%;
+    padding: 0 var(--spacer-6);
+  }
+
+  &__container {
+    margin-top: 15px;
+    width: 100%;
+  }
+
+  &__wrapper {
+    @include drumee.typo($size: 16px, $line: 21px, $color: var(--egrey-78));
+    gap: 8px;
+    width: 100%;
+
+    &.header {
+      align-content: center;
+      align-items: center;
+      height: 60px;
+      justify-content: center;
+    }
+
+    &.error-message {
+      align-items: center;
+      min-height: 30px;
+      padding: 10px 0;
+      text-align: center;
+      // width: 320px;
+      position: relative;
+      align-items: center;
+      align-content: center;
+      justify-content: center;
+      justify-items: center;
+      @include drumee.typo(
+        $size: 16px,
+        $weight: 300,
+        $line: 18px,
+        $color: var(--default-text-alert)
+      );
+    }
+  }
+
+  &__label-wrapper {
+    gap: 16px;
+    align-items: center;
+  }
+
+  &__label-item {
+    &.text {
+      font-weight: bold;
+    }
+
+    &.user-help {
+      height: 36px;
+      width: 36px;
+      cursor: pointer;
+      background-color: var(--primary-500);
+      border-radius: 8px;
+      padding: 6px;
+      color: white;
+    }
+  }
+
+  &__note {
+    &.header {
+      @include drumee.typo(
+        $size: 18px,
+        $line: 21px,
+        $color: var(--secondary-text-color)
+      ); //var(--eblue));
+    }
+  }
+
+  &__entry {
+    @include drumee.typo(
+      $size: 16px,
+      $line: 21px,
+      $color: var(--default-text-color)
+    ); //var(--egrey-2f));
+    width: 100%;
+    border: 1px solid var(--neutral-300);
+    padding: 10px;
+    border-radius: 12px;
+
+    &[data-status="error"] {
+      & input {
+        border-bottom: 1px solid var(--default-border-error); //var(--default-border-error);
+
+        &:focus {
+          border-color: var(
+            --default-border-error
+          ); // var(--default-border-error);
+        }
+      }
+    }
+
+    & input {
+      width: 100%;
+      @include drumee.typo(
+        $size: 16px,
+        $line: 21px,
+        $color: var(--default-text-color)
+      );
+
+      &[data-status="error"] {
+        border-bottom: var(--default-border-error);
+      }
+
+      &:focus {
+        border-color: var(--neutral-600);
+
+        @include drumee.placeholder-input {
+          color: var(--neutral-600);
+        }
+      }
+
+      &::placeholder {
+        @include drumee.typo(
+          $size: 16px,
+          $line: 21px,
+          $weight: 300,
+          $color: var(--default-text-placeholder)
+        );
+      }
+    }
+
+    &.message {
+      width: 100%;
+      margin-top: 15px;
+
+      & textarea {
+        @include drumee.typo(
+          $size: 16px,
+          $line: 21px,
+          $color: var(--default-text-color)
+        ); // var(--egrey-2f));
+        border-radius: var(--border-radius);
+        border: none;
+        outline: none;
+        padding: 10px;
+        resize: none;
+
+        &::placeholder {
+          @include drumee.typo(
+            $size: 14px,
+            $line: 14px,
+            $weight: 300,
+            $color: var(--default-text-placeholder)
+          ); // var(--default-text-placeholder));
+        }
+      }
+    }
+  }
+
+  &__icon {
+    height: 26px;
+    width: 26px;
+
+    &.account_mail {
+      margin-right: 20px;
+      opacity: 0.55;
+    }
+
+    &.user-help {
+      cursor: pointer;
+      margin-left: 20px;
+      opacity: 0.55;
+      width: 35px;
+
+      &:hover {
+        color: var(--default-icon-hover);
+      }
+    }
+  }
+
+  &__error {
+    color: var(--default-text-error); //var(--default-text-error);
+    margin: auto;
+  }
+
+  &__buttons-wrapper {
+    justify-items: center;
+    width: 100%;
+    gap: var(--spacer-4);
+    justify-content: center;
+
+    & .button {
+      @include drumee.typo($size: 16px, $line: 19px);
+      align-items: center;
+      border-radius: var(--corner-radius-max);
+      height: 35px;
+      justify-content: center;
+      max-width: 115px;
+      width: 100%;
+    }
+  }
+
+  &__button-cancel {
+    @include drumee.typo($weight: 300, $color: var(--btn-rollback-text));
+    background-color: var(--neutral-300);
+
+    &:hover {
+      border: 2px solid var(--neutral-100);
+    }
+  }
+
+  &__button-confirm {
+    @include drumee.typo($color: var(--btn-commit-text));
+    background-color: var(--primary-500);
+
+    &:hover {
+      background-color: var(--primary-600);
+    }
+
+    &[data-error="on"] {
+      opacity: 0.2;
+      pointer-events: none;
+      @include drumee.typo($weight: 300, $color: var(--white));
+    }
+
+    &[data-wait="1"] {
+      opacity: 0.4;
+      pointer-events: none;
+    }
+  }
+}

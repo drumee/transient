@@ -1,0 +1,264 @@
+@use "sass:meta";
+@use "mixins/drumee";
+@use "warning";
+@use "./vars";
+@use "./common";
+
+.window {
+  /*--- Common styles for all groups of windows ---*/
+
+  &__ui {
+    position: absolute;
+    background: transparent;
+    min-width: 600px;
+    min-height: 320px;
+    z-index: 1000;
+    box-shadow: var(--shadow-main);
+    overflow: visible;
+    max-width: 100vw;
+    border-radius: var(--corner-radius-5);
+
+    &[data-device="mobile"] {
+      min-width: 300px;
+      width: 100%;
+    }
+
+    // `.window__ui` is shared with window_manager (both have fig.group="window"),
+    // so this active-window lift would otherwise hoist the entire home content
+    // above the settings/apps slot (z 1500). Scope to actual window instances.
+    &[data-state="1"]:not(.window-manager__ui) {
+      z-index: 10000 !important;
+    }
+
+    &[data-state="0"] {
+      .window__header {
+        opacity: 0.4;
+      }
+    }
+
+    &[data-minimize="1"] {
+      display: none;
+    }
+
+    &[data-dialog="open"] {
+      .window__wrapper--modal.dialog__wrapper {
+        pointer-events: none;
+        opacity: 0.4;
+      }
+    }
+
+    // Access to this window's workspace was revoked while it was open (see
+    // desk/wm/push.js onWorkspaceAccessRevoked). Blur it out and stop taking
+    // input right away: everything in it is about to fail the server's ACL, so
+    // the user must not keep typing into it while the notice loads.
+    &[data-revoked="1"] {
+      filter: blur(6px);
+      pointer-events: none;
+      user-select: none;
+    }
+  }
+
+  &__content-row {
+    width: 100%;
+    height: calc(100% - 132px);
+    // Prefer 810px (keeps the folder grid's multi-column layout) but never
+    // force the content wider than the window itself — otherwise it pins the
+    // window to an 810px floor and it can't shrink to fit a narrow work area
+    // (sidebar open / DevTools / small browser). Below 810 the grid reflows.
+    min-width: min(810px, 100%);
+
+    .smart-container {
+      direction: rtl;
+
+      .media-row {
+        direction: ltr;
+      }
+    }
+  }
+
+  &__wrapper-modal {
+    top: 0;
+    left: 0;
+    position: absolute;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+
+    &[data-state="open"] {
+      width: 100%;
+      height: 100%;
+      right: 0;
+      bottom: 0;
+      background: transparent;
+      backdrop-filter: none;
+      -webkit-backdrop-filter: none;
+    }
+
+    &[data-overlay="blur"],
+    &[data-state="open"][data-overlay="blur"] {
+      @include drumee.glass-overlay;
+    }
+
+    .drumee-spinner {
+      width: 150px;
+      height: 150px;
+      background: var(--default-bg); // white;
+      top: calc(50% - 75px);
+      left: calc(50% - 75px);
+      border-radius: var(--border-radius); //4px;
+      padding: 20px;
+
+      .root-node {
+        position: absolute;
+      }
+    }
+  }
+
+  &__wrapper-tooltips {
+    top: 0;
+    left: 0;
+    width: 0;
+    height: 0;
+    position: fixed;
+  }
+
+  &__upload-tooltips {
+    min-width: 98px;
+    min-height: 32px;
+    background: var(--default-bg); //var(--ewhite);
+    box-shadow: 0px 0px 31px 0 rgba(0, 0, 0, 0.4);
+    padding: 10px;
+    @include drumee.typo($size: 12px,
+      $line: 30px,
+      $color: var(--tertiary-text-color),
+      $weight: 300); //$egrey-89
+    border-radius: var(--border-radius); //4px;
+    left: calc(24px - 50%);
+    top: -18px;
+    position: absolute;
+
+    &:before {
+      content: " ";
+      width: 10px;
+      height: 10px;
+      background-color: var(--default-bg-block); //#F7F7F9;
+      position: absolute;
+      top: -3px;
+      left: calc(50% - 5px);
+      transform: rotate(45deg);
+    }
+  }
+
+  &__drop-denied-toast {
+    position: fixed;
+    top: 92px;
+    right: 28px;
+    z-index: 50001;
+    width: auto;
+    max-width: min(360px, calc(100vw - 32px));
+    min-height: 44px;
+    padding: 10px 14px;
+    align-items: center;
+    gap: 10px;
+    border-radius: var(--corner-radius-6);
+    background: var(--default-bg);
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.18);
+    color: var(--neutral-900);
+    pointer-events: auto;
+  }
+
+  &__drop-denied-toast-icon {
+    width: 22px;
+    height: 22px;
+    min-width: 22px;
+    border-radius: var(--corner-radius-max);
+    align-items: center;
+    justify-content: center;
+    background: var(--btn-caution-background);
+    color: var(--white);
+    font-size: 14px;
+    font-weight: 600;
+    line-height: 22px;
+  }
+
+  &__drop-denied-toast-text {
+    max-width: 300px;
+    color: var(--neutral-900);
+    font-size: 14px;
+    font-weight: 400;
+    line-height: 18px;
+    white-space: normal;
+  }
+
+  &__wrapper--modal.dialog__wrapper,
+  &__dialog-overlay {
+    position: absolute;
+    height: auto;
+
+    &[data-state="open"] {
+      width: 100%;
+      height: calc(100% - 132px);
+      left: 0;
+      right: 0;
+      top: 132px;
+      bottom: 0;
+      justify-items: center;
+      align-items: center;
+      border-radius: 0 0 var(--corner-radius-6) var(--corner-radius-6);
+      background-color: var(--transparency-container-overlay);
+      padding: var(--spacer-6) 0;
+    }
+  }
+}
+
+@include meta.load-css("group/header/main.scss");
+@include meta.load-css("group/body/filter.scss");
+@include meta.load-css("group/body/main.scss");
+@include meta.load-css("group/body/contextmenu.scss");
+@include meta.load-css("group/popup.scss");
+
+@media (max-width: 650px) {
+  .window {
+    &__ui:not(.window-manager__ui) {
+      border-radius: 6px;
+      left: 0 !important;
+      margin: 0;
+      max-height: calc(100vh - 44px);
+      max-height: calc(100dvh - 44px);
+      max-width: 100vw;
+      min-height: 0;
+      min-width: 0 !important;
+      overflow: hidden;
+      right: auto;
+      width: 90vw !important;
+    }
+
+    &-folder__main.drive-popup{
+      border-radius: 0 !important;
+    }
+
+    &__content-row {
+      height: calc(100% - 88px);
+      min-width: 0;
+      overflow: hidden;
+    }
+
+    &__wrapper-modal,
+    &__wrapper--modal.dialog__wrapper,
+    &__dialog-overlay {
+      &[data-state="open"] {
+        border-radius: 0;
+        height: 100%;
+        padding: var(--spacer-4) 0;
+        top: 0;
+      }
+    }
+
+    &__drop-denied-toast {
+      left: 16px;
+      right: 16px;
+      top: 64px;
+      max-width: calc(100vw - 32px);
+    }
+  }
+}

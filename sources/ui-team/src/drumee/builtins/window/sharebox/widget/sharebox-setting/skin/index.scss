@@ -1,0 +1,487 @@
+@use "sass:meta";
+@use "mixins/drumee";
+@include meta.load-css('validity');
+
+.widget-sharebox-setting {
+
+  &__ui {
+    width: 410px;
+    position: absolute;
+    height: auto !important;
+    background-color: var(--default-background);
+    border-radius: var(--border-radius-bottom);
+    align-items: center;
+    min-height: 345px;
+    box-shadow: var(--shadow-container);
+  }
+
+  &__container {
+    padding: 20px 10px 10px 10px;
+    justify-content: center;
+  }
+
+  & .button {
+    cursor: pointer;
+  }
+
+  & .dialog__button--close {
+    position: absolute;
+    top: 0;
+    right: 0;
+    color: var(--default-thinline-icon); // #b6bfca;
+    cursor: pointer;
+    z-index: 2;
+
+    &:hover {
+      color: var(--default-thinline-icon-hover);
+    }
+  }
+
+  &__body-main {
+    width: calc(100% - 20px);
+  }
+
+  &__copy-text-wrapper {
+    align-items: center;
+    @include drumee.typo($size: 12px, $color: var(--default-text-color)); //$default-text-success
+
+    .icon {
+      height: 14px; //16px
+      width: 38px; //22px;
+      margin: 0 0px 0 20x; //0 4px 0 12px;;//
+      color: var(--default-icon-success);
+    }
+  }
+
+  &__copy-success {
+    @include drumee.typo($size: 12px, $color: var(--default-text-color));
+  }
+
+  &__action-button {
+    align-items: center;
+    justify-content: center;
+  }
+
+  &__icon.destroy {
+    color: var(--default-icon-neutral);
+    position: absolute;
+    width: 19px;
+    height: 19px;
+    opacity: 0.65;
+    visibility: visible;
+    padding: 2px; //3px;
+    left: 11px; //5px;
+    top: 7px; //5px;
+    z-index: 2;
+    cursor: pointer;
+
+    &:hover {
+      svg {
+        opacity: 1;
+        color: var(--default-icon-hover);
+      }
+    }
+  }
+
+  /*  &__body-main {
+    width: calc(100% - 20px);
+  }*/
+  &__setting-main {
+    padding-left: 20px;
+    padding-top: 10px;
+    margin-bottom: -7px; // -10px;
+  }
+
+  &__page_title {
+    justify-content: center;
+  }
+
+  &__page-title-note {
+    margin: 10px 0px 16px 0px;
+    @include drumee.typo($size: 16px, $color: var(--sharebox-main));
+  }
+
+  &__password-view-row {
+    &:hover {
+      background-color: var(--default-background-hover);
+      color: var(--default-text-hover);
+
+      * {
+        background-color: var(--default-background-hover);
+        color: var(--default-text-hover);
+      }
+    }
+  }
+
+  &__rights-wrapper {
+    padding-left: 3px;
+    margin-left: -2px;
+
+    &:hover {
+      background-color: var(--default-background-hover);
+      color: var(--default-text-hover);
+
+      * {
+        background-color: var(--default-background-hover);
+        color: var(--default-text-hover);
+      }
+
+      &[data-state="1"],
+      &.selected {
+        color: var(--default-checkbox-checked); //$checkbox-active;
+        border: 1px solid var(--checkbox-checked-border-reverse); //white;
+        color: var(--checkbox-checked-reverse);
+      }
+
+      .widget-sharebox-setting__inline-action-btn {
+        background-color: var(--btn-commit-background-hover);
+
+        .drumee-text {
+          background-color: var(--btn-commit-background-hover);
+        }
+      }
+
+      .widget-sharebox-setting {
+        &-permission__icon {
+          .checkbox[data-state="1"] {
+            color: var(--checkbox-checked-reverse); //var(--ewhite);
+            border: 1px solid var(--checkbox-checked-border-reverse);
+            border-radius: var(--checkbox-border-radius);
+          }
+        }
+      }
+
+      .checkbox {
+        &[data-state="1"] {
+          border: 1px solid var(--checkbox-checked-border-reverse);
+        }
+      }
+    }
+  }
+
+  &__password-holder {
+    margin-left: -5px;
+  }
+
+  &__settings_wrapper {
+    justify-content: center;
+    background: var(--default-block-background);
+    border-radius: var(--border-radius); // 2px;
+    padding: 9px 0; //0px 10px 10px 10px;
+    margin: 10px 8px 0 10px; //10px;
+  }
+
+  &__row-item {
+    // margin-top: 10px;
+    margin-bottom: 10px;
+    //padding-right:14px;
+    padding-left: 12px;
+  }
+
+  &__legend {
+    width: 100px; //80px;
+    padding-top: 2px;
+    @include drumee.typo($color: var(--sharebox-main)-legend, $size: 14px, $line: 26px, $weight: 400);
+    //  margin-left:20px;
+    flex-shrink: 0;
+    //left: 15px;
+  }
+
+  &__setting-item {
+    flex: 1;
+    min-width: 180px;
+    width: 249px; //256px;
+    padding-left: 2px; //5px;
+  }
+
+  &__button {
+    margin-left: -1px;
+    border: 1px solid var(--default-entry-border-bottom);
+    border-radius: var(--border-radius);
+    padding: 3px 10px; //1px 6px;
+    cursor: pointer;
+    @include drumee.typo($size: 14px, $color: var(--default-text-color), $weight: 300, ); //$size: 13px
+
+    &:hover {
+      background: var(--default-background-hover); //var(--eviolet);
+      color: var(--default-text-hover); // var(--ewhite);
+    }
+  }
+
+  /*** Permission block  ***/
+  &-permission__item {
+    height: 26px;
+    align-items: center;
+  }
+
+  &-permission__icon.checkbox {
+    width: 15px;
+    height: 15px;
+    border: 1px solid var(--default-checkbox-border);
+    border-radius: var(--checkbox-border-radius);
+    cursor: pointer;
+    color: var(--default-checkbox-background);
+
+    &[data-state="1"],
+    &.selected {
+      color: var(--default-checkbox-checked);
+      border: 1px solid var(--default-checkbox-border);
+    }
+
+    &[data-state="0"],
+    &.unselected {
+      color: transparent;
+    }
+  }
+
+  &-permission__note {
+    margin-right: 20px; //15px;
+    margin-left: 3px; //5px;
+    @include drumee.typo($color: var(--default-text-color), $size: 14px, $weight: 300); //($size: 13px, $color: var(--egrey-78));
+
+    &:hover {
+      color: var(--default-text-hover);
+    }
+  }
+
+  /*** Valid For  ***/
+
+  &__month_entry,
+  &__hours_entry {
+    width: 23px; //28px;
+    height: 23px;
+    background-color: var(--default-background);
+    border-radius: var(--border-radius);
+
+    & input::-webkit-outer-spin-button,
+    & input::-webkit-inner-spin-button {
+      -webkit-appearance: none;
+      margin: 0;
+
+      &:hover {
+        background-color: var(--default-background-hover);
+        color: var(--default-text-hover); //#fff;
+        border: var(--ewhite) 1px solid;
+      }
+    }
+
+    /* Firefox */
+    & input[type="number"] {
+      -moz-appearance: textfield;
+      border-bottom: none;
+      text-align: center;
+      padding-right: 2px; // 0px;
+      @include drumee.typo($line: 29px, $size: 14px, $weight: 400, $color: var(--default-text-color));
+
+      @include drumee.placeholder-input {
+        @include drumee.typo($line: 29px, $size: 14px, $weight: 300, $color: var(--default-text-placeholder)); //#89929e
+      }
+    }
+  }
+
+  /*  &__validity-wrapper {
+    align-items: center;
+    margin-bottom: 0px;
+  }*/
+  &__validity-caption {
+    padding-right: 15px;
+    @include drumee.typo($size: 14px, $weight: 300, $color: var(--default-text-color)); // var(--egrey-78));  $weight: 400,
+  }
+
+  /* Notification Block */
+  &__notification-block_wrapper {
+    justify-content: center;
+    margin: 20px 0px;
+  }
+
+  &__notification-title {
+    justify-content: center;
+    margin-bottom: 10px;
+    @include drumee.typo($size: 16px, $color: var(--sharebox-main));
+  }
+
+  &__action-button {
+    background: var(--btn-rollback-background);
+    border: 1px solid var(--btn-rollback-border);
+    border-radius: var(--border-radius);
+    padding: 0 12px; //5px 9px;
+    margin: 15px auto 0px; //15px auto 10px;
+    cursor: pointer;
+    height: 35px;
+    min-width: 115px;
+    align-items: center;
+    justify-content: center;
+    @include drumee.typo($size: 15px, $line: 25px, $color: var(--btn-rollback-text));
+
+    &:hover {
+      border: 2px solid var(--btn-rollback-border-hover);
+      color: var(--btn-rollback-text-hover);
+    }
+
+    &.save {
+      background: var(--btn-commit-background);
+      border: 1px solid var(--btn-commit-border); //var(--btn-rollback-border);
+      margin-left: 10px;
+      @include drumee.typo($size: 15px, $line: 25px, $color: var(--btn-commit-text));
+
+      &:hover {
+        border: 1px;
+        background-color: var(--btn-commit-text-hover); //var(--btn-rollback-text-hover);
+      }
+    }
+  }
+
+  &__inline-action-btn {
+    background: var(--btn-commit-background);
+    border-radius: var(--border-radius);
+    padding: 5px; //3px 5px;
+    // margin: auto;
+    margin-left: 5px; //13px;//20px;
+    cursor: pointer;
+    width: 26px; //24px;
+    height: 26px; //24px;
+    justify-content: center;
+    align-items: center;
+    @include drumee.typo($size: 12px, $color: var(--btn-commit-text));
+
+    &:hover {
+      background-color: var(--btn-commit-background-hover);
+    }
+
+    &.first {
+      margin-left: 20px; //28px;//15px;
+    }
+
+    &.middle {
+      margin-left: -2px; //9px;//20px;
+    }
+  }
+
+  &__inline-edit-icon {
+    height: 18px;
+    width: 18px;
+    margin: 3px 5px 3px 12px;
+    color: var(--default-block-background); //must follow the background color
+    padding-right: 5px;
+    opacity: 0.85;
+
+    svg {
+      margin-left: 2px;
+    }
+
+    &:hover {
+      opacity: 1;
+      background-color: var(--default-background-hover);
+      color: var(--default-icon-reverse);
+      //  color:$default-thinline-icon-hover;
+    }
+
+    &.btn-first {
+      margin-left: 66px; //73px;//55px;//136px;
+      margin-right: 8px;
+    }
+
+    &.btn-middle {
+      margin-left: 5px; //13px;
+      margin-right: 7px;
+    }
+  }
+
+  &__password-info-icon {
+    width: 14px; //16px;
+    height: 14px; //16px;
+    padding: 0;
+    margin: auto auto auto 14px;
+    left: 15px;
+    color: var(--default-icon-neutral);
+
+    :hover {
+      color: var(--default-thinline-icon-hover);
+    }
+
+    .widget-sharebox-setting__tooltips {
+      top: calc(100% + 5px);
+      left: -42px; // 50%;
+      transform: translate(-50%, 0);
+      border-radius: var(--border-radius); //4px;
+      width: 210px; // 264px;
+      height: auto;
+      padding: 6px; //12px 18px;
+      text-align: justify;
+      position: absolute;
+      background-color: var(--background-tooltips);
+      z-index: 100;
+      @include drumee.typo($line: 14px, $size: 11px, $weight: 400, $color: var(--default-text-tooltips));
+      //  @include typo($line: 16px, $size: 14px, $weight: 400, $color: var(--default-text-color)); //var(--egrey-2f)
+      /*     &:after {
+        content: "";
+        position: absolute;
+        width: 10px;
+        height: 10px;
+        transform: rotate(45deg);
+        background: var(--default-border-notification); // white;
+        top: -3px;
+        left: calc(50% - 5px);
+      }*/
+    }
+  }
+
+  &__password-view-txt {
+    padding-right: 10px;
+    @include drumee.typo($line: 26px, $size: 14px, $weight: 300, $color: var(--default-text-color)); //$line:23px $size:13px,$weight:400,
+    min-width: 145px;
+    padding-left: 5px;
+
+    &:hover {
+      color: var(--default-text-hover);
+    }
+  }
+
+  &__password-wrapper {
+    margin-right: 25px;
+
+    & .entry-reminder {
+      width: 160px;
+
+      input {
+        @include drumee.typo($line: 26px, $size: 14px, $weight: 400, $color: var(--default-text-color)); //$size:13px
+
+        @include drumee.placeholder-input {
+          @include drumee.typo($line: 26px, $size: 14px, $weight: 300, $color: var(--default-text-placeholder)); //#89929e $size:13px
+        }
+      }
+    }
+
+    & .pw-shower {
+      top: 0px;
+      color: var(--default-icon-neutral);
+      right: -30px;
+
+      :hover {
+        color: var(--default-thinline-icon-hover);
+      }
+    }
+  }
+
+  .invitation-searchbox__icon {
+    width: 24px;
+    height: 24px;
+  }
+
+  .schedule-recipient {
+    &__text {
+      padding: 0 5px;
+    }
+  }
+
+  /*
+  .schedule-recipient-name{
+    padding: 0 10px 0 5px;//0 10px;
+    margin-left: 5px;
+  }
+  .schedule-recipient-icon{
+    width: 15px;
+    height: 16px;
+    margin-bottom: 2px;
+  }*/
+}

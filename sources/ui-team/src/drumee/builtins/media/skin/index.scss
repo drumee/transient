@@ -1,0 +1,90 @@
+@use "sass:meta";
+@use "mixins/drumee.scss";
+
+.media {
+  &__ui {
+    &[data-raised="1"] {
+      z-index: 1000;
+    }
+
+    &[data-disabled="1"] {
+      opacity: 0.5;
+    }
+
+    &[data-opened="1"] {
+      border: solidsolid var(--primary-600) 2px;
+
+      .media-grid__container {
+        &:after {
+          content: " ";
+          position: absolute;
+          display: block;
+          width: 100%;
+          height: 100%;
+          top: 0;
+          left: 0;
+          border: solid var(--primary-300) 1px;
+          border-radius: var(--corner-radius-2);
+        }
+      }
+
+      .notify__count {
+        display: none;
+      }
+    }
+
+    &[data-read="1"] {
+      .notify__count {
+        display: none;
+      }
+    }
+
+    &[data-count="0"] {
+      display: none;
+    }
+
+    .forbiden-block__icon {
+      width: 12px;
+      height: 12px;
+    }
+
+    // Row-view insertion indicator: a full-width dashed rule in the opening
+    // the two flanking rows make. Was a 1px hard-coded blue hairline —
+    // effectively invisible while dragging. Dashed to match the grid marker;
+    // a row-height seat was tried and rejected for the same reason as there
+    // (only the two neighbours move, so a full-height opening overran the
+    // rows behind it).
+    &[data-shift="top"],
+    &[data-shift="bottom"] {
+      &:after {
+        content: " ";
+        width: 100%;
+        height: 0;
+        box-sizing: border-box;
+        border-top: 3px dashed var(--primary-500);
+        position: absolute;
+        pointer-events: none;
+        z-index: 120;
+      }
+    }
+
+    &[data-shift="top"] {
+      &:after {
+        top: calc(100% + 2px);
+      }
+    }
+
+    &[data-shift="bottom"] {
+      &:after {
+        top: -5px;
+      }
+    }
+  }
+
+  .preview.drumee-spinner {
+    position: absolute;
+  }
+}
+
+@include meta.load-css("contextmenu.scss");
+@include meta.load-css("failed-upload.scss");

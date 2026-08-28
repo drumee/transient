@@ -1,0 +1,9 @@
+@use 'mixins/drumee';
+
+.drumee-api-image-tag {
+
+  &__ui, 
+  &__main {
+    display: none;
+  }
+}

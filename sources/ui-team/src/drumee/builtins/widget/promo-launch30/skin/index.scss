@@ -1,0 +1,296 @@
+// LAUNCH30 promo modal (Modal A "offer" / Modal B "welcome").
+//
+// Colours come from the Drumee design system, NOT from the original design
+// handoff's own indigo ramp: that handoff shipped a generic #4F46E5 /
+// #E4E2FF / #F2F1FF palette plus invented greys (#14142b, #8a8aa3,
+// #4a4a68), none of which are Drumee tokens — it read as a foreign product
+// bolted onto the desk. Brand primary is --primary-50 (#433cc5, the same
+// value as --area-personal), and every surface/foreground here now uses the
+// theme-aware --normal-* tokens so the modal follows light/dark like the
+// rest of the app instead of being pinned to a light-only palette.
+//
+// Portalled to <body> like rating-survey-popup — fixed + high z-index wins
+// over the desk chrome regardless of where Wm mounts the widget.
+.promo-launch30 {
+  &__ui {
+    position: fixed;
+    inset: 0;
+    z-index: 99998;
+    font-family: var(--font-main);
+  }
+
+  &__backdrop {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: var(--spacer-6);
+    background: var(--overlay-bg);
+    backdrop-filter: blur(2px);
+  }
+
+  &__card {
+    position: relative;
+    width: min(400px, 100%);
+    max-height: 100%;
+    overflow-y: auto;
+    background: var(--normal-bg-elevated);
+    border-radius: var(--corner-radius-6);
+    padding: 26px;
+    box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25), 0 1px 5.5px rgba(0, 0, 0, 0.13);
+  }
+
+  &__close {
+    position: absolute;
+    top: 14px;
+    right: 14px;
+    width: 26px;
+    height: 26px;
+    border-radius: 50%;
+    background: var(--normal-bg-90);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+
+    svg {
+      width: 11px;
+      height: 11px;
+      fill: var(--normal-fg-50);
+      stroke: var(--normal-fg-50);
+    }
+
+    &:hover {
+      background: var(--normal-bg-80);
+    }
+  }
+
+  &__confetti {
+    font-size: 30px;
+    line-height: 1;
+    margin-bottom: var(--spacer-3);
+  }
+
+  &__title {
+    font-size: 21px;
+    line-height: 1.25;
+    font-weight: 600;
+    letter-spacing: -0.03em;
+    color: var(--normal-fg-800);
+  }
+
+  &__lead {
+    font-size: 13px;
+    line-height: 1.6;
+    color: var(--normal-fg-20);
+    margin-top: 9px;
+  }
+
+  &__benefits {
+    list-style: none;
+    margin: var(--spacer-5) 0;
+    gap: var(--spacer-4);
+  }
+
+  &__benefit-row {
+    gap: var(--spacer-4);
+    align-items: flex-start;
+  }
+
+  &__benefit-tick {
+    width: 19px;
+    height: 19px;
+    flex-shrink: 0;
+    margin-top: 1px;
+
+    svg {
+      width: 19px;
+      height: 19px;
+      fill: var(--primary-50);
+      stroke: var(--primary-50);
+    }
+  }
+
+  &__benefit-num {
+    width: 19px;
+    height: 19px;
+    flex-shrink: 0;
+    margin-top: 1px;
+    border-radius: 50%;
+    background: var(--primary-10);
+    color: var(--primary-50);
+    font-size: 11px;
+    font-weight: 700;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  &__benefit-text {
+    gap: 1px;
+    min-width: 0;
+  }
+
+  &__benefit-title {
+    font-size: 12.5px;
+    line-height: 1.45;
+    font-weight: 600;
+    color: var(--normal-fg-800);
+  }
+
+  &__benefit-sub {
+    font-size: 11.5px;
+    line-height: 1.4;
+    color: var(--normal-fg-50);
+  }
+
+  &__cta-stack {
+    gap: var(--spacer-3);
+    margin-top: var(--spacer-2);
+  }
+
+  &__cta {
+    width: 100%;
+    justify-content: center;
+    align-items: center;
+    padding: var(--spacer-4);
+    border-radius: var(--corner-radius-max);
+    background: var(--primary-50);
+    cursor: pointer;
+    transition: background 0.15s ease, opacity 0.15s ease;
+
+    &:hover {
+      background: var(--primary-60);
+    }
+
+    &--busy {
+      opacity: 0.7;
+      cursor: default;
+      pointer-events: none;
+    }
+
+    // Secondary action: brand tint fill with brand-dark label. Stays the
+    // light tint in both themes (it sits on the elevated card, paired with
+    // the solid primary CTA above it).
+    &--ghost {
+      background: var(--primary-10);
+
+      &:hover {
+        background: var(--primary-20);
+      }
+
+      .promo-launch30__cta-label {
+        color: var(--primary-70);
+      }
+    }
+  }
+
+  &__cta-label {
+    font-size: 13.5px;
+    font-weight: 600;
+    color: var(--white);
+  }
+
+  &__fineprint {
+    text-align: center;
+    font-size: 11px;
+    color: var(--normal-fg-50);
+    margin-top: 11px;
+  }
+
+  &__posline {
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--normal-fg-20);
+    background: var(--primary-10);
+    border-radius: var(--corner-radius-3);
+    padding: var(--spacer-4) var(--spacer-4);
+    margin-bottom: var(--spacer-3);
+  }
+
+  // ── Modal C: the trial-ended gate ─────────────────────────────────────
+  // Same card and CTA stack as the other two states; only the pieces this
+  // screen introduces are styled here.
+
+  &__badge {
+    align-self: flex-start;
+    font-size: 10.5px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    color: var(--orange-700);
+    background: var(--orange-100);
+    padding: 4px 10px;
+    border-radius: var(--corner-radius-max);
+    margin-bottom: var(--spacer-3);
+  }
+
+  // The over-limit variant of the same pill — danger, not warning: this one
+  // reports something already locked, not something coming.
+  &__lock-tag {
+    align-self: flex-start;
+    font-size: 11.5px;
+    font-weight: 600;
+    color: var(--red-700);
+    background: var(--red-100);
+    padding: 5px 10px;
+    border-radius: var(--corner-radius-max);
+    margin-bottom: var(--spacer-3);
+  }
+
+  &__price-row {
+    align-items: baseline;
+    gap: 6px;
+    margin-bottom: var(--spacer-4);
+  }
+
+  &__price-amount {
+    font-size: 34px;
+    font-weight: 700;
+    color: var(--primary-60);
+  }
+
+  &__price-period {
+    font-size: 13px;
+    color: var(--normal-fg-50);
+  }
+
+  &__feature-list {
+    gap: 9px;
+    margin-bottom: var(--spacer-5);
+  }
+
+  &__feature-row {
+    align-items: center;
+    gap: var(--spacer-3);
+  }
+
+  &__feature-tick {
+    width: 16px;
+    height: 16px;
+    flex-shrink: 0;
+    color: var(--green-500);
+  }
+
+  &__feature-text {
+    font-size: 13px;
+    color: var(--normal-fg-800);
+  }
+
+  &__footnote {
+    text-align: center;
+    font-size: 11px;
+    color: var(--normal-fg-50);
+    margin-top: var(--spacer-3);
+  }
+
+  // Destructive-adjacent action on the over-limit screen.
+  &__cta--danger {
+    background: var(--red-600);
+
+    &:hover {
+      background: var(--red-700);
+    }
+  }
+
+}

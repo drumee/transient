@@ -1,0 +1,111 @@
+@use "mixins/drumee";
+
+.addressbook-widget-contact-detail {
+  &-menu {
+    &__wrapper {
+      &[data-state="1"] {
+        & .trigger-icon {
+          color: var(--default-icon-active);
+          opacity: 1;
+        }
+      }
+
+      & .menu-topic-items {
+        border-radius: var(--corner-radius-3);
+        background-color: var(--normal-bg-90);
+        max-width: 1600px;
+        min-width: 155px;
+        width: 100% !important;
+        padding: var(--spacer-4);
+        border: 1px solid var(--neutral-300);
+
+        &__wrapper {
+          left: -145px;
+          top: 33px;
+          box-shadow: var(--shadow-main);
+        }
+      }
+    }
+
+    &__icon {
+      align-items: center;
+      color: var(--default-icon-neutral);
+      cursor: pointer;
+
+      svg {
+        fill: var(--normal-fg-10);
+      }
+
+      &.trigger-icon {
+        box-sizing: border-box;
+        color: inherit;
+        height: 24px;
+        top: 3px;
+        width: 22.5px;
+
+        &:hover {
+          color: var(--default-icon-hover);
+          opacity: 1;
+        }
+      }
+    }
+
+    &__item-wrapper {
+      width: 100%;
+      gap: var(--spacer-2);
+    }
+
+    &__item {
+      cursor: pointer;
+      padding: var(--spacer-3) var(--spacer-2) var(--spacer-3) var(--spacer-5);
+      border-radius: var(--corner-radius-2);
+
+      &:hover,
+      &[data-state="1"],
+      &.active,
+      &.selected {
+        background-color: var(--primary-purple-30);
+        color: var(--default-text-hover);
+
+        & .widget-contact-detail-menu__note {
+          color: var(--normal-fg-10);
+        }
+
+        & svg {
+          fill: var(--default-icon-reverse);
+        }
+      }
+
+      &.coming-soon {
+        opacity: 0.4;
+        pointer-events: none;
+      }
+    }
+
+    &__note {
+      padding-top: 0px;
+      @include drumee.typo(
+        $size: 14px,
+        $weight: 300,
+        $line: 14px,
+        $color: var(--normal-fg-10)
+      );
+
+      &.same-domain-info {
+        height: 86px;
+        margin-bottom: 5px;
+        padding: 0px 5px 5px 15px;
+
+        width: 150px;
+
+        & .note-content,
+        & .root-node {
+          height: 100%;
+          overflow: hidden;
+
+          width: 100%;
+        }
+      }
+    }
+  }
+}

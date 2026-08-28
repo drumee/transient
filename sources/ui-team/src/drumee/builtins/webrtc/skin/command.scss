@@ -1,0 +1,267 @@
+@use 'mixins/drumee';
+@mixin webrtc-command {
+  &__commands {
+    height: 100%;
+    width: auto; // right: 40px; //10px;
+    background-color: var(--default-transparent-black); //rgba(0, 0, 0, 0.33);//($vdo-background-color;
+    border-radius: var(--border-radius);
+    align-items: center;
+    padding: 0 3px;
+    display: flex;
+
+    &-container {
+      width: 100%; // auto; //190px; 
+      align-items: center;
+      justify-items: center;
+      justify-content: center;
+      z-index: 200;
+      height: 56px; //80px; //100px;
+      position: absolute;
+      bottom: 10px; //20px; 
+      z-index: 100000;
+
+      &[data-state="0"] {
+        display: none;
+      }
+    }
+
+    .device-button {
+      .audio.settings {
+        position: absolute;
+        right: -7px;
+        padding: 0;
+        width: 15px;
+        height: 15px;
+        top: -7px;
+        padding: 1px;
+        border: 1px solid var(--btn-rollback-border);
+      }
+    }
+
+
+    .ctrl-button {
+      position: relative;
+      width: 36px; //48px;
+      border-radius: var(--border-radius);
+      height: 36px; //30px;
+      padding: 8px; // 5px;
+      border: 1.2px transparent solid;
+      background-color: var(--default-bg);
+      margin: 0 7px; // 0 6px;
+      color: var(--multimedia-vdo-icon);
+      cursor: pointer;
+      display: flex;
+      flex-direction: row;
+      justify-content: center;
+      align-items: center;
+      transition: background-color 0.15s ease, opacity 0.15s ease;
+
+      &:hover {
+        filter: brightness(1.08);
+      }
+
+      &:active {
+        opacity: 0.85;
+      }
+
+      &[data-disabled="1"] {
+        opacity: 0.4;
+        pointer-events: none;
+        filter: grayscale(0.6);
+        cursor: not-allowed;
+      }
+
+      &[data-muted="1"]:not([data-disabled="1"]) {
+        opacity: 0.85;
+      }
+
+      &.line {
+        background-color: var(--default-border-caution);
+        color: var(--default-icon-reverse);
+        fill: none;
+
+        svg {
+          height: 100%;
+          width: 100%;
+          transform: rotate(135deg);
+        }
+      }
+
+      &.leave {
+        background-color: var(--default-border-caution);
+        color: var(--default-icon-reverse);
+        fill: none;
+
+        svg {
+          transform: none;
+        }
+      }
+
+      &.reject {
+        background-color: var(--default-border-caution);
+        color: var(--default-icon-reverse);
+      }
+
+      &.screen {
+        color: var(--multimedia-vdo-button-accept);
+
+        &[data-state="0"] {
+          color: var(--multimedia-vdo-icon);
+
+          &:before {
+            display: none;
+          }
+        }
+      }
+
+      &.accept {
+        color: var(--multimedia-vdo-button-accept);
+
+        svg {
+          height: 100%;
+          width: 100%;
+        }
+      }
+
+      &.pickup {
+        background-color: var(--button-accept);
+        color: var(--default-icon-reverse);
+        fill: none;
+      }
+
+      &[data-state="0"] {
+        color: var(--multimedia-vdo-icon);
+
+        &:before {
+          content: " ";
+          position: absolute;
+          top: calc(50% - 1px);
+          left: 17.5%;
+          width: 65%;
+          height: 2px;
+          background-color: var(--multimedia-vdo-ctrl-button);
+          transform: rotate(-45deg);
+          transform-origin: center center;
+          pointer-events: none;
+          z-index: 2;
+        }
+      }
+
+      &[data-online="1"] {
+        background-color: var(--multimedia-vdo-ctrl-button);
+        color: var(--default-icon-reverse);
+      }
+
+      &.hand-raise {
+        color: var(--multimedia-vdo-icon);
+
+        &[data-state="0"]:before,
+        &[data-state="1"]:before {
+          display: none;
+        }
+
+        &[data-raised="1"] {
+          background-color: var(--button-accept, #18ac72);
+          color: var(--default-icon-reverse);
+        }
+      }
+    }
+  }
+
+  &__devices-list {
+    padding: 8px;
+    min-width: 132px;
+    width: auto;
+    height: auto;
+    position: absolute;
+    background-color: var(--default-bg);
+    bottom: calc(100% + 15px);
+    right: -134px;
+    overflow: visible;
+    border-radius: var(--border-radius);
+    max-width: 240px;
+
+    &::before {
+      background: var(--default-bg);
+      //box-shadow: 0px 0px 4px 0px rgb(63 79 117 / 13%), 0 5px 0px 0 rgb(86 65 113 / 8%), 0 2px 0px 0 rgb(194 185 203 / 0%);
+      content: " ";
+      height: 12px;
+      position: absolute;
+      right: 135px;
+      bottom: -6px;
+      transform: rotate(45deg);
+      width: 12px;
+      z-index: 1;
+    }
+
+    .device-label {
+      padding: 4px 8px;
+      @include drumee.typo($size: 13px, $line: 17px, $weight: 400, $color: var(--default-text-color));
+      text-align: left;
+      cursor: pointer;
+      margin-bottom: 3px;
+      background-color: #fbfbfb;
+      border-radius: var(--border-radius);
+      width: 100%;
+      text-align: center;
+      justify-content: center;
+      min-width: 150px;
+
+      &:hover {
+        background-color: #879bff;
+        color: var(--default-bg);
+      }
+
+      &[data-state="1"] {
+        background-color: #6178d8;
+        color: var(--default-bg);
+      }
+
+      div {
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+    }
+
+
+    .mic-selection {
+      width: 50%;
+      height: auto;
+      border-radius: 6px;
+      justify-content: center;
+      border-radius: var(--border-radius);
+      align-items: center;
+      padding: 4px;
+      margin: 0 5px;
+
+      &.button-cancel {
+        @include drumee.typo($line: 18px, $size: 13px, $weight: 300, $color: var(--btn-rollback-text));
+        border: 1px solid var(--btn-rollback-border);
+      }
+
+      &.button-confirm {
+        // --btn-commit-background is malformed in skin/vars/default.scss
+        // (`-primary-500` instead of `var(--primary-500)`) so it computes to
+        // transparent — the Confirm button then rendered white-on-white on the
+        // popup and looked blank. Use the intended commit accent directly.
+        background-color: var(--primary-500);
+        @include drumee.typo($line: 18px, $size: 13px, $weight: 300, $color: var(--btn-commit-text));
+
+        &:hover {
+          background-color: var(--primary-600);
+        }
+      }
+    }
+
+
+    .device-heading {
+      @include drumee.typo($size: 12px, $line: 16px, $weight: 500, $color: var(--default-text-color));
+      padding: 0 6px;
+      justify-content: flex-start;
+      margin-bottom: 4px;
+      margin-top: 2px;
+    }
+
+  }
+}

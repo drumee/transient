@@ -1,0 +1,1234 @@
+.settings-main {
+  // Color tokens used throughout
+  $purple-deep: #433cc5; // Save Profile button + Edit-avatar pencil bg
+  $purple-base: #5950ff; // Ghost-button tint base
+  $purple-text: #847dff; // Ghost-button text
+  $ink-900: #0b0a21; // Primary text
+  $ink-600: #65656c; // Subtle text / field labels
+  $ink-400: #aeaeb2; // Tertiary text
+  $ink-500: #84848c; // EDIT AVATAR label
+  $card-bg: rgba(0, 0, 0, 0.05);
+  $row-bg: #ffffff;
+  $danger-fg: #d64e49; // Delete button + warning glyph
+  $danger-bg: #f6504a; // Used at low opacity for warning chip & delete row
+  $success-fg: #54b684; // "Profile saved" pill text (Signal/Success)
+  $success-bg: rgba(84, 182, 132, 0.15); // "Profile saved" pill background
+
+  &__ui {
+    width: 100%;
+    height: 100%;
+    overflow-y: auto;
+    overflow-x: hidden;
+    padding: var(--spacer-6);
+    background: var(--white);
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacer-6);
+    font-family: "Geist", system-ui, sans-serif;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+
+    &::-webkit-scrollbar {
+      display: none;
+    }
+  }
+
+  // ── Header row ────────────────────────────────────────────
+  &__header {
+    &-row {
+      width: 100%;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: var(--spacer-6);
+    }
+
+    &-text {
+      gap: 4px;
+      flex: 1;
+      min-width: 0;
+    }
+
+    &-title {
+      font-size: 32px;
+      line-height: 35.2px;
+      font-weight: 600;
+      color: $ink-900;
+    }
+
+    &-subtitle {
+      font-size: 14px;
+      line-height: 19.6px;
+      font-weight: 400;
+      color: $ink-600;
+    }
+
+    &-save {
+      &-main {
+        height: 48px;
+        padding: 0 var(--spacer-6);
+        background: $purple-deep;
+        border-radius: 4px;
+        cursor: pointer;
+        align-items: center;
+        justify-content: center;
+        min-width: 140px;
+        flex-shrink: 0;
+
+        &:hover {
+          background: var(--primary-purple-60);
+        }
+
+        .btn {
+          color: var(--white);
+          font-size: 16px;
+          line-height: 24px;
+          font-weight: 600;
+        }
+      }
+    }
+
+    // Right-side action cluster. `position: relative` anchors the floating
+    // confirmation pill; the pill is absolutely positioned so showing it
+    // never shifts the Save button (or reserves empty space when hidden).
+    &-actions {
+      position: relative;
+      align-items: center;
+      gap: var(--spacer-4);
+      flex-shrink: 0;
+    }
+
+    // Save confirmation pill — floats just below the Save button and is
+    // hidden (opacity 0) until saveProfile() flips data-state to "1".
+    &-saved {
+      position: absolute;
+      top: calc(100% + var(--spacer-3));
+      right: 0;
+      z-index: 2;
+      display: flex;
+      align-items: center;
+      height: 36px;
+      padding: 0 16px;
+      border-radius: 4px;
+      background: $success-bg;
+      color: $success-fg;
+      font-size: 14px;
+      line-height: 19.6px;
+      font-weight: 600;
+      white-space: nowrap;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.25s ease;
+
+      &[data-state="1"] {
+        opacity: 1;
+      }
+
+      &[data-variant="error"] {
+        background: rgba(214, 78, 73, 0.12);
+        color: $danger-fg;
+      }
+    }
+  }
+
+  // ── Row layout (two flex rows, asymmetric) ────────────────
+  &__row {
+    width: 100%;
+    gap: var(--spacer-6);
+    align-items: stretch;
+  }
+
+  &__row-1 {
+    .settings-main__profile-card {
+      flex: 698 1 0;
+      min-width: 0;
+    }
+    .settings-main__preferences-card {
+      flex: 450 1 0;
+      min-width: 0;
+    }
+  }
+
+  // Figma 2769-277671: Billing + Account Credentials + Danger zone are one
+  // 3-column row, equal thirds.
+  &__row-2 {
+    .settings-main__billing-card,
+    .settings-main__credentials-card,
+    .settings-main__danger-card {
+      flex: 1 1 0;
+      min-width: 0;
+    }
+  }
+
+  &__row-3 {
+    .settings-main__linked-card {
+      flex: 1 1 0;
+      min-width: 0;
+    }
+  }
+
+  // Referral/invite isn't part of the Figma frame — its own full-width row.
+  &__row-referral {
+    .settings-main__referral-card {
+      flex: 1 1 0;
+      min-width: 0;
+    }
+  }
+
+  // ── Linked accounts card ─────────────────────────────────
+  &__linked {
+    &-list {
+      gap: var(--spacer-3);
+    }
+    &-row--empty {
+      opacity: 0.7;
+    }
+
+    // (migrate CTA shares the common ghost-button style — see the grouped
+    // rule below, near the other card buttons.)
+    &-disconnect-main[data-flow] {
+      display: flex;
+      flex-direction: row;
+      width: 120px;
+      height: 32px;
+      border-radius: 4px;
+      background: rgba(214, 78, 73, 0.1);
+      cursor: pointer;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      gap: 8px;
+
+      .btn {
+        color: $danger-fg;
+        font-size: 12px;
+        line-height: 16px;
+        font-weight: 600;
+      }
+
+      &:hover {
+        background: rgba(214, 78, 73, 0.18);
+      }
+
+      &::before {
+        content: "";
+        width: 14px;
+        height: 14px;
+        border: 2px solid rgba(214, 78, 73, 0.25);
+        border-top-color: $danger-fg;
+        border-radius: 50%;
+        animation: settings-main-spinner 0.7s linear infinite;
+        display: none;
+        flex-shrink: 0;
+      }
+
+      &[data-loading="1"] {
+        pointer-events: none;
+        opacity: 0.85;
+
+        &::before {
+          display: block;
+        }
+      }
+    }
+  }
+
+  // ── Referral card (beside billing, shares its row) ────────
+  &__referral {
+    &-list {
+      width: 100%;
+      gap: var(--spacer-5);
+    }
+  }
+
+  // ── Card shell ────────────────────────────────────────────
+  &__card {
+    background: $card-bg;
+    border-radius: 8px;
+    padding: var(--spacer-6);
+    gap: var(--spacer-6);
+
+    &-heading {
+      gap: 8px;
+    }
+
+    &-title {
+      font-size: 18px;
+      line-height: 24px;
+      font-weight: 600;
+      color: $ink-900;
+    }
+
+    &-subtitle {
+      font-size: 12px;
+      line-height: 16.8px;
+      font-weight: 400;
+      color: $ink-400;
+    }
+  }
+
+  // ── General Profile card ──────────────────────────────────
+  &__profile {
+    &-body {
+      width: 100%;
+      gap: 40px;
+      align-items: flex-start;
+    }
+
+    &-avatar-block {
+      align-items: center;
+      gap: 8px;
+      flex-shrink: 0;
+      width: 128px;
+    }
+
+    &-avatar-frame {
+      position: relative;
+      width: 128px;
+      height: 128px;
+      border-radius: 8px;
+      overflow: hidden;
+      cursor: pointer;
+      background: var(--neutral-100);
+    }
+
+    &-avatar {
+      width: 100%;
+      height: 100%;
+      background-size: cover;
+      background-position: center;
+    }
+
+    &-avatar-edit {
+      position: absolute;
+      right: 8px;
+      bottom: 8px;
+      width: 26px;
+      height: 26px;
+      border-radius: 4px;
+      background: $purple-deep;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+
+      svg {
+        width: 14px;
+        height: 14px;
+        fill: var(--white);
+      }
+    }
+
+    &-avatar-label {
+      font-size: 10px;
+      line-height: 14px;
+      font-weight: 400;
+      letter-spacing: 0.04em;
+      color: $ink-500;
+      text-transform: uppercase;
+    }
+
+    &-avatar-input {
+      position: absolute;
+      width: 0;
+      height: 0;
+      visibility: hidden;
+    }
+
+    // ── Avatar processing state (HEIC convert + upload in flight) ──
+    &-avatar-overlay {
+      position: absolute;
+      inset: 0;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      background: rgba(255, 255, 255, 0.45);
+      backdrop-filter: blur(2px);
+    }
+
+    &-avatar-spinner {
+      width: 28px;
+      height: 28px;
+      border: 3px solid rgba(67, 60, 197, 0.25); // $purple-deep @ 25%
+      border-top-color: $purple-deep;
+      border-radius: 50%;
+      animation: settings-main-spinner 0.7s linear infinite;
+    }
+
+    &-avatar-frame[data-processing="1"] {
+      pointer-events: none; // block re-click while uploading
+
+      .settings-main__profile-avatar-overlay {
+        display: flex;
+      }
+
+      .settings-main__profile-avatar {
+        filter: brightness(0.8);
+      }
+
+      .settings-main__profile-avatar-edit {
+        opacity: 0;
+      }
+    }
+
+    &-fields {
+      flex: 1;
+      gap: var(--spacer-6);
+      min-width: 0;
+    }
+
+    &-fields-row {
+      width: 100%;
+      gap: var(--spacer-5);
+
+      > * {
+        flex: 1 1 0;
+        min-width: 0;
+      }
+    }
+
+    &-bio {
+      width: 100%;
+      gap: var(--spacer-5);
+
+      &-label {
+        font-size: 12px;
+        line-height: 16px;
+        font-weight: 700;
+        color: $ink-600;
+      }
+
+      &-input {
+        width: 100%;
+        background: $row-bg;
+        border-radius: 8px;
+        padding: var(--spacer-4) var(--spacer-5);
+        font-size: 14px;
+        line-height: 20px;
+        color: $ink-900;
+
+        textarea {
+          width: 100%;
+          min-height: 60px;
+          border: none;
+          outline: none;
+          resize: vertical;
+          font: inherit;
+          color: inherit;
+          background: transparent;
+        }
+      }
+    }
+  }
+
+  // Field helpers (shared with other cards)
+  &__entry {
+    &-main {
+      gap: 4px;
+      flex: 1;
+      min-width: 0;
+    }
+
+    &-label {
+      font-size: 12px;
+      line-height: 16px;
+      font-weight: 700;
+      color: $ink-600;
+    }
+
+    &-input {
+      width: 100%;
+      background: $row-bg;
+      border-radius: 8px;
+      height: 44px;
+      padding: 0 var(--spacer-5);
+
+      input {
+        width: 100%;
+        border: none;
+        outline: none;
+        background: transparent;
+        font-size: 14px;
+        line-height: 20px;
+        color: $ink-900;
+      }
+    }
+  }
+
+  // ── Preferences card ──────────────────────────────────────
+  &__preferences {
+    &-list {
+      width: 100%;
+      gap: var(--spacer-5);
+    }
+  }
+
+  // ── Account Credentials card ──────────────────────────────
+  &__credentials {
+    &-list {
+      width: 100%;
+      gap: var(--spacer-5);
+    }
+
+    // Figma 2769-277772/277786: these rows are label-over-value, the
+    // opposite emphasis from the Preferences toggle rows (bold title,
+    // muted description) — the small grey text is the FIELD LABEL
+    // ("Email Address"/"Password") and the bold dark text is the VALUE.
+    &-row {
+      .settings-main__inner-title {
+        font-size: 12px;
+        line-height: 16px;
+        font-weight: 600;
+        color: $ink-600;
+      }
+      .settings-main__inner-description {
+        font-size: 14px;
+        line-height: 20px;
+        font-weight: 600;
+        color: $ink-900;
+      }
+    }
+
+    // Email value shares the flex text column (min-width:0) — never hard-cap
+    // at 150px (that clipped addresses like launch30configtest@e…). Ellipsis
+    // only when the row truly runs out of space next to the Change button.
+    &-row.email-row {
+      .settings-main__inner-description {
+        max-width: 100%;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+    }
+  }
+
+  // ── Danger zone card ──────────────────────────────────────
+  &__danger {
+    &-header {
+      align-items: center;
+      gap: 12px;
+    }
+
+    &-warning {
+      width: 32px;
+      height: 32px;
+      border-radius: 6px;
+      background: rgba(246, 81, 75, 0.15);
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+
+      &-ico {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+
+        svg {
+          width: 14px;
+          height: 14px;
+          fill: $danger-fg;
+
+          .icon-fill-blue,
+          .icon-fill-grey {
+            fill: $danger-fg;
+          }
+        }
+      }
+    }
+
+    &-list {
+      width: 100%;
+      gap: 16px;
+    }
+
+    &-row {
+      // Standard row: white background; padding overridden via &__inner below.
+    }
+
+    &-row-delete {
+      background: rgba(246, 81, 75, 0.1) !important;
+
+      .settings-main__inner-title {
+        color: $danger-fg;
+      }
+    }
+  }
+
+  // ── Inner row (shared) ────────────────────────────────────
+  &__inner {
+    width: 100%;
+    padding: var(--spacer-5);
+    border-radius: 8px;
+    background: $row-bg;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--spacer-5);
+
+    &-left {
+      align-items: center;
+      gap: var(--spacer-5);
+      flex: 1;
+      min-width: 0;
+    }
+
+    &-ico {
+      width: 36px;
+      height: 36px;
+      border-radius: 6px;
+      background: rgba(89, 80, 255, 0.1);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+
+      svg {
+        width: 18px;
+        height: 18px;
+        fill: $purple-base;
+      }
+    }
+
+    &-text {
+      gap: 4px;
+      flex: 1;
+      min-width: 0;
+    }
+
+    &-title {
+      font-size: 14px;
+      line-height: 20px;
+      font-weight: 600;
+      color: $ink-900;
+    }
+
+    &-description {
+      font-size: 10px;
+      line-height: 14px;
+      font-weight: 400;
+      color: $ink-600;
+    }
+  }
+
+  // Toggle items use slightly tighter horizontal padding (16px ↔ Figma 24/16).
+  &__preferences-list .settings-main__inner {
+    padding: var(--spacer-5) var(--spacer-6);
+  }
+
+  // ── Appearance: display-mode segmented control ──────────────
+  // Light / Dark / System pill group (the desk sidebar's old binary
+  // toggle lives here now). Active option reads via data-active="1".
+  &__theme-control {
+    align-items: center;
+    gap: 4px;
+    padding: 3px;
+    border-radius: 10px;
+    border: 1px solid var(--neutral-200, rgba(0, 0, 0, 0.08));
+    flex-shrink: 0;
+  }
+
+  &__theme-opt {
+    align-items: center;
+    gap: 6px;
+    padding: 6px 12px;
+    border-radius: 8px;
+    cursor: pointer;
+    color: var(--normal-fg-50);
+    transition:
+      background 0.15s ease,
+      color 0.15s ease;
+
+    &:hover {
+      color: var(--normal-fg);
+    }
+
+    &[data-active="1"] {
+      background: var(--active-item-bg);
+      color: var(--primary-50);
+      font-weight: 600;
+    }
+
+    // raw-light / raw-dark keep their own sprite colors; only size them.
+    &-ico {
+      width: 16px;
+      height: 16px;
+      flex-shrink: 0;
+
+      svg {
+        width: 100%;
+        height: 100%;
+      }
+    }
+
+    &-label {
+      font-size: 12px;
+      line-height: 16px;
+      color: inherit;
+      white-space: nowrap;
+    }
+  }
+
+  // ── Toggle switch ─────────────────────────────────────────
+  &__toggle {
+    width: 40px;
+    height: 20px;
+    border-radius: 12px;
+    background: $ink-400;
+    padding: 2px;
+    cursor: pointer;
+    flex-shrink: 0;
+    transition: background 0.2s ease;
+    align-items: center;
+    justify-content: flex-start;
+    position: relative;
+
+    // The visible pill is only 40×20 — a fiddly target. Enlarge the *clickable*
+    // area to ~64×44 (meets the 44px touch-target guideline) with a transparent
+    // inset-negative overlay, without touching the pill's look or the layout
+    // (the overlay is absolutely positioned, so it adds no box). A click on the
+    // pseudo-element resolves to the toggle element, so the switch's existing
+    // click service still fires — anywhere on/around the pill now toggles.
+    &::before {
+      content: "";
+      position: absolute;
+      inset: -12px;
+    }
+
+    &-knob {
+      width: 16px;
+      height: 16px;
+      border-radius: 12px;
+      background: var(--white);
+      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.15);
+      transition: transform 0.2s ease;
+      // The knob is transformed (creates its own stacking context) so it paints
+      // above the ::before hit overlay — a click landing on the white knob would
+      // otherwise miss the toggle's click target. Make it click-through so every
+      // pixel of the switch, knob included, forwards to the track's service.
+      pointer-events: none;
+    }
+
+    &[data-state="1"] {
+      background: $purple-deep;
+
+      .settings-main__toggle-knob {
+        transform: translateX(20px);
+      }
+    }
+
+    // Loading: while the OTP is requested and the modal loads, lock the switch
+    // and replace the knob with a centered spinner (reads on both the grey and
+    // purple pill backgrounds).
+    &[data-loading="1"] {
+      position: relative;
+      pointer-events: none;
+
+      .settings-main__toggle-knob {
+        opacity: 0;
+      }
+
+      &::after {
+        content: "";
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        width: 14px;
+        height: 14px;
+        margin: -7px 0 0 -7px;
+        border: 2px solid rgba(255, 255, 255, 0.5);
+        border-top-color: var(--white);
+        border-radius: 50%;
+        animation: settings-main-spinner 0.6s linear infinite;
+      }
+    }
+  }
+
+  // ── "Coming soon" pill used on placeholder rows ───────────
+  &__preferences-coming-soon {
+    padding: 4px 10px;
+    border-radius: 999px;
+    background: rgba(89, 80, 255, 0.1);
+    color: $purple-text;
+    font-size: 11px;
+    line-height: 16px;
+    font-weight: 600;
+    letter-spacing: 0.2px;
+    text-transform: uppercase;
+    flex-shrink: 0;
+  }
+
+  // Subscription status line under the Current-Plan row (billing card):
+  // "Your subscription renews on …" / "… will be canceled on …". Sits inside
+  // &__billing-list's own 24px padding now — no extra padding of its own.
+  &__billing-status {
+    font-size: 12px;
+    line-height: 16.8px;
+    color: $ink-600;
+
+    &:empty {
+      display: none;
+    }
+  }
+
+  // ── Ghost (light-purple) buttons used inside cards ────────
+  // Shared "normal button" style for the settings cards — same light-purple
+  // tint as the "Coming soon" pill. Used by manage / action / export / migrate.
+  // NOTE: billing's action button is NOT part of this group — Figma
+  // (2769-213367) shows it as a solid filled CTA, not a ghost tint; see its
+  // own rule below.
+  &__preferences-manage-main,
+  &__credentials-action-main,
+  &__referral-action-main,
+  &__danger-export-btn-main,
+  &__linked-migrate-btn-main {
+    width: 120px;
+    height: 32px;
+    border-radius: 4px;
+    background: rgba(89, 80, 255, 0.1);
+    cursor: pointer;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    flex-shrink: 0;
+
+    .btn {
+      color: $purple-text;
+      font-size: 12px;
+      line-height: 16px;
+      font-weight: 600;
+    }
+
+    .icon svg {
+      fill: $purple-text;
+      width: 14px;
+      height: 14px;
+    }
+
+    &:hover {
+      background: rgba(89, 80, 255, 0.18);
+    }
+  }
+
+  // The migrate CTA shares the same ghost look as the "Coming soon" pill in
+  // every state (Start migration / View progress / Migrate again); its labels
+  // are wider than the 120px tiles, so size to content.
+  &__linked-migrate-btn-main,
+  &__referral-action-main {
+    width: auto;
+    min-width: 120px;
+    padding: 0 var(--spacer-5);
+  }
+
+  // ── Billing card CTA (solid, Figma 2769-213367) ───────────
+  &__billing-action-main {
+    width: auto;
+    padding: 6px 24px;
+    border-radius: 4px;
+    background: $purple-deep; // #433cc5
+    cursor: pointer;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+
+    .btn {
+      color: var(--white);
+      font-size: 14px;
+      line-height: 20px;
+      font-weight: 600;
+    }
+
+    &:hover {
+      opacity: 0.9;
+    }
+  }
+
+  // ── Billing card: white panel wrapping plan-row + status,
+  // matching Figma's single unified card surface (not per-row boxes) ──
+  &__billing-list {
+    width: 100%;
+    background: $row-bg;
+    border-radius: 8px;
+    padding: var(--spacer-6);
+    flex: 1;
+    justify-content: space-between;
+    gap: var(--spacer-6);
+  }
+
+  // The plan-row already carries the generic &__inner white/padded box —
+  // reset it here so it doesn't nest a second white box inside the panel
+  // above (Figma's title+button sit flush on the panel's own padding).
+  &__billing-row.settings-main__inner {
+    background: transparent;
+    padding: 0;
+    border-radius: 0;
+  }
+
+  &__billing-card &__card-subtitle {
+    color: $ink-600; // Grey/80 #65656c
+  }
+
+  &__billing-row &__inner-title {
+    font-size: 18px;
+    line-height: 24px;
+    font-weight: 600;
+  }
+
+  // "Pro" + status line, paired tightly (Figma "Frame 1618872891", gap 4px) —
+  // a separate block below the title row, NOT the title row's own
+  // description (that put "Pro" 4px from "Current Plan" and the status line
+  // a mismatched 24px further down instead of right under "Pro").
+  &__billing-plan-block {
+    gap: 4px;
+  }
+
+  &__billing-plan-name {
+    font-size: 18px;
+    line-height: 24px;
+    font-weight: 600;
+    color: $purple-base; // Primary/40 #5950ff
+  }
+
+  &__danger-export-btn-main {
+    gap: 8px;
+    padding: 0 var(--spacer-5) 0 var(--spacer-4);
+  }
+
+  // ── Filled red Delete button ──────────────────────────────
+  &__danger-delete-btn-main {
+    height: 32px;
+    padding: 0 var(--spacer-5);
+    border-radius: 4px;
+    background: $danger-fg;
+    cursor: pointer;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+
+    .btn {
+      color: var(--white);
+      font-size: 12px;
+      line-height: 16px;
+      font-weight: 600;
+    }
+
+    &:hover {
+      background: #c33d38;
+    }
+  }
+
+  // ── Overlay slot for sub-modals ───────────────────────────
+  // Matches the adminpanel members action-popup pattern: a translucent
+  // gray scrim, no backdrop-filter blur. The fixed positioning lets the
+  // scrim cover the whole viewport regardless of where settings is mounted.
+  &__overlay {
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    align-items: center;
+    justify-content: center;
+    z-index: 20000;
+
+    &[data-state="open"] {
+      pointer-events: auto;
+      background: var(--transparency-container-overlay);
+    }
+  }
+
+  // ── Toast (top-right) ─────────────────────────────────────
+  // Transient confirmation, fed by _showToast/_renderToast. Sits above the
+  // overlay so it remains visible even if a modal is mid-teardown. The slot
+  // collapses when empty so it never intercepts clicks.
+  &__toast-slot {
+    position: fixed;
+    top: 24px;
+    right: 24px;
+    z-index: 30000;
+    pointer-events: none;
+
+    &:empty {
+      display: none;
+    }
+  }
+
+  &__toast {
+    flex-direction: row;
+    align-items: center;
+    gap: 10px;
+    max-width: 360px;
+    padding: 12px 16px;
+    border-radius: 10px;
+    background: $row-bg;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+    pointer-events: auto;
+    animation: settings-toast-in 160ms ease-out;
+
+    &-ico {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+
+      svg {
+        width: 20px;
+        height: 20px;
+      }
+    }
+
+    &-text {
+      font-size: 13px;
+      font-weight: 600;
+      line-height: 18px;
+      color: $ink-900;
+    }
+
+    &--success &-ico svg {
+      fill: $success-fg;
+
+      .icon-fill-blue,
+      .icon-fill-grey {
+        fill: $success-fg;
+      }
+    }
+
+    &--error &-ico svg {
+      fill: $danger-fg;
+
+      .icon-fill-blue,
+      .icon-fill-grey {
+        fill: $danger-fg;
+      }
+    }
+  }
+
+  // ── Responsive: tablet ────────────────────────────────────
+  // Two-column layout (~698 + 450 / ~375 + 773) doesn't fit at tablet
+  // widths (≤ 1024). Stack rows; keep header on one line and avatar/
+  // fields side-by-side since there's still enough horizontal room.
+  &__ui[data-device="tablet"] {
+    padding: var(--spacer-5);
+  }
+
+  &__row[data-device="tablet"] {
+    flex-direction: column;
+
+    .settings-main__profile-card,
+    .settings-main__preferences-card,
+    .settings-main__credentials-card,
+    .settings-main__danger-card,
+    .settings-main__linked-card {
+      flex: 1 1 auto;
+    }
+  }
+
+  // ── Responsive: tablet (viewport-based) ───────────────────
+  // Mirror the mobile [data-device] rules at <=1024px so tablet
+  // viewports collapse to the single-column layout regardless of
+  // whether the data-device attribute is set.
+  @media (max-width: 1024px) {
+    &__ui {
+      padding: var(--spacer-5);
+      gap: var(--spacer-5);
+    }
+
+    &__row {
+      flex-direction: column !important;
+
+      .settings-main__profile-card,
+      .settings-main__preferences-card,
+      .settings-main__credentials-card,
+      .settings-main__danger-card,
+      .settings-main__linked-card {
+        flex: 1 1 auto;
+      }
+    }
+
+    &__header-row {
+      flex-direction: column !important;
+      align-items: stretch;
+      gap: var(--spacer-5);
+    }
+
+    &__header-save-main {
+      width: 100%;
+      min-width: 0;
+    }
+
+    &__header-title {
+      font-size: 24px;
+      line-height: 28px;
+    }
+
+    &__profile-body {
+      flex-direction: column !important;
+      align-items: center;
+      gap: var(--spacer-5);
+    }
+
+    &__profile-avatar-block {
+      align-self: center;
+    }
+
+    &__profile-fields {
+      width: 100%;
+    }
+
+    &__profile-fields-row {
+      flex-direction: column !important;
+    }
+
+    &__card {
+      padding: var(--spacer-5);
+      gap: var(--spacer-5);
+    }
+
+    &__inner {
+      flex-wrap: wrap;
+      row-gap: var(--spacer-3);
+    }
+  }
+
+  &__header-row[data-device="mobile"] {
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--spacer-5);
+  }
+
+  &__header-save-main[data-device="mobile"] {
+    width: 100%;
+    min-width: 0;
+  }
+
+  &__header-title[data-device="mobile"] {
+    font-size: 24px;
+    line-height: 28px;
+  }
+
+  &__profile-body[data-device="mobile"] {
+    flex-direction: column;
+    align-items: center;
+    gap: var(--spacer-5);
+  }
+
+  &__profile-avatar-block[data-device="mobile"] {
+    align-self: center;
+  }
+
+  &__profile-fields[data-device="mobile"] {
+    width: 100%;
+  }
+
+  &__profile-fields-row[data-device="mobile"] {
+    flex-direction: column;
+  }
+
+  &__card[data-device="mobile"] {
+    padding: var(--spacer-5);
+    gap: var(--spacer-5);
+  }
+
+  // Inner rows (icon + text on left, button/toggle on right) start to
+  // wrap awkwardly at small widths. Allow them to stack if the right
+  // side has its own visible affordance (button/pill), but keep toggle
+  // rows inline since the switch is narrow.
+  &__inner[data-device="mobile"] {
+    flex-wrap: wrap;
+    row-gap: var(--spacer-3);
+  }
+}
+
+// ── Dark mode overrides ─────────────────────────────────────────
+// Remap hardcoded light-mode surfaces and text to theme-aware tokens.
+html[data-theme="dark"] {
+  .settings-main {
+    &__ui {
+      background: var(--normal-bg);
+    }
+
+    &__header-title,
+    &__card-title,
+    &__inner-title {
+      color: var(--normal-fg-10);
+    }
+
+    &__header-subtitle,
+    &__profile-bio-label,
+    &__entry-label,
+    &__inner-description {
+      color: var(--normal-fg-20);
+    }
+
+    &__card-subtitle {
+      color: var(--normal-fg-50);
+    }
+
+    &__profile-avatar-label {
+      color: var(--normal-fg-50);
+    }
+
+    &__profile-avatar-frame {
+      background: var(--normal-bg-80);
+    }
+
+    &__card {
+      background: var(--overlay-bg-05);
+    }
+
+    &__toast {
+      background: var(--normal-bg-elevated);
+
+      &-text {
+        color: var(--normal-fg-10);
+      }
+    }
+
+    &__inner {
+      background: var(--normal-bg-elevated);
+    }
+
+    &__profile-bio-input,
+    &__entry-input {
+      background: var(--normal-bg-elevated);
+      color: var(--normal-fg-10);
+
+      input,
+      textarea {
+        color: var(--normal-fg-10);
+      }
+    }
+
+    &__danger-row-delete {
+      background: rgba(246, 81, 75, 0.18);
+
+      .settings-main__inner-title {
+        color: var(--normal-fg-10);
+      }
+    }
+
+    &__toggle {
+      background: var(--normal-bg-40);
+    }
+
+    // Active display-mode text: light-purple in dark mode (same swap the
+    // sidebar makes), and a subtle elevated track instead of the light border.
+    &__theme-control {
+      border-color: var(--normal-bg-40);
+    }
+
+    &__theme-opt[data-active="1"] {
+      color: var(--primary-purple-20);
+    }
+  }
+}
+
+@keyframes settings-main-spinner {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes settings-toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}

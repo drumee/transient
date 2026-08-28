@@ -1,0 +1,124 @@
+
+@use 'mixins/drumee';
+
+.media-notifications {
+  &__ui {
+    position: absolute;
+    width: 200px;
+    background-color: var(--default-bg);   
+    top: 21px;
+    left: 64px;
+    z-index: 10000;
+    border-radius:var(--border-radius);
+
+    &[data-align="left"] {
+      left: -100px;
+      &:before {
+        left: 175px;
+      }
+    }
+
+    &:before {
+      content: " ";
+      width: 20px;
+      height: 20px;
+      top: -4px;
+      left: 12px;
+      background: var(--default-bg);
+      position: absolute;
+      -webkit-transform: rotate(45deg);
+      transform: rotate(45deg);
+    }
+
+    &.row {
+      background-color: var(--default-bg);
+      background: var(--default-bg);
+      left: 6px;
+      top:35px;
+      Z-index:10000;
+
+      &:before {
+        background-color:transparent !important;
+        box-shadow: -5px -6px 8px 3px rgba(63,79,117,.08);
+        content: " ";
+        height: 15px;
+        left: 100px;
+        position: absolute;
+        top: -7px;
+        transform: rotate(45deg);
+        width: 15px;
+        z-index: 0 !important;
+        -webkit-transform: rotate(45deg);
+      }
+    }
+  }
+
+  .list-smart__ui {
+    max-height:300px;
+    top:10px;
+    width: 200px;
+  }
+
+  &__main {
+    box-shadow: var(--shadow-container);
+    height: 100%;
+    overflow-x: hidden;
+    overflow-y: hidden;
+    padding-bottom: 20px;
+    padding-top: 20px;
+    width: 100%;
+    min-height: max-content;
+    z-index: auto;
+  }
+
+  &__list {
+    max-height:160px;
+  }
+
+  &__button {
+    &--close {
+      color: var(--default-thinline-icon);
+      height:12px;
+      padding:1.5px;
+      position: absolute;
+      right: 4px;
+      top: 4px;
+      width:12px;
+
+      &:hover {
+        color:var(--default-thinline-icon-hover);
+      }
+    }
+  }
+
+  &__header {
+    height: 20px;
+    top:0px;
+    width: 100%;
+  }
+
+  &__title {
+    margin-left:60px;
+    width:69px;
+    @include drumee.typo($size:14px,$line:20px,$weight:400,$color: var(--emauve-dark));
+  }
+
+  &__item {
+    &.ack {
+      height: 20px;
+      width:20px;
+      display:flex;
+      flex-direction: column;
+      justify-content: center;
+      margin: -1px 0 0 10%;
+
+      svg {
+        fill:var(--emauve-dark);
+        height: 18px;
+        opacity:0.65;
+        padding: 1px;
+        width: 17px;
+      }
+    }
+  }
+}

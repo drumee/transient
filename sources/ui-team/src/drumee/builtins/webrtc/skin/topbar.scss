@@ -1,0 +1,106 @@
+@use "mixins/drumee";
+@mixin webrtc-topbar {
+  &-topbar {
+    &__icon {
+      width: 24px;
+      height: 24px;
+      color: var(--white);
+      background-color: var(--primary-40);
+      cursor: pointer;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      border-radius: 4px;
+      svg {
+        width: 16px;
+        height: 16px;
+      }
+
+      &.desktopgroup {
+        // margin-top: 11px;
+      }
+
+      &:hover {
+        color: #879bff;
+        opacity: 1;
+      }
+    }
+
+    &__control {
+      .icon {
+        width: 12px;
+        height: 12px;
+        margin: auto 15px auto 0;
+        padding: 0;
+        color: var(--default-icon-reverse);
+      }
+    }
+  }
+
+  &__topbar {
+    &-container {
+      width: 100%;
+      height: auto;
+      justify-content: center;
+    }
+
+    &-title {
+      flex: 1;
+      align-items: center;
+      justify-content: center;
+
+      .name {
+        align-items: flex-start;
+        margin-left: -30px; //-54px;
+        max-width: 100%; //316px;
+        justify-content: center;
+        @include drumee.typo(
+          $size: 18px,
+          $line: 24px,
+          $weight: 400,
+          $color: var(--normal-fg-10)
+        );
+        @include drumee.overflow-text;
+
+        .note-content {
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+      }
+    }
+
+    &-notification {
+      font-size: 10px;
+      width: 13px; //15px;
+      height: 13px; //15px;
+      background-color: var(--default-bg);
+      top: 6px; //2px;
+      right: 6px;
+      border-radius: 50%;
+      justify-content: center;
+      cursor: pointer;
+
+      &[data-area="dmz"] {
+        .inner {
+          @include drumee.typo(
+            $size: 10px,
+            $weight: 500,
+            $line: 14px,
+            $color: var(--sharebox-main)
+          );
+        }
+
+        &.guest {
+          .inner {
+            color: #00b7c4;
+          }
+        }
+      }
+
+      &[data-state="0"] {
+        display: none;
+      }
+    }
+  }
+}

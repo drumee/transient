@@ -1,0 +1,90 @@
+/* ==================================================================== *
+ * desk_breadcrumb styles
+ * ==================================================================== */
+@use "mixins/drumee";
+
+.desk-breadcrumb {
+  &__ui {
+    flex: 1;
+    justify-content: flex-start;
+    display: flex;
+    color: #65656c;
+    min-width: 60px;  
+  }
+
+  &__main {
+    background-color: inherit;
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    gap: 0;
+    overflow: auto;
+    flex: 1;
+    height: 35px;
+    padding-left: 8px;
+    &::-webkit-scrollbar { width: 4px; };
+     &::-webkit-scrollbar-track { background: rgba(0, 0, 0, 0.05); };
+      &::-webkit-scrollbar-thumb { background: var(--primary-40); border-radius: 4px; }
+  }
+
+  &__context {
+    @include drumee.typo($color: #65656c, $size: 13px, $line: 18px);
+    cursor: pointer;
+    flex-shrink: 0;
+
+    &:hover {
+      text-decoration: underline;
+    }
+
+    &[data-current="1"] {
+      color: #000000;
+      font-weight: 700;
+    }
+  }
+}
+
+// Breadcrumb items scoped to desk context
+.desk-breadcrumb .window-breadcrumbs__item {
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 160px;
+
+  &--filename {
+    @include drumee.typo($size: 13px, $line: 24px);
+  }
+
+  &:last-child .window-breadcrumbs__item--filename {
+    font-weight: 600;
+  }
+
+  &:hover .window-breadcrumbs__item--filename {
+    text-decoration: underline;
+  }
+}
+
+// ── Dark mode overrides ─────────────────────────────────────────
+html[data-theme="dark"] {
+  .desk-breadcrumb {
+    &__ui {
+      color: var(--normal-fg-20);
+    }
+
+    &__context {
+      color: var(--normal-fg-20);
+
+      &[data-current="1"] {
+        color: var(--normal-fg);
+      }
+    }
+  }
+
+  .desk-breadcrumb .window-breadcrumbs__item {
+    color: var(--normal-fg-20);
+
+    &:last-child .window-breadcrumbs__item--filename {
+      color: var(--normal-fg);
+    }
+  }
+}

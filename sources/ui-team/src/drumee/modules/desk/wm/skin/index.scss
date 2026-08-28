@@ -1,0 +1,1172 @@
+@use "../../../../skin/mixins/drumee.scss";
+
+// Centres a wrapper-modal's dialog on the viewport. See the include sites.
+@mixin wrapper-modal-mobile-centre {
+  // !important on both, and it is the whole reason this mixin does anything.
+  //
+  // The sibling `&[data-state="open"]` rule above sets `position: absolute;
+  // inset: 0` at specificity 0,2,0. Two of this mixin's three include sites
+  // are `&:has(> *)` inside a media query, and `:has()` takes the specificity
+  // of its argument — `> *` is the universal selector, which contributes
+  // nothing — so those sites land at 0,1,0 and LOSE. The wrapper stayed
+  // absolute over .window-manager__ui, i.e. the desk body, which begins below
+  // the 44px mobile topbar.
+  //
+  // That is not cosmetic. This element takes `backdrop-filter` in blur mode,
+  // and a backdrop-filter makes an element the containing block for its
+  // fixed-position descendants — so a dialog centring itself with
+  // `position: fixed` resolves against THIS box, not the viewport. Measured at
+  // a 500px viewport before this change: the confirm card centred at (238, 401)
+  // against a screen centre of (250, 357) — off by the topbar vertically and by
+  // half the scrollbar horizontally, and by much more whenever this box is
+  // narrower than the screen.
+  //
+  // Pinning the wrapper to the viewport fixes both paths at once: the flex
+  // centring below, and any dialog that still positions itself fixed.
+  position: fixed !important;
+  inset: 0 !important;
+
+  > * {
+    // Join the flex flow so the host's align/justify centre this. Inset is
+    // reset because `relative` still honours the inline left/top the window
+    // manager writes; margin because a dialog may carry its own.
+    position: relative !important;
+    inset: auto !important;
+    margin: auto !important;
+    // The fourth neutraliser, and the one whose absence broke this.
+    //
+    // A dialog that centres ITSELF does it with `position: fixed; left: 50%;
+    // top: 50%` plus `transform: translate(-50%, -50%)` — the translate exists
+    // only to cancel the 50% offsets. The three lines above strip the offsets,
+    // but a transform is not a positioning property and survived them, so the
+    // translate stayed and displaced a card that flex had already centred.
+    //
+    // Measured on a 390×844 phone, confirm card 351×157: flex placed it at
+    // x = (390-351)/2 = 19.5, then the orphaned translate moved it to
+    // 19.5 - 175.5 = -156 — 156px off the left edge of the screen, with its
+    // own centre at x=20 against a screen centre of 195. Vertically the same:
+    // 343.5 - 78.5 = 265.
+    //
+    // Joining the flex flow and self-centring are alternatives, never both.
+    // This is what makes that exclusive, for every dialog fed through here —
+    // not only the confirm, whose own mixin is simply the one that happens to
+    // use the translate recipe today.
+    transform: none !important;
+    // Never wider or taller than the screen it is being centred on.
+    max-width: calc(100vw - 32px);
+    max-height: calc(100dvh - 32px);
+
+    // ...and never a sliver. A dialog whose body renders empty collapses to
+    // its widest child — for the trash confirm that is the button row, about
+    // 190px on a 390px screen, which reads as a broken fragment rather than a
+    // dialog. A floor keeps it dialog-shaped whatever its content does.
+    //
+    // A minimum rather than a fixed width on purpose: dialogs that size
+    // themselves (the invite popup's 450px, the confirm's own
+    // calc(100vw - 32px)) still win, so this only catches the ones that end up
+    // with nothing to size against.
+    min-width: min(320px, calc(100vw - 32px));
+  }
+}
+
+
+.window-manager {
+  &__ui {
+    background-color: transparent;
+    box-shadow: none;
+    position: absolute;
+    width: calc(100% - 10px);
+    height: 100%;
+    min-height: calc(100vh - 160px);
+    // Confines home content's z-indices so re-rendered grid items can't
+    // escape to the root and paint above the settings/apps slot (1500).
+    isolation: isolate;
+
+    &[data-device="mobile"] {
+      // Let the parent flex container (.desk-module__wm-container) own
+      // the height. The previous `calc(100vh - 260px)` reserved 260px
+      // for the desktop topbar + sidebar + dock — none of which exist
+      // on mobile anymore, so it just clipped the bottom 212px of the
+      // workspace grid.
+      height: 100%;
+      min-height: 0;
+    }
+
+    // Same intent for Chrome DevTools mobile emulator (viewport <650 but
+    // desktop UA) where `data-device` resolves to "desktop" and the
+    // attribute-based rule above doesn't fire.
+    @media (max-width: 650px) {
+      & {
+        height: 100%;
+        min-height: 0;
+      }
+    }
+
+    &[data-kind="window_manager"] {
+      box-shadow: none;
+    }
+  }
+
+  &__main {
+    width: 100%;
+    position: absolute;
+    height: 100%;
+    min-height: calc(100vh - 160px);
+    overflow: visible;
+  }
+
+  &__icons-list {
+    display: flex;
+    flex-direction: row;
+    justify-content: flex-start;
+    align-items: flex-start;
+    height: 100%;
+    max-height: none;
+    min-height: 0;
+    overflow-y: auto;
+    width: 100%;
+
+    // &[data-device="mobile"]{
+    //   padding: 0;
+    //   height: calc(100vh - 160px);
+    // }
+    &[data-wait="1"] {
+      &:after {
+        content: " ";
+        display: block;
+        width: 60px;
+        height: 60px;
+        border-radius: 50%;
+        border: 5px solid #879bff;
+        border-color: #879bff transparent #879bff transparent;
+        animation: drumee-spinner 1.2s linear infinite;
+        margin: auto;
+        position: absolute;
+      }
+    }
+  }
+
+  // The acknowledge mascot (ui-core preset/ack -> profile/templates/avatar)
+  // fills itself from a linearGradient whose two stops carry these classes, so
+  // its colour is CSS-driven. Both stops are the SAME brand indigo (#433cc5) —
+  // the flat logo, no gradient — matching the sidebar logo and
+  // icons/src/raw/logo-drumee-icon.svg.
+  // NOT --primary-500/-400: revamp.scss declares two --primary-* scales in the
+  // same :root and the later (lilac) one wins, so those resolved to #b251fb /
+  // #c781ff. --primary-purple-50 has no duplicate overriding it.
+  &__gradient-mascot {
+    &-start {
+      stop-color: var(--primary-purple-50);
+    }
+
+    &-end {
+      stop-color: var(--primary-purple-50);
+    }
+  }
+
+  &__acknowledge {
+    &-icon {
+      width: 100%;
+      justify-content: center;
+
+      svg {
+        width: 140px;
+        height: 140px;
+      }
+
+      // The avatar template hardcodes a drop-shadow whose feColorMatrix is a
+      // purple (#881dd3) that no class can reach, so it survived the recolour
+      // as a lilac halo around an indigo logo. CSS `filter` overrides the SVG
+      // presentation attribute, giving the flat mark the brand sheet shows.
+      g[filter] {
+        filter: none;
+      }
+    }
+
+    &-text {
+      width: 100%;
+      justify-content: center;
+    }
+  }
+
+  &__icons-scroll {
+    margin: 0;
+    min-height: 0;
+    padding-top: 24px;
+
+    &.smart-container {
+      height: 100%;
+      min-height: 0;
+      overflow-y: auto;
+      align-content: flex-start;
+    }
+
+    &[data-type="trial"]::after {
+      @include drumee.typo(
+        $size: 36px,
+        $line: 42px,
+        $color: var(--default-text-title)
+      );
+      transform: none;
+      bottom: 0;
+      width: 100%;
+    }
+
+    &[data-type="error"]::after {
+      @include drumee.typo($size: 76px, $line: 2, $color: red);
+      transform: none;
+      width: 100%;
+      background-color: white;
+      bottom: calc(50% - 76px);
+    }
+  }
+
+  &__wrapper-modal {
+    &[data-state="open"] {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      z-index: 20000;
+      align-items: center;
+      justify-content: center;
+      overflow: clip;
+      background: transparent;
+      backdrop-filter: none;
+      -webkit-backdrop-filter: none;
+    }
+
+    &[data-overlay="blur"],
+    &[data-state="open"][data-overlay="blur"] {
+      @include drumee.glass-overlay;
+    }
+
+    // The flat alternative to the glass above: `--overlay-bg` (the same
+    // theme-aware scrim the activity panel puts behind its mobile card) with
+    // the blur(6px) it was designed to pair with, and glass's stacked
+    // `::before` layer switched off — all of which scrim-overlay does.
+    //
+    // A separate `data-overlay` value rather than a `:has()` override on the
+    // blur one (which is how invite-popup and the media form reach the same
+    // mixin). Those predate this value and each had to name the dialog inside
+    // the wrapper, with a doubled class to win specificity; a caller that owns
+    // its own open path — window_confirm does, see manager.js confirm() — can
+    // simply ask for the backdrop it wants instead.
+    //
+    // Emitted in both forms for the same reason the blur rule is: the sibling
+    // `[data-state="open"]` block sets `backdrop-filter: none` at 0,2,0, so the
+    // bare 0,2,0 form would only tie with it and be decided by source order.
+    &[data-overlay="scrim"],
+    &[data-state="open"][data-overlay="scrim"] {
+      @include drumee.scrim-overlay;
+    }
+
+    // ── Mobile: centre whatever this hosts ──────────────────────────────
+    // This element is already a full-inset centring flex container, but its
+    // children never benefit: dialogs fed in here are position:absolute (plus
+    // inline left/top the window manager stamps on the instance), so they sit
+    // out of flow and land wherever those offsets put them — top-left of the
+    // anchor, in practice.
+    //
+    // Centring each dialog from its own skin means naming its class, and that
+    // keeps missing: the trash Empty-Trash confirm renders a card that matches
+    // none of the .window-confirm__ui rules deployed for it. Centring from the
+    // HOST needs no class at all — every dialog Wm feeds through
+    // Wm.__wrapperModal (confirm, invite, request-access, the create-workspace
+    // form) is a direct child here, so this reaches all of them.
+    //
+    // `relative`, not `static`: it neutralises the inline offsets just the same
+    // once inset is reset, but it stays a containing block, so a dialog whose
+    // close button is position:absolute keeps resolving against its own card
+    // rather than escaping to this wrapper.
+    //
+    // The wrapper itself is pinned to the viewport here. Left absolute it spans
+    // .window-manager__ui — the desk BODY, which starts below the 44px mobile
+    // topbar — so "centred" would sit about 22px low.
+    //
+    // Emitted twice, as mixins/responsive.scss does it: Visitor.device() only
+    // answers "mobile" below 801px, so the attribute is absent in the DevTools
+    // emulator and on a landscape phone.
+    // Keyed on "does it hold a dialog", NOT on [data-state="open"].
+    //
+    // The open state is what gives this element its inset:0 size (see the rule
+    // above). When it is missing, a hosted dialog's max-width/max-height:100%
+    // resolve against a container with no size, so the card collapses to its
+    // widest child — the button row — and its body is clipped to nothing. That
+    // is the ~190px fragment the trash confirm was rendering as. Requiring the
+    // same attribute here would have made this rule sit out precisely when it
+    // is needed most.
+    //
+    // :has(> *) rather than :not(:empty): both mean "hosting something", but
+    // :empty is defeated by a stray whitespace text node, and being wrong in
+    // that direction would pin an invisible full-screen fixed layer over the
+    // app whenever the wrapper is idle.
+    &[data-device="mobile"]:has(> *) {
+      @include wrapper-modal-mobile-centre;
+    }
+
+    @media (max-width: 650px) {
+      &:has(> *) {
+        @include wrapper-modal-mobile-centre;
+      }
+    }
+
+    // Tablets. Same recipe, same reasoning — the only thing that changes is
+    // which viewports reach it. Visitor.device() has no tablet tier (user.js
+    // returns `desktop` above 800px, and `mobile` only below that AND with
+    // /mobile/i in the UA, which a modern iPad's Macintosh UA never matches),
+    // so neither branch above fires on a tablet and every dialog this hosts
+    // stayed at the window manager's inline left/top.
+    //
+    // Centring from the HOST rather than from each dialog's own skin matters
+    // more here than the note above already argues, because a dialog centring
+    // itself with `position: fixed` cannot be trusted to reach the viewport:
+    // this wrapper takes `backdrop-filter` in blur mode (see [data-overlay]
+    // above), and a backdrop-filter makes an element the containing block for
+    // its fixed-position descendants. Verified in a headless render — with the
+    // filter applied, a fixed card centres on THIS box, and when this box is
+    // narrower than the card's min-width the card anchors to its edge and
+    // overflows instead of centring. Flex-centring a `position: relative`
+    // child, which is what the mixin switches to, has no such failure mode.
+    @media (min-width: 651px) and (max-width: 1024px) {
+      &:has(> *) {
+        @include wrapper-modal-mobile-centre;
+      }
+    }
+  }
+
+  &__create-folder-dialog {
+    background: var(--normal-bg);
+    box-shadow: 0 1px 11px rgba(0, 0, 0, 0.13);
+    border-radius: 8px;
+    border: 1px solid var(--border-default);
+    width: 360px;
+  }
+
+  &__create-folder-header {
+    align-items: flex-start;
+    border-bottom: 1px solid var(--border-default);
+    justify-content: space-between;
+    padding: 24px 24px 25px;
+  }
+
+  &__create-folder-heading {
+    gap: 4px;
+  }
+
+  &__create-folder-title {
+    @include drumee.typo(
+      $size: 18px,
+      $line: 24px,
+      $weight: 600,
+      $color: var(--normal-fg)
+    );
+  }
+
+  &__create-folder-subtitle {
+    @include drumee.typo(
+      $size: 12px,
+      $line: 17px,
+      $weight: 400,
+      $color: #65656c
+    );
+  }
+
+  &__create-folder-close {
+    color: var(--normal-fg);
+    height: 24px;
+    padding: 0;
+    width: 14px;
+  }
+
+  &__create-folder-content {
+    gap: 16px;
+    padding: 24px;
+  }
+
+  &__create-folder-label {
+    @include drumee.typo(
+      $size: 12px,
+      $line: 14px,
+      $weight: 600,
+      $color: var(--normal-fg)
+    );
+  }
+
+  &__create-folder-entry {
+    width: 100%;
+
+    input {
+      @include drumee.typo(
+        $size: 12px,
+        $line: 17px,
+        $weight: 400,
+        $color: var(--normal-fg)
+      );
+      background: var(--normal-bg-elevated);
+      border: 0;
+      border-radius: 8px;
+      min-height: 41px;
+      padding: 12px;
+    }
+  }
+
+  &__create-folder-footer {
+    padding: 0 24px 24px;
+  }
+
+  &__create-folder-button {
+    @include drumee.typo(
+      $size: 14px,
+      $line: 20px,
+      $weight: 600,
+      $color: #ffffff
+    );
+    align-items: center;
+    border-radius: 4px;
+    cursor: pointer;
+    justify-content: center;
+    padding: 8px 24px;
+    text-align: center;
+    width: 100%;
+
+    &.primary {
+      background: #433cc5;
+    }
+  }
+
+  // "File created" card, shown after a new document / spreadsheet /
+  // presentation is created (notifyFileCreated). Bottom-right, same corner
+  // as upload progress and one step above it so the card is never buried.
+  &__file-created-layer {
+    position: fixed;
+    right: 24px;
+    bottom: 24px;
+    z-index: calc(var(--z-index-upload-progress, 50002) + 1);
+
+    &:empty,
+    &[data-state="closed"] {
+      display: none;
+    }
+  }
+
+  &__file-created {
+    align-items: center;
+    gap: 12px;
+    padding: 12px 14px;
+    border-radius: 8px;
+    background-color: var(--normal-bg);
+    box-shadow: 0 4px 18px 0 rgba(0, 0, 0, 0.18);
+    min-width: 260px;
+
+    &-body {
+      align-items: center;
+      gap: 12px;
+      cursor: pointer;
+      flex: 1;
+    }
+
+    &-ico {
+      width: 32px;
+      height: 32px;
+      flex-shrink: 0;
+
+      svg {
+        width: 100%;
+        height: 100%;
+        display: block;
+      }
+    }
+
+    &-title {
+      @include drumee.typo($color: var(--normal-fg-10), $weight: 700, $size: 13px, $line: 1.3);
+    }
+
+    &-name {
+      @include drumee.typo($color: var(--normal-fg-30), $weight: 500, $size: 12px, $line: 1.3);
+      word-break: break-all;
+    }
+
+    &-hint {
+      @include drumee.typo($color: var(--normal-fg-50), $weight: 500, $size: 11px, $line: 1.3);
+    }
+
+    &-close {
+      flex-shrink: 0;
+      cursor: pointer;
+      width: 16px;
+      height: 16px;
+
+      svg {
+        width: 100%;
+        height: 100%;
+        fill: var(--normal-fg-50);
+      }
+    }
+  }
+
+  &__layer {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 0;
+    height: 0;
+    overflow: visible;
+    user-select: none;
+    z-index: 1300;
+
+    &[data-device="mobile"] {
+      width: 100%;
+      height: 100%;
+    }
+
+    // The headless layer hosts the full-area workspace pane. It is normally a
+    // 0x0 positioning anchor; give it the full work area ONLY while it hosts a
+    // pane so the pane (sized 100%, see window-folder skin) tracks the flex
+    // container as the sidebar pins/collapses/resizes. When empty (home grid
+    // shown) it stays 0x0 so it never covers or blocks the grid below it.
+    //
+    // `__ui` is `calc(100% - 10px)` — a right gutter the home grid uses (e.g.
+    // for the scrollbar). The pane should be full-bleed, so add that 10px back
+    // here to reach the container's right edge instead of stopping short of it.
+    &.headless:has(.window-folder__ui[data-headless="1"]) {
+      width: calc(100% + 10px);
+      height: 100%;
+    }
+
+    // When both layers are non-empty they resolve to the same z-index (the
+    // global [data-state="open"] lift), so paint order falls back to DOM
+    // order and headless-layer — later in the DOM — fully covers windowsLayer
+    // popups. The active-window lift (z 10000) cannot cross sibling stacking
+    // contexts, so raising a covered popup changed its state but stayed
+    // hidden. Lift whichever layer hosts the active window instead: direct
+    // children of a layer are only top-level windows/players, and the shared
+    // radio channel keeps at most one at data-state="1" app-wide.
+    // !important to out-cascade the global [data-state="open"] lift;
+    // upload-progress is excluded because it carries its own fixed z-index,
+    // set ABOVE this one so the floater stays visible over any raised window.
+    &:not(.upload-progress-layer):has(> [data-state="1"]) {
+      z-index: 50001 !important;
+    }
+
+    // The call layer (see wm/skeleton) deliberately carries NO z-index of its
+    // own: it exists to keep a live call out of the layers the desk recycles,
+    // not to change how it stacks. It therefore behaves as any window layer —
+    // 50000 while it holds a window (the global `[data-state="open"]` lift in
+    // skin/lib/utils.scss), the 50001 focus lift above, ties broken by DOM
+    // order, which puts it above the other windows and below __wrapper-modal.
+    //
+    // And nothing here can lift it over the desk's full-page screens: `isolation:
+    // isolate` on &__ui (above) traps every layer inside the WM's stacking
+    // context by design. That is why the "come back to the call" affordance is a
+    // desk-level pill (desk/skeleton call-dock) rather than the parked tile.
+
+    // Upload progress floater — above EVERY window layer, including the
+    // active-window lift right above (50001) and the per-window lift in
+    // window/skin/window.scss (`[data-state="1"]` → 10000 !important).
+    //
+    // It used to sit at 9000, i.e. below both, so the moment the user clicked
+    // any window the floater disappeared behind it — the popup reporting an
+    // upload is exactly what you want to keep watching while you carry on
+    // working. This layer is excluded from the lift rule above, so it cannot
+    // ride up on its own; the number has to clear the lift by itself.
+    //
+    // `!important` is not optional here. This layer is a Wrapper, whose
+    // `wrapper` behavior stamps `data-state="open"` on the element as soon as
+    // it holds a child — and skin/lib/utils.scss carries a global
+    // `[data-state="open"] { z-index: var(--z-index-context) !important }`
+    // (50000). A plain declaration loses to it, so the floater was pinned at
+    // 50000 alongside every other populated layer, and the lift above then put
+    // the focused window's layer at 50001 on top of it. That is the whole bug:
+    // the number here never applied at all.
+    //
+    // Trade-off: this also clears the desk slide-out panels (chat /
+    // notification / trash at 10001), so an open panel is overlapped in the
+    // bottom-right corner where the floater sits. Accepted — an upload in
+    // flight outranks a panel, and the floater is small and dismissible.
+    &.upload-progress-layer {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 0;
+      height: 0;
+      overflow: visible;
+      z-index: var(--z-index-upload-progress, 50002) !important;
+      pointer-events: none;
+
+      .window-upload-progress__ui {
+        pointer-events: auto;
+      }
+    }
+
+    &.creating-hub {
+      .window__ui {
+        &[data-state="0"] {
+          .window__main {
+            opacity: 0.3;
+          }
+        }
+      }
+    }
+  }
+
+  &__wrapper.bug-report {
+    background-color: rgba(47, 47, 47, 0.5);
+    border-radius: var(--border-radius);
+    cursor: pointer;
+    height: 35px;
+    justify-content: center;
+    position: absolute;
+    right: 0px;
+    bottom: -65px;
+    z-index: 20000;
+    padding: 0 20px;
+    box-shadow:
+      0 2px 2px 1px rgb(63 79 117 / 13%),
+      0 6px 16px 0 rgb(86 65 113 / 8%),
+      0 2px 14px 0 rgb(194 185 203 / 0%);
+
+    &:hover {
+      background-color: var(--default-bg-hover);
+      z-index: 200000;
+    }
+
+    &::before {
+      backdrop-filter: blur(27px);
+      border-radius: 6px 6px 0 0;
+      content: "";
+      cursor: pointer;
+    }
+  }
+
+  &__bug-report {
+    align-items: center;
+    cursor: pointer;
+    text-align: center;
+    @include drumee.typo(
+      $size: 14px,
+      $line: 15px,
+      $color: var(--default-text-reverse)
+    ); //$size: 13px,
+  }
+
+  b {
+    font-weight: bold;
+  }
+
+  &__disk {
+    &-main {
+      width: 610px;
+      max-width: 100%;
+      position: absolute;
+      height: 380px;
+      background-color: var(--default-bg);
+      border-radius: var(--border-radius);
+      align-items: center;
+      min-height: 345px;
+      //box-shadow: var(--shadow-container);
+      padding-top: 60px;
+    }
+
+    &-content {
+      width: 100%;
+      height: 100%;
+    }
+  }
+
+  &__header {
+    width: 100%;
+    height: 54px;
+    justify-content: space-between;
+    padding: var(--spacer-4) var(--spacer-5);
+    border-bottom: 1px solid var(--neutral-200);
+  }
+
+  &__topics {
+    width: 100%;
+    padding: var(--spacer-5) var(--spacer-4);
+    border-bottom: 1px solid var(--neutral-200);
+    gap: var(--spacer-2);
+
+    &[data-device="mobile"] {
+      gap: 0;
+      width: 360px;
+      flex-direction: row;
+      align-items: center;
+      overflow-x: auto;
+    }
+  }
+
+  &__item {
+    align-items: center;
+    width: 100%;
+    height: 34px;
+    padding: var(--spacer-3) var(--spacer-4);
+    gap: 8px;
+    font-size: 12px;
+    font-weight: 400;
+    line-height: 18px;
+    border-radius: var(--corner-radius-3);
+    cursor: pointer;
+
+    &[data-device="mobile"] {
+      flex-shrink: 0;
+      width: 150px;
+      justify-content: center;
+    }
+
+    &[data-radio="on"] {
+      border: 1px var(--primary-500) solid;
+      background-color: var(--primary-100);
+    }
+
+    &-icon {
+      width: 16px;
+      height: 16px;
+      color: var(--neutral-500);
+    }
+
+    &-text {
+      font-size: 12px;
+      line-height: 18px;
+      font-weight: 600;
+      color: var(--neutral-900);
+
+      &[data-device="mobile"] {
+        margin-top: var(--spacer-2);
+      }
+    }
+
+    &.active {
+      border: 1px solid var(--primary-500);
+    }
+  }
+
+  &-sidebar {
+    &__main {
+      justify-content: space-between;
+    }
+
+    &__header {
+      gap: var(--spacer-3);
+      padding: var(--spacer-4);
+      border-bottom: 1px solid var(--neutral-600);
+
+      &-workspace {
+        align-items: center;
+        gap: var(--spacer-2);
+      }
+
+      &-status {
+        width: var(--spacer-3);
+        height: var(--spacer-3);
+        background: var(--green-400);
+        border-radius: 50%;
+      }
+    }
+
+    &__footer {
+      &-user-btn {
+        align-items: center;
+        padding: var(--spacer-3) var(--spacer-4);
+        gap: var(--spacer-3);
+        font-size: 12px;
+        font-weight: 400;
+        line-height: 18px;
+        border-radius: var(--corner-radius-3);
+        cursor: pointer;
+      }
+
+      &-avatar {
+        width: var(--spacer-8);
+        height: var(--spacer-8);
+        background-color: var(--primary-500);
+        align-items: center;
+        justify-content: center;
+        border-radius: 50%;
+
+        &-note {
+          color: var(--white);
+        }
+      }
+    }
+  }
+
+  &-actions {
+    &__buttons-wrapper {
+      gap: var(--spacer-4);
+      padding: var(--spacer-4) var(--spacer-9) 0;
+    }
+
+    &__label-button {
+      cursor: pointer;
+      align-items: center;
+      justify-content: center;
+      padding: var(--spacer-3) var(--spacer-6);
+      color: var(--normal-bg-100);
+      background-color: var(--primary-400);
+      border-radius: var(--corner-radius-2);
+      font-size: 14px;
+      display: flex;
+      gap: var(--spacer-2);
+
+      svg {
+        width: 16px;
+        height: 16px;
+      }
+
+      &:hover {
+        color: var(--normal-fg-10);
+      }
+
+      &.primary {
+        color: var(--normal-fg-10);
+        background-color: var(--normal-bg-90);
+      }
+
+      &.secondary {
+        color: var(--neutral-900);
+        background-color: var(--primary-400);
+      }
+    }
+
+    &__icon-button {
+      display: flex;
+      cursor: pointer;
+      align-items: center;
+      justify-content: center;
+      color: var(--normal-fg-10);
+
+      svg {
+        width: 20px;
+        height: 20px;
+      }
+
+      &:hover {
+        color: var(--normal-fg-20);
+      }
+
+      .icon {
+        width: 20px;
+        height: 20px;
+      }
+    }
+
+    &__icon-bg-button {
+      cursor: pointer;
+      background-color: var(--normal-bg-90);
+      color: var(--normal-fg-10);
+      padding: var(--spacer-2) var(--spacer-4);
+      border-radius: var(--corner-radius-2);
+
+      svg {
+        width: 24px;
+        height: 20px;
+      }
+
+      &:hover {
+        color: var(--normal-fg-20);
+      }
+
+      &.primary {
+        color: var(--normal-fg-10);
+        background-color: var(--normal-bg-90);
+      }
+
+      &.secondary {
+        color: var(--normal-bg-100);
+        background-color: var(--primary-400);
+      }
+    }
+
+    &__dropdown-button {
+      cursor: pointer;
+      background-color: var(--normal-bg-90);
+      color: var(--normal-fg-10);
+      padding: var(--spacer-2) var(--spacer-4);
+      border-radius: var(--corner-radius-2);
+
+      svg {
+        width: 24px;
+        height: 20px;
+      }
+
+      &:hover {
+        color: var(--normal-fg-20);
+      }
+    }
+
+    &__dropdown-menu {
+      &__wrapper {
+        .menu-topic-items {
+          border-radius: var(--corner-radius-2);
+          background-color: var(--normal-bg-100);
+          width: 200px;
+          padding: var(--spacer-4);
+          border: 1px solid var(--neutral-800);
+
+          &__wrapper {
+            padding: var(--spacer-4);
+
+            &[data-device="mobile"] {
+              left: 50%;
+              transform: translateX(-50%);
+            }
+          }
+        }
+      }
+
+      &__items {
+        width: 100%;
+        gap: var(--spacer-2);
+      }
+
+      &__item {
+        cursor: pointer;
+        padding: var(--spacer-2) var(--spacer-4);
+        align-items: center;
+        border-radius: var(--corner-radius-1);
+        gap: var(--spacer-5);
+
+        &:hover {
+          background-color: var(--primary-500);
+          color: var(--white);
+
+          .window-button__dropdown-menu__name {
+            color: var(--white);
+          }
+
+          svg {
+            fill: var(--white);
+          }
+        }
+      }
+
+      &__icon {
+        width: 24px;
+        height: 24px;
+
+        svg {
+          fill: var(--normal-fg-10);
+        }
+      }
+
+      &__name {
+        font-size: 14px;
+        line-height: 16px;
+        color: var(--normal-fg-10);
+      }
+
+      &__separator {
+        background-color: var(--default-separator);
+        border-radius: 1px;
+        height: 1.5px;
+        margin: 5px 20px;
+        width: calc(100% - 40px);
+      }
+    }
+  }
+}
+
+.list-smart {
+  &-sidebar {
+    &__workspace {
+      gap: var(--spacer-3);
+      padding: var(--spacer-4);
+    }
+
+    &__workspace-item {
+      align-items: center;
+      gap: var(--spacer-2);
+      padding: var(--spacer-3);
+      cursor: pointer;
+      transition: background 0.2s;
+      border-radius: var(--corner-radius-2);
+
+      &:hover {
+        background: var(--neutral-300);
+      }
+
+      &[active="1"] {
+        background: var(--neutral-700);
+      }
+
+      &-status {
+        width: var(--spacer-3);
+        height: var(--spacer-3);
+        background: var(--green-400);
+        border-radius: 50%;
+      }
+    }
+
+    &__footer {
+      &-user-btn {
+        align-items: center;
+        padding: var(--spacer-3) var(--spacer-4);
+        gap: var(--spacer-3);
+        font-size: 12px;
+        font-weight: 400;
+        line-height: 18px;
+        border-radius: var(--corner-radius-3);
+        cursor: pointer;
+      }
+
+      &-avatar {
+        width: var(--spacer-8);
+        height: var(--spacer-8);
+        background-color: var(--primary-500);
+        align-items: center;
+        justify-content: center;
+        border-radius: 50%;
+
+        &-note {
+          color: var(--white);
+        }
+      }
+    }
+  }
+}
+
+.window__icons-scroll {
+  &.sidebar-flex {
+    height: 200px !important;
+    display: flex !important;
+    flex-direction: column;
+    padding: var(--spacer-4);
+    margin: 0;
+    align-items: start;
+    gap: 0;
+    overflow: auto;
+    justify-content: start;
+  }
+}
+
+.window-manager__icons-scroll.smart-container > .media-grid__ui {
+  flex: 0 0 auto;
+  height: var(--grid-cell-h-file);
+  width: var(--grid-cell-w);
+}
+
+.window-manager__icons-scroll.smart-container[data-partitioning="1"]
+  > .media-grid__ui {
+  visibility: hidden;
+}
+
+.window-manager__icons-scroll.smart-container > .workspace-section,
+.window-manager__icons-scroll.smart-container > .folder-section,
+.window-manager__icons-scroll.smart-container > .file-section {
+  > .media-grid__ui {
+    visibility: visible;
+  }
+}
+
+// ── Shared ──
+.workspace-section,
+.folder-section,
+.file-section {
+  display: grid;
+  gap: var(--grid-gap);
+  padding: 8px var(--grid-padding);
+  width: 100%;
+  // border-box: with content-box the horizontal padding made the section 80px
+  // wider than its panel, so the last column bled under the chat panel.
+  box-sizing: border-box;
+  flex: 0 0 auto !important; // override framework's inline flex-grow:1
+
+  &:empty,
+  &[data-empty="1"] {
+    display: none;
+    padding: 0;
+  }
+}
+
+// ── Workspace + Folder: shorter cells (--grid-cell-h-folder) ──
+.workspace-section,
+.folder-section {
+  grid-template-columns: repeat(auto-fill, var(--grid-cell-w));
+  grid-auto-rows: var(--grid-cell-h-folder);
+  overflow: visible;
+}
+
+// ── File: taller cells (--grid-cell-h-file, card 119 + meta + gap) ──
+.file-section {
+  grid-template-columns: repeat(auto-fill, var(--grid-cell-w));
+  grid-auto-rows: var(--grid-cell-h-file);
+  overflow: visible;
+}
+
+
+
+// Tablet landscape (768–1024px) — bigger, full-size desktop icons instead
+// of the 90px + scale(0.75) recipe the rest of the ≤1024px range uses.
+// Placed AFTER the ≤1024px block so it wins for this range (same
+// specificity → source order decides).
+@media (min-width: 768px) and (max-width: 1024px) {
+  .workspace-section,
+  .folder-section {
+    grid-template-columns: repeat(auto-fill, var(--grid-cell-w));
+    grid-auto-rows: var(--grid-cell-h-folder);
+
+    .media-grid__container {
+      transform: none;
+    }
+  }
+
+  .file-section {
+    grid-template-columns: repeat(auto-fill, var(--grid-cell-w));
+    grid-auto-rows: var(--grid-cell-h-file);
+
+    .media-grid__container {
+      transform: none;
+    }
+  }
+}
+
+
+// Phone — 2 fixed columns, full-size icons. Cells flex with viewport
+// so labels get real room (a 430px iPhone gives ~190px cells vs the
+// prior 70px scaled-down recipe).
+@media (max-width: 480px) {
+  .workspace-section,
+  .folder-section,
+  .file-section {
+    gap: 12px;
+    padding: 8px 12px;
+  }
+
+  .workspace-section,
+  .folder-section {
+    grid-template-columns: 1fr 1fr;
+    grid-auto-rows: var(--grid-cell-h-folder);
+
+    .media-grid__container {
+      transform: none;
+    }
+
+    > .media-grid__ui {
+      width: 100%;
+      max-width: 100%;
+    }
+  }
+
+  .file-section {
+    grid-template-columns: 1fr 1fr;
+    // Let each row grow to fit the actual card height. Desktop's fixed
+    // 184px row was calibrated against a 120×120 card; with the mobile
+    // card cap (~140×140 in container.scss) + 2-line filename + date,
+    // content needs ~212px. minmax keeps a 184px floor for very short
+    // labels but allows the row to expand when content is taller —
+    // prevents the next row's cards from drawing on top of the
+    // previous row's meta-row.
+    grid-auto-rows: minmax(var(--grid-cell-h-file), auto);
+
+    .media-grid__container {
+      transform: none;
+    }
+
+    > .media-grid__ui {
+      width: 100%;
+      max-width: 100%;
+    }
+  }
+}

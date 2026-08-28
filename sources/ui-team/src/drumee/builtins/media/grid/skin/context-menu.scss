@@ -1,0 +1,56 @@
+@use "mixins/drumee";
+
+.media-grid {
+  // File kebab — sits inline in .meta-row-top alongside the filename.
+  // Theme-aware foreground via --grid-color-meta. Always-visible.
+  .media-context-menu__trigger {
+    width: 16px;
+    height: 16px;
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    z-index: 15;
+    border-radius: var(--corner-radius-1);
+    color: var(--grid-color-meta);
+
+    &:hover {
+      background-color: var(--hover-bg-40);
+      color: var(--normal-fg);
+    }
+  }
+
+  .media-context-menu__trigger-icon {
+    width: 12px;
+    height: 12px;
+    fill: currentColor;
+    pointer-events: none;
+  }
+
+  // Workspace / folder kebab — Figma 264:80393 / 264:81896. Three small
+  // white circles at the bottom-right corner of the folder shape, mirroring
+  // the area badge. Always-visible.
+  .media-context-menu__folder-trigger {
+    position: absolute;
+    bottom: 11px;
+    right: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    z-index: 15;
+    padding: 4px;
+    border-radius: var(--corner-radius-1);
+
+    &:hover {
+      background-color: rgba(255, 255, 255, 0.18);
+    }
+  }
+
+  .media-context-menu__folder-trigger-icon {
+    width: 12px;
+    height: 10px;
+    pointer-events: none;
+  }
+}

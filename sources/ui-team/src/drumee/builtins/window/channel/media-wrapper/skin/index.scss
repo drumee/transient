@@ -1,0 +1,15 @@
+
+@use 'mixins/drumee.scss';
+
+.media-wrapper{
+  &__ui {
+    background-color:var(--default-background);
+  }
+  &__body {
+    height: 100%;
+  }
+  & .list-content {
+    display: flex;
+    flex-wrap: wrap;
+  }
+} 

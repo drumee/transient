@@ -1,0 +1,246 @@
+// Shared OTP-gate modal — used by any settings widget that needs an
+// email-OTP step-up confirmation (MFA toggle, OAuth-only delete-account
+// or change-email, etc.).
+//
+// Visual spec follows the "Unlock Activity Insights" Figma popup
+// (file g5V3PjhNMf5bHlsHMvV17w, node 100:53094):
+//   width 450, padding 32, gap 32, radius 12, two-layer shadow,
+//   Geist 20/14 typography, Primary/100 heading, Grey/80 body.
+
+.otp-gate-card {
+  position: relative;
+  flex: 0 0 auto;
+  background: #ffffff;
+  border-radius: 12px;
+  box-shadow: 0 1px 11px 0 rgba(0, 0, 0, 0.13),
+    0 25px 50px -12px rgba(0, 0, 0, 0.25);
+  width: 450px;
+  max-width: calc(100vw - 32px);
+  padding: 32px;
+  gap: 32px;
+  align-items: center;
+  font-family: "Geist", system-ui, sans-serif;
+  pointer-events: auto;
+
+  // Close button: 32×32 hit target with 16×16 icon, top-right corner.
+  // Visible border on hover so it reads as the dismiss control — the rest
+  // of the card is click-sunk (bubble:0) so users have no other way out.
+  &__close-btn {
+    position: absolute;
+    top: 12px;
+    right: 12px;
+    z-index: 1;
+    width: 32px;
+    height: 32px;
+    padding: 8px;
+    border-radius: 8px;
+    color: #65656c;
+    cursor: pointer;
+    transition: background-color 120ms ease, color 120ms ease;
+
+    svg {
+      width: 16px;
+      height: 16px;
+    }
+
+    &:hover {
+      color: #0b0a21;
+      background: rgba(11, 10, 33, 0.06);
+    }
+  }
+
+  // Strip dtk_otp's full-screen styling so it sits cleanly inside our
+  // card. dataset:fit=parent already clamps width/height; these
+  // overrides remove its gray background, padding, and outer frame.
+  .dtk-otp__ui {
+    width: 100%;
+    height: auto;
+    background: transparent;
+    padding: 0;
+    gap: 16px;
+    overflow: visible;
+  }
+
+  .dtk-otp__main {
+    width: 100%;
+    max-width: none;
+    background: transparent;
+    border: none;
+    padding: 0;
+    top: 0;
+    gap: 16px;
+    box-shadow: none;
+  }
+
+  .dtk-otp__header{
+    gap: 12px;
+  }
+
+  // Heading — dtk_otp renders the title via its `header()` helper.
+  .dtk-otp__title,
+  .dtk-otp__main .header {
+    font-family: "Geist", system-ui, sans-serif;
+    font-weight: 600;
+    font-size: 20px;
+    line-height: 1.1;
+    color: #0b0a21;
+    text-align: center;
+  }
+
+  // Body / "sent to" message.
+  .dtk-otp__message,
+  .dtk-otp__message-text {
+    font-family: "Geist", system-ui, sans-serif;
+    font-weight: 400;
+    font-size: 14px;
+    line-height: 1.4;
+    color: #65656c;
+    text-align: center;
+  }
+
+  // Compact square OTP digit cells (default is 52×72 rectangle).
+  .dtk-otp__digits {
+    height: auto;
+    gap: 8px;
+    justify-content: center;
+  }
+
+  .dtk-otp__digit {
+    width: 44px;
+    height: 44px;
+    padding: 0;
+    aspect-ratio: 1 / 1;
+    border-radius: 8px;
+    border: 1px solid var(--border-strong);
+    transition: border-color 120ms ease, background-color 120ms ease;
+
+    input {
+      font-family: "Geist", system-ui, sans-serif;
+      font-size: 20px;
+      font-weight: 600;
+      line-height: 1;
+      height: 100%;
+      padding: 0;
+    border-radius: 8px;
+      color: #0b0a21;
+    }
+
+    &:focus-within {
+      border-color: #433cc5;
+      background: #f4e7ff;
+    }
+  }
+
+  .dtk-otp__tips{
+    .dtk-otp__tips-text{
+      justify-content: center;
+    }
+  }
+
+  .dtk-otp__resend{
+    width: 100%;
+    justify-content: center;
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+
+  // Resend link styled to match the small-body palette.
+  .dtk-otp__resend-text {
+    font-family: "Geist", system-ui, sans-serif;
+    font-size: 14px;
+    line-height: 1.4;
+    color: #65656c;
+    justify-content: center;
+
+    &.resend {
+      color: #433cc5;
+      font-weight: 600;
+    }
+  }
+
+  // Resend in flight (host-driven; see resendOtpGate). The host sets
+  // data-resending="1" on the dtk_otp root while otp.send is pending — lock the
+  // link and swap its label for a spinner so the user can't double-send.
+  [data-resending="1"] .dtk-otp__resend {
+    pointer-events: none;
+  }
+
+  [data-resending="1"] .dtk-otp__resend-text.resend {
+    position: relative;
+    color: transparent;
+
+    &::after {
+      content: "";
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      width: 14px;
+      height: 14px;
+      margin: -7px 0 0 -7px;
+      border: 2px solid rgba(67, 60, 197, 0.3);
+      border-top-color: #433cc5;
+      border-radius: 50%;
+      animation: otp-gate-spin 0.6s linear infinite;
+    }
+  }
+
+  // Submit in flight (see attachSubmitSpinner in index.js). otp-gate wraps the
+  // dtk_otp instance's verify POST and sets data-submitting="1" on its root
+  // while the code is being checked — lock the inputs and resend link, dim the
+  // entered digits, and spin a loader over them so the code can't be edited or
+  // double-submitted.
+  [data-submitting="1"] {
+    .dtk-otp__resend {
+      pointer-events: none;
+      opacity: 0.5;
+    }
+
+    .dtk-otp__digits {
+      pointer-events: none;
+      position: relative;
+
+      .dtk-otp__digit {
+        opacity: 0.45;
+      }
+
+      &::after {
+        content: "";
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        width: 20px;
+        height: 20px;
+        margin: -10px 0 0 -10px;
+        border: 2px solid rgba(67, 60, 197, 0.3);
+        border-top-color: #433cc5;
+        border-radius: 50%;
+        animation: otp-gate-spin 0.6s linear infinite;
+      }
+    }
+  }
+
+  @media (max-width: 560px) {
+    width: calc(100vw - 24px);
+    padding: 24px;
+    gap: 24px;
+
+    .dtk-otp__digit {
+      width: 38px;
+      height: 38px;
+
+      input {
+        font-size: 18px;
+      }
+    }
+  }
+}
+
+html[data-theme="dark"] .otp-gate-card {
+  background: var(--normal-bg-elevated);
+}
+
+@keyframes otp-gate-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}

@@ -1,0 +1,1022 @@
+/** ================================================================== *
+#   Copyright Xialia.com  2011-2021
+#   FILE : /src/drumee/modules/welcome/signin/skin/index.scss
+#   TYPE : Component style
+# ===================================================================**/
+
+@use "mixins/drumee.scss";
+@use "cross-signin";
+@use "gateway";
+@use "url";
+
+// Figma tokens (Drumee design system, node 5:73987)
+$drumee-bg: #f2f2f7; // Grey/20
+$drumee-primary: #433cc5; // Primary/50
+$drumee-primary-hover: #5950ff; // brand overlay
+$drumee-grey-90: #34343a; // Grey/90
+$drumee-grey-80: #65656c; // Grey/80
+$drumee-input-bg: rgba(0, 0, 0, 0.05);
+$drumee-divider: rgba(71, 69, 84, 0.2);
+$drumee-google-bg: rgba(89, 80, 255, 0.1);
+$drumee-link-purple: #b1adff;
+
+.welcome-signin {
+  &__ui,
+  &__main,
+  &__container,
+  &__items {
+    width: 100%;
+  }
+
+  &__ui {
+    background-color: $drumee-bg;
+    padding-top: 70px;
+
+    &[data-mode="reconnect"] {
+      background-color: $drumee-bg;
+      padding: 0;
+    }
+  }
+
+  &__main {
+    height: 100%;
+  }
+
+  // Both embedded-dtk_otp screens: the reconnect popup and the OAuth 2FA
+  // hand-off (skeleton/otp-oauth.js). The widget's shared skin is the full-page
+  // layout (52×72 cells, 180px top offset), which would sit badly inside our
+  // content slot; here we reshape it to the shared otp-gate modal — the "Unlock
+  // Activity Insights" Figma popup (file g5V3PjhNMf5bHlsHMvV17w, node
+  // 100:53094): a 450 white card, padding 32, gap 16, radius 12, two-layer
+  // shadow, Geist 20/14 typography, 44×44 square digit cells. Mirrors
+  // builtins/widget/otp-gate so both match dtk-otp__main everywhere else it is
+  // used.
+  &__items.reconnect,
+  &__items.oauth {
+    $otp-font: "Geist", system-ui, sans-serif;
+
+    // Transparent centering wrapper — the popup container provides the
+    // backdrop; this just centers the card.
+    .dtk-otp__ui {
+      width: 100%;
+      height: 100%;
+      padding: 16px;
+      background: transparent;
+      justify-content: center;
+      align-items: center;
+      align-content: center;
+      overflow: auto;
+      font-family: $otp-font;
+    }
+
+    // __main IS the card (otp-gate's .otp-gate-card merged onto __main).
+    .dtk-otp__main {
+      position: relative;
+      flex: 0 0 auto;
+      top: 0;
+      width: 450px;
+      max-width: calc(100vw - 32px);
+      padding: 32px;
+      gap: 16px;
+      justify-content: center;
+      align-items: center;
+      text-align: center;
+      background: #ffffff;
+      border: none;
+      border-radius: 12px;
+      font-family: $otp-font;
+      box-shadow: none;
+    }
+
+    // Center every stacked row inside the card.
+    .dtk-otp__header,
+    .dtk-otp__logo-container,
+    .dtk-otp__text-container,
+    .dtk-otp__message,
+    .dtk-otp__digits,
+    .dtk-otp__tips,
+    .dtk-otp__resend {
+      width: 100%;
+      justify-content: center;
+      align-items: center;
+      text-align: center;
+    }
+
+    .dtk-otp__header {
+      gap: 12px;
+    }
+
+    // Heading — rendered by the toolkit header() helper as __title.
+    .dtk-otp__title {
+      font-family: $otp-font;
+      font-weight: 600;
+      font-size: 20px;
+      line-height: 1.1;
+      color: #0b0a21;
+      text-align: center;
+    }
+
+    // Body / "sent to" message.
+    .dtk-otp__message,
+    .dtk-otp__message-text {
+      font-family: $otp-font;
+      font-weight: 400;
+      font-size: 14px;
+      line-height: 1.4;
+      color: #65656c;
+      text-align: center;
+    }
+
+    // Compact square OTP digit cells (default was a 52×72 rectangle).
+    .dtk-otp__digits {
+      height: auto;
+      gap: 8px;
+      flex-wrap: nowrap;
+    }
+
+    .dtk-otp__digit {
+      // flex lock stops the Box.X row from stretching the cells into wide
+      // rectangles; keeps them a true 44×44 square.
+      flex: 0 0 auto;
+      box-sizing: border-box;
+      width: 44px;
+      height: 44px;
+      min-width: 44px;
+      padding: 0;
+      aspect-ratio: 1 / 1;
+      border-radius: 8px;
+      border: 1px solid var(--border-strong, #c7c7cc);
+      transition: border-color 120ms ease, background-color 120ms ease;
+
+      input {
+        width: 100%;
+        height: 100%;
+        padding: 0;
+        border-radius: 8px;
+        font-family: $otp-font;
+        font-size: 20px;
+        font-weight: 600;
+        line-height: 1;
+        text-align: center;
+        vertical-align: middle;
+        color: #0b0a21;
+      }
+
+      &:focus-within {
+        border-color: #433cc5;
+        background: #f4e7ff;
+      }
+    }
+
+    // Error / transient note line below the inputs.
+    .dtk-otp__tips-text {
+      width: 100%;
+      font-family: $otp-font;
+      font-weight: 400;
+      font-size: 14px;
+      line-height: 1.4;
+      text-align: center;
+      justify-content: center;
+
+      &[data-error="1"] {
+        color: var(--red-500);
+        font-weight: 600;
+        cursor: pointer;
+      }
+    }
+
+    .dtk-otp__resend {
+      gap: 12px;
+
+      &-text {
+        width: 100%;
+        font-family: $otp-font;
+        font-weight: 400;
+        font-size: 14px;
+        line-height: 1.4;
+        text-align: center;
+        color: #65656c;
+        justify-content: center;
+
+        &.resend {
+          color: #433cc5;
+          font-weight: 600;
+          cursor: pointer;
+        }
+      }
+    }
+
+    // Resend in flight: the host sets data-resending="1" on the dtk_otp root
+    // while yp.login re-sends the code. Lock the link and swap its label for a
+    // spinner (reuses the `loader` keyframes defined further down).
+    [data-resending="1"] .dtk-otp__resend {
+      pointer-events: none;
+    }
+
+    [data-resending="1"] .dtk-otp__resend-text.resend {
+      position: relative;
+      color: transparent;
+
+      &::after {
+        content: "";
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        width: 14px;
+        height: 14px;
+        margin: -7px 0 0 -7px;
+        border: 2px solid rgba(67, 60, 197, 0.3);
+        border-top-color: #433cc5;
+        border-radius: 50%;
+        animation: loader 0.7s linear infinite;
+      }
+    }
+
+    @media (max-width: 560px) {
+      .dtk-otp__main {
+        width: calc(100vw - 24px);
+        padding: 24px;
+      }
+
+      .dtk-otp__digit {
+        width: 38px;
+        height: 38px;
+        min-width: 38px;
+
+        input {
+          font-size: 18px;
+        }
+      }
+    }
+  }
+
+  // OAuth 2FA only: the "Back to sign in" escape hatch, which lives beside the
+  // dtk_otp widget rather than inside it (abandoning the screen needs a server
+  // round-trip the widget knows nothing about — see index.js -> _cancelOauthMfa).
+  // Stacked under the card and centered on it.
+  &__items.oauth {
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+  }
+
+  &__backlink-row {
+    flex: 0 0 auto;
+    width: 100%;
+    justify-content: center;
+    align-items: center;
+    padding-top: 8px;
+  }
+
+  &__backlink {
+    @include drumee.typo(
+      $size: 14px,
+      $line: 1.4,
+      $weight: 600,
+      $color: $drumee-grey-80
+    );
+    width: auto;
+    // typo() maps $weight to a font-family and only knows 300/400/500/700, so
+    // 600 emits nothing — same as __social-label above, the semibold face has
+    // to be named explicitly.
+    font-family: var(--font-bold);
+    text-align: center;
+    cursor: pointer;
+    padding: 8px 16px;
+    border-radius: 4px;
+    transition: color 120ms ease;
+
+    &:hover {
+      color: $drumee-primary;
+    }
+  }
+
+  &__container {
+    background-color: $drumee-bg;
+    padding: 48px;
+    gap: 32px;
+    border-radius: 12px;
+
+    &[data-mode="reconnect"] {
+      padding: 32px;
+      max-width: 600px;
+      margin: 0 auto;
+    }
+  }
+
+  &__logo-content {
+    align-items: center;
+    justify-content: flex-start;
+    width: 100%;
+  }
+
+  &__logo-icon {
+    height: 24px;
+    width: 100px;
+  }
+
+  &__header {
+    width: 100%;
+
+    &[data-mode="reconnect"] {
+      display: flex;
+    }
+  }
+
+  &__header-content {
+    align-items: flex-start;
+    gap: 12px;
+    width: 100%;
+  }
+
+  &__content {
+    width: 100%;
+    height: auto;
+  }
+
+  &__items {
+    align-items: stretch;
+    margin: 0 auto;
+    max-width: 500px;
+    width: 100%;
+    gap: 24px;
+
+    &.content {
+      align-items: stretch;
+    }
+  }
+
+  &__form-section {
+    gap: 12px;
+    width: 100%;
+    padding-top: 8px;
+  }
+
+  &__row {
+    align-items: center;
+    background-color: transparent;
+    width: 100%;
+    height: auto;
+    padding: 0;
+    border: none;
+
+    &.helper {
+      justify-content: center;
+    }
+
+    &.without-icon,
+    &.no-background {
+      background-color: transparent;
+    }
+  }
+
+  &__entry-main {
+    width: 100%;
+    gap: 6px;
+  }
+
+  &__entry-label {
+    font-size: 12px;
+    font-weight: 400;
+    line-height: 1.4;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    color: $drumee-grey-80;
+    text-align: left;
+    justify-content: flex-start;
+    width: 100%;
+  }
+
+  &__entry-row {
+    width: 100%;
+    height: 45px;
+    background-color: $drumee-input-bg;
+    border: none;
+    border-radius: 4px;
+    padding: 0 12px;
+    align-items: center;
+    gap: 8px;
+    overflow: hidden;
+    transition: box-shadow 0.2s;
+
+    &:focus-within {
+      box-shadow: 0 0 0 1px $drumee-primary-hover;
+    }
+  }
+
+  &__entry-ico {
+    width: 20px;
+    height: 20px;
+    flex-shrink: 0;
+    color: $drumee-grey-80;
+
+    svg {
+      width: 100%;
+      height: 100%;
+      fill: currentColor;
+    }
+  }
+
+  &__entry-input {
+    flex: 1;
+    min-width: 0;
+    width: 100%;
+    height: 100%;
+    border: none;
+    outline: none;
+    display: flex;
+    align-items: center;
+    padding: 0;
+    background: transparent;
+
+    // EntryBox internal wrappers — make them transparent passthroughs
+    .entry-reminder__main,
+    .entry-reminder__component,
+    .entry-reminder__input-wrap,
+    .entry-reminder__label,
+    .entry-box,
+    .entry-wrapper {
+      flex: 1;
+      min-width: 0;
+      width: 100%;
+      height: 100%;
+      background: transparent;
+      border: none;
+      outline: none;
+      box-shadow: none;
+      padding: 0;
+      margin: 0;
+      align-items: center;
+    }
+
+    .entry-reminder__icon {
+      right: 5px;
+      position: absolute;
+    }
+
+    input {
+      width: 100%;
+      height: 43px;
+      background: transparent;
+      border: none;
+      outline: none;
+      color: $drumee-grey-90;
+      font-size: 15px;
+      line-height: 43px;
+      padding: 0;
+      margin: 0;
+      box-sizing: border-box;
+      vertical-align: middle;
+
+      &::placeholder {
+        color: $drumee-grey-80;
+        line-height: 43px;
+      }
+
+      &:focus {
+        border: none;
+        outline: none;
+        box-shadow: none;
+      }
+
+      &:-webkit-autofill,
+      &:-webkit-autofill:hover,
+      &:-webkit-autofill:focus,
+      &:-webkit-autofill:active {
+        -webkit-text-fill-color: $drumee-grey-90 !important;
+        -webkit-box-shadow: 0 0 0 1000px $drumee-input-bg inset !important;
+        box-shadow: 0 0 0 1000px $drumee-input-bg inset !important;
+        background-color: transparent !important;
+        background-image: none !important;
+        transition: background-color 5000s ease-in-out 0s;
+        caret-color: $drumee-grey-90;
+        border-radius: 0;
+      }
+    }
+  }
+
+  &__entry-eye-toggle {
+    width: 21px;
+    height: 21px;
+    flex-shrink: 0;
+    cursor: pointer;
+    color: $drumee-grey-80;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-right: 2px;
+    transition: color 0.2s;
+
+    svg {
+      width: 100%;
+      height: 100%;
+      fill: currentColor;
+    }
+
+    &:hover {
+      color: $drumee-primary;
+    }
+
+    &[data-state="1"] {
+      color: $drumee-primary;
+    }
+  }
+
+  &__note {
+    @include drumee.typo(
+      $size: 14px,
+      $line: 1.4,
+      $weight: 400,
+      $color: $drumee-grey-80
+    );
+    width: 100%;
+
+    &.message {
+      color: var(--default-text-error);
+    }
+
+    &.header {
+      @include drumee.typo(
+        $size: 20px,
+        $line: 1.1,
+        $weight: 600,
+        $color: $drumee-primary
+      );
+      justify-content: flex-start;
+      text-align: left;
+      width: 100%;
+    }
+
+    &.sub-header {
+      @include drumee.typo(
+        $size: 16px,
+        $line: 1.4,
+        $weight: 400,
+        $color: $drumee-grey-80
+      );
+      padding-top: 0;
+      text-align: left;
+      justify-content: flex-start;
+    }
+
+    &.helper,
+    &.forgot-password {
+      @include drumee.typo(
+        $size: 14px,
+        $line: 20px,
+        $weight: 400,
+        $color: $drumee-grey-80
+      );
+      cursor: pointer;
+      width: auto;
+      &:hover {
+        color: $drumee-primary;
+      }
+    }
+  }
+
+  &__icon {
+    color: $drumee-grey-80;
+    cursor: pointer;
+    height: 20px;
+    width: 20px;
+
+    &.input-wrapper {
+      position: relative;
+      margin: 0 8px 0 0;
+    }
+
+    &.email {
+      height: 20px;
+      width: 20px;
+      left: auto;
+      top: auto;
+
+      svg {
+        fill: $drumee-grey-80;
+        opacity: 1;
+      }
+    }
+  }
+
+  &__entry {
+    & input {
+      border-bottom: none;
+      border-radius: 0;
+      padding: 4px 0;
+      background-color: transparent;
+      @include drumee.typo(
+        $size: 14px,
+        $line: 1.4,
+        $weight: 400,
+        $color: $drumee-grey-90
+      );
+
+      &::placeholder {
+        @include drumee.typo(
+          $size: 14px,
+          $line: 1.4,
+          $weight: 400,
+          $color: $drumee-grey-80
+        );
+      }
+    }
+
+    &.with-icon {
+      height: 100%;
+      padding: 0;
+      width: 100%;
+    }
+
+    .pw-shower {
+      cursor: pointer;
+      left: auto;
+      right: 0;
+    }
+  }
+
+  .pw-shower {
+    position: relative;
+    right: 0;
+    top: 0;
+    color: $drumee-grey-80;
+    opacity: 1;
+  }
+
+  &__button-confirm {
+    @include drumee.typo(
+      $size: 16px,
+      $line: 24px,
+      $weight: 600,
+      $color: #ffffff
+    );
+    align-items: center;
+    background-color: $drumee-primary;
+    border-radius: 4px;
+    cursor: pointer;
+    height: 56px;
+    justify-content: center;
+    width: 100%;
+    padding: 16px 24px;
+    margin-top: 8px;
+    font-family: var(--font-main);
+
+    &:hover {
+      background-color: $drumee-primary-hover;
+      box-shadow: 0 0 13px 0 rgba(89, 80, 255, 0.5);
+    }
+
+    // Loading: hide the label and show a centered spinner while the request
+    // is in flight (set via setButtonLoading()). Reuses the `loader` keyframes
+    // defined further down in this file.
+    &[data-loading="1"] {
+      pointer-events: none;
+      position: relative;
+      color: transparent;
+
+      &::after {
+        content: "";
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        width: 20px;
+        height: 20px;
+        margin: -10px 0 0 -10px;
+        border: 2px solid rgba(255, 255, 255, 0.4);
+        border-top-color: #ffffff;
+        border-radius: 50%;
+        animation: loader 0.7s linear infinite;
+      }
+    }
+  }
+
+  &__divider {
+    align-items: center;
+    gap: 16px;
+    padding-top: 8px;
+    width: 100%;
+
+    &-line {
+      flex: 1 0 0;
+      height: 1px;
+      background-color: $drumee-divider;
+    }
+
+    &-label {
+      @include drumee.typo(
+        $size: 12px,
+        $line: 1.4,
+        $weight: 400,
+        $color: $drumee-grey-90
+      );
+      width: auto;
+      white-space: nowrap;
+    }
+  }
+
+  &__social-button {
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    height: 56px;
+    background-color: $drumee-google-bg;
+    border-radius: 8px;
+    cursor: pointer;
+    width: 100%;
+    transition: background-color 0.15s ease;
+
+    &:hover {
+      background-color: rgba(89, 80, 255, 0.18);
+    }
+  }
+
+  &__social-icon {
+    height: 20px;
+    width: 20px;
+  }
+
+  &__social-label {
+    @include drumee.typo(
+      $size: 16px,
+      $line: 24px,
+      $weight: 600,
+      $color: $drumee-primary
+    );
+    width: auto;
+    font-family: var(--font-bold);
+  }
+
+  &__footer-links {
+    gap: 16px;
+    padding-top: 8px;
+    align-items: center;
+    width: 100%;
+  }
+
+  &__signup-prompt {
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    width: 100%;
+font-family: var(--font-main);
+    &-text {
+      @include drumee.typo(
+        $size: 14px,
+        $line: 20px,
+        $weight: 600,
+        $color: $drumee-grey-90
+      );
+      width: auto;
+    }
+
+    &-link {
+      @include drumee.typo(
+        $size: 14px,
+        $line: 20px,
+        $weight: 600,
+        $color: $drumee-link-purple
+      );
+      width: auto;
+      cursor: pointer;
+    }
+  }
+
+  &__legal-links {
+    gap: 24px;
+    justify-content: center;
+    align-items: center;
+    width: 100%;
+  }
+
+  &__legal-link {
+    @include drumee.typo(
+      $size: 12px,
+      $line: 1.4,
+      $weight: 400,
+      $color: $drumee-grey-80
+    );
+    cursor: pointer;
+    text-align: center;
+    width: auto;
+    white-space: nowrap;
+  }
+
+  &__legal-dot {
+    background-color: $drumee-grey-80;
+    border-radius: 12px;
+    width: 4px;
+    height: 4px;
+    flex-shrink: 0;
+  }
+
+  // ----- Forgot-password link (in-form) -----
+  &__forgot-row {
+    width: 100%;
+    justify-content: flex-end;
+    align-items: center;
+    margin-top: -4px;
+  }
+
+  &__forgot-link {
+    @include drumee.typo(
+      $size: 12px,
+      $line: 1.4,
+      $weight: 400,
+      $color: $drumee-grey-80
+    );
+    width: auto;
+    cursor: pointer;
+    text-decoration: underline;
+    transition: color 0.2s;
+
+    &:hover {
+      color: $drumee-primary;
+    }
+  }
+
+  // ----- Social buttons cluster (Google + Apple) -----
+  &__social-buttons {
+    width: 100%;
+    gap: 12px;
+  }
+
+  // ----- Terms / legal block -----
+  &__terms-container {
+    display: flex;
+    flex-direction: row;
+    width: 100%;
+    justify-content: center;
+    align-items: center;
+    gap: 24px;
+  }
+
+  &__terms-link {
+    @include drumee.typo(
+      $size: 12px,
+      $line: 1.4,
+      $weight: 400,
+      $color: $drumee-grey-80
+    );
+    width: auto;
+    white-space: nowrap;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    cursor: pointer;
+    transition: color 0.2s;
+
+    &:hover {
+      color: $drumee-grey-90;
+    }
+  }
+
+  &__terms-dot {
+    @include drumee.typo(
+      $size: 12px,
+      $line: 1.4,
+      $weight: 400,
+      $color: $drumee-grey-80
+    );
+    width: auto;
+  }
+
+  // ----- Check-inbox view -----
+  &__items.check-inbox {
+    align-items: center;
+    text-align: center;
+  }
+
+  &__inbox-icon {
+    width: 72px;
+    height: 72px;
+    padding: 12px;
+    border-radius: 100px;
+    background-color: $drumee-google-bg;
+    align-items: center;
+    justify-content: center;
+    flex: 0 0 auto;
+    margin: 0 auto;
+  }
+
+  &__envelope {
+    width: 24px;
+    height: 24px;
+    color: $drumee-primary-hover;
+
+    svg {
+      width: 100%;
+      height: 100%;
+      fill: currentColor;
+    }
+  }
+
+  &__inbox-email {
+    @include drumee.typo(
+      $size: 18px,
+      $line: 1.2,
+      $weight: 600,
+      $color: $drumee-grey-90
+    );
+    font-family: var(--font-bold);
+    width: 100%;
+    justify-content: center;
+    text-align: center;
+    word-break: break-word;
+  }
+
+  &__inbox-footer {
+    align-items: center;
+    text-align: center;
+    width: 100%;
+    gap: 2px;
+  }
+
+  &__inbox-note {
+    @include drumee.typo(
+      $size: 12px,
+      $line: 1.4,
+      $weight: 400,
+      $color: $drumee-grey-80
+    );
+    width: 100%;
+    justify-content: center;
+    text-align: center;
+  }
+
+  // Resend button cooldown ([data-counting]) / permanently disabled
+  // ([data-disabled]) states — the check-inbox view's button-confirm.
+  &__button-confirm {
+    &[data-counting="1"],
+    &[data-disabled="1"] {
+      pointer-events: none;
+      opacity: 0.6;
+    }
+  }
+
+  // -----  Non-Figma states preserved for OTP / URL / cross-signin flows  -----
+
+  &-go {
+    @include drumee.typo(
+      $color: var(--default-text-reverse),
+      $size: 18px,
+      $line: 21px,
+      $weight: 300
+    );
+    align-items: center;
+    background-color: var(--egreen-soft);
+    cursor: pointer;
+    justify-content: center;
+    opacity: 0.2;
+    pointer-events: none;
+    width: 100%;
+
+    &[data-device="mobile"] {
+      @include drumee.typo(
+        $color: var(--default-text-reverse),
+        $size: 16px,
+        $line: 13px,
+        $weight: 300
+      );
+    }
+
+    &[data-mode="1"] {
+      opacity: 1;
+      pointer-events: auto;
+    }
+
+    &[data-error="1"] {
+      background-color: transparent;
+      opacity: 1;
+    }
+  }
+
+  .drumee-api-popup__ui {
+    position: absolute;
+  }
+
+  // for loader -- Do not remove
+  @keyframes loader {
+    0% {
+      transform: rotate(0deg);
+    }
+    100% {
+      transform: rotate(359deg);
+    }
+  }
+
+  &__icon {
+    &.loader {
+      color: transparent;
+      height: 142px;
+      width: 140px;
+      animation: loader 2s linear infinite;
+    }
+  }
+
+  &__waiting {
+    height: 100px;
+    left: calc(50vw - 50px);
+    position: absolute;
+    top: calc(50vh - 50px);
+    width: 100px;
+  }
+}

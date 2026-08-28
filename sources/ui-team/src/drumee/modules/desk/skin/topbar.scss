@@ -1,0 +1,1153 @@
+@use "mixins/drumee";
+
+.desk-module-topbar {
+  &__main {
+    width: 100%;
+    height: 44px;
+    box-sizing: border-box;
+    justify-content: space-between;
+    align-items: center;
+    padding: 8px 24px;
+    background-color: var(--normal-bg-90);
+    border-bottom: 1px solid var(--border-muted);
+  }
+
+  &__logo {
+    &-content {
+      width: 128px;
+      height: 48px;
+      align-content: center;
+      justify-content: start;
+      align-items: start;
+      flex-wrap: wrap;
+
+      svg {
+        width: 100%;
+        height: 100%;
+      }
+    }
+  }
+
+  &__actions-cluster {
+    overflow: visible;
+
+    &[data-state="0"] {
+      // Hidden outright, not dimmed (2026-07-29): the admin console and
+      // Settings pages set state 0 on this cluster, and a greyed-out,
+      // dead Add new / Search / Invite row read as broken UI. None of
+      // those actions mean anything on those pages, so remove them.
+      // !important — Box children are forced display:flex inline by the
+      // framework.
+      display: none !important;
+    }
+  }
+
+  // Left cluster — home breadcrumb + folder tabs sit flush, then
+  // flex's space-between pushes the whole cluster left and the actions
+  // cluster right. The breadcrumb widget ships with `flex: 1` on its
+  // `__ui` root (from breadcrumb/skin/index.scss), which would otherwise
+  // stretch it to fill the row and push the tabs all the way right.
+  // Override that inside the cluster so the breadcrumb hugs its content.
+  &__left-cluster {
+    align-items: center;
+    gap: 20px;
+    min-width: 0;
+    flex: 0 1 auto;
+    overflow: hidden;
+
+    .desk-breadcrumb__ui {
+      flex: 0 1 auto;
+    }
+  }
+
+  // Chrome-style folder tabs — sit immediately right of the home
+  // breadcrumb. One tab per open folder window. data-state="1" = visible;
+  // data-state="0" = minimized. Empty until at least one folder opens.
+  &__folder-tabs {
+    align-items: center;
+    gap: 4px;
+    flex: 0 1 auto;
+    min-width: 0;
+    overflow: auto;
+    &::-webkit-scrollbar { width: 4px; } ;
+    &::-webkit-scrollbar-track { background: rgba(0, 0, 0, 0.05); } ;
+    &::-webkit-scrollbar-thumb { background: var(--primary-40); border-radius: 4px; };
+  }
+
+  &__folder-tab {
+    align-items: center;
+    gap: 6px;
+    max-width: 200px;
+    height: 28px;
+    padding: 0 4px 0 10px;
+    border-radius: 8px 8px 0 0;
+    background-color: var(--normal-bg-elevated, #fff);
+    border: 1px solid var(--border-muted, rgba(0, 0, 0, 0.08));
+    border-bottom: none;
+    cursor: pointer;
+    font-family: "Geist", sans-serif;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--normal-fg-10);
+    transition: background-color 0.12s ease, opacity 0.12s ease;
+
+    &:hover {
+      background-color: var(--normal-bg-90);
+    }
+
+    // Minimized: muted background + dimmed text.
+    &[data-state="0"] {
+      background-color: var(--normal-bg-80, rgba(0, 0, 0, 0.04));
+      opacity: 0.7;
+      font-weight: 400;
+    }
+  }
+
+  &__folder-tab-icon {
+    width: 16px;
+    height: 16px;
+    flex-shrink: 0;
+    color: var(--area-private);
+
+    svg {
+      width: 16px;
+      height: 16px;
+    }
+
+    &[data-area="personal"] { color: var(--area-personal); }
+    &[data-area="share"],
+    &[data-area="dmz"]      { color: var(--area-share); }
+    &[data-area="public"]   { color: var(--area-public); }
+  }
+
+  &__folder-tab-label {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    line-height: 1.2;
+  }
+
+  &__folder-tab-close {
+    width: 18px;
+    height: 18px;
+    flex-shrink: 0;
+    border-radius: 4px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--normal-fg-20, var(--normal-fg-10));
+    cursor: pointer;
+    transition: background-color 0.12s ease, color 0.12s ease;
+
+    svg {
+      width: 10px;
+      height: 10px;
+    }
+
+    &:hover {
+      background-color: var(--normal-bg-70, rgba(0, 0, 0, 0.08));
+      color: var(--normal-fg-10);
+    }
+  }
+
+  &__user-menu {
+    align-items: center;
+    justify-content: center;
+    background-color: var(--white);
+    border-radius: var(--corner-radius-max);
+    padding: var(--spacer-2) var(--spacer-2) var(--spacer-2) var(--spacer-5);
+    cursor: pointer;
+
+    &[data-device="mobile"] {
+      max-width: calc(100% - 85px);
+      background-color: transparent;
+    }
+
+    .user-profile__icon {
+      background-color: var(--primary-500);
+    }
+
+    &-container {
+      height: 100%;
+    }
+
+    &-content {
+      height: 100%;
+    }
+
+    &-username {
+      @include drumee.typo(
+        $line: 22px,
+        $size: 16px,
+        $weight: 400,
+        $color: var(--neutral-900)
+      );
+      height: 40px;
+      align-content: center;
+      flex-wrap: wrap;
+    }
+
+    &-trigger {
+      gap: var(--spacer-4);
+      background-color: var(--neutral-100);
+      border-radius: var(--corner-radius-max);
+
+      &-icon {
+        width: 20px;
+        height: 20px;
+        padding: var(--spacer-1);
+        align-self: center;
+      }
+    }
+
+    .menu-topic-items {
+      background-color: var(--white);
+      border-radius: var(--corner-radius-3);
+      border-width: 1px;
+      padding: var(--spacer-4);
+
+      &__wrapper {
+        box-shadow: 0px 12px 24px 0px var(--neutral-300);
+        border-radius: var(--corner-radius-3);
+
+        &[data-direction="down"] {
+          top: 45px;
+          right: 0;
+        }
+      }
+    }
+
+    &-item {
+      cursor: pointer;
+      display: flex;
+      flex-direction: row-reverse;
+      justify-content: space-between;
+      padding: var(--spacer-4) var(--spacer-5);
+      border-radius: var(--corner-radius-3);
+      width: 100%;
+      gap: var(--spacer-2);
+      @include drumee.typo(
+        $line: 22px,
+        $size: 16px,
+        $weight: 400,
+        $color: var(--neutral-600)
+      );
+
+      span.label {
+        display: flex;
+      }
+
+      section.label {
+        align-self: center;
+      }
+
+      svg {
+        width: 20px;
+        height: 20px;
+        padding: var(--spacer-1);
+        align-self: center;
+      }
+
+      &:hover {
+        background-color: var(--default-bg-hover);
+      }
+    }
+  }
+
+  &__icon {
+    color: var(--normal-fg-10);
+    width: 40px;
+    height: 40px;
+    padding: var(--spacer-3);
+    border-radius: var(--corner-radius-4);
+
+    &[data-haptic="1"] {
+      opacity: 0.5;
+      pointer-events: none;
+    }
+  }
+
+  &__activity-count {
+    position: absolute;
+    text-align: center;
+    width: 14px;
+    height: 14px;
+    overflow: hidden;
+    border-radius: 50%;
+    transition-property: opacity;
+    transition-duration: 0.9s;
+    align-items: center;
+    align-content: center;
+    display: flex;
+    justify-content: center;
+    justify-items: center;
+    flex-direction: column;
+    font-size: 8px;
+    letter-spacing: 0em;
+    line-height: 1px;
+    background: var(--red-400);
+    color: var(--white);
+    top: 3px;
+    left: 3px;
+
+    &[data-count="0"] {
+      display: none;
+    }
+  }
+
+  // Actions cluster
+  &__actions-cluster {
+    align-items: center;
+    gap: 12px;
+    padding-left: 12px;
+  }
+
+  // Merged New button shared visually with the folder-window control.
+  &__new-workspace-btn {
+    display: inline-flex !important;
+    flex-direction: row !important;
+    height: 30px;
+    min-height: 30px;
+    min-width: 82px;
+    padding: 0 14px;
+    gap: 6px;
+    background-color: #b2adfa;
+    border: 0;
+    border-radius: 8px;
+    box-shadow: none;
+    align-items: center !important;
+    justify-content: center;
+    cursor: pointer;
+    flex-shrink: 0;
+    box-sizing: border-box;
+    font-family: "Inter", sans-serif;
+    transition:
+      background-color 0.15s ease,
+      color 0.15s ease;
+
+    > * {
+      display: inline-flex;
+      align-items: center;
+    }
+
+    .svg-wrapper,
+    .drumee-svg,
+    svg {
+      width: 14px;
+      height: 14px;
+      flex: 0 0 14px;
+      color: #0b0a20;
+      fill: currentColor;
+    }
+
+    .inner,
+    .note-content,
+    .drumee-text,
+    span.label,
+    section.label {
+      font-size: 14px;
+      font-weight: 500;
+      line-height: 16px;
+      color: #0b0a20;
+      white-space: nowrap;
+      display: inline-flex;
+      align-items: center;
+    }
+
+    &:hover {
+      background-color: #a7a2f0;
+    }
+
+    &:active {
+      background-color: #9d98e6;
+    }
+  }
+
+  // Wrapper for the merged import/create cascade.
+  &__add-wrapper {
+    position: relative;
+    flex-shrink: 0;
+    overflow: visible;
+
+    .menu-topic,
+    .menu-topic__ui,
+    .menu-trigger {
+      position: relative;
+      overflow: visible;
+      display: flex;
+      align-items: center;
+    }
+
+    .menu-topic-items__wrapper {
+      position: absolute;
+      top: calc(100% + 6px);
+      right: 0;
+      left: auto;
+      width: max-content;
+      min-width: 242px;
+      z-index: 99999;
+    }
+
+    .menu-topic-items__wrapper[data-state="open"] {
+      overflow: visible !important;
+    }
+
+    .menu-topic-items,
+    .menu-items,
+    .desk-module-topbar__new-menu-items {
+      background-color: var(--normal-bg-elevated, #fff);
+      border-radius: 6px;
+      padding: 6px;
+      width: max-content;
+      min-width: 242px;
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      overflow: visible;
+    }
+
+    // The dropdown surface is .menu-topic-items. The menu widget FEEDS the
+    // `items:` box into it (menu/index.js renderItems -> __items.feed), so
+    // .desk-module-topbar__new-menu-items is a CHILD of that surface, not the
+    // same node — sharing the shadow painted it twice, one nested inside the
+    // other. It belongs to the outer surface alone.
+    .menu-topic-items,
+    .menu-items {
+      box-shadow:
+        0 4px 6px -4px rgba(0, 0, 0, 0.1),
+        0 10px 15px -3px rgba(0, 0, 0, 0.1);
+        border: 1px solid var(--border-default);
+    }
+
+    .menu-topic-items__wrapper[data-state="closed"],
+    .menu-topic-items__wrapper[data-state="0"],
+    &:not([data-state="1"]) .menu-topic-items__wrapper {
+      display: none;
+    }
+
+    .desk-module-topbar__new-menu-item {
+      display: flex !important;
+      flex-direction: row !important;
+      align-items: center !important;
+      gap: 10px;
+      min-height: 36px;
+      padding: 8px 10px;
+      border-radius: 4px;
+      box-sizing: border-box;
+      cursor: pointer;
+      white-space: nowrap;
+      width: 100%;
+      font-family: "Geist", sans-serif;
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--normal-fg-10);
+
+      &:hover,
+      &[data-highlight="1"] {
+        background-color: var(--normal-bg-90);
+      }
+    }
+
+    .desk-module-topbar__new-menu-icon {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 20px;
+      height: 20px;
+      flex: 0 0 20px;
+
+      svg {
+        width: 16px;
+        height: 16px;
+      }
+    }
+
+    .desk-module-topbar__new-menu-name {
+      flex: 1;
+      min-width: 0;
+      line-height: 16px;
+    }
+
+    .desk-module-topbar__new-menu-create-group {
+      position: relative;
+    }
+
+    .desk-module-topbar__new-menu-create-symbol {
+      width: 20px;
+      height: 20px;
+      flex: 0 0 20px;
+      align-items: center;
+      justify-content: center;
+      font-family: "Inter", sans-serif;
+      font-size: 25px;
+      font-weight: 400;
+      line-height: 20px;
+      text-align: center;
+      color: #0b0a20;
+    }
+
+    .desk-module-topbar__new-menu-create-submenu {
+      display: none;
+      position: absolute;
+      top: -8px;
+      left: calc(100% - 8px);
+      right: auto;
+      z-index: 2;
+      width: max-content;
+      min-width: 200px;
+      padding: 8px;
+      gap: 2px;
+      align-items: stretch;
+      background-color: var(--normal-bg-elevated, #fff);
+      border-radius: 6px;
+      box-shadow:
+        0 4px 6px -4px rgba(0, 0, 0, 0.1),
+        0 10px 15px -3px rgba(0, 0, 0, 0.1);
+        border: 1px solid var(--border-default);
+      box-sizing: border-box;
+    }
+
+    .desk-module-topbar__new-menu-create-group:hover
+      > .desk-module-topbar__new-menu-create-submenu,
+    .desk-module-topbar__new-menu-create-group[data-submenu="open"]
+      > .desk-module-topbar__new-menu-create-submenu {
+      display: flex;
+    }
+
+    &:not([data-state="1"])
+      .desk-module-topbar__new-menu-create-submenu {
+      display: none !important;
+    }
+
+    .desk-module-topbar__new-menu-submenu-item {
+      width: 100%;
+      min-height: 34px;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    &__new-workspace-btn {
+      transition: none;
+    }
+  }
+
+  &__add-menu-item {
+    display: flex !important;
+    flex-direction: row !important;
+    padding: 4px;
+    gap: 4px;
+    border-radius: 4px;
+    align-items: center !important;
+    cursor: pointer;
+    white-space: nowrap;
+    width: 100%;
+    box-sizing: border-box;
+
+    > * {
+      display: inline-flex;
+      align-items: center;
+    }
+
+    &[data-highlight="1"] {
+      background: var(--neutral-100, #f2f2f7);
+    }
+
+    &:hover {
+      background: rgba(89, 80, 255, 0.1);
+    }
+
+    .svg-wrapper,
+    .drumee-svg,
+    svg {
+      width: 16px;
+      height: 16px;
+      flex-shrink: 0;
+    }
+
+    span.label,
+    section.label {
+      font-size: 12px;
+      font-weight: 600;
+      color: #0b0a21;
+      white-space: nowrap;
+      line-height: normal;
+      display: inline-flex;
+      align-items: center;
+    }
+
+    &.ico-workspace svg {
+      fill: #5950ff;
+      color: #5950ff;
+    }
+
+    &.ico-note svg {
+      fill: #e8a13b;
+      color: #e8a13b;
+    }
+
+    &.ico-document svg {
+      fill: #847eff;
+      color: #847eff;
+    }
+
+    &.ico-spreadsheet svg {
+      fill: #54b684;
+      color: #54b684;
+    }
+
+    &.ico-presentation svg {
+      fill: #ffa8dc;
+      color: #ffa8dc;
+    }
+  }
+
+  &__upload-btn {
+    display: inline-flex !important;
+    flex-direction: row !important;
+    height: 28px;
+    padding: 0 13px;
+    gap: 7px;
+    background-color: var(--white);
+    border-radius: 4px;
+    align-items: center !important;
+    cursor: pointer;
+    flex-shrink: 0;
+
+    > * {
+      display: inline-flex;
+      align-items: center;
+    }
+
+    svg {
+      width: 14px;
+      height: 14px;
+      fill: #0b0a21;
+    }
+
+    span.label,
+    section.label {
+      font-size: 13px;
+      font-weight: 600;
+      line-height: 28px;
+      color: #0b0a21;
+      white-space: nowrap;
+      display: inline-flex;
+      align-items: center;
+    }
+
+    &:hover {
+      background-color: var(--normal-bg-80);
+    }
+  }
+
+  // Search container (relative anchor for dropdown)
+  &__search-container {
+    position: relative;
+    flex-shrink: 0;
+  }
+
+  // Search bar
+  &__search-bar {
+    position: relative;
+    background-color: var(--white);
+    width: 192px;
+    height: 28px;
+    border-radius: 4px;
+    align-items: center;
+    padding: 0 6px 0 36px;
+    flex-shrink: 0;
+  }
+
+  // Suggestions dropdown (Figma: Access filter 100:47197)
+  &__search-suggestions {
+    visibility: hidden;
+    pointer-events: none;
+    position: absolute;
+    top: calc(100% + 4px);
+    left: 0;
+    width: 193px;
+    background-color: var(--white);
+    border-radius: 4px;
+    box-shadow: 0 1px 5.5px rgba(0, 0, 0, 0.13);
+    z-index: 99999;
+    padding: 8px;
+    max-height: 160px;
+    overflow-y: auto;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+
+    &::-webkit-scrollbar {
+      display: none;
+    }
+
+    &[data-state="1"] {
+      visibility: visible;
+      pointer-events: auto;
+    }
+  }
+
+  &__suggestions-list {
+    width: 100%;
+    gap: 8px;
+
+    .workspace-item {
+      padding: 4px;
+      cursor: pointer;
+      border-radius: 4px;
+
+      &__row {
+        min-height: auto;
+        padding: 0;
+        gap: 4px;
+        font-size: 12px;
+        line-height: 1.4;
+        color: #65656c;
+
+        &[data-level="0"],
+        &[data-radio="on"][data-level="0"] {
+          padding-left: 0;
+        }
+      }
+
+      &__icon {
+        width: 16px;
+        height: 16px;
+        padding: 0;
+        flex-shrink: 0;
+
+        svg {
+          width: 20px;
+          height: 20px;
+        }
+
+        &.file {
+          color: #65656c;
+        }
+      }
+
+      &__name {
+        font-size: 12px;
+        color: #65656c;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
+      &:hover,
+      &[data-state="1"] {
+        background-color: rgba(89, 80, 255, 0.1);
+      }
+
+      &[data-radio="on"] {
+        background-color: rgba(89, 80, 255, 0.1);
+        border-left: none;
+
+        .workspace-item__row {
+          padding-left: 0;
+        }
+      }
+    }
+  }
+
+  &__search-icon {
+    position: absolute;
+    left: 12px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 15px;
+    height: 15px;
+    padding: 0;
+    pointer-events: none;
+    color: var(--primary-50);
+
+    svg {
+      width: 100%;
+      height: 100%;
+    }
+  }
+
+  &__search-input {
+    flex: 1;
+    min-width: 0;
+
+    input {
+      background-color: transparent;
+      font-size: 13px;
+      color: var(--normal-fg-10);
+      width: 100%;
+
+      &::placeholder {
+        color: #c7c7cc;
+      }
+    }
+  }
+
+  &__search-kbd {
+    display: flex;
+    background-color: var(--normal-bg-90);
+    color: var(--primary-50);
+    font-family: "Geist Mono", monospace;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    padding: 2px 6px;
+    border-radius: 2px 2px 2px 0;
+    white-space: nowrap;
+    flex-shrink: 0;
+    line-height: 1;
+  }
+
+  // Tablet "more" menu — collapses Add / Upload / Invite into a single
+  // icon-only dropdown at 1024px and below (see media query at the
+  // bottom of this block).
+  &__more-wrapper {
+    display: none;
+    position: relative;
+    flex-shrink: 0;
+
+    .menu-topic-items {
+      background: var(--normal-bg);
+      border-radius: 4px;
+      padding: 8px;
+      gap: 4px;
+      min-width: 160px;
+      border: 1px solid var(--border-default);
+    }
+
+    .menu-topic-items__wrapper {
+      box-shadow: 0 1px 5.5px rgba(0, 0, 0, 0.13);
+      border-radius: 4px;
+      right: 0;
+      min-width: 160px;
+      z-index: 99999;
+
+      &[data-direction="down"] {
+        top: calc(100% + 4px);
+      }
+    }
+
+    &:not([data-state="1"]) .menu-topic-items__wrapper {
+      visibility: hidden;
+    }
+  }
+
+  &__more-btn {
+    width: 28px;
+    height: 28px;
+    padding: 6px;
+    background-color: var(--white);
+    border-radius: 4px;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    flex-shrink: 0;
+
+    svg {
+      width: 16px;
+      height: 16px;
+      fill: var(--normal-fg-10);
+      color: var(--normal-fg-10);
+    }
+
+    &:hover {
+      background-color: var(--normal-bg-80);
+    }
+  }
+
+  &__more-menu-item {
+    display: flex !important;
+    flex-direction: row !important;
+    padding: 6px 8px;
+    gap: 8px;
+    border-radius: 4px;
+    align-items: center !important;
+    cursor: pointer;
+    white-space: nowrap;
+    width: 100%;
+    box-sizing: border-box;
+
+    > * {
+      display: inline-flex;
+      align-items: center;
+    }
+
+    .svg-wrapper,
+    .drumee-svg,
+    svg {
+      width: 14px;
+      height: 14px;
+      flex-shrink: 0;
+      color: var(--normal-fg-10);
+      fill: currentColor;
+    }
+
+    span.label,
+    section.label {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--normal-fg);
+      white-space: nowrap;
+      line-height: 1;
+      display: inline-flex;
+      align-items: center;
+    }
+
+    &:hover {
+      background: rgba(89, 80, 255, 0.1);
+    }
+  }
+
+  // Tablet & narrower (≤ 1024px): swap the three primary actions for the
+  // consolidated menu. This covers narrow desktop-browser widths below 768px
+  // too — there `data-device` is not "mobile" so the desktop topbar stays
+  // mounted and the inline Add / Upload / Invite buttons would otherwise
+  // reappear and overflow.
+  // `!important` is required because __upload-btn ships with `display: inline-flex !important`
+  // and __invite-btn is declared further down the cascade.
+  @media (max-width: 1024px) {
+    &__add-wrapper,
+    &__upload-btn,
+    &__invite-btn {
+      display: none !important;
+    }
+
+    &__more-wrapper {
+      display: flex !important;
+    }
+  }
+
+  // Desktop: never show the consolidated "more" button — the three primary
+  // actions are displayed inline above 1024px.
+  @media (min-width: 1025px) {
+    &__more-btn {
+      display: none !important;
+    }
+  }
+
+  // Narrow viewports: cap the search bar so it doesn't crowd the rest of
+  // the topbar (the 192px default eats too much of a sub-650px row).
+  @media (max-width: 650px) {
+    &__search-bar {
+      max-width: 140px;
+    }
+  }
+
+  // Invite button
+  &__invite-btn {
+    display: inline-flex;
+    flex-direction: row !important;
+    height: 28px;
+    padding: 0 17px;
+    gap: 6px;
+    border: 1px solid var(--primary-50, #433cc5);
+    border-radius: 4px;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    flex-shrink: 0;
+    color: var(--primary-50, #433cc5);
+
+    .svg-wrapper,
+    .drumee-svg,
+    svg {
+      width: 15px;
+      height: 11px;
+      flex-shrink: 0;
+      color: currentColor;
+      fill: currentColor;
+    }
+
+    .inner,
+    .note-content,
+    .drumee-text,
+    span.label,
+    section.label {
+      font-size: 13px;
+      font-weight: 700;
+      line-height: 1;
+      color: currentColor;
+      white-space: nowrap;
+      display: inline-flex;
+      align-items: center;
+    }
+
+    &:hover {
+      background-color: var(--primary-40);
+      border-color: var(--primary-40);
+      color: var(--white);
+    }
+  }
+}
+
+// ── Dark mode overrides ─────────────────────────────────────────
+// Light mode keeps existing white/light-purple aesthetic; dark mode
+// swaps stark whites for elevated surfaces and softens the accent
+// purple so the topbar blends into the dark canvas.
+html[data-theme="dark"] {
+  .desk-module-topbar {
+    &__new-workspace-btn {
+      background-color: rgba(89, 80, 255, 0.25);
+
+      svg {
+        fill: var(--normal-fg);
+      }
+
+      span.label,
+      section.label {
+        color: var(--normal-fg);
+      }
+
+      &:hover {
+        background-color: rgba(89, 80, 255, 0.4);
+      }
+    }
+
+    &__add-wrapper {
+      .menu-topic-items,
+      .menu-items,
+      .desk-module-topbar__new-menu-items,
+      .desk-module-topbar__new-menu-create-submenu {
+        background-color: var(--normal-bg-elevated);
+      }
+
+      // Same nesting as the light rule above: __new-menu-items sits INSIDE
+      // .menu-topic-items, so it must not repeat the surface shadow. The
+      // create submenu keeps its own — it flies out beside the parent box
+      // rather than sitting within it.
+      .menu-topic-items,
+      .menu-items,
+      .desk-module-topbar__new-menu-create-submenu {
+        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
+      }
+
+      .desk-module-topbar__new-menu-create-symbol {
+        color: var(--normal-fg);
+      }
+
+      .desk-module-topbar__new-menu-item:hover,
+      .desk-module-topbar__new-menu-item[data-highlight="1"] {
+        background-color: var(--normal-bg-40);
+      }
+    }
+
+    &__upload-btn {
+      background-color: var(--normal-bg-elevated);
+
+      svg {
+        fill: var(--normal-fg);
+      }
+
+      span.label,
+      section.label {
+        color: var(--normal-fg);
+      }
+
+      &:hover {
+        background-color: var(--normal-bg-40);
+      }
+    }
+
+    &__more-btn {
+      background-color: var(--normal-bg-elevated);
+
+      svg {
+        fill: var(--normal-fg);
+        color: var(--normal-fg);
+      }
+
+      &:hover {
+        background-color: var(--normal-bg-40);
+      }
+    }
+
+    &__more-wrapper .menu-topic-items {
+      background-color: var(--normal-bg-elevated);
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
+    }
+
+    &__more-menu-item {
+      svg {
+        color: var(--normal-fg);
+        fill: var(--normal-fg);
+      }
+
+      span.label,
+      section.label {
+        color: var(--normal-fg);
+      }
+
+      &:hover {
+        background: rgba(89, 80, 255, 0.2);
+      }
+    }
+
+    &__search-bar {
+      background-color: var(--normal-bg-elevated);
+    }
+
+    &__search-icon {
+      color: var(--normal-fg-20);
+    }
+
+    &__search-input input {
+      color: var(--normal-fg);
+
+      &::placeholder {
+        color: var(--placeholder-fg);
+      }
+    }
+
+    &__search-kbd {
+      background-color: var(--normal-bg-80);
+      color: var(--normal-fg-20);
+    }
+
+    &__search-suggestions {
+      background-color: var(--normal-bg-elevated);
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
+
+      .workspace-item {
+        &__name {
+          color: var(--normal-fg);
+        }
+
+        // &__icon svg {
+        //   fill: var(--normal-fg-20);
+        // }
+
+        &__row {
+          color: var(--normal-fg);
+        }
+
+        &:hover,
+        &[data-state="1"],
+        &[data-radio="on"] {
+          background-color: var(--hover-bg-40);
+        }
+      }
+    }
+
+    &__add-menu {
+      background-color: var(--normal-bg-elevated);
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
+    }
+
+    &__add-menu-item {
+      span.label,
+      section.label {
+        color: var(--normal-fg);
+      }
+
+      &[data-highlight="1"] {
+        background: var(--normal-bg-40);
+      }
+
+      &:hover {
+        background: rgba(89, 80, 255, 0.2);
+      }
+    }
+  }
+}

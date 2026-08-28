@@ -1,0 +1,141 @@
+@use "mixins/drumee";
+
+.window-website {
+  &__ui {
+    &[data-device="mobile"] {
+      width: 360px !important;
+      height: 500px !important;
+      left: 50% !important;
+      transform: translateX(-50%) translateY(15%);
+    }
+    &[data-content="folder"] {
+      & .window-website-topbar__icon {
+        display: none;
+      }
+
+      & .window-topbar__title .svg-wrapper {
+        visibility: hidden;
+      }
+    }
+  }
+
+  &__header {
+    background-color: var(--normal-bg-100);
+    border-radius: var(--corner-radius-5) var(--corner-radius-5) 0 0;
+  }
+
+  &__name-wrapper {
+    gap: var(--spacer-4);
+  }
+
+  &__subtitle-wrapper {
+    gap: var(--spacer-4);
+    color: var(--neutral-300);
+
+    &.files {
+      padding-right: 10px;
+      border-right: 1px solid var(--neutral-300);
+    }
+
+    &[data-device="mobile"] {
+      display: none;
+    }
+  }
+
+  &__badge {
+    background-color: var(--primary-purple-80);
+    padding: var(--spacer-3);
+    border-radius: var(--corner-radius-1);
+    color: var(--mint-400);
+    font-size: 12px;
+    font-weight: 600;
+  }
+  &-topbar {
+    &__container {
+      position: absolute;
+      height: 44px;
+    }
+
+    &__icon {
+      color: #fff;
+      cursor: pointer;
+      width: 16px;
+      height: 16px;
+      padding: 0px;
+      margin: auto;
+
+      &:hover {
+        color: #879bff;
+      }
+
+      &.link {
+        padding: 1px;
+      }
+
+      &.contact {
+        margin-right: 15px;
+      }
+
+      &.settings {
+        margin-left: 2px;
+        padding: 1px;
+      }
+    }
+
+    &__menu-trigger {
+      padding: 1px;
+      color: #fff;
+      cursor: pointer;
+      width: 16px;
+      height: 16px;
+      margin: auto 0 auto 15px;
+    }
+
+    &__menu {
+      &[data-state="1"] {
+        .menu-trigger {
+          opacity: 0.4;
+        }
+      }
+
+      .menu-items {
+        min-width: 112px;
+        top: 0 !important;
+        margin-top: 9px;
+        flex-direction: row;
+        background-color: #fff;
+        border-radius: 4px;
+        background-color: rgba(241, 227, 244, 0.25);
+        height: 60% !important;
+        padding-top: 0;
+        left: 42px;
+
+        :hover {
+          color: #879bff;
+        }
+      }
+    }
+
+    &__count {
+      position: absolute;
+      width: 12px;
+      height: 12px;
+      background-color: var(--ewhite);
+      border-radius: 50%;
+      align-items: center;
+      justify-content: center;
+      @include drumee.typo(
+        $size: 8px,
+        $line: 12px,
+        $weight: 400,
+        $color: #2f2f2f
+      );
+      right: -6px;
+      top: 8px;
+
+      &[data-count="0"] {
+        display: none;
+      }
+    }
+  }
+}

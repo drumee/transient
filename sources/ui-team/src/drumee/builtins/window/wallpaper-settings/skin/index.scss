@@ -1,0 +1,362 @@
+@use "sass:meta";
+@use "mixins/drumee";
+@use "buttons" as *;
+
+.window-wallpaper-settings {
+  // __main is a flex column holding __header (72px) + this body. `height: 100%`
+  // made the body claim the WHOLE column, so header + body came to 72px MORE
+  // than the box and the footer inside it was pushed out the bottom (clipped by
+  // __main's overflow:hidden, so Cancel / Apply & Save became unclickable).
+  // `min-height: 0` is the load-bearing half: a flex item defaults to
+  // min-height:auto = its min-content height, which the uploader + footer floor
+  // at ~500px, so without it the body refuses to shrink and overflows anyway.
+  &__body {
+    flex: 1 1 auto;
+    min-height: 0;
+  }
+
+  &__ui {
+    background-color: var(--white);
+    border: 1px solid var(--default-border-notification);
+    border-radius: var(--corner-radius-6);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+    width: 800px;
+    height: 700px;
+    // Anchored at top:72px with no cap, this asked for 772px of viewport and
+    // simply ran off the bottom of any short screen — on a 14" laptop at 150%
+    // Windows scaling (CSS viewport ~1280x596) 180px hung below the fold and
+    // the footer buttons were unreachable. 88px = the 72px top offset + a 16px
+    // breathing gap. Above ~772px tall this is inert and the window stays 700px.
+    max-height: calc(100vh - 88px);
+    top: 72px;
+    left: calc(100vw - 800px);
+
+    &[data-device="mobile"] {
+      width: calc(100% - 32px);
+      left: auto !important;
+      top: 50% !important;
+      transform: translateY(-50%) !important;
+    }
+  }
+
+  &__main {
+    width: 100%;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    background-color: var(--white);
+    overflow: hidden;
+    border-radius: var(--corner-radius-6);
+  }
+
+  &__header {
+    height: 72px;
+  }
+
+  &-topbar {
+    &__container {
+      height: 100%;
+      display: flex;
+      align-items: center;
+      position: relative;
+    }
+
+    &__content {
+      height: 100%;
+      justify-content: left;
+      width: 100%;
+      padding: var(--spacer-8);
+
+      &[data-device="mobile"] {
+        align-items: center;
+      }
+
+      & .title {
+        text-align: left;
+        color: var(--neutral-900, #222732);
+        font-size: 18px;
+        font-style: normal;
+        font-weight: 500;
+        line-height: 30px;
+        padding: 0;
+      }
+    }
+
+    &__control {
+      position: absolute;
+      right: 22px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+
+      & .icon {
+        margin: auto;
+        background-color: var(--neutral-300);
+      }
+    }
+  }
+
+  @include wallpaper-settings-button;
+
+  &__uploader {
+    max-width: 500px;
+    width: 90%;
+    min-height: 184px;
+    padding: var(--spacer-5) var(--spacer-6);
+    justify-content: center;
+    align-items: center;
+    gap: var(--spacer-4);
+    align-self: center;
+    border-radius: var(--corner-radius-4);
+    margin: var(--spacer-5) auto;
+    background-color: var(--neutral-200);
+    background-size: cover;
+    transition: all 0.3s ease;
+    // On a short screen the capped dialog has to pay for this box out of the
+    // wallpaper grid, which collapsed to ~67px (under one thumbnail row).
+    // Trading 64px of empty drop-zone back to the grid keeps it usable at
+    // ~139px. 800px covers every 14" laptop viewport (596-740px) and leaves
+    // full-height desktops (>=956px) untouched.
+    @media (max-height: 800px) {
+      min-height: 120px;
+      margin: var(--spacer-3) auto;
+    }
+
+    &:hover {
+      background-color: var(--neutral-300);
+    }
+
+    &[data-over="on"] {
+      background-color: var(--neutral-300);
+    }
+
+    &-text {
+      @include drumee.typo($size: 14px, $line: 20px, $color: var(--white));
+      text-align: center;
+      text-shadow: 0 1px 1px rgba(34, 39, 50, 0.24);
+
+      &[data-error="1"] {
+        border: 1px solid var(--red-600);
+        padding: var(--spacer-3);
+        border-radius: var(--corner-radius-2);
+        background-color: var(--red-400);
+      }
+    }
+
+    &-progress {
+      height: 0;
+      width: 0;
+
+      &[data-state="1"] {
+        border-radius: var(--corner-radius-max);
+        height: 4px;
+        background-color: var(--green-200);
+      }
+    }
+
+    &-content {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: var(--spacer-3);
+    }
+  }
+
+  &__upload-button {
+    display: flex;
+    height: 40px;
+    padding: var(--spacer-3) var(--spacer-6);
+    align-items: center;
+    gap: var(--spacer-3);
+    cursor: pointer;
+    flex-shrink: 0;
+    border-radius: var(--corner-radius-max);
+    background: var(--gray-white, #fff);
+    box-shadow: 0 4px 12px 0 rgba(34, 39, 50, 0.12);
+    color: var(--neutral-900);
+
+    &:hover {
+      background-color: var(--neutral-50);
+    }
+  }
+
+  &__images-list {
+    flex: 1;
+    width: 100%;
+    padding: var(--spacer-4);
+    overflow-y: auto;
+
+    .smart-container {
+      gap: var(--spacer-4);
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(92px, 1fr));
+      grid-auto-rows: min-content;
+      align-items: start;
+    }
+  }
+
+  /** hidden because to use progress from the widget*/
+  .media-uploader {
+    display: none;
+  }
+
+  &__image {
+    aspect-ratio: 92 / 64;
+    width: 100%;
+    cursor: pointer;
+    object-fit: cover;
+    border: 2px solid transparent;
+
+    .content-preview {
+      border-radius: var(--corner-radius-3);
+      overflow: hidden;
+    }
+
+    &:hover {
+      border-color: var(--primary-500);
+    }
+
+    &[data-selected="on"] {
+      border-color: var(--primary-600);
+      box-shadow: 0 0 0 2px var(--primary-200);
+    }
+  }
+
+  &__colors {
+    padding: var(--spacer-5) var(--spacer-6);
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--spacer-5);
+    border-top: 1px solid var(--neutral-200);
+    &[data-device="mobile"] {
+      flex-direction: column;
+    }
+  }
+
+  &__colors-title {
+    @include drumee.typo(
+      $size: 14px,
+      $line: 21px,
+      $weight: 400,
+      $color: var(--default-text-color)
+    );
+    flex-shrink: 0;
+  }
+
+  &__colors-swatches {
+    display: flex;
+    gap: 12px;
+    align-items: center;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    flex: 1;
+  }
+
+  &__color-swatch {
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    cursor: pointer;
+    border: 2px solid transparent;
+    transition: all 0.2s ease;
+
+    &:hover {
+      transform: scale(1.1);
+      border-color: var(--neutral-400);
+    }
+
+    &[data-selected="1"] {
+      border-color: var(--primary-600);
+      box-shadow: 0 0 0 2px var(--primary-200);
+      transform: scale(1.15);
+    }
+  }
+
+  &-content {
+    &__container {
+      width: 100%;
+      height: 100%;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    &__body-content {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      padding: 0 var(--spacer-6);
+    }
+
+    &__footer {
+      padding: var(--spacer-5) var(--spacer-6);
+      display: flex;
+      justify-content: flex-end;
+      background-color: var(--white);
+      flex-shrink: 0;
+    }
+  }
+
+  .window-wallpaper-settings {
+    &__colors-wrapper {
+      gap: var(--spacer-6);
+
+      &.item {
+        width: 20px;
+        height: 20px;
+        border-radius: 100%;
+        cursor: pointer;
+        transition: all 0.2s ease;
+        border: 2px solid transparent;
+
+        &:hover {
+          transform: scale(1.2);
+          opacity: 0.8;
+        }
+
+        // Style for selected color
+        &[data-state="1"] {
+          border-color: var(--primary-600);
+          box-shadow: 0 0 0 2px var(--primary-200);
+          transform: scale(1.1);
+        }
+      }
+
+      // Individual color definitions
+      &.color-gray {
+        background-color: #ebecf0;
+      }
+
+      &.color-red {
+        background-color: #ff5779;
+      }
+
+      &.color-pink {
+        background-color: #ff65d5;
+      }
+
+      &.color-blue {
+        background-color: #2aaaff;
+      }
+
+      &.color-green {
+        background-color: #34d382;
+      }
+
+      &.color-yellow {
+        background-color: #ffe50d;
+      }
+
+      &.color-orange {
+        background-color: #ffa332;
+      }
+    }
+  }
+
+  &__buttons {
+    justify-content: flex-end;
+    margin: 10px 0 10px -10px;
+  }
+}

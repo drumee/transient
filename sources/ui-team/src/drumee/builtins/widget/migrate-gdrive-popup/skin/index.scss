@@ -1,0 +1,1158 @@
+@use "mixins/drumee";
+
+// Opacity-only entry for the mobile card. The desktop keyframes animate
+// transform, and a retained transform (`both`) would trap the scrim below.
+@keyframes migrate-gdrive-in-mobile {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+@mixin gdrive-mobile-card {
+  // inset:0 + margin:auto centres on both axes without a transform. `inset: 0`
+  // is what replaces the desktop top:50%/left:50% anchor — do NOT then set
+  // top/left back to auto, which leaves the card pinned bottom-right and
+  // margin:auto with nothing to distribute (caught by a headless measurement).
+  inset: 0;
+  margin: auto;
+  transform: none;
+  width: min(480px, calc(100vw - 32px));
+  height: fit-content;
+  max-height: calc(100dvh - 48px);
+  animation: migrate-gdrive-in-mobile 0.22s cubic-bezier(0.2, 0.7, 0.2, 1) both;
+
+  &::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    z-index: -1;
+    background-color: var(--overlay-bg);
+    backdrop-filter: blur(6px);
+    -webkit-backdrop-filter: blur(6px);
+    // Blocks taps reaching desk items behind the card. It does not dismiss:
+    // this popup has no outside-click handler, deliberately — a stray tap must
+    // not abandon an import in flight. Closing stays with its own ×.
+    pointer-events: auto;
+  }
+
+  // Opaque card surface above the negative-z scrim, or the dim and blur wash
+  // out the card itself. `inherit` tracks __ui's var(--normal-bg-90).
+  .migrate-gdrive-popup__container {
+    background-color: inherit;
+    border-radius: inherit;
+  }
+}
+
+
+// Quick "pop" when the SA email is copied (migrate-gdrive-popup__sa-copy).
+@keyframes migrate-gdrive-copy-pop {
+  0% { transform: scale(0.85); }
+  55% { transform: scale(1.12); }
+  100% { transform: scale(1); }
+}
+
+// Drumee brand accent — INDIGO/PURPLE per Figma (node 1661-60457). Solid
+// colors reuse the design-system tokens (--primary-purple-40 = #5950ff is the
+// brand button color; --primary-purple-50 = #433cc5 is the darker/hover shade)
+// — the same tokens settings_main already uses. The brand purple is identical
+// in light AND dark themes, so the rgba tints below are theme-safe. Everything
+// structural (surfaces, borders, shadows, text) still flips via theme tokens.
+//
+// NOTE: drumee.typo() maps $weight -> font-family but does NOT emit
+// `font-weight` (a system quirk — see skin/mixins/typo.scss). Following the
+// settings_main convention, bold text declares `font-weight` explicitly.
+// --primary-40 / --primary-50, not --primary-purple-40/50. Same hex, but the
+// canonical names are what every other surface uses (billing plan cards, the
+// system buttons), so a token retune reaches this popup too.
+// #433cc5 — the exact purple of the "Manage subscription" button in
+// settings (settings/main skin, &__billing-action-main). That button is the
+// reference for a Drumee primary action, NOT the pill CTA in lib/button.scss:
+// the pill's --primary-500 (#b251fb) never reaches it, because that rule is
+// scoped to `&__button-main` and the billing button renders as
+// `&__billing-action-main`. Anchoring here keeps this popup the same purple
+// as the settings screen it is opened from.
+$accent: var(--primary-50);
+$accent-strong: var(--primary-60);
+$accent-soft: rgba(67, 60, 197, 0.12);
+$accent-soft-2: rgba(67, 60, 197, 0.2);
+$danger-soft: rgba(246, 81, 75, 0.12);
+
+.migrate-gdrive-popup {
+  // Icons nested inside clickable Notes/Buttons must not swallow the click.
+  &__close > *,
+  &__cancel > *,
+  &__mode-opt > *,
+  &__tree-caret > *,
+  &__tree-check > *,
+  &__tree-more > *,
+  &__primary-btn > * { pointer-events: none !important; }
+
+  // ───────── shell ─────────
+  &__ui {
+    // Armin Grotesk for everything inside, by inheritance.
+    //
+    // drumee.typo() only emits font-family for $weight 300/400/500/700 (see
+    // skin/mixins/typo.scss) — pass 600 and it emits NONE, silently. This
+    // file passes 600 in fourteen places, so fourteen pieces of text — the
+    // primary button, the step titles, the copy pill, the account row —
+    // were rendering in the browser's default serif while the app around
+    // them was Armin Grotesk. That is what made the popup look like it came
+    // from somewhere else.
+    //
+    // Set here rather than patched into all fourteen call sites: inheritance
+    // reaches the Note's inner .note-content too, and any rule that DOES
+    // declare a family still wins.
+    font-family: var(--font-main);
+
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: min(480px, calc(100vw - 32px));
+    max-height: calc(100vh - 48px);
+    overflow-y: auto;
+    background: var(--normal-bg-90);
+    border: 1px solid var(--border-default);
+    border-radius: var(--corner-radius-4);          // 12px
+    box-shadow:
+      0 16px 48px -8px rgba(11, 10, 33, 0.24),
+      0 4px 12px rgba(11, 10, 33, 0.08);
+    z-index: 99998;
+    animation: migrate-gdrive-in 0.22s cubic-bezier(0.2, 0.7, 0.2, 1) both;
+
+    &[data-state="0"] { display: none; }
+
+    // ── Mobile backdrop ───────────────────────────────────────────────
+    // On a phone this card floats over a fully sharp desk. Give it the desk's
+    // own scrim — the same var(--overlay-bg) + blur(6px) that
+    // .desk-module__overlay uses behind the mobile drawer — as a ::before on
+    // the card itself, so it depends on NOTHING outside this widget.
+    //
+    // An earlier attempt hung the scrim off .window-manager__layer via :has().
+    // That reads better but ties the fix to where the window manager happens to
+    // mount this popup, which is not a contract this widget controls
+    // (Wm.launch -> getWindowsPool() returns windowsLayer OR headlessLayer).
+    // Self-contained is the safer trade for a backdrop.
+    //
+    // Three things have to change together for the pseudo to reach the
+    // viewport, and each is load-bearing:
+    //   • transform must go. A transform makes this card the containing block
+    //     for fixed descendants, which would shrink the scrim to the card.
+    //     Centring therefore moves to inset:0 + margin:auto, which needs a
+    //     definite size — hence height:fit-content with the max-height cap.
+    //   • the animation must go with it. Keyframes outrank normal
+    //     declarations, so `migrate-gdrive-in` (which animates transform, with
+    //     `both` retaining the end state) would defeat `transform: none`
+    //     without !important. Swapped for an opacity-only fade instead, so the
+    //     entry still animates.
+    //   • overflow stays on this element, not the pseudo, so a tall card still
+    //     scrolls inside the viewport cap.
+    //
+    // Same shape panel_activity uses for its own mobile card, including the
+    // opaque __container below — in-flow content outranks a negative-z pseudo,
+    // so without it the scrim's dim and blur wash out the card's own rows.
+    //
+    // Emitted twice, as mixins/responsive.scss does it: Visitor.device() only
+    // answers "mobile" below 801px, so the attribute is absent in the DevTools
+    // emulator and on a landscape phone.
+    &[data-device="mobile"] {
+      @include gdrive-mobile-card;
+    }
+
+    @media (max-width: 650px) {
+      & {
+        @include gdrive-mobile-card;
+      }
+    }
+
+    scrollbar-width: thin;
+    scrollbar-color: var(--border-strong) transparent;
+    &::-webkit-scrollbar { width: 8px; }
+    &::-webkit-scrollbar-track { background: transparent; }
+    &::-webkit-scrollbar-thumb {
+      background: var(--border-strong);
+      border-radius: var(--corner-radius-max);
+    }
+  }
+
+  &__container {
+    padding: var(--spacer-6);                        // 24px
+    gap: var(--spacer-5);                            // 16px
+  }
+
+  // ───────── header ─────────
+  &__header {
+    align-items: center;
+    justify-content: space-between;
+    width: 100%;
+    padding-bottom: var(--spacer-4);                 // 12px
+    border-bottom: 1px solid var(--border-muted);
+  }
+
+  &__title-wrap { align-items: center; gap: var(--spacer-3); }   // 8px
+
+  &__title-ico { width: 22px; height: 22px; flex: 0 0 auto; }
+
+  &__title {
+    // No "Manrope": Drumee is Armin Grotesk everywhere (skin/vars/font.scss
+    // maps every weight to it), so naming another family here made this the
+    // one dialog whose title did not match the app around it.
+    @include drumee.typo($size: 18px, $weight: 700, $line: 24px, $color: var(--normal-fg-10));
+    font-family: var(--font-bold);
+    font-weight: 700;
+    letter-spacing: -0.01em;
+  }
+
+  &__close {
+    width: 28px;
+    height: 28px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: var(--corner-radius-2);
+    cursor: pointer;
+    flex: 0 0 auto;
+    color: var(--normal-fg-50);
+    transition: color 0.15s, background 0.15s;
+
+    svg { width: 16px; height: 16px; fill: currentColor; }
+    &:hover { color: var(--normal-fg-10); background: var(--overlay-bg-05); }
+  }
+
+  // ───────── hero (big icon + title + subtitle) ─────────
+  &__hero {
+    align-items: center;
+    text-align: center;
+    gap: var(--spacer-4);
+    padding: var(--spacer-5) var(--spacer-3) var(--spacer-2);
+  }
+
+  &__hero-ico {
+    width: 64px;
+    height: 64px;
+    padding: 14px;
+    box-sizing: border-box;
+    border-radius: 50%;
+    background: var(--overlay-bg-05);
+  }
+
+  &__hero-title {
+    @include drumee.typo($size: 17px, $weight: 700, $line: 24px, $color: var(--normal-fg-10));
+    font-weight: 700;
+  }
+
+  &__hero-sub {
+    @include drumee.typo($size: 13.5px, $weight: 400, $line: 20px, $color: var(--normal-fg-20));
+    max-width: 340px;
+  }
+
+  // brand hero keeps the multicolor Google logo — neutral elevated ring only
+  &__hero--brand &__hero-ico {
+    background: var(--normal-bg-elevated);
+    border: 1px solid var(--border-muted);
+  }
+  &__hero--success &__hero-ico { background: rgba(84, 182, 132, 0.14); color: var(--success); fill: var(--success); }
+  &__hero--error   &__hero-ico { background: rgba(246, 81, 75, 0.14);  color: var(--error);   fill: var(--error); }
+  &__hero--neutral &__hero-ico { background: var(--overlay-bg-05);      color: var(--normal-fg-50); fill: var(--normal-fg-50); }
+
+  // ───────── intro text ─────────
+  &__description {
+    @include drumee.typo($size: 13.5px, $weight: 400, $line: 20px, $color: var(--normal-fg-20));
+  }
+
+  // returning-user "incremental sync" note on the ready screen
+  &__resync-hint {
+    @include drumee.typo($size: 12.5px, $weight: 400, $line: 18px, $color: var(--normal-fg-20));
+    background: var(--overlay-bg-05);
+    border-radius: var(--corner-radius-2);
+    padding: var(--spacer-3) var(--spacer-4);
+  }
+
+  // ───────── connected Google account row (ready screen) ─────────
+  &__account-row {
+    align-items: center;
+    gap: var(--spacer-3);
+    padding: var(--spacer-3) var(--spacer-4);
+    background: var(--normal-bg-elevated);
+    border: 1px solid var(--border-default);
+    border-radius: var(--corner-radius-3);
+  }
+
+  &__account-ico { width: 20px; height: 20px; flex: 0 0 auto; }
+
+  &__account-text { flex: 1; min-width: 0; gap: 1px; }
+
+  &__account-email {
+    @include drumee.typo($size: 13px, $weight: 600, $line: 18px, $color: var(--normal-fg-10));
+    font-weight: 600;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  &__account-actions { flex: 0 0 auto; gap: var(--spacer-4); align-items: center; }
+
+  &__account-action {
+    @include drumee.typo($size: 12px, $weight: 600, $line: 16px, $color: $accent);
+    font-weight: 600;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: opacity 0.12s;
+
+    &:hover { text-decoration: underline; }
+    &--danger { color: var(--error); }
+  }
+
+  // ───────── shared elevated surfaces (card / row / input) ─────────
+  &__dest-card,
+  &__toggle-row,
+  &__entry {
+    background: var(--normal-bg-elevated);
+    border: 1px solid var(--border-default);
+    border-radius: var(--corner-radius-3);           // 8px
+  }
+
+  // micro section label (uppercase) — used above destination + source folder
+  &__field-label {
+    @include drumee.typo($size: 11px, $weight: 600, $line: 16px, $color: var(--normal-fg-50));
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+
+  // ───────── destination card ─────────
+  &__dest-card {
+    align-items: center;
+    gap: var(--spacer-4);
+    padding: var(--spacer-4);
+  }
+
+  // Home/personal folder glyph — coral per Figma (Signal/Restricted #d65f59),
+  // decoupled from the brand accent so it stays red while buttons are indigo.
+  &__dest-ico {
+    width: 36px;
+    height: 36px;
+    padding: 7px;
+    box-sizing: border-box;
+    border-radius: var(--corner-radius-2);
+    background: rgba(214, 95, 89, 0.14);
+    color: #d65f59;
+    fill: #d65f59;
+    flex: 0 0 auto;
+  }
+
+  &__dest-text { gap: 1px; min-width: 0; }
+
+  &__destination {
+    @include drumee.typo($size: 14px, $weight: 600, $line: 20px, $color: var(--normal-fg-10));
+    font-weight: 600;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  // ───────── source folder field ─────────
+  &__field { gap: var(--spacer-3); }
+
+  &__entry {
+    padding: 0 var(--spacer-4);
+    height: 42px;
+    display: flex;
+    align-items: center;
+    transition: border-color 0.15s, box-shadow 0.15s;
+
+    &:focus-within {
+      border-color: $accent;
+      box-shadow: 0 0 0 3px $accent-soft;
+    }
+
+    input {
+      width: 100%;
+      height: 100%;
+      border: none;
+      outline: none;
+      background: transparent;
+      @include drumee.typo($size: 14px, $weight: 400, $line: 20px, $color: var(--normal-fg-10));
+      &::placeholder { color: var(--placeholder-fg); }
+    }
+  }
+
+  &__field-help {
+    @include drumee.typo($size: 12px, $weight: 400, $line: 16px, $color: var(--normal-fg-50));
+  }
+
+  // ───────── status banner ─────────
+  &__status {
+    @include drumee.typo($size: 13px, $weight: 500, $line: 18px);
+    font-weight: 500;
+    padding: var(--spacer-3) var(--spacer-4);
+    border-radius: var(--corner-radius-2);
+
+    &[data-state="0"] { display: none; }
+    &[data-kind="info"]  { background: $accent-soft; color: $accent; }
+    &[data-kind="error"] { background: $danger-soft; color: var(--error); }
+  }
+
+  // ───────── toggle switch ─────────
+  // The row is a static label + switch container; only the switch is clickable.
+  &__toggle-row {
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--spacer-3);
+    padding: var(--spacer-4);
+  }
+
+  &__toggle-label {
+    @include drumee.typo($size: 14px, $weight: 500, $line: 20px, $color: var(--normal-fg-10));
+    font-weight: 500;
+  }
+
+  &__switch {
+    flex: 0 0 auto;
+    width: 42px;
+    height: 24px;
+    border-radius: var(--corner-radius-max);
+    background: var(--normal-bg-40);
+    transition: background 0.2s;
+    align-items: center;
+    padding: 0 3px;
+    cursor: pointer;
+  }
+
+  &__switch-knob {
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    background: #ffffff;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+    transition: transform 0.2s cubic-bezier(0.2, 0.7, 0.2, 1);
+  }
+
+  &__toggle-row[data-state="1"] &__switch { background: $accent; }
+  &__toggle-row[data-state="1"] &__switch-knob { transform: translateX(18px); }
+
+  // ───────── mode selector (All / Choose) ─────────
+  &__mode { gap: var(--spacer-3); }
+
+  &__mode-opt {
+    align-items: center;
+    gap: var(--spacer-3);
+    padding: var(--spacer-3) var(--spacer-4);
+    border: 1px solid var(--border-default);
+    border-radius: var(--corner-radius-3);
+    cursor: pointer;
+    transition: border-color 0.15s, background 0.15s;
+
+    &[data-state="1"] { border-color: $accent; background: $accent-soft; }
+    &:hover { background: var(--overlay-bg-05); }
+  }
+
+  &__mode-radio {
+    flex: 0 0 auto;
+    width: 18px;
+    height: 18px;
+    border: 2px solid var(--border-strong);
+    border-radius: 50%;
+    align-items: center;
+    justify-content: center;
+    transition: border-color 0.15s;
+  }
+  &__mode-opt[data-state="1"] &__mode-radio { border-color: $accent; }
+
+  &__mode-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: transparent;
+    transition: background 0.15s;
+  }
+  &__mode-opt[data-state="1"] &__mode-dot { background: $accent; }
+
+  &__mode-label {
+    @include drumee.typo($size: 14px, $weight: 500, $line: 20px, $color: var(--normal-fg-10));
+    font-weight: 500;
+  }
+
+  // ───────── picker tree ─────────
+  &__tree {
+    max-height: 260px;
+    overflow-y: auto;
+    border: 1px solid var(--border-default);
+    border-radius: var(--corner-radius-3);
+    padding: var(--spacer-2) 0;
+    background: var(--normal-bg-elevated);
+  }
+
+  &__tree-row {
+    align-items: center;
+    gap: var(--spacer-2);
+    height: 32px;
+    padding-right: var(--spacer-3);
+
+    &[data-implied="1"] { opacity: 0.5; }
+    &:hover { background: var(--overlay-bg-05); }
+  }
+
+  &__tree-caret {
+    flex: 0 0 auto;
+    width: 18px;
+    height: 18px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    color: var(--normal-fg-50);
+    transition: transform 0.12s ease;
+    svg { width: 12px; height: 12px; fill: currentColor; }
+  }
+  // Single caret icon (apps-caret-down) rotated when the folder is collapsed.
+  &__tree-caret[data-state="0"] { transform: rotate(-90deg); }
+  &__tree-caret--leaf { cursor: default; visibility: hidden; }
+
+  &__tree-check {
+    flex: 0 0 auto;
+    width: 18px;
+    height: 18px;
+    border: 2px solid var(--border-strong);
+    border-radius: var(--corner-radius-2);
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: background 0.12s, border-color 0.12s;
+
+    &[data-state="1"] { background: $accent; border-color: $accent; }
+    &[data-disabled="1"] { cursor: default; }
+  }
+
+  &__tree-check-mark {
+    width: 8px;
+    height: 8px;
+    border-radius: 1px;
+    background: transparent;
+  }
+  &__tree-check[data-state="1"] &__tree-check-mark { background: #ffffff; }
+
+  &__tree-ico {
+    flex: 0 0 auto;
+    width: 18px;
+    height: 18px;
+    color: var(--normal-fg-50);
+    fill: var(--normal-fg-50);
+  }
+
+  &__tree-name {
+    @include drumee.typo($size: 13.5px, $weight: 400, $line: 20px, $color: var(--normal-fg-10));
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    min-width: 0;
+  }
+
+  &__tree-info {
+    @include drumee.typo($size: 12.5px, $weight: 400, $line: 18px, $color: var(--normal-fg-50));
+    padding: var(--spacer-2) var(--spacer-4);
+    &[data-kind="error"] { color: var(--error); }
+  }
+
+  &__tree-more {
+    @include drumee.typo($size: 12.5px, $weight: 500, $line: 18px, $color: $accent);
+    font-weight: 500;
+    padding: var(--spacer-2) var(--spacer-4);
+    cursor: pointer;
+    &:hover { color: $accent-strong; }
+  }
+
+  // ───────── footer + buttons ─────────
+  &__footer {
+    justify-content: flex-end;
+    align-items: center;
+    gap: var(--spacer-3);
+    margin-top: var(--spacer-2);
+  }
+
+  &__cancel,
+  &__primary-btn {
+    cursor: pointer;
+    // 6px/24px, 4px radius, 14px/20 semibold — measured off the live
+    // "Manage subscription" button in settings, which is the primary action
+    // a user sees immediately before opening this popup. An earlier pass made
+    // this a 24px-radius pill at 16px by copying the plan-card CTAs; that is a
+    // different button in a different screen, and next to the settings UI it
+    // read as another product.
+    padding: 6px var(--spacer-6);
+    border-radius: var(--corner-radius-1);
+    @include drumee.typo($size: 14px, $weight: 600, $line: 20px);
+    font-weight: 600;
+    user-select: none;
+    text-align: center;
+    // The button is a `note` (drumee-widget, data-flow="wrap") which the global
+    // container rule renders as `display:flex; flex-direction:row`. Its inner
+    // `.note-content` is a flex child, so text-align alone won't center it —
+    // justify/align-items center the label inside the full-width button.
+    justify-content: center;
+    align-items: center;
+    transition: filter 0.15s, background 0.15s, color 0.15s, border-color 0.15s, transform 0.06s;
+
+    &:active { transform: translateY(1px); }
+  }
+
+  &__cancel {
+    color: var(--normal-fg-20);
+    background: transparent;
+    border: 1px solid var(--border-default);
+
+    &:hover { color: var(--normal-fg-10); background: var(--overlay-bg-05); }
+  }
+
+  &__primary-btn {
+    color: var(--white);
+    background: $accent;
+    border: 1px solid transparent;
+    // No drop-shadow: the shell is `overflow-y:auto` + border-radius, which
+    // clips a child's glow into hard square corners at the rounded edge
+    // (looked like the button bleeding past the popup). Flat reads cleaner and
+    // matches the system buttons (settings).
+    max-width: 100%;
+    box-sizing: border-box;
+
+    &[data-state="0"] { opacity: 0.55; pointer-events: none; }
+    &[data-disabled="1"] { opacity: 0.55; pointer-events: none; }
+    &[data-busy="1"]  { opacity: 0.8; pointer-events: none; }
+    // Dim, don't re-tint — same hover the settings button uses.
+    &:hover { opacity: 0.9; }
+  }
+
+  // Stand-alone CTA (connect / result states) spans the full width. Use an
+  // explicit width:100% (not flex:1 in a flex-end row) so it can't be widened
+  // past the padded content box by flex quirks.
+  &__body--not-connected > &__primary-btn { width: 100%; }
+  // Result footer holds two equal buttons (Migrate again / Close, or
+  // Close / Try again) — split the row evenly, contained in the padding.
+  &__body--result &__footer { width: 100%; }
+  &__body--result &__footer > * { flex: 1 1 0; min-width: 0; }
+
+  &[data-busy="1"] { pointer-events: none; }
+
+  // ───────── progress ─────────
+  &__body--in-progress { gap: var(--spacer-3); }
+
+  &__progress-head { align-items: center; gap: var(--spacer-3); }
+
+  &__progress-ico {
+    width: 20px;
+    height: 20px;
+    color: $accent;
+    fill: $accent;
+    flex: 0 0 auto;
+  }
+
+  &__progress-label {
+    @include drumee.typo($size: 14px, $weight: 600, $line: 20px, $color: var(--normal-fg-10));
+    font-weight: 600;
+    flex: 1;
+  }
+
+  &__progress-pct {
+    @include drumee.typo($size: 15px, $weight: 700, $line: 20px, $color: $accent);
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+  }
+
+  &__progress-bar {
+    width: 100%;
+    height: 8px;
+    background: var(--overlay-bg-05);
+    border-radius: var(--corner-radius-max);
+    overflow: hidden;
+    margin: var(--spacer-2) 0;
+  }
+
+  &__progress-fill {
+    height: 100%;
+    background: linear-gradient(90deg, $accent, var(--primary-purple-30));
+    border-radius: inherit;
+    transition: width 250ms cubic-bezier(0.4, 0, 0.2, 1);
+    min-width: 4px;
+  }
+
+  &__progress-count {
+    @include drumee.typo($size: 12px, $weight: 500, $line: 16px, $color: var(--normal-fg-20));
+    font-weight: 500;
+    font-variant-numeric: tabular-nums;
+  }
+
+  &__progress-current {
+    @include drumee.typo($size: 12px, $weight: 400, $line: 16px, $color: var(--normal-fg-50));
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    font-style: italic;
+  }
+
+  // ───────── result summary + errors ─────────
+  // Notes render as flex rows (drumee-widget + data-flow="wrap"), so text-align
+  // alone won't center the inner .note-content — justify-content does.
+  &__summary {
+    @include drumee.typo($size: 14px, $weight: 400, $line: 20px, $color: var(--normal-fg-20));
+    text-align: center;
+    justify-content: center;
+  }
+
+  &__fail-reason {
+    background: rgba(246, 81, 75, 0.1);
+    color: var(--error);
+    font-weight: 500;
+    padding: var(--spacer-3) var(--spacer-4);
+    border-radius: var(--corner-radius-2);
+    text-align: center;
+    justify-content: center;
+  }
+
+  // Report panel. Neutral by default: it also carries items that were merely
+  // SKIPPED (Drive shortcuts), and painting those red said "your migration
+  // broke" about a run that lost nothing.
+  &__error-list {
+    gap: var(--spacer-3);
+    max-height: 168px;
+    overflow-y: auto;
+    padding: var(--spacer-3) var(--spacer-4);
+    background: var(--normal-bg-100, rgba(0, 0, 0, 0.03));
+    border: 1px solid var(--normal-bg-20, rgba(0, 0, 0, 0.10));
+    border-radius: var(--corner-radius-2);
+  }
+
+  // One group per reason: the cause stated once, the affected names under it.
+  &__error-group {
+    gap: 2px;
+  }
+
+  &__error-reason {
+    @include drumee.typo($size: 12px, $line: 16px, $weight: 400, $color: var(--normal-fg));
+    font-weight: 600;
+  }
+
+  // Only genuine failures are red; skipped groups stay neutral.
+  &__error-group[data-kind="error"] &__error-reason,
+  &__error-group[data-kind="error"] .migrate-gdrive-popup__error-reason {
+    color: var(--error);
+  }
+
+  // The names wrap: this is a comma list of everything in the group, so
+  // clipping it to one ellipsised line hid most of what it reports.
+  &__error-item {
+    @include drumee.typo($size: 12px, $weight: 400, $line: 16px, $color: var(--normal-fg-10));
+    white-space: normal;
+    word-break: break-word;
+  }
+
+  // ───────── skip link ─────────
+  &__skip {
+    @include drumee.typo($size: 13px, $weight: 500, $line: 18px, $color: var(--normal-fg-50));
+    font-weight: 500;
+    cursor: pointer;
+    margin-top: var(--spacer-1);
+    align-self: center;
+    transition: color 0.15s;
+
+    &:hover { color: $accent; }
+  }
+
+  // ───────── Figma-flow additions (choose / in-progress / result) ─────────
+  // Full-width CTA (Import now / Start Migrate). Taller than the inline
+  // settings action because it spans the dialog, but the same 14px/20
+  // semibold label — this modifier comes after the base rule, so its type
+  // is what actually paints, and at 16px it was the one piece still off
+  // the system scale.
+  &__primary-btn--full {
+    width: 100%;
+    text-align: center;
+    padding: 14px var(--spacer-5);
+    @include drumee.typo($size: 14px, $weight: 600, $line: 20px);
+    font-weight: 600;
+  }
+  &__primary-btn--grow { flex: 1; text-align: center; }
+
+  &__btn-row { gap: var(--spacer-3); }
+
+  &__back-btn {
+    @include drumee.typo($size: 14px, $weight: 600, $line: 20px, $color: var(--normal-fg-10));
+    padding: var(--spacer-3) var(--spacer-7);
+    border-radius: var(--corner-radius-1);
+    background: var(--normal-bg-90);
+    cursor: pointer;
+    align-self: stretch;
+    display: flex;
+    align-items: center;
+
+    &:hover { background: var(--normal-bg-100); }
+  }
+
+  &__summary-row {
+    justify-content: space-between;
+    align-items: center;
+
+    > * { @include drumee.typo($size: 13px, $weight: 500, $line: 18px, $color: var(--normal-fg-50)); }
+  }
+
+  &__keep-open {
+    @include drumee.typo($size: 13px, $weight: 400, $line: 18px, $color: var(--normal-fg-50));
+  }
+
+  &__progress-row {
+    justify-content: space-between;
+    align-items: center;
+  }
+
+  &__filelog {
+    gap: 0;
+    max-height: 280px;
+    overflow-y: auto;
+  }
+
+  &__filelog-row {
+    align-items: center;
+    gap: var(--spacer-3);
+    padding: var(--spacer-3) 0;
+    border-bottom: 1px solid var(--border-muted, rgba(0, 0, 0, 0.05));
+
+    &:last-child { border-bottom: none; }
+
+    svg { width: 18px; height: 18px; flex-shrink: 0; }
+  }
+
+  &__filelog-name {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    @include drumee.typo($size: 13px, $weight: 500, $line: 18px, $color: var(--normal-fg-10));
+  }
+
+  &__chip {
+    flex-shrink: 0;
+    padding: 2px 10px;
+    border-radius: var(--corner-radius-max);
+    @include drumee.typo($size: 11px, $weight: 600, $line: 16px, $color: var(--normal-fg-50));
+    background: var(--normal-bg-90);
+
+    &[data-kind="done"] { background: rgba(34, 160, 107, 0.12); color: #1d8f5f; }
+    &[data-kind="uploading"] { background: rgba(244, 162, 60, 0.14); color: #c87d1e; }
+  }
+
+  &__tree-size {
+    flex-shrink: 0;
+    margin-left: auto;
+    @include drumee.typo($size: 12px, $weight: 500, $line: 16px, $color: var(--normal-fg-50));
+  }
+
+  &__summary-errors[data-kind="error"] { color: var(--red-500); }
+  // Skipped is information, not a fault — keep it in the normal text colour.
+  &__summary-errors[data-kind="skipped"] { color: var(--normal-fg-10); }
+
+  &__dest-block { gap: var(--spacer-2); }
+
+  &__dest-sub {
+    @include drumee.typo($size: 12px, $weight: 400, $line: 16px, $color: var(--normal-fg-50));
+  }
+
+  &__header--bare { justify-content: flex-end; border-bottom: none; }
+
+  &__title-ico--cloud { color: $accent; }
+
+  // ───────── whole-folder import (share-to-SA) ─────────
+  // Bigger gap than the old --sa body: the two steps are now separate blocks
+  // and need to read as separate blocks, not one continuous list.
+  &__body--sa { gap: var(--spacer-5); }
+
+  &__sa-step { gap: var(--spacer-2); }
+
+  &__sa-step-head {
+    align-items: center;
+    gap: var(--spacer-2);
+  }
+
+  // The number in its own disc, so the eye can count the steps without
+  // reading them — the old screen buried "1." and "2." inside the prose.
+  //
+  // Centred with justify/align, NOT text-align: a Note renders as a flex
+  // container with the text in an inner .note-content, so text-align has
+  // nothing to act on and the digit sat off to one side, unreadable.
+  &__sa-step-badge {
+    flex-shrink: 0;
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    align-items: center;
+    justify-content: center;
+    background: $accent;
+    @include drumee.typo($size: 11px, $line: 20px, $color: #fff);
+    // drumee.typo emits no font-weight, so it goes here or the digit renders
+    // at the inherited weight.
+    font-weight: 700;
+  }
+
+  &__sa-step-title {
+    @include drumee.typo($size: 14px, $weight: 600, $line: 20px, $color: var(--normal-fg-10));
+  }
+
+  // Big primary CTA on the ready screen — the ONLY import entry point for
+  // drive.file users (Picker option removed).
+  &__sa-cta {
+    align-items: center;
+    justify-content: center;
+    gap: var(--spacer-3);
+    width: 100%;
+    padding: var(--spacer-5);
+    box-sizing: border-box;
+    border-radius: var(--corner-radius-1);
+    background: $accent;
+    cursor: pointer;
+    transition: background 0.15s, transform 0.1s;
+
+    > * { pointer-events: none !important; }
+
+    &:hover { background: $accent-strong; }
+    &:active { transform: scale(0.99); }
+  }
+
+  &__sa-cta-ico {
+    width: 22px;
+    height: 22px;
+    color: #fff;
+    fill: #fff;
+    flex: 0 0 auto;
+  }
+
+  &__sa-cta-label {
+    @include drumee.typo($size: 15px, $weight: 700, $line: 22px, $color: #fff);
+    font-weight: 700;
+  }
+
+  // Ghost variant — on the not-connected screen Connect is the solid primary;
+  // the SA import is the secondary (outline) peer option.
+  &__sa-cta--ghost {
+    background: transparent;
+    border: 1px solid $accent;
+
+    &:hover { background: $accent-soft; }
+  }
+  &__sa-cta--ghost &__sa-cta-ico { color: $accent; fill: $accent; }
+  &__sa-cta--ghost &__sa-cta-label { color: $accent; }
+
+  &__alt { gap: var(--spacer-2); align-items: stretch; }
+
+  &__or {
+    @include drumee.typo($size: 12px, $weight: 500, $line: 16px, $color: var(--normal-fg-50));
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    text-align: center;
+    justify-content: center;
+    margin: var(--spacer-1) 0;
+  }
+
+  &__sa-cta-sub {
+    @include drumee.typo($size: 12px, $weight: 400, $line: 16px, $color: var(--normal-fg-50));
+    text-align: center;
+    justify-content: center;
+  }
+
+  &__sa-link {
+    @include drumee.typo($size: 13px, $weight: 600, $line: 18px, $color: $accent);
+    cursor: pointer;
+    align-self: center;
+    margin-top: var(--spacer-1);
+
+    &:hover { text-decoration: underline; }
+  }
+
+  &__sa-email-card {
+    align-items: center;
+    gap: var(--spacer-2);
+    padding: var(--spacer-3) var(--spacer-4);
+    // -3 like every other card in this popup (dest-card, entry, toggle-row);
+    // -1 was near-square and made this row read as its own component.
+    border-radius: var(--corner-radius-3);
+    background: var(--normal-bg-elevated);
+    // Flash a green outline when the email is copied so the feedback is
+    // unmissable; reverts with the button after ~1.8s (JS clears data-copied).
+    border: 1px solid var(--border-default);
+    transition: border-color 0.2s ease, background 0.2s ease;
+
+    &[data-copied="1"] {
+      border-color: var(--green-400);
+      background: var(--green-100);
+    }
+  }
+
+  &__sa-email {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    user-select: all;
+    @include drumee.typo($size: 13px, $weight: 600, $line: 18px, $color: var(--normal-fg-10));
+  }
+
+  &__sa-copy {
+    flex-shrink: 0;
+    cursor: pointer;
+    padding: 2px 10px;
+    border-radius: var(--corner-radius-max);
+    background: var(--normal-bg-100);
+    white-space: nowrap;
+    transition: background 0.15s ease, color 0.15s ease, transform 0.1s ease;
+    @include drumee.typo($size: 11px, $weight: 600, $line: 16px, $color: $accent);
+
+    &:hover { background: var(--normal-bg-elevated, var(--normal-bg-90)); }
+    &:active { transform: scale(0.92); }
+
+    // Copied: solid green pill with a ✓ + a quick pop — clearly distinct from
+    // the idle state, then JS reverts it to "Copy" after ~1.8s.
+    &[data-copied="1"] {
+      color: #fff;
+      background: var(--green-500);
+      animation: migrate-gdrive-copy-pop 0.32s ease;
+
+      &::before { content: "✓ "; }
+    }
+  }
+
+  &__sa-input-row {
+    // The row is a Box.X inside the step's Box.Y; without this it collapses
+    // to the Entry's intrinsic width and the link field ends up a stub.
+    width: 100%;
+
+    > * { flex: 1 1 auto; min-width: 0; }
+
+    input {
+      width: 100%;
+      padding: var(--spacer-3) var(--spacer-4);
+      border: 1px solid var(--border-default);
+      border-radius: var(--corner-radius-3);
+      background: var(--normal-bg-elevated);
+      @include drumee.typo($size: 13.5px, $weight: 400, $line: 20px, $color: var(--normal-fg-10));
+
+      &:focus { border-color: $accent; outline: none; }
+    }
+  }
+
+  &__sa-status {
+    @include drumee.typo($size: 12px, $weight: 500, $line: 16px, $color: var(--normal-fg-50));
+
+    &[data-kind="ok"] { color: #1d8f5f; }
+    &[data-kind="error"] { color: var(--red-500); }
+  }
+
+  // ───────── Google Picker (drive.file flow) ─────────
+  &__picker {
+    gap: var(--spacer-3);
+  }
+
+  &__picker-hint {
+    @include drumee.typo($size: 13px, $weight: 400, $line: 18px, $color: var(--normal-fg-50));
+  }
+
+  &__picker-btn {
+    align-items: center;
+    justify-content: center;
+    gap: var(--spacer-2);
+    padding: var(--spacer-3) var(--spacer-5);
+    border: 1px dashed var(--border-default);
+    border-radius: var(--corner-radius-1);
+    cursor: pointer;
+    transition: color 0.15s, border-color 0.15s;
+    @include drumee.typo($size: 14px, $weight: 600, $line: 20px, $color: var(--normal-fg-10));
+
+    &:hover { border-color: $accent; color: $accent; }
+
+    svg { width: 18px; height: 18px; }
+  }
+
+  &__picker-list {
+    gap: var(--spacer-1);
+    max-height: 180px;
+    overflow-y: auto;
+  }
+
+  &__picker-item {
+    align-items: center;
+    gap: var(--spacer-2);
+    padding: var(--spacer-2) var(--spacer-3);
+    border-radius: var(--corner-radius-1);
+    background: var(--normal-bg-90);
+
+    svg { width: 16px; height: 16px; flex-shrink: 0; }
+  }
+
+  &__picker-item-name {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    @include drumee.typo($size: 13px, $weight: 500, $line: 18px, $color: var(--normal-fg-10));
+  }
+
+  &__picker-item-remove {
+    cursor: pointer;
+    color: var(--normal-fg-50);
+
+    &:hover { color: var(--red-500); }
+
+    svg { width: 12px; height: 12px; }
+  }
+
+  // ───────── checking spinner ─────────
+  &__body--checking {
+    align-items: center;
+    padding: var(--spacer-8) var(--spacer-5);
+    gap: var(--spacer-5);
+  }
+
+  &__spinner {
+    width: 38px;
+    height: 38px;
+    border: 3px solid $accent-soft-2;
+    border-top-color: $accent;
+    border-radius: 50%;
+    animation: migrate-gdrive-spin 0.8s linear infinite;
+  }
+
+  &__loading {
+    @include drumee.typo($size: 14px, $weight: 400, $line: 20px, $color: var(--normal-fg-50));
+  }
+}
+
+// ───────── DARK MODE ─────────
+// Surfaces/borders/text already flip via theme tokens; this block sharpens the
+// distinction: deeper shell shadow + hairline rim so the popup lifts off the
+// dark page, and small tweaks where a fixed value reads better on dark.
+html[data-theme="dark"] .migrate-gdrive-popup {
+  &__ui {
+    box-shadow:
+      0 20px 56px -8px rgba(0, 0, 0, 0.6),
+      0 0 0 1px rgba(255, 255, 255, 0.04);
+  }
+
+  &__switch-knob { background: #f4f4f6; }
+
+  // brand hero ring a touch lighter so the (mostly white) Google logo separates
+  &__hero--brand &__hero-ico { background: rgba(255, 255, 255, 0.06); }
+}
+
+// Google Picker mounts its dialog directly on <body> with z-index ~1001 —
+// far below this popup (z 9999) and the wm modal lift (30000), so without
+// this the picker opens INVISIBLE behind the app. Google's own classes, no
+// Drumee element matches them.
+.picker-dialog { z-index: 100001 !important; }
+.picker-dialog-bg { z-index: 100000 !important; }
+
+@keyframes migrate-gdrive-spin {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes migrate-gdrive-in {
+  from { opacity: 0; transform: translate(-50%, -48%) scale(0.97); }
+  to   { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+}

@@ -1,0 +1,20 @@
+@use "mixins/drumee";
+
+// Audio-player header overrides.
+//
+// The header itself is the shared topbar widget
+// (builtins/player/widget/topbar), which brings its own layout and skin.
+// The old `-topbar__main` / `__title` / `__note` rules went with the
+// bespoke header they styled.
+.player-audio {
+  // "Music player" is a caption, not a filename — it never needs to
+  // ellipsize, and at 300 weight it reads as a label rather than a title.
+  .drumee-topbar__title {
+    @include drumee.typo(
+      $size: 16px,
+      $line: 24px,
+      $weight: 300,
+      $color: var(--multimedia-default-text-title)
+    );
+  }
+}

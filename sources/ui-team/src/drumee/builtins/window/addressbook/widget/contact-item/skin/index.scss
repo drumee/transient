@@ -1,0 +1,135 @@
+@use "mixins/drumee";
+
+.contact-item {
+  &__ui {
+    background-color: inherit;
+    cursor: pointer;
+    overflow: hidden;
+    @include drumee.typo($color: var(--default-text-color));
+
+    &:hover,
+    &[data-active="active"],
+    &[data-radio="on"] {
+      background: var(--default-background-hover);
+
+      & .profile-icon,
+      & .note-reader {
+        color: var(--default-text-hover);
+      }
+    }
+  }
+
+  &__main {
+    background-color: inherit;
+    height: 100%;
+  }
+
+  &__container {
+    background-color: inherit;
+    gap: var(--spacer-3);
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+  }
+
+  &__icon {
+    color: var(--default-icon-neutral);
+    height: 28px;
+    width: 25px;
+    min-width: 25px;
+
+    & .note-reader {
+      &:hover {
+        color: var(--default-icon-hover);
+      }
+    }
+    &.memory {
+      height: 22px;
+      width: 22px;
+      min-width: 22px;
+    }
+    &.sent {
+      height: 24px;
+      margin-top: 0px;
+      width: 24px;
+      &.user-help {
+        height: 31px;
+        margin-top: -4px;
+        width: 31px;
+        min-width: 31px;
+      }
+    }
+  }
+  &__profile {
+    &.user-profile__ui {
+      border-radius: 50%;
+      height: 29px;
+      width: 29px;
+      background-color: var(--normal-fg-10);
+
+      &[data-default="1"] {
+        border: none;
+      }
+    }
+  }
+}
+
+.widget-contacts__item {
+  & .contact-item {
+    border-radius: var(--corner-radius-2);
+
+    height: 35px;
+    @include drumee.typo($size: 14px, $line: 16px);
+
+    &__profile {
+      & section {
+        font-size: 80%;
+      }
+    }
+
+    &__name {
+      @include drumee.typo(
+        $size: 14px,
+        $line: 16px,
+        $color: var(--normal-fg-10)
+      );
+      overflow: hidden;
+      width: 200px;
+      @include drumee.overflow-text;
+
+      & .inner.note-content {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+    }
+  }
+}
+
+.addressbook-widget-search__item {
+  & .contact-item {
+    @include drumee.typo($size: 12px, $line: 14px);
+
+    &__icon {
+      color: var(--default-icon-neutral);
+      height: 28px;
+
+      width: 25px;
+      &:hover {
+        color: var(--default-icon-reverse);
+      }
+    }
+    &__profile {
+      color: var(--default-user-icon);
+      height: 29px;
+
+      width: 29px;
+    }
+
+    &__profile {
+      & section {
+        font-size: 70%;
+      }
+    }
+  }
+}

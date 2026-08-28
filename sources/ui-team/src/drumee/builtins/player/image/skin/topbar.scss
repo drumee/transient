@@ -1,0 +1,17 @@
+// Image-player header overrides.
+//
+// The header itself is the shared topbar widget
+// (builtins/player/widget/topbar), which brings its own layout and skin.
+// Only what is specific to THIS player belongs here.
+.player-image {
+  // Not in the Figma header: save-rotation only surfaces while a
+  // client-side rotation is waiting to be pushed to the server (see
+  // `_syncRotationPending`).
+  .drumee-topbar__actions .icon.save-rotation {
+    display: none;
+
+    &[data-pending="1"] {
+      display: flex;
+    }
+  }
+}

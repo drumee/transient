@@ -1,0 +1,18 @@
+@use "mixins/drumee";
+
+/** ================================================================== *
+#   Copyright Xialia.com  2011-2016
+#   FILE : src/drumee/builtins/desk/account/current/skin/avatar.scss
+#   TYPE : Account Main Style
+# ===================================================================**/
+
+.account-searchbox{
+  &__list-results{
+    width: 145px;
+    height: 216px;
+    .account__item{
+      cursor: pointer;
+      @include drumee.typo($color: var(--default-text-color),$size:14px,$line:42px,$weight:300);
+    }
+  }
+}

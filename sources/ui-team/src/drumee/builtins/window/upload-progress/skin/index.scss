@@ -1,0 +1,873 @@
+@use "sass:meta";
+@use "mixins/drumee";
+
+// Upload-progress card, restyled onto the folder Settings panel's base
+// (window-folder__settings-action-panel), the same base the workspace-members
+// panel was moved onto: the --normal-bg-90 surface, a pinned 65px header with a
+// --border-default divider, one scrolling body with hidden scrollbars, and rows
+// as 4px-radius tiles on --overlay-bg-05 instead of hairline-separated bands.
+//
+// Two things are deliberately NOT the base's. It stays a floating card, so it
+// keeps its fixed bottom-right placement, its rounding and its collapse
+// behaviour — the base is a full-height flush dock. And its vertical rhythm is
+// 12px where the base uses 24px: the base fills a window's height, this card is
+// 280px tall, and 48px of padding would leave barely two rows visible.
+//
+// Colors now come from the runtime tokens, so the card follows the theme. It
+// used to reach for --neutral-900 / --primary-500 / --success-500 / --error-500;
+// the last two are defined nowhere in the app (see the note that was already on
+// __progress-canceled), so those rules were silently running on their
+// hard-coded fallbacks, and the fixed --neutral-* palette does not change
+// between themes — which is why this card stayed light in dark mode.
+.window-upload-progress {
+  &__ui {
+    position: fixed !important;
+    bottom: 130px; // Aligned with dock launcher
+    right: 24px;
+    // 360px is the base panel's measure, which is what makes its 24px side
+    // padding leave the same 312px content column.
+    width: 360px;
+    min-width: 250px;
+    max-width: calc(100vw - 48px);
+    height: 280px;
+    min-height: 64px;
+    background: var(--normal-bg-90);
+    border-radius: var(--corner-radius-3);
+    border: 1px solid var(--border-default);
+    box-shadow: 0 1px 11px rgba(0, 0, 0, 0.13);
+    // Must match the layer's z-index (desk/wm/skin/index.scss
+    // `.upload-progress-layer`) — both read the same custom property, so the
+    // fallbacks have to agree or the two disagree wherever the property is
+    // unset. Above every window layer; see that file for the trade-off.
+    z-index: var(--z-index-upload-progress, 50002);
+    overflow: hidden;
+    transition: height 0.2s ease;
+
+    // Handle expand state on root element
+    &[data-expanded="0"] {
+      height: auto !important;
+      min-height: 64px !important;
+      max-height: 64px !important;
+
+      .window-upload-progress__body {
+        display: none !important;
+      }
+
+      .window-upload-progress__footer {
+        display: none !important;
+      }
+
+      .window-upload-progress__header {
+        border-bottom: none;
+      }
+    }
+
+    &[data-expanded="1"] {
+      height: 280px !important;
+      min-height: 280px;
+      max-height: none;
+    }
+  }
+
+  // Expand/collapse state on container
+  &__container {
+    &[data-expanded="0"] {
+      .window-upload-progress__body {
+        display: none !important;
+      }
+
+      .window-upload-progress__footer {
+        display: none !important;
+      }
+
+      .window-upload-progress__collapse {
+        transform: rotate(0deg);
+      }
+
+      .window-upload-progress__header {
+        border-bottom: none;
+      }
+    }
+
+    &[data-expanded="1"] {
+      .window-upload-progress__collapse {
+        transform: rotate(180deg);
+      }
+    }
+  }
+
+  &__container {
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    height: 100%;
+    background: var(--normal-bg-90);
+  }
+
+  // ── Header (pinned, with divider) ─────────────────────────────
+  // Base panel's __settings-action-header geometry.
+  &__header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex: 0 0 auto;
+    min-height: 65px;
+    padding: 16px 24px 17px;
+    border-bottom: 1px solid var(--border-default);
+  }
+
+  &__header-left {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex: 1;
+    min-width: 0;
+  }
+
+  &__icon {
+    width: 32px;
+    height: 32px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+
+    &-svg {
+      width: 32px;
+      height: 32px;
+      color: var(--primary-50);
+    }
+  }
+
+  // Base panel's __settings-action-title.
+  &__title {
+    @include drumee.typo(
+      $size: 14px,
+      $line: 24px,
+      $weight: 600,
+      $color: var(--normal-fg-10)
+    );
+    @include drumee.overflow-text;
+  }
+
+  &__header-actions {
+    align-items: center;
+    gap: 12px;
+    flex-shrink: 0;
+  }
+
+  &__collapse-wrapper,
+  &__close-wrapper {
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    cursor: pointer;
+  }
+
+  // Bare icons in the header, like the base panel's __settings-action-close —
+  // the grey round chips these sat in were the only pill-shaped controls in
+  // either panel.
+  &__collapse,
+  &__close-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 16px;
+    height: 16px;
+    padding: 0;
+    background: transparent;
+    color: var(--normal-fg-10);
+    flex-shrink: 0;
+    transition: transform 0.2s ease, color 0.2s ease;
+
+    &:hover {
+      color: var(--normal-fg-20);
+      background: transparent;
+    }
+
+    svg,
+    .icon {
+      width: 12px;
+      height: 12px;
+      padding: 0;
+      margin: 0;
+      flex-shrink: 0;
+    }
+  }
+
+  &__collapse svg,
+  &__collapse .icon {
+    rotate: -90deg;
+  }
+
+  &__close-btn:active {
+    transform: scale(0.95);
+  }
+
+  // ── Body ──────────────────────────────────────────────────────
+  // The single scroller, per the base's __settings-action-scroll: the sections
+  // inside carry the side padding, and the scrollbar is hidden.
+  &__body {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    overflow-x: hidden;
+
+    scrollbar-width: none;
+
+    -ms-overflow-style: none;
+
+    &::-webkit-scrollbar {
+      display: none;
+    }
+  }
+
+  &__aggregate,
+  &__file-list,
+  &__staging-list {
+    width: 100%;
+    padding: 0 24px;
+  }
+
+  &__file-list,
+  &__staging-list {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding-top: 12px;
+    padding-bottom: 12px;
+  }
+
+  // ── File rows ─────────────────────────────────────────────────
+  // The base's __settings-action-item treatment — a tinted 4px tile — rather
+  // than full-bleed bands separated by hairlines. Height stays fixed so a queue
+  // of rows reads as one rhythm whatever the file names do.
+  &__file-item {
+    padding: 8px 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    border-radius: 4px;
+    background: var(--overlay-bg-05);
+    color: var(--normal-fg-10);
+    width: 100%;
+    min-height: 64px;
+    max-height: 64px;
+    overflow: hidden;
+
+    &[data-status="completed"] {
+      cursor: pointer;
+
+      &:hover {
+        background-color: var(--hover-bg-40);
+      }
+
+      // Hide progress bar when completed
+      .window-upload-progress__file-item-progress-wrapper {
+        display: none !important;
+      }
+
+      // Hide cancel button when completed (should already be hidden by skeleton, but ensure it)
+      .window-upload-progress__file-item-cancel {
+        display: none !important;
+      }
+    }
+
+    &[data-status="error"] {
+      opacity: 0.6;
+    }
+
+    &[data-status="uploading"] {
+      // Hide check icon when uploading
+      .window-upload-progress__file-item-check {
+        display: none !important;
+      }
+    }
+  }
+
+  &__file-item-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    min-width: 0;
+    width: 100%;
+    height: 40px;
+
+    // Ensure file info can shrink and truncate
+    > :nth-child(2) {
+      min-width: 0;
+      flex: 1;
+      overflow: hidden;
+    }
+
+    // Ensure cancel button and checkmark align to the right
+    > :last-child {
+      margin-left: auto;
+      flex-shrink: 0;
+    }
+  }
+
+  // 32px, like the base's member avatar — the other 32px round-ish glyph in
+  // that column.
+  &__file-item-icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    flex-shrink: 0;
+    color: var(--normal-fg-20);
+  }
+
+  &__file-item-info {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+    flex: 1;
+    overflow: hidden;
+  }
+
+  &__file-item-name-speed {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    gap: 6px;
+    width: 100%;
+    min-width: 0;
+    overflow: hidden;
+  }
+
+  // Base panel's __settings-action-member-name.
+  &__file-item-name,
+  &__progress-name,
+  &__staging-name {
+    @include drumee.typo(
+      $size: 12px,
+      $line: 18px,
+      $weight: 600,
+      $color: var(--normal-fg-10)
+    );
+    display: block;
+    min-width: 0;
+    @include drumee.overflow-text;
+  }
+
+  &__file-item-meta {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  // Base panel's __settings-action-role-label — the secondary line everywhere.
+  &__file-item-separator,
+  &__file-item-speed,
+  &__file-item-size,
+  &__estimated-time,
+  &__progress-count,
+  &__progress-more,
+  &__agg-text {
+    @include drumee.typo(
+      $size: 10px,
+      $line: 14px,
+      $weight: 400,
+      $color: var(--normal-fg-20)
+    );
+  }
+
+  &__file-item-separator {
+    margin: 0 2px;
+  }
+
+  &__file-item-actions {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 8px;
+    flex-shrink: 0;
+    min-width: 24px;
+  }
+
+  // Squared to the base's 4px, on the app's theme-aware error colour. The pill
+  // radius and the undefined --error-500 both went with the old look.
+  &__file-item-cancel {
+    @include drumee.typo($size: 10px, $line: 14px, $weight: 500);
+    color: var(--default-text-error);
+    cursor: pointer;
+    background: rgba(234, 77, 68, 0.12) !important;
+    border: none !important;
+    padding: 4px 8px !important;
+    min-width: 0;
+    height: auto;
+    border-radius: 4px !important;
+    box-shadow: none !important;
+    appearance: none;
+    flex-shrink: 0;
+    white-space: nowrap;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    transition: background-color 0.2s ease;
+    text-align: center;
+
+    // Ensure text stays centered inside the tile
+    span,
+    section,
+    .label {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 100%;
+      height: 100%;
+    }
+
+    &:hover {
+      background: rgba(234, 77, 68, 0.2) !important;
+    }
+  }
+
+  &__file-item-check,
+  &__progress-check {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    width: 20px;
+    height: 20px;
+    color: var(--green-400);
+  }
+
+  &__file-item-check {
+    &-svg {
+      width: 20px;
+      height: 20px;
+      flex-shrink: 0;
+      color: inherit;
+
+      svg {
+        width: 100%;
+        height: 100%;
+        display: block;
+        fill: currentColor;
+        stroke: currentColor;
+        use {
+          stroke: currentColor;
+          fill: none;
+        }
+      }
+    }
+  }
+
+  // checked-circle is a self-coloured filled icon (green circle + cut-out tick);
+  // do NOT force fill/stroke or the tick blob-fills. Just size it.
+  &__progress-check svg {
+    width: 100%;
+    height: 100%;
+    display: block;
+  }
+
+  // ── Progress bars ─────────────────────────────────────────────
+  &__file-item-progress-wrapper {
+    width: 100%;
+    margin-top: 6px;
+    display: block;
+  }
+
+  &__file-item-progress-bar,
+  &__agg-bar {
+    width: 100%;
+    height: 4px;
+    background-color: var(--normal-bg-80);
+    border-radius: 2px;
+    overflow: hidden;
+  }
+
+  &__file-item-progress-fill,
+  &__agg-fill {
+    height: 100%;
+    width: 0%;
+    background-color: var(--primary-50);
+    border-radius: 2px;
+    transition: width 0.3s ease;
+    min-width: 0;
+    // Ensure it displays as a block element for width to work
+    display: block !important;
+    flex: none !important;
+  }
+
+  // ── Footer ────────────────────────────────────────────────────
+  // Mirrors the header's divider and side padding so the card reads as one box.
+  &__footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex: 0 0 auto;
+    gap: 12px;
+    padding: 12px 24px;
+    border-top: 1px solid var(--border-default);
+    min-height: 48px;
+  }
+
+  &__footer-spacer {
+    flex: 1;
+  }
+
+  // The base's __settings-action-send-button, sized down to a footer action
+  // (that one is a full-width section CTA).
+  &__close {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 8px 16px;
+    border-radius: 4px;
+    background: var(--primary-50);
+    border: none;
+    cursor: pointer;
+    flex-shrink: 0;
+    transition: background-color 0.2s ease;
+    @include drumee.typo(
+      $size: 12px,
+      $line: 16px,
+      $weight: 600,
+      $color: var(--white)
+    );
+
+    &:hover {
+      background: var(--primary-40);
+    }
+  }
+
+  &__cancel-all,
+  &__progress-retry,
+  &__staging-remove {
+    @include drumee.typo($size: 12px, $line: 16px, $weight: 500);
+    cursor: pointer;
+    background: none;
+    border: none;
+    padding: 0;
+    transition: color 0.2s ease;
+  }
+
+  &__cancel-all {
+    color: var(--default-text-error);
+
+    &:hover {
+      text-decoration: underline;
+    }
+  }
+
+  // ── Bundle-upload phase toggle ────────────────────────────────────────────
+  // data-phase="progress" → hide staging panel
+  &__container[data-phase="progress"] &__staging { display: none; }
+  // data-phase="staging"  → hide aggregate bar and progress file-list
+  &__container[data-phase="staging"]  &__aggregate { display: none; }
+  &__container[data-phase="staging"]  &__file-list  { display: none; }
+
+  // Staging action bar
+  &__staging-actions {
+    gap: 8px;
+    align-items: center;
+    padding: 12px 24px 0;
+  }
+
+  // Staging / progress action buttons — the base's item tile, as buttons.
+  &__add-files,
+  &__add-folder,
+  &__upload-all,
+  &__clear-bundle {
+    @include drumee.typo(
+      $size: 12px,
+      $line: 16px,
+      $weight: 600,
+      $color: var(--normal-fg-10)
+    );
+    cursor: pointer;
+    padding: 8px 12px;
+    border-radius: 4px;
+    background: var(--overlay-bg-05);
+    transition: background-color 0.2s ease;
+
+    &:hover {
+      background: var(--hover-bg-40);
+    }
+  }
+
+  // Row layout (Box.X rows — do NOT add display:flex / flex-direction)
+  // Same tile as __file-item; the body above is the only scroller, so these
+  // no longer carry a max-height of their own.
+  &__staging-row,
+  &__progress-row {
+    justify-content: space-between;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    padding: 8px 12px;
+    border-radius: 4px;
+    background: var(--overlay-bg-05);
+    color: var(--normal-fg-10);
+  }
+
+  // Folder name emphasis
+  &__staging-row[data-kind="folder"] &__staging-name { font-weight: 600; }
+
+  // Depth indentation
+  &__staging-row[data-depth="1"],
+  &__progress-row[data-depth="1"] { margin-left: 20px; }
+
+  &__staging-row[data-depth="2"],
+  &__progress-row[data-depth="2"] { margin-left: 32px; }
+
+  &__agg-text {
+    padding: 4px 0;
+  }
+
+  // Error state for progress rows
+  &__progress-row[data-status="error"] &__progress-state {
+    color: var(--default-text-error);
+  }
+
+  &__progress-retry {
+    color: var(--primary-50);
+    margin-left: 8px;
+
+    &:hover { text-decoration: underline; }
+  }
+
+  // Finished rows are clickable (focus the file/folder in the workspace).
+  &__progress-row[data-clickable="1"] {
+    cursor: pointer;
+
+    &:hover { background: var(--hover-bg-40); }
+  }
+
+  &__progress-left  { align-items: center; gap: 10px; min-width: 0; flex: 1; overflow: hidden; }
+  &__progress-right { align-items: center; gap: 10px; flex-shrink: 0; }
+
+  &__progress-icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px; height: 24px; flex-shrink: 0;
+    color: var(--normal-fg-20);
+    svg { width: 100%; height: 100%; display: block; }
+  }
+
+  // Upload stopped before this file reached the server (the viewer lost write
+  // access mid-bundle). Sits where the tick would be, in the error colour, so
+  // the row cannot be mistaken for a success — but with no Retry affordance,
+  // since retrying would only 403 again.
+  &__progress-canceled {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 20px; height: 20px; flex-shrink: 0;
+    color: var(--default-text-error);
+
+    svg {
+      width: 100%; height: 100%; display: block;
+      // apps-warning is a monochrome outline glyph, so it takes the colour
+      // above — unlike checked-circle, which carries its own fill.
+      fill: currentColor;
+    }
+  }
+
+  &__progress-spinner {
+    width: 18px; height: 18px; flex-shrink: 0;
+    border: 2px solid var(--normal-bg-80);
+    border-top-color: var(--primary-50);
+    border-radius: 50%;
+    animation: window-upload-progress-spin 0.8s linear infinite;
+  }
+
+  &__progress-more {
+    padding: 8px 0;
+  }
+
+  &__staging-remove {
+    color: var(--normal-fg-20);
+    opacity: .6;
+
+    &:hover { opacity: 1; }
+  }
+}
+
+@keyframes window-upload-progress-spin {
+  to { transform: rotate(360deg); }
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// Responsive: mobile centres the card over a frosted desk; tablet keeps the
+// corner floater it already has.
+//
+// Both branches are emitted twice throughout, the way mixins/responsive.scss
+// and the dock's own skin do it: Visitor.device() only answers "mobile" below
+// 801px, so the attribute is missing in the DevTools emulator and on a
+// landscape phone.
+// ═══════════════════════════════════════════════════════════════════════
+
+// ── The backdrop ───────────────────────────────────────────────────────
+// Lives on the LAYER's pseudo-element, not the card's. Two reasons, both
+// found the hard way:
+//
+//   * A ::before on the CARD cannot be the backdrop. Negative-z-index
+//     children paint AFTER their parent's background, so the layer sampled
+//     the card's own opaque background and smeared it — the card rendered as
+//     a soft white blob with no border or corners. On the layer the card is a
+//     later sibling in paint order, so it stays crisp on top.
+//   * `position: fixed` on the pseudo escapes both the layer's 0x0 box and
+//     the card's `overflow: hidden`, because a fixed box's containing block
+//     is the viewport and neither ancestor creates one (no transform, no
+//     filter). That is also why the card is centred with `inset: 0` +
+//     `margin: auto` below rather than a transform: a transform on the card
+//     WOULD create that containing block.
+//
+// Gated on `:has(... [data-expanded="1"])`, which does the whole job of
+// "collapse drops the backdrop": collapse the card and the selector stops
+// matching, so the desk is sharp and usable again while the upload runs on.
+// An empty layer has no card and therefore no backdrop either.
+//
+// pointer-events: auto against the layer's `none` — while expanded this is a
+// real modal, so the desk underneath is deliberately not reachable. The card's
+// collapse chevron, its x and "Cancel all" are the ways out.
+@mixin upload-progress-backdrop {
+  content: "";
+  position: fixed;
+  inset: 0;
+  // The desk's own scrim, matching .desk-module__overlay (desk/skin) and every
+  // other mobile overlay surface: var(--overlay-bg) with the blur(6px) that
+  // rule pairs with it, instead of the frosted glass this used to carry
+  // (rgba(255,255,255,.55) over blur(30px)).
+  //
+  // The token is theme-aware on its own — rgba(0,0,0,.4) on :root,
+  // rgba(20,17,35,.4) under html[data-theme="dark"] — which is why the two
+  // explicit dark-theme overrides that used to follow this are gone.
+  background-color: var(--overlay-bg);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  pointer-events: auto;
+}
+
+.upload-progress-layer[data-device="mobile"]:has(
+    .window-upload-progress__ui[data-expanded="1"]
+  )::before {
+  @include upload-progress-backdrop;
+}
+
+
+@media (max-width: 650px) {
+  .upload-progress-layer:has(
+      .window-upload-progress__ui[data-expanded="1"]
+    )::before {
+    @include upload-progress-backdrop;
+  }
+
+}
+
+// ── The card ───────────────────────────────────────────────────────────
+// Centred while expanded. `bottom: 130px` exists to line the card up with the
+// dock launcher, and the dock is `display: none !important` on mobile (see
+// wm/dock/skin) — so on a phone that offset was holding the card 130px clear
+// of nothing.
+//
+// Collapsed, it returns to the bottom of the screen: a 64px bar parked in the
+// middle of a now-sharp desk reads as a stuck dialog, and the bottom is where
+// this card has always rested.
+@mixin upload-progress-mobile-card {
+  // State-agnostic first. Both width rules below sit inside a [data-expanded]
+  // block, so until that attribute is written the desktop `width: 360px` and
+  // `right: 24px` leak through and the card renders as a narrow corner floater
+  // on a phone. This is the full-bleed baseline; the state blocks only refine
+  // where it sits vertically.
+  //
+  // Edge to edge, not the 16px gutters this used to keep: the card is a
+  // full-screen sheet on a phone. `max-width: none` is required — the base
+  // caps at calc(100vw - 48px), which would otherwise hold it 48px short.
+  //
+  // border-box with it: the card carries a 1px border and is otherwise
+  // content-box, so `width: 100%` measured 2px WIDER than the viewport and
+  // overflowed it (782 against 780, i.e. a horizontal scrollbar on every
+  // phone). Measured, not assumed.
+  // !important on the geometry, and it is load-bearing.
+  //
+  // The window manager writes inline width/left/top on a window instance, and
+  // an inline declaration beats any stylesheet rule without !important. That is
+  // why the plain `width: 100%` shipped and changed nothing: the card kept
+  // rendering at the manager's computed width — 351.35px, a FRACTIONAL value,
+  // which no rule in this file can produce and which is the giveaway that the
+  // number came from JS rather than CSS. The base rule above already had to do
+  // the same thing for `position: fixed !important`, for the same reason.
+  box-sizing: border-box !important;
+  // 16px either side, the gutter this file already uses for the collapsed
+  // bar's bottom offset. `width: auto` rather than a calc: with both left and
+  // right set, the card fills what is between them, so the gutters stay right
+  // at any viewport without arithmetic.
+  left: 16px !important;
+  right: 16px !important;
+  width: auto !important;
+  max-width: none !important;
+
+  // Asked for explicitly. Applied on mobile only — the desktop corner floater
+  // keeps --corner-radius-3, which is what the rest of the desk chrome uses.
+  border-radius: 6px;
+
+  &[data-expanded="1"] {
+    // inset:0 + margin:auto keeps it vertically centred; the left/right above
+    // already make it full width, so no horizontal margin is left to
+    // distribute.
+    // inset:16px gives the same 16px gutters on all four sides; margin:auto
+    // then centres the card vertically inside that box, since its height is
+    // fixed at 280px by the base rule.
+    inset: 16px !important;
+    margin: auto !important;
+    width: auto !important;
+    max-width: none !important;
+  }
+
+  &[data-expanded="0"] {
+    top: auto !important;
+    // Still lifted off the bottom edge — only the WIDTH goes full-bleed here.
+    bottom: 16px !important;
+    left: 16px !important;
+    right: 16px !important;
+    width: auto !important;
+    max-width: none !important;
+  }
+}
+
+.window-upload-progress__ui[data-device="mobile"] {
+  @include upload-progress-mobile-card;
+}
+
+@media (max-width: 650px) {
+  .window-upload-progress__ui {
+    @include upload-progress-mobile-card;
+  }
+}
+
+// ── Short viewports ────────────────────────────────────────────────────
+// A landscape phone is ~380px tall, and `bottom: 130px` + a 280px card needs
+// 410px — the card ran off the top. `[data-expanded="1"]` sets
+// `max-height: none`, so this clamp has to come after it (same specificity,
+// later in the file). max-height still clamps the used height even though the
+// height beside it is `!important` — they are different properties.
+//
+// This is also the only rule here a TABLET can reach, and only in a short
+// window: at 768px+ the card's 360px width already fits inside its existing
+// `max-width: calc(100vw - 48px)`, and the dock that `bottom: 130px` aligns to
+// is present, so the corner floater needs nothing else there.
+@media (max-height: 480px) {
+  .window-upload-progress__ui[data-expanded="1"] {
+    // `min-height: 0` FIRST, and it is not optional: [data-expanded="1"] also
+    // pins min-height to 280px, and CSS resolves a min-height larger than
+    // max-height in favour of the MINIMUM — so the clamp below was computing
+    // the right value (261px at a 293px viewport) and being ignored, leaving
+    // the card at 280px and still off-screen.
+    min-height: 0;
+    max-height: calc(100vh - 32px);
+    max-height: calc(100dvh - 32px);
+    // The 130px dock offset is most of the problem on its own: at a 293px
+    // viewport it pushes even a correctly-clamped card past the top edge.
+    bottom: 16px;
+  }
+}

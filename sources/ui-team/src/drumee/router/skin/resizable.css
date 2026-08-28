@@ -1,0 +1,121 @@
+/*!
+ * jQuery UI Resizable 1.12.1
+ * http://jqueryui.com
+ *
+ * Copyright jQuery Foundation and other contributors
+ * Released under the MIT license.
+ * http://jquery.org/license
+ */
+.ui-resizable {
+	position: relative;
+}
+.ui-resizable-handle {
+	position: absolute;
+	font-size: 0.1px;
+	display: block;
+	-ms-touch-action: none;
+	touch-action: none;
+}
+.ui-resizable-disabled .ui-resizable-handle,
+.ui-resizable-autohide .ui-resizable-handle {
+	display: none;
+}
+.ui-resizable-n {
+	cursor: n-resize;
+	height: 7px;
+	width: 100%;
+	top: -5px;
+	left: 0;
+}
+.ui-resizable-s {
+	cursor: s-resize;
+	height: 7px;
+	width: 100%;
+	bottom: -5px;
+	left: 0;
+}
+.ui-resizable-e {
+	cursor: e-resize;
+	width: 7px;
+	right: -5px;
+	top: 0;
+	height: 100%;
+}
+.ui-resizable-w {
+	cursor: w-resize;
+	width: 7px;
+	left: -5px;
+	top: 0;
+	height: 100%;
+}
+.ui-resizable-se {
+	cursor: se-resize;
+	width: 12px;
+	height: 12px;
+	right: 1px;
+	bottom: 1px;
+}
+.ui-resizable-sw {
+	cursor: sw-resize;
+	width: 9px;
+	height: 9px;
+	left: -5px;
+	bottom: -5px;
+}
+.ui-resizable-nw {
+	cursor: nw-resize;
+	width: 9px;
+	height: 9px;
+	left: -5px;
+	top: -5px;
+}
+.ui-resizable-ne {
+	cursor: ne-resize;
+	width: 9px;
+	height: 9px;
+	right: -5px;
+	top: -5px;
+}
+
+[contenteditable].text-editable {
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+.ui-resizable-e {
+  width: 10px;
+  right: -10px;
+}
+.ui-resizable-s {
+  height: 10px;
+  bottom: -5px;
+}
+.ui-resizable-nw {
+  z-index: 200 !important;
+  width: 20px !important;
+  height:  20px !important;
+  top: -7px !important;
+  left: -7px !important;
+}
+
+.ui-resizable-ne {
+  z-index: 200 !important;
+  width:  20px !important;
+  height: 20px !important;
+  top: -7px !important;
+  left: calc(100% - 7px) !important;
+}
+.ui-resizable-se {
+  z-index: 200 !important;
+  width:  20px !important;
+  height:  20px !important;
+  top: calc(100% - 7px) !important;
+  left: calc(100% - 7px) !important;
+}
+.ui-resizable-sw {
+  z-index: 200 !important;
+  width:  20px !important;
+  height:  20px !important;
+  top: calc(100% - 7px) !important;
+  left: -7px !important;
+}

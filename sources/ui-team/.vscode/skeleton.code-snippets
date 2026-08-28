@@ -1,0 +1,147 @@
+{
+	// Add the snippets for skeleton files in js
+	"New Skeletons" :{
+		"scope": "javascript,typescript",
+		"prefix": ["sklnew","__skl"],
+
+		"body": [
+			"function __skl_${1:Skeletons_Name} (_ui_){",
+			"\tlet a = Skeletons.Box.Y({",
+			"\t\tclassName  : `${_ui_.fig.family}__main`,",
+			"\t\tdebug      : __filename,",
+			"\t\tkids       : [",
+			"\t\t\tSkeletons.Box.X({",
+			"\t\t\tclassName  : `${_ui_.fig.family}__container`,",
+			"\t\t\tkids : []",
+			"\t\t\t})",
+			"\t\t]",
+			"\t})",
+			"\treturn a;",
+			"}",
+			"export default __skl_${1:Skeletons_Name};"
+		],
+		"description": "To add a new skeleton"
+	},
+
+	"Skeletons Note": {
+		"scope": "javascript,typescript",
+		"prefix": ["sklnt","note"],
+		"body": [
+			"Skeletons.Note({",
+			"\tclassName  : `${_ui_.fig.family}__${1:classname}`,",
+			"\tcontent: \"${2:content}\"",
+			"})"
+		],
+		"description": "Add Note Compoment"
+	},
+
+	"Skeletons Box": {
+		"scope": "javascript,typescript",
+		"prefix": ["sklbx","box"],
+		"body": [
+			"Skeletons.Box.${1|X,Y|}({",
+			"\tclassName  : `${_ui_.fig.family}__${2:classname}`,",
+			"\tkids: [$0]",
+			"})"
+		],
+		"description": "Add New Box Skeletons"
+	},
+
+	"Skeletons EntryBox": {
+		"scope": "javascript,typescript",
+		"prefix": ["entry","input"],
+		"body": [
+			"Skeletons.EntryBox({",
+			"\tclassName   : `${_ui_.fig.family}__${1:classname}`,",
+			"\tformItem    : '${2:name}',",
+			"\tplaceholder : '${3:placegolder}',",
+			"\tvalue       : '$0',",
+			"})"
+		],
+		"description": "Add New Box Skeletons"
+	},
+
+	"Skeletons svg single": {
+		"scope": "javascript,typescript",
+		"prefix": ["svg","button"],
+		"body": [
+			"Skeletons.Button.Svg({",
+			"\tico       : '${2:contact_add}',",
+			"\tclassName : `${_ui_.fig.family}__icon ${1:classname}`,",
+			"})"
+		],
+		"description": "Add New svg button"
+	},
+
+	"Skeletons svg multiple": {
+		"scope": "javascript,typescript",
+		"prefix": ["svg","check"],
+		"body": [
+			"Skeletons.Button.Svg({",
+			"\tclassName : `${_ui_.fig.family}__icon ${1:classname}`,",
+			"\ticons       : [\"${2:box-tags}\", \"${3:backoffice_checkboxfill}\"],",
+			"\tformItem    : \"$4\"",
+			"})"
+		],
+		"description": "Add New svg multiple buttons"
+	},
+  "Skeletons Function": {
+    "prefix": "sk",
+    "body": [
+      "export function ${1:name}(ui, opt) {",
+      "  const pfx = `${ui.fig.family}__${1/(.*)/${1:/downcase}/}`;",
+      "  return Skeletons.${2:Box.Y}({",
+      "    className: `${pfx}-container`,",
+      "    kids: [",
+      "      $0",
+      "    ]",
+      "  });",
+      "}"
+    ]
+  },
+  "Box.Y": {
+    "prefix": "sky",
+    "body": [
+      "Skeletons.Box.Y({",
+      "  className: `${pfx}-container`,",
+      "  kids: [$0]",
+      "})"
+    ]
+  },
+  "Box.X": {
+    "prefix": "skx", 
+    "body": [
+      "Skeletons.Box.X({",
+      "  className: `${pfx}-container`,",
+      "  kids: [$0]",
+      "})"
+    ]
+  },
+  "EntryBox": {
+    "prefix": "ske",
+    "body": [
+      "Skeletons.EntryBox({",
+      "  className: `${pfx}-input`,",
+      "  name: \"${1:name}\"$0",
+      "})"
+    ]
+  },
+  "Button.Icon": {
+    "prefix": "skbi",
+    "body": [
+      "Skeletons.Button.Icon({",
+      "  className: `${pfx}-button`,",
+      "  ico: \"${1:icon}\"$0",
+      "})"
+    ]
+  },
+  "Element": {
+    "prefix": "skel",
+    "body": [
+      "Skeletons.Element({",
+      "  className: `${pfx}-element`,",
+      "  content: ${1:LOCALE.TEXT}$0", 
+      "})"
+    ]
+  }
+}

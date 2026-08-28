@@ -1,0 +1,60 @@
+html[data-theme="light"],
+:root {
+  /* Surface */
+  --normal-bg: #ffffff;
+  --normal-bg-100: #ffffff;
+  --normal-bg-90: #f2f2f7;
+  --normal-bg-80: #e5e5ea;
+  --normal-bg-50: #e5e5ea;
+  --normal-bg-40: #d1d1d6;
+  --normal-bg-elevated: #ffffff;
+  --overlay-bg: rgba(0, 0, 0, 0.4);
+  --overlay-bg-05: rgba(0, 0, 0, 0.05);
+  --overlay-fg: #2d2a6a;
+
+  /* Foreground */
+  --normal-fg: #0b0a21;
+  --normal-fg-10: #0b0a21;
+  --normal-fg-20: #65656c;
+  --normal-fg-50: #84848c;
+  --normal-fg-800: #34343a;
+  --placeholder-fg: #c7c7cc;
+
+  /* Reverse */
+  --reverse-bg: #2d2a6a;
+  --reverse-fg: #ffffff;
+  --reverse-lb: #433cc5;
+  --reverse-lb-hover: var(--primary-40);
+
+  /* Border */
+  --border-default: #e5e5ea;
+  --border-muted: rgba(0, 0, 0, 0.05);
+  --border-strong: #c7c7cc;
+  --active-border: #5950ff;
+  --hover-border-40: #847eff;
+
+  /* Scrollbar — consumed by the global .list-smart__container override in
+     router/skin/index.scss. Light keeps the current purple thumb on a clear
+     track. */
+  --scrollbar-thumb: var(--primary-400);
+  --scrollbar-track: transparent;
+
+  /* Accent / state */
+  --avatar-bg: #5950ff;
+  --radio-on-bg: rgba(89, 80, 255, 0.1);
+  --radio-on-border: #5950ff;
+  --hover-bg-40: rgba(89, 80, 255, 0.08);
+  --active-item-bg: rgba(89, 80, 255, 0.1);
+  --folder-fill: #884eff;
+  --signout-fg: #eb6159;
+
+  /* Shadows */
+  --shadow-top-tiny: 0px 1px 2px rgba(0, 0, 0, 0.05);
+  --shadow-left-big: -24px 0 48px rgba(0, 0, 0, 0.1);
+  --shadow-right-big: 24px 0 48px rgba(0, 0, 0, 0.1);
+
+  /* Other */
+  --trash-btn-bg: var(--primary-10);
+  --trash-btn-fg: var(--primary-50);
+  --trash-btn-fg-hover: var(--primary-60);
+}

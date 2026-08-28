@@ -1,0 +1,504 @@
+@use "mixins/drumee.scss";
+@use "skin/lib/button" as *;
+
+.window-info {
+  .dialog__wrapper {
+    position: absolute;
+    width: 0;
+    height: 0;
+  }
+
+  &__ui {
+    // Match the confirm dialog's default width (window-confirm
+    // data-maxsize="0"): a fixed 500px card that shrinks to fit, with the same
+    // mobile clamp as window-confirm.
+    width: 500px;
+    max-width: 100%;
+    // Dynamic height: the card hugs its content (header + message + actions).
+    // The old fixed 300px minimum left ~120px of dead space under the button
+    // on one-line alerts; long messages still grow the card naturally.
+    min-height: 0;
+    height: auto;
+
+    &[data-device="mobile"] {
+      min-width: unset !important;
+      width: calc(100vw - 32px) !important;
+      max-width: 340px;
+    }
+  }
+
+  .gradient-start-badge {
+    stop-color: var(--primary-300);
+  }
+
+  .gradient-end-badge {
+    stop-color: var(--primary-500);
+  }
+
+  &__logo {
+    align-items: end;
+    gap: var(--spacer-2);
+    &-ico {
+      width: 40px;
+      height: 40px;
+      color: var(--primary-50);
+    }
+    &-text {
+      font-weight: bold;
+      font-size: 24px;
+    }
+  }
+
+  &__main {
+    padding: var(--spacer-5);
+    // Height follows the card (see __ui): no fixed minimum.
+    min-height: 0;
+    gap: 12px;
+  }
+
+  // ── Header (based on window/confirm): logo left, X close right ──────────────
+  &__topbar {
+    width: 100%;
+    flex: 0 0 auto;
+    align-items: center;
+    justify-content: space-between;
+    position: relative;
+  }
+
+  &__close {
+    width: 28px;
+    height: 28px;
+    padding: 4px;
+    flex-shrink: 0;
+    cursor: pointer;
+    color: var(--normal-fg-10);
+    margin-left: auto;
+    border-radius: 6px;
+    transition: background-color 120ms ease;
+
+    svg {
+      width: 18px;
+      height: 18px;
+    }
+
+    &:hover {
+      background-color: rgba(0, 0, 0, 0.04);
+    }
+  }
+
+  &__icon.badge {
+    width: 47px;
+    height: 40px;
+
+    svg {
+      width: 100%;
+      height: 100%;
+    }
+  }
+
+  &__container {
+    // Natural content height — the card is now dynamically sized (see __ui),
+    // so the message simply stacks between the header and the action row.
+    // (The old `height: 100%` was a no-op as a flex item anyway.)
+    height: auto;
+    min-height: 0;
+    justify-content: center;
+
+    & .center-text {
+      justify-content: center;
+      align-items: center;
+    }
+
+    & .note-reader {
+      // Based on window/confirm__message: left-aligned body that fills the card
+      // width (the outer __main supplies the padding).
+      padding: 0;
+      text-align: left;
+      width: 100%;
+      margin: 0 0 6px;
+      justify-content: flex-start;
+      align-items: flex-start;
+      word-wrap: break-word;
+      @include drumee.typo(
+        $weight: 400,
+        $size: 14px,
+        $line: 20px,
+        $color: var(--normal-fg)
+      );
+
+      p {
+        text-align: left;
+        margin: 0;
+      }
+
+      &.primary-color {
+        padding: 5px;
+        @include drumee.typo(
+          $weight: 300,
+          $size: 24px,
+          $line: 33px,
+          $color: var(--secondary-text-color)
+        ); //var(--eblue));
+      }
+    }
+  }
+
+  &__message {
+    // Based on window/confirm__message: left-aligned, fills the card width.
+    display: block;
+    padding: 0;
+    text-align: left;
+    width: 100%;
+    margin: 0 0 6px;
+    @include drumee.typo(
+      $weight: 400,
+      $size: 14px,
+      $line: 20px,
+      $color: var(--normal-fg)
+    );
+
+    p {
+      text-align: left;
+      margin: 0;
+    }
+  }
+
+  &__footer {
+    width: 100%;
+    justify-content: flex-end;
+    margin-bottom: var(--spacer-4);
+  }
+
+  // &__button {
+  //   padding: 5px;
+  //   background-color: var(--btn-rollback-background); //var(--egreen);//#18a3ac; //#18ac72
+  //   width: 90px; //120px;
+  //   height: 32px;
+  //   // padding: 5px;
+  //   justify-content: center;
+  //   border-radius: var(--border-radius); // 2px;
+  //   cursor: pointer;
+  //   @include drumee.typo($size: 16px,
+  //     $line: 28px,
+  //     $color: var(--btn-rollback-text)); //$weight:300
+  //   align-items: center;
+  //   border: 1px solid var(--btn-rollback-border);
+  //   justify-content: center;
+
+  //   &:hover {
+  //     border: 2px solid var(--btn-rollback-border-hover);
+  //     color: var(--btn-rollback-text-hover);
+  //   }
+  // }
+
+  @include common-button;
+
+  // Based on window/confirm__buttons: right-aligned action row.
+  &__buttons {
+    align-items: center;
+    justify-content: flex-end;
+    gap: 8px;
+    width: 100%;
+    padding-top: 2px;
+  }
+
+  &__button-main {
+    opacity: 1;
+    height: 100%;
+    gap: var(--spacer-4);
+    border-radius: var(--corner-radius-2);
+    padding: var(--spacer-4) var(--spacer-6);
+    cursor: pointer;
+    background-color: var(--normal-bg-80) !important;
+  }
+
+  // ── Simulated download-progress bar (window_info `body` = download-progress) ──
+  // Scoped to __dl-* only, so standard info dialogs/alerts are untouched.
+  &__dl-progress {
+    width: 100%;
+    gap: 14px;
+    justify-content: flex-start;
+  }
+
+  &__dl-track {
+    width: 100%;
+    height: 8px;
+    border-radius: 999px;
+    background: var(--normal-bg-80, #e6e6ef);
+    overflow: hidden;
+  }
+
+  &__dl-fill {
+    height: 100%;
+    width: 0;
+    border-radius: 999px;
+    background: var(--btn-commit, #18a3ac);
+    // Ease toward ~90% and hold (fill-mode: forwards). Duration is bucketed by
+    // archive size below — approximate/simulated, never a real byte count.
+    animation-name: dl-progress-ease;
+    animation-timing-function: ease-out;
+    animation-fill-mode: forwards;
+    animation-duration: 30s;
+    &--xs { animation-duration: 12s; }
+    &--sm { animation-duration: 30s; }
+    &--md { animation-duration: 90s; }
+    &--lg { animation-duration: 240s; }
+  }
+
+  &__dl-hint {
+    width: 100%;
+    text-align: center;
+    opacity: 0.75;
+    @include drumee.typo($weight: 400, $size: 13px, $line: 18px, $color: var(--normal-fg));
+  }
+
+  // ── Indeterminate loader ──────────────────────────────────────────────────
+  // A message-only notice that says "working on it" with no progress to report,
+  // used by the desk while it waits to offer an invited workspace
+  // (desk/index.js _showInvitedWorkspaceLoader). Indeterminate on purpose: the
+  // wait is "until Home settles", which has no measurable fraction — unlike
+  // __dl-progress above, which fakes one because a download has a size.
+  // Left-aligned, not centred: the notice variant forces
+  // `__container .note-reader { width: 100% }`, so the label fills the row and
+  // there is nothing for justify-content to distribute. Left also matches how the
+  // prompt that replaces this loader renders its own message.
+  &__loader {
+    width: 100%;
+    gap: 16px;
+    // Holds the ring on the text baseline's centre line.
+    align-items: center;
+  }
+
+  &__loader-spinner {
+    flex: 0 0 auto;
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    // Three-quarter ring: the transparent quadrant is what reads as motion.
+    border: 2px solid var(--normal-bg-80, #e6e6ef);
+    border-top-color: var(--primary-50, #433cc5);
+    animation: window-info-loader-spin 0.7s linear infinite;
+  }
+
+  // Width and text-align come from the variant's `.note-reader` rule; this only
+  // has to match its type scale.
+  &__loader-label {
+    @include drumee.typo($weight: 500, $size: 14px, $line: 20px, $color: var(--normal-fg));
+  }
+}
+
+@keyframes dl-progress-ease {
+  from { width: 0; }
+  to   { width: 90%; }
+}
+
+@keyframes window-info-loader-spin {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+
+// The loader must never animate for someone who asked for stillness; the ring
+// still reads as a "busy" glyph without turning.
+@media (prefers-reduced-motion: reduce) {
+  .window-info__loader-spinner {
+    animation: none;
+  }
+}
+
+// While a full-screen flow (reward, LAUNCH30) is up, the loader steps aside
+// rather than unmounting — remounting would lose its place in the windows pool
+// and flicker each time the flow toggles. Kept in the DOM, taken off the screen.
+.window-info__ui[data-guest-join-loading="1"][data-busy="1"] {
+  display: none !important;
+}
+
+// ── "notice" variant ────────────────────────────────────────────────────────
+// Compact card styled after window-confirm (the "We have updated your Drumee
+// desktop" prompt): a small, rounded, shadowed card with an outline secondary
+// button and a filled primary button — instead of the default 600×300 info
+// dialog. Scoped to [data-variant="notice"] (set by window/info on the
+// `variant` model field) so the standard alerts/revision dialogs are untouched.
+// Used by the folder invite-sent toast.
+.window-info__ui[data-variant="notice"] {
+  // Centre on the viewport. The windows pool is a 0×0 anchor (so the default
+  // absolute placement lands top-left); pin to the screen with !important to
+  // override the inline left/top the window manager sets on the instance.
+  position: fixed !important;
+  top: 50% !important;
+  left: 50% !important;
+  right: auto !important;
+  bottom: auto !important;
+  transform: translate(-50%, -50%) !important;
+  margin: 0 !important;
+  z-index: 100000;
+  background-color: var(--normal-bg-90);
+
+  // Match the confirm dialog's default width (500px), same as the standard
+  // info dialog above — the notice card is no longer capped at 400px. The
+  // window-info__ui[data-device="mobile"] clamp above also applies here.
+  min-width: unset;
+  min-height: 0 !important;
+  width: 500px;
+  height: auto;
+  max-width: 100%;
+  padding: 20px 24px 24px;
+  border-radius: var(--corner-radius-4, 16px);
+  border: 1px solid var(--border-default, rgba(0, 0, 0, 0.05));
+  box-shadow: 0 14px 42px rgba(11, 10, 33, 0.16);
+  overflow: hidden;
+
+  .window-info__main {
+    min-height: 0;
+    padding: 0;
+    gap: 16px;
+    width: 100%;
+    border: none;
+
+.window__header{
+  padding: 0;
+}
+
+  }
+
+  .window-info__topbar {
+    align-items: center;
+  }
+
+  // Message — regular body text, left-aligned, fills the card width. Reset the
+  // base rules that center the content and cap it at the default dialog size.
+  .window-info__container {
+    width: 100%;
+    height: auto;
+    justify-content: flex-start;
+    align-items: flex-start;
+  }
+
+  .window-info__message,
+  .window-info__container .note-reader {
+    width: 100%;
+    margin: 0;
+    text-align: left;
+    @include drumee.typo(
+      $weight: 400,
+      $size: 14px,
+      $line: 20px,
+      $color: var(--normal-fg)
+    );
+  }
+
+  .window-info__revoked {
+    width: 100%;
+    align-items: flex-start;
+    gap: 12px;
+  }
+
+  .window-info__revoked-icon {
+    width: 44px;
+    height: 44px;
+    align-items: center;
+    justify-content: center;
+    border-radius: 12px;
+    color: var(--primary-50, #433cc5);
+    background: color-mix(in srgb, var(--primary-50, #433cc5) 10%, transparent);
+  }
+
+  .window-info__revoked-icon-svg {
+    width: 22px;
+    height: 22px;
+
+    svg {
+      width: 22px;
+      height: 22px;
+    }
+  }
+
+  .window-info__revoked-title {
+    width: 100%;
+    margin-top: 2px;
+    @include drumee.typo(
+      $weight: 600,
+      $size: 18px,
+      $line: 24px,
+      $color: var(--normal-fg-10)
+    );
+  }
+
+  // The workspace name is part of the sentence below, not a chip of its own —
+  // standing alone it read as a stray label rather than a name.
+  .window-info__revoked-message {
+    width: 100%;
+    margin: 0 0 2px;
+    @include drumee.typo(
+      $weight: 400,
+      $size: 14px,
+      $line: 20px,
+      $color: var(--normal-fg)
+    );
+  }
+
+  // Right-aligned action row with confirm-style buttons. The base
+  // `__button-main` pins a flat grey background with !important, so the
+  // secondary/primary backgrounds here must also be !important to win.
+  .window-info__buttons {
+    width: 100%;
+    justify-content: flex-end;
+    align-items: center;
+    gap: 8px;
+    margin: 0;
+  }
+
+  .window-info__button-main {
+    height: 36px;
+    width: auto;
+    min-width: 88px;
+    padding: 0 16px;
+    border-radius: var(--corner-radius-2, 8px);
+    justify-content: center;
+    align-items: center;
+    transition:
+      background-color 120ms ease,
+      border-color 120ms ease,
+      color 120ms ease;
+    @include drumee.typo($size: 14px, $line: 20px, $weight: 600);
+
+    // Label span inherits the button's text colour (the shared common-button
+    // rules can otherwise leave it grey).
+    .window-info__button.btn {
+      color: inherit;
+    }
+
+    &.secondary {
+      background-color: transparent !important;
+      border: 1px solid var(--neutral-300, rgba(0, 0, 0, 0.12));
+      color: var(--normal-fg-10);
+
+      &:hover {
+        background-color: var(--normal-bg-100) !important;
+      }
+    }
+
+    &.primary {
+      background-color: var(--primary-50, #433cc5) !important;
+      border: 0;
+      color: #fff;
+
+      &:hover {
+        background-color: var(--primary-40, #5950ff) !important;
+      }
+    }
+  }
+}
+
+// Dark-mode override — base rules use --default-text-color (#2F2F2F) which is
+// not redefined in dark.scss, so message text disappears on the dark popup
+// surface. Remap to --normal-fg-10 (light lavender in dark mode).
+html[data-theme="dark"] .window-info {
+  &__message,
+  &__container .note-reader {
+    color: var(--normal-fg-10);
+  }
+
+  &__container .note-reader.primary-color {
+    color: var(--normal-fg-20);
+  }
+}

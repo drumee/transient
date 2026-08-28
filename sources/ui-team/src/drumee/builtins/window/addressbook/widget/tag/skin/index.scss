@@ -1,0 +1,216 @@
+@use "mixins/drumee";
+
+.widget-tag {
+  &__ui {
+    height: 100%;
+    width: 100%;
+  }
+
+  &__main {
+    height: 100%;
+    overflow: hidden;
+  }
+
+  &__container {
+    background-color: inherit;
+    height: 100%;
+  }
+
+  &__header {
+    height: 34px;
+    width: 100%;
+  }
+
+  &__separator {
+    background-color: var(--normal-fg-10);
+    height: 1px;
+  }
+
+  &-content {
+    height: 100%;
+    overflow: hidden;
+    width: 100%;
+    padding: var(--spacer-6);
+
+    &__main {
+      color: var(--normal-fg-10);
+    }
+
+    &__digit {
+      z-index: 2 !important;
+      align-items: center;
+      @include drumee.typo(
+        $color: var(--default-text-reverse),
+        $weight: 100,
+        $line: 1,
+        $size: 10px
+      );
+      background-color: var(--special-tag-note-chat);
+      border-radius: 50%;
+      height: 16px;
+      justify-content: center;
+      position: absolute;
+      width: 16px;
+      left: 10px;
+      top: 9px;
+    }
+
+    &__container {
+      height: 35px;
+    }
+
+    &__items {
+      height: 99%; //100%;
+      overflow: hidden;
+      width: 100%;
+    }
+
+    &__item {
+      height: 100%;
+      overflow: hidden;
+      padding-bottom: var(--spacer-5);
+      width: calc(100% - 0px);
+      top: -1px;
+      gap: var(--spacer-3);
+
+      & .smart-container {
+        overflow-x: hidden;
+        width: 100%;
+
+        margin: 1px 0 0;
+      }
+
+      & .tag-sortable-placeholder {
+        background: var(--default-background-hover);
+        height: 24px;
+        opacity: 0.3;
+        width: 100%;
+      }
+    }
+
+    &__container {
+      cursor: pointer;
+      padding-left: var(--spacer-5);
+      align-items: center;
+      width: 100%;
+      @include drumee.typo(
+        $size: 14px,
+        $line: 16px,
+        $color: var(--ab-special-tag-fg)
+      );
+
+      &.chat {
+        color: var(--normal-fg-10) !important;
+      }
+
+      &.addressbook-widget-tag-item__ui {
+        height: 30px;
+      }
+
+      &.min-view {
+        padding: 2px 0px 2px 42px;
+      }
+
+      &[data-active="active"],
+      &[data-radio="on"],
+      &:hover {
+        background-color: var(--default-background-hover);
+        border-radius: var(--corner-radius-2);
+        color: var(--normal-fg-10);
+        width: 100%;
+      }
+    }
+  }
+
+  &__note {
+    &.title {
+      justify-content: center;
+      align-items: center;
+      width: 100%;
+      @include drumee.typo(
+        $size: 15px,
+        $line: 16px,
+        $color: var(--normal-fg-10)
+      );
+      height: 34px;
+    }
+  }
+
+  &__icon {
+    box-sizing: border-box;
+    cursor: pointer;
+    height: 27px;
+    opacity: 0.85;
+    padding: var(--spacer-3);
+    position: absolute;
+    right: 3px;
+    top: 5px;
+    width: 27px;
+
+    & svg {
+      fill: var(--normal-fg-10);
+
+      &:hover {
+        fill: var(--normal-fg-20);
+      }
+    }
+  }
+
+  &__shareroom-wrapper,
+  &__support-wrapper {
+    align-items: center;
+    cursor: pointer;
+    font-size: 14px;
+    height: 30px;
+    justify-content: start;
+    padding: var(--spacer-3) var(--spacer-5);
+    width: 100%;
+    @include drumee.typo(
+      $size: 14px,
+      $line: 16px,
+      $color: var(--ab-special-tag-fg)
+    );
+
+    &.chat {
+      color: var(--normal-fg-10) !important;
+    }
+
+    &[data-active="active"],
+    &[data-radio="on"],
+    &:hover {
+      background: var(--default-background-hover);
+      border-radius: var(--corner-radius-2);
+
+      & .addressbook-widget-tag-item__container {
+        color: var(--normal-fg-10) !important;
+      }
+
+      & .addressbook-widget-tag-item__name {
+        @include drumee.overflow-text;
+      }
+    }
+  }
+
+  &__sharechat_notify,
+  &__supportchat_notify {
+    &[data-state="0"] {
+      visibility: hidden;
+    }
+  }
+
+  // &__support_name {
+  // 	margin-left: -4px;
+  // }
+
+  &__chat_note {
+    //color: var(--eblue);
+    height: 9px; //15px
+    margin-left: -19px; //-22px;//-28px;
+    margin-right: 10px;
+    margin-top: 0px; // 3px;
+    width: 9px; //15px;
+    background-color: var(--special-tag-note-chat); //#1187f6;//var(--eblue);
+    border-radius: 50%;
+    border: 1px solid var(--ewhite);
+  }
+}

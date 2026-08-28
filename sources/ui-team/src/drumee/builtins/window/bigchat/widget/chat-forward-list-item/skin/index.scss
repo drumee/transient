@@ -1,0 +1,166 @@
+@use 'mixins/drumee';
+
+.chat-forward-list-item {
+  &__ui,
+  &__main,
+  &__container {
+    background-color: inherit;
+    width: 100%;
+  }
+
+  &__main[data-disabled="1"] {
+    // Anchors the absolutely-positioned tooltip below to this row.
+    position: relative;
+
+    .chat-forward-list-item__list {
+      cursor: not-allowed;
+      opacity: 0.55;
+
+      &:hover {
+        background-color: var(--grid-card-bg, rgba(0, 0, 0, 0.05));
+      }
+    }
+
+    .chat-forward-list-item__icon {
+      cursor: not-allowed;
+    }
+  }
+
+  // Reason card for a row the caller may not forward to, injected by the
+  // framework `tooltips` prop (letc.js __addTooltips only creates the node —
+  // every rule here is what makes it visible at all).
+  //
+  // Kept INSIDE the row bounds on purpose. The picker's list scrolls through
+  // `.smart-container { overflow-y: auto }`, so a card hanging below the row
+  // would be clipped on the last row and would grow the scrollable area.
+  // Vertically centred, stopping short of the trailing checkbox.
+  // pointer-events:none preserves the row's own not-allowed cursor.
+  &__tooltip {
+    position: absolute;
+    left: 12px;
+    right: 48px;
+    top: 50%;
+    transform: translateY(-50%);
+    z-index: 100000;
+    box-sizing: border-box;
+    width: auto;
+    padding: 6px 10px;
+    border-radius: 6px;
+    background-color: var(--normal-fg, #2f2f36);
+    color: var(--white, #fff);
+    white-space: normal;
+    pointer-events: none;
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.18);
+    @include drumee.typo($size: 12px, $weight: 400, $line: 16px, $color: var(--white, #fff));
+  }
+
+  // Row (Figma 2307-52459): avatar + name/presence column + trailing checkbox,
+  // vertically centred, rounded so the selected-state highlight reads as a card.
+  &__list {
+    align-items: center;
+    // Transparent 1px border reserved on every row (border-box) so the selected
+    // outline below adds no layout shift.
+    border: 1px solid transparent;
+    border-radius: 8px;
+    box-sizing: border-box;
+    column-gap: 16px;
+    height: auto;
+    min-height: 48px;
+    padding: 8px 12px;
+    width: 100%;
+    transition: background-color 120ms ease, border-color 120ms ease;
+
+    &:hover {
+      background-color: var(--grid-card-bg, rgba(0, 0, 0, 0.05));
+    }
+
+    // Selected row (light) — a white card with a grey outline rather than a flat
+    // tinted fill, which read as an "ugly blob" on the white popup. :has lets the
+    // row react to the checkbox state with no extra JS / re-render. Dark theme
+    // keeps a tinted fill (chat-item-forward dark block).
+    &:has(.checkbox[data-state="1"]) {
+      background-color: var(--default-background, #ffffff);
+      border-color: var(--tertiary-grey-50, #c7c7cc);
+    }
+  }
+
+  // Avatar / team-room glyph — 32px circle (Figma).
+  &__profile {
+    &.user-profile__ui {
+      border-radius: 50%;
+      flex: 0 0 auto;
+      height: 32px;
+      width: 32px;
+
+      &[data-default="1"] {
+        border: none;
+      }
+    }
+  }
+
+  &__icon {
+    color: var(--egrey-b6);
+    cursor: pointer;
+
+    &.raw-drumee_projectroom {
+      flex: 0 0 auto;
+      height: 24px !important;
+      width: 32px;
+    }
+
+    &.display-icon {
+      flex: 0 0 auto;
+      height: 32px;
+      width: 32px;
+    }
+
+    // Checkbox — always visible 20px square (Figma): muted outline when empty,
+    // solid indigo fill + white tick when selected. The state-0 icon
+    // (editbox_shapes-roundsquare) draws the empty box; state 1 swaps to the
+    // tick, which we wrap in the filled square via background.
+    &.checkbox {
+      align-items: center;
+      border-radius: 4px;
+      box-sizing: border-box;
+      color: var(--normal-fg-50, #84848c);
+      display: flex;
+      flex: 0 0 auto;
+      height: 20px;
+      justify-content: center;
+      width: 20px;
+
+      &[data-state="1"] {
+        background-color: var(--primary-50, #433cc5);
+        border: none;
+        box-shadow: none;
+        color: #ffffff;
+        padding: 3px;
+      }
+    }
+  }
+
+  // Name + presence column — takes the remaining width; min-width:0 lets both
+  // lines truncate with an ellipsis instead of pushing the checkbox out.
+  &__info {
+    flex: 1 1 auto;
+    justify-content: center;
+    min-width: 0;
+    row-gap: 1px;
+  }
+
+  &__name {
+    @include drumee.typo($size: 14px, $line: 20px, $color: var(--normal-fg-10, #0b0a21));
+    @include drumee.overflow-text;
+    font-weight: 600;
+    max-width: 100%;
+    width: 100%;
+  }
+
+  // Secondary presence line (Online / Offline) — muted, smaller, single line.
+  &__presence {
+    @include drumee.typo($size: 12px, $line: 1.4, $weight: 400, $color: var(--normal-fg-50, #65656c));
+    @include drumee.overflow-text;
+    max-width: 100%;
+    width: 100%;
+  }
+}

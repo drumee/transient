@@ -1,0 +1,254 @@
+@use "builtins/webrtc/skin/avatar" as *;
+@use "builtins/webrtc/skin/video" as *;
+@use "mixins/drumee";
+
+.endpoint-local {
+  @include webrtc-avatar;
+  @include webrtc-video;
+
+  &__ui {
+    height: 100%;
+    width: 100%;
+    overflow: hidden;
+    border-radius: 16px;
+  }
+
+  &__main {
+    height: 100%;
+    width: 100%;
+    position: relative;
+    justify-content: center;
+    align-items: center;
+    align-content: center;
+    background-color: var(--primary-50, #433cc5);
+    overflow: hidden;
+    border-radius: 8px;
+    container-type: size;
+  }
+
+  &__avatar {
+    // Overlay the tile, exactly like the remote tile does (endpoint/remote/user
+    // skin). As an IN-FLOW item of the center-aligned column `__main` it shared
+    // the main axis with its siblings (the presenter-screen element, which gains
+    // a box while sharing), so a 100%-tall avatar got pushed off-centre as soon
+    // as any sibling took height — your own avatar sat higher than everyone
+    // else's. inset:0 pins it to the tile so its content is always centred.
+    position: absolute;
+    inset: 0;
+    height: 100%;
+    width: 100%;
+    z-index: 1;
+    justify-content: center;
+    align-content: center;
+    align-items: center;
+    box-sizing: border-box;
+
+    &[data-video="1"] {
+      display: none;
+    }
+
+    .user-profile {
+      &:before {
+        visibility: hidden;
+      }
+    }
+
+    .user-profile__ui {
+      // Same circle as the remote tiles (was 200px): a bigger avatar for
+      // yourself than for everyone else read as a misaligned row of tiles.
+      width: min(60cqmin, 180px);
+      height: min(60cqmin, 180px);
+      max-width: calc(100% - 24px);
+      max-height: calc(100% - 64px);
+      flex: none;
+    }
+
+    .user-profile__main {
+      width: 100%;
+      height: 100%;
+      background-color: rgba(255, 255, 255, 0.08) !important;
+      border-radius: 50%;
+      overflow: hidden;
+      justify-content: center;
+      align-items: center;
+
+      img {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+      }
+    }
+
+    .user-profile__initiales {
+      .note-content {
+        font-size: clamp(18px, 25cqmin, 46px);
+        font-weight: 500;
+        color: #fff;
+      }
+    }
+  }
+
+  &__video {
+    width: 100%;
+    position: absolute;
+    z-index: 2;
+    background-color: var(--multimedia-background);
+    object-fit: cover;
+
+    &[data-status="idle"] {
+      background-color: transparent;
+    }
+
+    &[data-state="0"] {
+      z-index: 0;
+      display: none;
+    }
+  }
+
+  // ── Top actions (pin + dots) ────────────────────────────────────────
+  &__tile-top-actions {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    gap: 6px;
+    z-index: 99999;
+    justify-content: flex-end;
+    align-items: center;
+  }
+
+  &__tile-pin,
+  &__tile-dots {
+    width: 28px;
+    height: 28px;
+    padding: 7px;
+    background-color: rgba(20, 17, 35, 0.4);
+    backdrop-filter: blur(4px);
+    border-radius: 50%;
+    flex-shrink: 0;
+    color: #fff;
+    cursor: pointer;
+
+    &:hover {
+      background-color: rgba(20, 17, 35, 0.65);
+    }
+  }
+
+  // Status badges (share-screen, hand-raise) live alongside pin/dots. They
+  // stay hidden by default and the meeting window flips them visible via
+  // `data-presenting` / `data-raised` set on the tile root by
+  // window_meeting._setMemberPresenting / _toggleHandRaise.
+  &__tile-badge {
+    width: 28px;
+    height: 28px;
+    padding: 6px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    display: none;
+    cursor: default;
+    pointer-events: none;
+
+    svg {
+      width: 16px;
+      height: 16px;
+    }
+
+    &--share {
+      background-color: rgba(89, 80, 255, 0.18);
+      color: #5950ff;
+    }
+    &--hand {
+      background-color: rgba(250, 133, 64, 0.18);
+      color: #fa8540;
+    }
+  }
+
+  &__ui[data-presenting="1"] &__tile-badge--share {
+    display: flex;
+  }
+  &__ui[data-raised="1"] &__tile-badge--hand {
+    display: flex;
+  }
+
+  // Pinned highlight — bright outline + filled pin icon. The actual
+  // spotlight repositioning happens at the meeting-window level via the
+  // [data-pinned-mode="1"] rule.
+  &__ui[data-pinned="1"] {
+    outline: 3px solid var(--primary-50, #5950ff);
+    outline-offset: -3px;
+  }
+
+  &__ui[data-pinned="1"] &__tile-pin {
+    background-color: #5950ff;
+    color: #fff;
+  }
+
+  // ── Tile footer (mic + name + maximize) ─────────────────────────────
+  &__tile-footer {
+    gap: 6px;
+    align-items: center;
+    // Figma: name pill anchored bottom-left, muted-mic badge to its right.
+    justify-content: flex-start;
+    z-index: 99999;
+    width: 100%;
+    box-sizing: border-box;
+    padding: 10px;
+    position: absolute;
+    bottom: 0;
+  }
+
+  &__tile-mic {
+    width: 28px;
+    height: 28px;
+    min-width: 28px;
+    padding: 7px;
+    background-color: var(--signal-error, #d74e49);
+    border-radius: 50%;
+    color: #fff;
+    z-index: 999999;
+
+    &[data-state="1"] {
+      background-color: rgba(0, 0, 0, 0.2);
+    }
+  }
+
+  &__uname {
+    flex: 0 1 auto;
+    min-width: 0;
+    max-width: 100%;
+    order: 0;
+    background-color: rgba(20, 17, 35, 0.4);
+    backdrop-filter: blur(5.5px);
+    border-radius: 60px;
+    padding: 6px 12px;
+    justify-content: flex-start;
+    overflow: hidden;
+
+    @include drumee.typo($size: 12px, $line: 1.4, $weight: 600, $color: #fff);
+
+    .note-content {
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      text-align: left;
+    }
+  }
+
+  // Muted-mic badge sits to the right of the name pill (Figma).
+  &__tile-mic {
+    order: 1;
+  }
+
+  // Per-tile maximize is superseded by the top-bar fullscreen control.
+  &__tile-maximize {
+    display: none;
+  }
+
+  // ── Legacy elements (kept for audio but hidden) ──────────────────────
+  &__label {
+    display: none;
+  }
+
+  &__audio.local {
+    display: none;
+  }
+}

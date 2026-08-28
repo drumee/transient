@@ -1,0 +1,827 @@
+@use "mixins/drumee";
+
+// In the 768–1024px width band the rail's behavior is split by input type:
+//   desktop (pointer: fine)   → ALWAYS collapsed (mini icon-only)
+//   tablet  (pointer: coarse) → ALWAYS expanded (full column)
+// The expanded layout is the rail's natural default, so "always expanded on
+// tablet" is achieved by SUPPRESSING the attribute-driven collapse rules for
+// touch devices in this band — they then fall back to the expanded default.
+// This guard is what every collapse rule below is wrapped in: "collapse is
+// allowed on fine pointers, or anywhere outside the tablet band". Its
+// complement — coarse pointer AND inside the band — is the only case where
+// collapse never applies. The desktop force-collapse @media at the end of the
+// file (which overrides the pinned state too) is gated to `pointer: fine`.
+$rail-collapse-allowed: "(pointer: fine), (max-width: 767px), (min-width: 1025px)";
+
+// Mini icon-only rail appearance: hide every label/list/pin, center the
+// glyphs and swap the wordmark for the compact mark. Shared by the
+// collapsed (data-collapsed="1") state on desktop AND the always-collapsed
+// tablet band (768–1024px) — see both @include sites below. Uses literal
+// class selectors (no `&`) so it can be included from any nesting context.
+@mixin sidebar-mini-icons {
+  // Labels and sections FADE out instead of display:none-flipping. Two
+  // reasons (both were user-visible jank): a display flip forces a large
+  // synchronous style+layout pass on the hover-boundary frame and makes
+  // the text POP in/out, and — combined with the width transition — every
+  // label used to reflow on each animation frame. Keeping the elements in
+  // flow at their expanded metrics (the rail scope pins __nav/__footer at
+  // 231px) means the width animation only clips: icons never jump, text
+  // never reflows, and opacity/visibility are animatable.
+  // !important mirrors the old rules: some of these carry
+  // `display: flex !important` bases that historically fought overrides.
+  .desk-module-sidebar__item-text,
+  .desk-module-sidebar__header,
+  .desk-module-sidebar__workspace,
+  .desk-module-sidebar__footer-name-wrapper,
+  .desk-module-sidebar__footer-user-plan,
+  .desk-module-sidebar__logo-pin-btn {
+    visibility: hidden !important;
+    opacity: 0 !important;
+  }
+
+  .desk-module-sidebar__logo-icon {
+    display: none !important;
+  }
+
+  .desk-module-sidebar__logo-mark {
+    display: flex;
+  }
+
+  // Notification count shrinks to a dot anchored on the icon (anchor from
+  // the LEFT — the row is 231px wide and clipped to 64px, so a right-based
+  // offset would put the dot outside the visible strip).
+  .desk-module-sidebar__badge {
+    position: absolute;
+    top: 4px;
+    left: 40px;
+    right: auto;
+    min-width: 9px;
+    width: 9px;
+    height: 9px;
+    padding: 0;
+    border-radius: 50%;
+    font-size: 0;
+    line-height: 0;
+    margin-left: 0;
+  }
+}
+
+.desk-module-sidebar {
+  &__main {
+    justify-content: space-between;
+    width: 231px;
+    height: 100vh;
+    min-height: 0;
+    box-sizing: border-box;
+    padding: 16px 0;
+    background-color: var(--normal-bg);
+    align-items: stretch;
+    z-index: 10002;
+    border-right: none;
+    box-shadow: var(--shadow-right-big, 0 1px 11px rgba(0, 0, 0, 0.13));
+    overflow: hidden;
+
+    // Mobile drawer mode — sidebar exits the flex row and becomes a
+    // fixed slide-in panel above the desk content.
+    &[data-device="mobile"] {
+      position: fixed;
+      top: 0;
+      left: 0;
+      height: 100vh;
+      width: 280px;
+      transform: translateX(-100%);
+      transition: transform 0.2s ease;
+      z-index: 99999 !important;
+
+      &[data-state="open"] {
+        transform: translateX(0);
+      }
+    }
+  }
+
+  // ── Collapsible desktop rail ───────────────────────────────────────
+  // The rail is the IN-FLOW flex column that RESERVES the sidebar's space
+  // so it never overlaps the workspace. __main is absolutely positioned
+  // inside it. Two modes, switched by data-collapsed on __rail:
+  //
+  //   collapsed (default, ="1") — rail reserves the 64px mini column; the
+  //     workspace sits beside it (no overlap). On HOVER, __main alone grows
+  //     to 231px and OVERLAYS the workspace (z-index 10002) — the reserved
+  //     64px is unchanged, so the main UI never reflows between the hovered
+  //     and non-hovered states.
+  //
+  //   pinned (="0")             — rail reserves the full 231px column,
+  //     pushing the workspace over (a deliberate user choice).
+  //
+  // The mobile drawer keeps its own fixed __main (no rail wrapper) and is
+  // unaffected by everything here.
+  &__rail {
+    position: relative;
+    height: 100vh;
+    box-sizing: border-box;
+    // Pinned: reserve the full column.
+    flex: 0 0 231px;
+
+    &[data-collapsed="1"] {
+      // Collapsed: reserve just the mini rail. Hover expands __main as an
+      // overlay (below) without touching this reserved width. Guarded so a
+      // touch tablet in the 768–1024px band stays expanded instead.
+      @media #{$rail-collapse-allowed} {
+        flex-basis: 64px;
+      }
+    }
+  }
+
+  // __main floats inside the rail (desktop only — mobile __main isn't
+  // wrapped in a rail, so this compound selector never matches it).
+  &__rail &__main {
+    position: absolute;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    height: auto;
+    width: 231px;
+    transition: width 0.18s ease;
+
+    // Pin the content columns at the EXPANDED width. The hover animation
+    // then only moves __main's clipping edge (overflow: hidden above) —
+    // without this, every label in the nav + workspace list + footer
+    // re-wraps on each of the ~11 width-transition frames, which is the
+    // main-thread cost behind the reported hover stutter.
+    // Width only — no flex properties: __main is a COLUMN, so a
+    // flex-shrink here would act on the vertical axis and stop the nav
+    // from yielding height to the footer on short viewports.
+    .desk-module-sidebar__nav,
+    .desk-module-sidebar__footer {
+      width: 231px;
+      min-width: 231px;
+      box-sizing: border-box;
+    }
+
+    // Fade metrics for the mini-mode labels (see sidebar-mini-icons):
+    // visibility participates in the transition so hidden labels are
+    // also removed from hit-testing once the fade completes.
+    .desk-module-sidebar__item-text,
+    .desk-module-sidebar__header,
+    .desk-module-sidebar__workspace,
+    .desk-module-sidebar__footer-name-wrapper,
+    .desk-module-sidebar__footer-user-plan,
+    .desk-module-sidebar__logo-pin-btn {
+      transition: opacity 0.15s ease, visibility 0.15s;
+    }
+  }
+
+  &__rail[data-collapsed="1"] &__main {
+    @media #{$rail-collapse-allowed} {
+      width: 64px;
+
+      &:hover {
+        width: 231px;
+        // Lift the shadow while floating over the workspace.
+        box-shadow: var(--shadow-right-big, 0 1px 18px rgba(0, 0, 0, 0.18));
+      }
+    }
+  }
+
+  // Collapsed + not hovered = the mini icon-only rail. Show ONLY the icons.
+  // On hover the :not(:hover) selector stops matching and the full sidebar
+  // returns. (The tablet band forces this same mini state regardless of the
+  // data-collapsed attribute — see the @media block at the end of the file.)
+  &__rail[data-collapsed="1"] &__main:not(:hover) {
+    @media #{$rail-collapse-allowed} {
+      @include sidebar-mini-icons;
+
+      // The footer/nav rows stay pinned at their expanded 231px width (see
+      // "Pin the content columns" above) and are just visually clipped to
+      // the 64px rail — every row's icon sits at its normal padding-left:24
+      // offset from that wider row's left edge, which happens to read as
+      // roughly centered for a 20px nav icon (24px vs 16px margins) but
+      // puts the 40px avatar chip flush against the clip window's right
+      // edge (24px vs 0px — no room left). Re-anchor the avatar's own
+      // left offset for the 64px strip specifically: (64 - 40) / 2 = 12px
+      // each side.
+      // Plain descendant selector, not `&__x` — the parent selector here
+      // ends in the pseudo-class :not(:hover), and Sass rejects suffixing
+      // a pseudo-class ("Selector :not(:hover) can't have a suffix").
+      .desk-module-sidebar__footer-user-btn {
+        padding-left: 12px;
+      }
+    }
+  }
+
+  // Compact mark is hidden by default (full wordmark wins); the collapsed
+  // rule above flips this.
+  &__logo-mark {
+    display: none;
+    width: 28px;
+    height: 28px;
+    margin-left: -2px;
+  }
+
+  // Desktop collapse/pin toggle. Hidden on the mobile drawer (it uses the
+  // close button instead).
+  &__logo-pin-btn {
+    width: 24px;
+    height: 24px;
+    padding: 4px;
+    border-radius: 4px;
+    cursor: pointer;
+    color: var(--normal-fg-50);
+    flex-shrink: 0;
+    margin-left: auto;
+
+    svg {
+      width: 100%;
+      height: 100%;
+
+      path {
+        fill: currentColor;
+      }
+    }
+
+    &:hover {
+      background-color: var(--default-bg-hover, rgba(0, 0, 0, 0.06));
+      color: var(--normal-fg);
+    }
+  }
+
+  &__main[data-device="mobile"] &__logo-pin-btn {
+    display: none;
+  }
+
+  &__nav-slot,
+  &__actions-slot {
+    width: 100%;
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  &__main[data-device="mobile"] {
+
+    .desk-module-sidebar__nav-slot,
+    .desk-module-sidebar__actions-slot,
+    .desk-module-sidebar__create-slot {
+      display: none;
+    }
+
+    &[data-mode="nav"] .desk-module-sidebar__nav-slot {
+      display: flex;
+    }
+
+    &[data-mode="actions"] .desk-module-sidebar__actions-slot {
+      display: flex;
+    }
+
+    // The "Add new" sub-screen, reached from the actions list.
+    &[data-mode="create"] .desk-module-sidebar__create-slot {
+      display: flex;
+    }
+  }
+
+  // Force SVG fills inside the actions- and create-slots to inherit the
+  // sidebar's text color the same way sidebar_* icons do. The reused icons
+  // (desktop_upload teal, magnifying-glass black, the addmenu-* set) hardcode
+  // colors that visually break the row alongside the currentColor sidebar icons.
+  &__actions-slot,
+  &__create-slot {
+    .desk-module-sidebar__item-icon svg {
+
+      path,
+      polygon,
+      rect,
+      circle,
+      ellipse {
+        fill: currentColor;
+      }
+    }
+  }
+
+  &__nav {
+    width: 100%;
+    gap: 32px;
+    flex: 1 1 auto;
+    min-height: 0;
+    // Scrolls instead of clipping. The column above the footer is mostly
+    // non-shrinkable (logo + the 6 nav rows + the footer itself ≈ 620px at
+    // the default metrics), so every pixel a short viewport is missing used
+    // to come out of __workspace alone: under ~620px of viewport height the
+    // workspace list collapsed to zero and the section title was sliced in
+    // half, with the footer's top shadow reading as if it covered them.
+    // A 14" 1200p laptop at 200% OS scaling plus a browser zoom step lands
+    // there. overflow-x stays hidden: the mini rail keeps this column pinned
+    // at its expanded 231px width and relies on __main clipping it.
+    overflow-y: auto;
+    overflow-x: hidden;
+    scrollbar-width: thin;
+
+    &::-webkit-scrollbar {
+      width: 4px;
+    }
+
+    &::-webkit-scrollbar-track {
+      background: rgba(0, 0, 0, 0.05);
+    }
+
+    &::-webkit-scrollbar-thumb {
+      background: var(--primary-40);
+      border-radius: 4px;
+    }
+  }
+
+  &__nav-main {
+    width: 100%;
+    gap: 4px;
+    flex-shrink: 0;
+  }
+
+  &__item {
+    position: relative;
+    align-items: center;
+    padding: 7.25px 24px 8px;
+    gap: 12px;
+    font-size: 14px;
+    line-height: 1.4;
+    cursor: pointer;
+    color: var(--normal-fg);
+    border-left: 4px solid transparent;
+    min-height: 35px;
+    box-sizing: border-box;
+
+    &:hover {
+      border-left-color: var(--hover-border-40);
+      background-color: var(--active-item-bg);
+    }
+
+    &[data-radio="on"] {
+      color: var(--primary-50);
+      background-color: var(--active-item-bg);
+      border-left-color: var(--active-border);
+      font-weight: bold;
+    }
+
+    &-icon {
+      width: 20px;
+      height: 20px;
+      color: inherit;
+
+      &.red {
+        color: var(--signout-fg, var(--error));
+      }
+    }
+
+    &-text {
+      display: flex !important;
+      align-items: center;
+      color: inherit;
+      min-height: 20px;
+
+      .inner {
+        display: flex;
+        align-items: center;
+        line-height: 20px;
+      }
+
+      &.red {
+        color: var(--signout-fg, var(--error));
+      }
+
+      &[data-device="mobile"] {
+        margin-top: var(--spacer-2);
+      }
+    }
+
+    &.active {
+      border: 1px solid var(--active-border);
+    }
+  }
+
+  &__badge {
+    display: flex !important;
+    align-items: center;
+    justify-content: center;
+    min-width: 18px;
+    height: 18px;
+    padding: 0 5px;
+    border-radius: 9px;
+    background: #e53935;
+    color: #fff;
+    font-size: 11px;
+    font-weight: 600;
+    line-height: 18px;
+    margin-left: auto;
+    box-sizing: border-box;
+
+    .note-content {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      line-height: 1;
+      height: 100%;
+      width: 100%;
+      text-align: center;
+    }
+
+    &[data-count="0"],
+    &:empty {
+      display: none !important;
+    }
+  }
+
+  // Row that holds the logo (left) and the mobile close button (right).
+  // The close button is hidden on desktop/tablet via the rule below.
+  &__logo-row {
+    display: flex;
+    flex-direction: row;
+    justify-content: space-between;
+    align-items: flex-start;
+    width: 100%;
+    padding: 0 24px;
+    box-sizing: border-box;
+    // The mini rail swaps the 20px wordmark for the 28px compact mark —
+    // reserve the taller height so the row doesn't shift 8px at the
+    // hover boundary.
+    min-height: 28px;
+  }
+
+  &__logo {
+    align-items: start;
+    gap: 8px;
+    // Padding lives on __logo-row now; keep this empty so existing
+    // desktop callers still get the same visual offset via the wrapper.
+    padding: 0;
+
+    &-icon {
+      width: 101px;
+      height: 20px;
+      margin-left: -7px;
+    }
+  }
+
+  // Mobile-only close button next to the logo. Closes the drawer via
+  // the "mobile-close-drawer" service handler in desk/index.js.
+  &__logo-close-btn {
+    display: none; // hidden by default; shown on mobile below
+    width: 32px;
+    height: 32px;
+    padding: 6px;
+    border-radius: 4px;
+    cursor: pointer;
+    color: var(--normal-fg-10);
+    flex-shrink: 0;
+
+    svg {
+      width: 100%;
+      height: 100%;
+
+      path {
+        fill: currentColor;
+      }
+    }
+
+    &:hover,
+    &:active {
+      background-color: var(--default-bg-hover, rgba(0, 0, 0, 0.06));
+    }
+  }
+
+  &__main[data-device="mobile"] &__logo-close-btn {
+    display: flex;
+  }
+
+  // Back arrow on the "Add new" sub-screen header, standing in for the
+  // desktop-only pin toggle. Same box and hover as the close button so the two
+  // ends of the header row match; unlike that button it has no default-hidden
+  // state, because the sub-screen it heads is mobile-only to begin with.
+  &__logo-back-btn {
+    width: 32px;
+    height: 32px;
+    padding: 6px;
+    border-radius: 4px;
+    cursor: pointer;
+    color: var(--normal-fg-10);
+    flex-shrink: 0;
+
+    svg {
+      width: 100%;
+      height: 100%;
+
+      path {
+        fill: currentColor;
+      }
+    }
+
+    &:hover,
+    &:active {
+      background-color: var(--default-bg-hover, rgba(0, 0, 0, 0.06));
+    }
+  }
+
+  // Sub-screen title, in the wordmark's place. Sized like the drawer's own
+  // rows rather than like __header (a 10px uppercase org label) — this reads as
+  // the screen's name, so it takes the weight the workspace title uses.
+  &__logo-title {
+    display: flex !important;
+    align-items: center;
+    color: var(--normal-fg);
+    font-size: 16px;
+    font-weight: 700;
+    line-height: 1.4;
+    min-height: 28px;
+    white-space: nowrap;
+  }
+
+  // Trailing arrow on a row that leads to a sub-screen (the mobile "Add new"
+  // row). Pushed to the far edge and dimmed — it marks the row as navigation
+  // without competing with the label.
+  &__item-affordance {
+    width: 16px;
+    height: 16px;
+    margin-left: auto;
+    flex-shrink: 0;
+    opacity: 0.45;
+    color: inherit;
+
+    svg {
+      width: 100%;
+      height: 100%;
+
+      path {
+        fill: currentColor;
+      }
+    }
+  }
+
+  &__header {
+    color: var(--reverse-lb);
+    font-family: "Geist Mono", monospace;
+    font-size: 10px !important;
+    font-weight: 600;
+    letter-spacing: 0.4px;
+    line-height: 1;
+    text-transform: uppercase;
+    white-space: nowrap;
+    margin-left: 4px;
+  }
+
+  &__workspace {
+    color: var(--normal-fg);
+    padding: 0;
+    width: 100%;
+    flex: 1 1 auto;
+    // Floor of title + ~2 rows. This is the only shrinkable block in the
+    // column, so without a floor it absorbs the whole deficit on a short
+    // viewport and disappears. Past this point __nav scrolls instead.
+    min-height: 132px;
+    overflow: hidden;
+  }
+
+  &__workspace-title {
+    color: var(--reverse-lb);
+    font-size: 14px;
+    font-weight: 700;
+    line-height: 1.4;
+    padding: 7.25px 24px 8px;
+    // Never let the squeeze slice the title itself in half.
+    flex-shrink: 0;
+  }
+
+  &__workspace-main {
+    width: 100%;
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  &__footer {
+    width: 100%;
+    padding-top: 16px;
+    gap: 2px;
+    flex-shrink: 0;
+    box-shadow: 0 -4px 12px rgba(0, 0, 0, 0.06);
+
+    .desk-module-sidebar__item {
+      padding: 8px 24px;
+      min-height: 38px;
+    }
+
+    &-user-wrapper {
+      position: relative;
+      width: 100%;
+    }
+
+    &-user-btn {
+      align-items: center;
+      padding: 8px 16px;
+      gap: 12px;
+      cursor: pointer;
+
+      &:hover {
+        background-color: var(--default-bg-hover, rgba(0, 0, 0, 0.04));
+      }
+    }
+
+    &-user-menu {
+      position: absolute;
+      bottom: calc(100% + 6px);
+      left: 12px;
+      right: 12px;
+      background-color: var(--white);
+      border-radius: 8px;
+      box-shadow: 0 12px 24px 0 rgba(0, 0, 0, 0.16);
+      padding: 8px;
+      gap: 2px;
+      z-index: 99999;
+      visibility: hidden;
+      opacity: 0;
+      pointer-events: none;
+      transform: translateY(4px);
+      transition:
+        opacity 0.15s,
+        transform 0.15s;
+
+      &[data-state="open"] {
+        visibility: visible;
+        opacity: 1;
+        pointer-events: auto;
+        transform: translateY(0);
+      }
+    }
+
+    &-user-menu-item {
+      align-items: center;
+      gap: 12px;
+      padding: 10px 12px;
+      border-radius: 6px;
+      cursor: pointer;
+      color: var(--normal-fg-10);
+
+      &:hover {
+        background-color: var(--default-bg-hover, #f5f5fa);
+      }
+
+      &.disconnect {
+        color: var(--red-400, #d74e49);
+
+        .desk-module-sidebar__footer-user-menu-icon {
+          color: currentColor;
+        }
+      }
+    }
+
+    &-user-menu-icon {
+      width: 18px;
+      height: 18px;
+      flex-shrink: 0;
+      color: var(--normal-fg-50);
+
+      svg {
+        width: 100%;
+        height: 100%;
+        fill: currentColor;
+      }
+    }
+
+    &-user-menu-label {
+      font-size: 14px;
+      line-height: 20px;
+      color: inherit;
+    }
+
+    &-avatar {
+      flex-shrink: 0;
+      background-color: var(--normal-bg-80);
+      align-items: center;
+      justify-content: center;
+      border-radius: 8px !important;
+      overflow: hidden;
+      padding: 10px !important;
+
+      img,
+      svg {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+      }
+
+      &-note {
+        color: var(--reverse-fg);
+        font-size: 12px;
+        font-weight: 700;
+      }
+    }
+
+    &-name-wrapper {
+      gap: 2px;
+      justify-content: center;
+    }
+
+    &-username {
+      color: var(--normal-fg);
+      font-size: 12px;
+      font-weight: 700;
+      line-height: 1.4;
+    }
+
+    &-user-plan {
+      color: var(--normal-fg-50);
+      font-size: 10px;
+      line-height: 1.4;
+    }
+  }
+}
+
+@media (min-width: 768px) and (max-width: 1024px) and (pointer: fine) {
+  // Desktop at tablet width (fine pointer, e.g. a resized desktop window):
+  // the rail is ALWAYS collapsed to the mini icon-only column, regardless of
+  // the pinned (data-collapsed="0") preference. Mirrors the data-collapsed="1"
+  // rules above but drops the attribute requirement, so a pinned-open rail
+  // still renders mini here. Hover still expands __main as an overlay (no
+  // reflow). Touch devices (pointer: coarse) are excluded — they stay
+  // expanded via the suppressed collapse rules above.
+  .desk-module-sidebar {
+    &__rail {
+      flex-basis: 64px;
+    }
+
+    &__rail &__main {
+      width: 64px;
+
+      &:hover {
+        width: 231px;
+        box-shadow: var(--shadow-right-big, 0 1px 18px rgba(0, 0, 0, 0.18));
+      }
+    }
+
+    &__rail &__main:not(:hover) {
+      @include sidebar-mini-icons;
+    }
+  }
+}
+
+@media (min-width: 768px) and (max-width: 1024px) and (pointer: coarse) {
+  // Tablet (coarse pointer): the rail is always expanded and can't be
+  // collapsed, so the collapse/pin toggle is meaningless — hide it. (Plain
+  // display:none, matching the mobile-drawer rule above.)
+  .desk-module-sidebar__logo-pin-btn {
+    display: none;
+  }
+}
+
+@media (max-width: 650px) {
+  // Keep the DESKTOP sidebar column visible on narrow viewports too.
+  // __main is absolutely positioned INSIDE __rail, so the rail must stay
+  // displayed for __main to render — hence both are forced visible here.
+  // The mobile drawer variant (`data-device="mobile"`) keeps its own
+  // transform-based show/hide and is unaffected.
+  .desk-module-sidebar {
+    &__rail {
+      display: flex;
+    }
+    &__main {
+      display: flex !important;
+    }
+  }
+}
+
+// ── Dark mode overrides (Figma node 1506:31860, file g5V3PjhNMf5bHlsHMvV17w) ──
+// Light mode keeps the canonical tokens from /router/skin/themes/light.scss.
+html[data-theme="dark"] .desk-module-sidebar {
+  &__main {
+    // Sidebar sits ON TOP of the dark desk surface (#0b0a21 = --normal-bg).
+    // Its own bg is the elevated purple-grey Primary/90 (#282538), not the
+    // bottom-of-stack black.
+    background-color: var(--primary-90);
+  }
+
+  &__item[data-radio="on"] {
+    // Active item text in dark mode is light-purple Primary/20 (#b1adff),
+    // not the deep #433cc5 (--primary-50) used against light bg.
+    color: var(--primary-purple-20);
+  }
+
+  &__footer-user-menu {
+    // Light theme uses var(--white) for the popover surface; in dark mode
+    // swap to elevated dark surface so the dropdown is readable.
+    background-color: var(--normal-bg-elevated);
+  }
+
+  &__footer-user-menu-item {
+
+    // Light-mode :hover fallback (#f5f5fa) bleeds through; re-anchor.
+    &:hover {
+      background-color: var(--normal-bg-80);
+    }
+  }
+
+  &__footer-user-btn {
+
+    // Bottom profile row's hover. The base rule uses --default-bg-hover
+    // which resolves to --neutral-200 (#ebecf0, light gray) and has no
+    // dark override — leaving a near-white hover smear on the dark
+    // sidebar. Match the elevated dark surface instead.
+    &:hover {
+      background-color: var(--normal-bg-80);
+    }
+  }
+}

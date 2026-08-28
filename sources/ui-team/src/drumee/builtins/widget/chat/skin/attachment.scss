@@ -1,0 +1,232 @@
+@use "mixins/drumee";
+
+.widget-chat {
+
+  &__attachment-wrapper {
+    // Collapse entirely unless `chat.checkPendingContent` has flagged a
+    // pending upload via `data-has-attachment="1"`. !important is required
+    // because Skeletons.Wrapper.Y auto-adds `.dialog__wrapper` + sets
+    // `data-state="open"`, and the framework's
+    // `.dialog__wrapper[data-state="open"] { display: flex }` rule beats
+    // a single-class selector on specificity (0,2,0 vs 0,1,0).
+    display: none !important;
+
+    &[data-has-attachment="1"] {
+      display: flex !important;
+      flex-direction: row;
+      flex-wrap: nowrap;
+      align-items: center;
+      background-color: var(--default-bg);
+      width: 100%;
+      height: 80px;
+      flex: 0 0 80px;
+      overflow: hidden;
+      padding: 8px;
+      gap: 8px;
+
+      // Inner skeleton has inline style="height: 100" on its list, plus
+      // default rules at 100% — both would overflow the 64px slot. Force
+      // a uniform 64px height inside the visible preview only.
+      .media-wrapper__ui,
+      .list-smart,
+      .smart-container {
+        height: 64px !important;
+        max-height: 64px !important;
+        min-height: 0 !important;
+        width: auto !important;
+      }
+    }
+
+    .drumee-spinner {
+      width: 48px;
+      height: 48px;
+      position: absolute;
+    }
+
+    & .media-grid {
+      &__ui {
+        background-color: inherit;
+        border-radius: var(--border-radius-small);
+        box-shadow: none;
+        height: 64px !important;
+        max-height: 64px !important;
+        min-height: unset !important;
+        margin: 0;
+        min-width: unset;
+        width: 64px !important;
+        max-width: 64px !important;
+        flex: 0 0 64px;
+
+        &[data-drag="on"] {
+          .media-grid__remove {
+            display: none;
+          }
+        }
+
+        &.document {
+          box-shadow: 0 5px 8px 1px rgba(63, 79, 117, 0.13), 0 0px 3px 0 rgba(86, 65, 113, 0.08), 0 2px 8px 0 rgba(194, 185, 203, 0);
+        }
+      }
+
+      &__container {
+        background-color: var(--default-bg);
+        overflow: hidden;
+
+        &[data-hover="on"] {
+          box-shadow: none;
+        }
+
+        &[data-icontype="vignette"] {
+          background: transparent;
+
+          & .filename {
+            display: none;
+          }
+        }
+
+        & .icon {
+          height: 20px;
+          margin: auto;
+          top: 8px;
+          width: 16px; // 15px;
+        }
+      }
+
+      &__content {
+        align-items: center;
+        justify-content: center;
+      }
+
+      &-notify__container {
+        display: none;
+      }
+
+      & .preview.image-capable {
+        height: 64px;
+        width: 64px;
+        object-fit: cover;
+      }
+
+      // Preview ở chat input chỉ cần thumb nhận diện — ẩn mọi filename/meta
+      // overlay để tránh bị clip nửa text dưới ảnh.
+      & .filename,
+      & .filename-wrapper,
+      &__meta-row,
+      &__meta-row-top,
+      &__date {
+        display: none !important;
+      }
+
+      // Remove ("X") button — drops a queued attachment before the message is
+      // sent. Dark filled circle + white ring so it stays visible on the light
+      // card tint AND on image thumbnails; ALWAYS shown (no hover gate) and
+      // pinned above the preview. Turns alert-red on hover to signal delete.
+      &__remove {
+        // Neutral grey chip that blends with the theme — soft ring + light
+        // shadow keep it legible over both the card tint and image thumbnails
+        // without the heavy black look. Always visible; hover flips to alert.
+        background-color: var(--default-icon-neutral);
+        border-radius: 50%;
+        border: 1px solid var(--default-text-reverse);
+        box-shadow: 0 1px 2px rgb(0 0 0 / 18%);
+        color: var(--default-text-reverse);
+        height: 18px;
+        width: 18px;
+        position: absolute;
+        right: 3px;
+        top: 3px;
+        z-index: 10;
+        opacity: 0.85;
+        visibility: visible;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        transition: opacity 0.15s ease, background-color 0.15s ease;
+
+        &--icon {
+          color: var(--default-text-reverse);
+          fill: var(--default-text-reverse);
+          height: 8px;
+          width: 8px;
+        }
+
+        &:hover {
+          opacity: 1;
+          background-color: var(--default-bg-alert);
+          border-color: var(--default-bg-alert);
+        }
+      }
+
+      .media-uploader {
+        &__container-header {
+          margin-left: -4px;
+        }
+
+        &__value-filesize {
+          font-size: 9px;
+        }
+
+        &__value-percent {
+          font-size: 9px;
+          padding-left: 3px;
+        }
+
+        &__chart {
+          width: 20px;
+          height: 20px;
+          left: calc(50% - 11px);
+          top: calc(50% - 8px);
+          position: absolute;
+          // margin-top: 2px;
+        }
+
+        &__close {
+          width: 8px;
+          height: 8px;
+          position: absolute;
+          padding: 0;
+          left: calc(50% - 5px);
+          top: calc(50% - 7px);
+        }
+      }
+    }
+  }
+}
+
+// Dark mode — `--default-bg` is hardcoded `#fff` and never overridden, so
+// the upload preview panel was rendering bright white on top of the dark
+// messenger. Map it to the theme surface so it blends with the input row.
+html[data-theme="dark"] {
+  .widget-chat {
+    &__attachment-wrapper {
+      background-color: var(--normal-bg-90, #282538);
+    }
+
+    // media-wrapper widget skin hardcodes background-color: var(--default-background)
+    // which has no dark theme override (always #fff). Force dark surface here so
+    // the inner list area doesn't flash white during/after upload.
+    .media-wrapper__ui {
+      background-color: transparent !important;
+    }
+
+    .media-grid {
+      &__container {
+        background-color: var(--normal-bg-80, #333042);
+      }
+
+      // Dark surface + light ring/icon so the always-visible X reads on the
+      // dark card. Hover still flips to alert-red (inherited from light rule).
+      &__remove {
+        background-color: var(--normal-fg-10, #e4e3ff);
+        border-color: var(--normal-bg-80, #333042);
+        color: var(--normal-bg-90, #282538);
+
+        &--icon {
+          color: var(--normal-bg-90, #282538);
+          fill: var(--normal-bg-90, #282538);
+        }
+      }
+    }
+  }
+}

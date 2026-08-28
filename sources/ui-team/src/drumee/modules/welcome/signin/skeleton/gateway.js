@@ -1,0 +1,63 @@
+
+function button(ui, content, c = 1) {
+  const fig = `${ui.fig.family}-gateway`;
+  let b = Skeletons.Box.G({
+    className: `${fig}__icons c-${c}`,
+    kids: []
+  });
+
+  for (var i = 1; i <= c; i++) {
+    b.kids.push(
+      Skeletons.Button.Svg({
+        ico: 'account_ip',
+        className: `${fig}__icon icon-${i}`,
+      }),
+    )
+  }
+  let type = '';
+  if (c == 1) {
+    type = 'personal';
+  } else {
+    type = 'company';
+  }
+  var a = Skeletons.Box.Y({
+    className: `${fig}__button OOOO`,
+    kids: [b, Skeletons.Note({
+      className: `${fig}__text ${type}`,
+      content
+    })]
+  })
+  const { isElectron, endpoint } = bootstrap();
+  if (c == 1) {
+    if (isElectron) {
+      a.href = `${_K.module.welcome}/signin/auth`
+      return
+    }
+    a.href = `${endpoint}${_K.module.welcome}/signin/auth`
+  } else {
+    a.href = `${_K.module.welcome}/signin/url`
+  }
+  return a;
+}
+
+function __skl_welcome_signin_gateway(ui) {
+  const fig = `${ui.fig.family}-gateway`;
+
+  return {
+    header: Skeletons.Note({
+      className: `${fig}__title`,
+      content: LOCALE.LOGIN_DRUMEE_ACCOUNT
+    }),
+    content: Skeletons.Box.X({
+      className: `${fig}__buttons`,
+      kids: [
+        button(ui, LOCALE.DRUMEE_DESK, 1),
+        button(ui, LOCALE.DRUMEE_COMPANY, 3)
+      ]
+    })
+  };
+
+};
+
+
+module.exports = __skl_welcome_signin_gateway;

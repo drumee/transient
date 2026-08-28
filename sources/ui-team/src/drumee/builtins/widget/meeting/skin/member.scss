@@ -1,0 +1,155 @@
+.widget-meeting-member {
+  &__ui {
+    border-radius: 8px;
+    padding: 12px;
+    width: 100%;
+    box-sizing: border-box;
+    flex-shrink: 0;
+  }
+
+  &__member-row {
+    justify-content: space-between;
+    align-items: center;
+    width: 100%;
+    gap: 12px;
+  }
+
+  &__member-avatar {
+    width: 36px;
+    height: 36px;
+    flex-shrink: 0;
+    border-radius: 50%;
+    overflow: hidden;
+  }
+
+  &__member-info {
+    flex: 1;
+    min-width: 0;
+    gap: 2px;
+  }
+
+  &__member-name-row {
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+  }
+
+  &__member-name {
+    font-size: 14px;
+    font-weight: 600;
+    line-height: 20px;
+    // Panel is pinned to the light Figma design — keep text readable on white
+    // regardless of the app theme.
+    color: #0b0a21;
+    font-family: var(--font-main);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    min-width: 0;
+  }
+
+  // Read-only state badges next to the name. Small, color-coded, no
+  // hover/cursor (active:0 on the source skeleton already disables
+  // click). The icons are reused from the call top-bar sprite.
+  &__member-badge {
+    // Figma "participants card" status icons: 24px, dark.
+    width: 24px;
+    height: 24px;
+    flex-shrink: 0;
+    cursor: default;
+    pointer-events: none;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+
+    svg {
+      width: 24px;
+      height: 24px;
+      fill: currentColor;
+    }
+
+    &--hand svg { color: #0b0a21; }
+    &--share svg { color: #0b0a21; }
+  }
+
+  &__member-email {
+    font-size: 12px;
+    font-weight: 400;
+    line-height: 16px;
+    color: #84848c;
+    font-family: var(--font-main);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  &__member-call-btn {
+    // Figma "Call" CTA: solid primary pill, white icon + label.
+    display: flex;
+    box-sizing: border-box;
+    background-color: var(--primary-50, #433cc5);
+    border-radius: 4px;
+    padding: 8px 16px;
+    gap: 8px;
+    align-items: center;
+    cursor: pointer;
+    flex-shrink: 0;
+    transition: background-color 0.15s ease;
+
+    &:hover {
+      background-color: #37319f;
+    }
+
+    svg {
+      width: 18px;
+      height: 18px;
+      color: #fff;
+      fill: currentColor;
+    }
+
+    .note-content {
+      font-size: 14px;
+      font-weight: 600;
+      color: #fff;
+      white-space: nowrap;
+    }
+
+    &[data-state="calling"],
+    &[data-state="joined"] {
+      cursor: default;
+      pointer-events: none;
+    }
+
+    &[data-state="calling"] {
+      background-color: rgba(250, 133, 64, 0.18);
+      svg { color: #fa8540; }
+      .note-content { color: #fa8540; }
+    }
+
+    &[data-state="joined"] {
+      background-color: rgba(46, 184, 113, 0.18);
+      opacity: 0.75;
+      svg { color: #2eb871; }
+      .note-content { color: #2eb871; }
+    }
+
+    // Self actions: distinct colors so users don't confuse them with the
+    // "Call" CTA. Lower-hand inherits the raised-hand orange; stop-share
+    // uses a destructive red because it ends an active broadcast.
+    &[data-state="lower-hand"] {
+      background-color: rgba(250, 133, 64, 0.12);
+      svg { color: #fa8540; }
+      .note-content { color: #fa8540; }
+
+      &:hover { background-color: rgba(250, 133, 64, 0.24); }
+    }
+
+    &[data-state="stop-share"] {
+      background-color: rgba(229, 62, 62, 0.12);
+      svg { color: #e53e3e; }
+      .note-content { color: #e53e3e; }
+
+      &:hover { background-color: rgba(229, 62, 62, 0.24); }
+    }
+  }
+}

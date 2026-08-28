@@ -1,0 +1,2085 @@
+@use "sass:meta";
+@use "mixins/drumee";
+
+// The standard Drumee text field, as used by both promo inputs in this
+// widget. Skeletons.Entry paints its own inner <input>, so the box is the
+// wrapper and the inner element has to be flattened into it — otherwise the
+// value sits off-centre with a second, nested border. Kept as one mixin so
+// the checkout field and the redeem field cannot drift apart.
+@mixin drumee-entry-box($height: 48px) {
+  height: $height;
+  box-sizing: border-box;
+  border-radius: var(--corner-radius-4, 8px);
+  padding: 0 var(--spacer-3, 12px);
+  border: 1px solid var(--neutral-200);
+  background-color: var(--white);
+  display: flex !important;
+  align-items: center;
+  flex-flow: row nowrap;
+
+  > *,
+  .drumee-entry-input,
+  input {
+    flex: 1 1 auto;
+    width: 100%;
+    height: 100%;
+    min-height: 0;
+    border: none;
+    background: transparent;
+    padding: 0;
+    margin: 0;
+    box-sizing: border-box;
+  }
+
+  input {
+    line-height: $height - 2px;
+  }
+
+  &:focus-within {
+    border-color: var(--primary-50);
+  }
+}
+
+.settings-billing {
+  &__ui {
+    width: 100%;
+    background-color: var(--white);
+    border-radius: 0;
+    border-width: 0;
+    padding: 0;
+  }
+
+  &__main {
+    width: 100%;
+    gap: var(--spacer-2);
+    // Containing block for __promo-pill's floating position (Box.Z).
+    position: relative;
+  }
+
+  // Measure the space the billing content actually gets, not the window: this
+  // page sits inside the settings panel, so the viewport is consistently wider
+  // than the room available (1280 of content inside a 1679 viewport). Declared
+  // on content-container because that is the one wrapper present in BOTH tabs
+  // — content-wrapper only exists on the plans tab, so a container declared
+  // there never matched anything while the checkout tab was open.
+  &__content-container {
+    margin-top: var(--spacer-6);
+    container-type: inline-size;
+    container-name: billing-content;
+  }
+
+  &__plans {
+    width: 100%;
+
+    &-main {
+      // 4 plans (Free/Pro/Team/Enterprise): auto-fit so they sit 4-up when
+      // wide and wrap to 2-up in the narrower popup instead of an uneven row.
+      grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+      gap: var(--spacer-4);
+      &[data-device="mobile"] {
+        grid-template-columns: 1fr;
+        gap: var(--spacer-6);
+      }
+    }
+  }
+
+  &__header {
+    &.main {
+      padding: 20px;
+      background-color: var(--neutral-200);
+      align-items: center;
+      justify-content: space-around;
+      width: 400px;
+      border-radius: 12px;
+    }
+  }
+
+  &.main {
+    gap: 10px;
+  }
+
+  &__tabs-trigger {
+    &-main {
+      background-color: var(--neutral-200);
+      align-items: center;
+      justify-content: space-around;
+      height: 42px;
+      border-radius: var(--corner-radius-3);
+      padding: var(--spacer-1) var(--spacer-6);
+      align-items: center;
+      gap: var(--spacer-6);
+      max-width: 400px;
+    }
+
+    &-item {
+      cursor: pointer;
+      display: flex;
+      padding: var(--spacer-3) var(--spacer-4);
+      justify-content: center;
+      align-items: center;
+      gap: var(--spacer-2);
+      text-align: center;
+      font-size: 12px;
+      font-weight: 500;
+      line-height: 18px;
+      letter-spacing: -0.132px;
+      border-radius: var(--corner-radius-2);
+
+      &[data-state="1"] {
+        background-color: white;
+        color: var(--neutral-900);
+      }
+    }
+
+    &-discount {
+      color: #00a63e;
+      font-weight: 700;
+      font-style: Bold;
+      font-size: 12.25px;
+      line-height: 18.38px;
+      letter-spacing: -0.13px;
+    }
+  }
+
+  &__plan {
+    &-main {
+      gap: var(--spacer-6);
+    }
+
+    // ── Card ──────────────────────────────────────────────────────────────
+    &-item {
+      border: 1px solid var(--tertiary-grey-30);
+      border-radius: var(--corner-radius-6); // 24px
+      padding: var(--spacer-6);
+      gap: var(--spacer-6);
+      overflow: hidden;
+
+      // Pro card is highlighted with a primary-tinted border (Figma #847eff).
+      &.popular {
+        border-color: var(--primary-30);
+      }
+
+      // The user's CURRENT plan is the focused/active card — it outranks
+      // the "Popular" highlight so the eye lands on where the user IS.
+      &.current {
+        border: 2px solid var(--primary-50);
+        box-shadow: 0 8px 24px rgba(89, 80, 255, 0.14);
+      }
+    }
+
+    // ── Price-header box (title + price, with the Popular badge) ──────────
+    &-header {
+      position: relative;
+      width: 100%;
+      // Was 164px, which left ~68px of dead air between the title and the
+      // price (space-between does the distribution). Product first asked for
+      // 40% less (136), then hand-tuned it to 80 — content-height plus
+      // padding, no filler at all (2026-07-29).
+      min-height: 80px;
+      padding: var(--spacer-4);
+      border-radius: var(--corner-radius-5); // 16px
+      background-color: var(--tertiary-grey-20);
+      justify-content: space-between;
+      overflow: hidden;
+
+      // primary-30 (#847eff) @ 16% for the Pro card box — and for the
+      // CURRENT plan's card (the focused one).
+      &.popular,
+      &.current {
+        background-color: rgba(132, 126, 255, 0.16);
+      }
+    }
+
+    &-title {
+      font-weight: 600;
+      font-size: 20px;
+      line-height: 1.1;
+      color: var(--tertiary-grey-80);
+
+      .settings-billing__plan-header.popular &,
+      .settings-billing__plan-header.current & {
+        color: var(--primary-50);
+      }
+    }
+
+    &-price {
+      width: 100%;
+
+      &-label {
+        font-size: 14px;
+        line-height: 1.4;
+        color: var(--neutral-900);
+
+        // Holds the row open on the cards that have no label, so all four
+        // headers are the same height and the prices sit on one line.
+        // visibility, not display:none — the box has to keep occupying space.
+        &.is-placeholder {
+          visibility: hidden;
+        }
+      }
+
+      &-row {
+        align-items: flex-end;
+        gap: var(--spacer-2);
+        width: 100%;
+      }
+
+      &-amount {
+        font-weight: 600;
+        font-size: 40px;
+        line-height: 1.1;
+        letter-spacing: -0.8px;
+        color: var(--tertiary-grey-80);
+
+        .settings-billing__plan-header.popular &,
+        .settings-billing__plan-header.current & {
+          color: var(--primary-50);
+        }
+      }
+
+      &-period {
+        font-weight: 500;
+        font-size: 20px;
+        line-height: 1.1;
+        letter-spacing: -0.4px;
+        color: var(--tertiary-grey-80);
+
+        .settings-billing__plan-header.popular &,
+        .settings-billing__plan-header.current & {
+          color: var(--primary-50);
+        }
+      }
+
+      &-text {
+        font-weight: 500;
+        font-size: 20px;
+        line-height: 1.1;
+        letter-spacing: -0.4px;
+        color: var(--tertiary-grey-80);
+      }
+    }
+
+    // ── Popular badge (star + label), pinned top-right of the price box ───
+    &-badge {
+      position: absolute;
+      top: var(--spacer-4);
+      right: var(--spacer-4);
+      align-items: center;
+      gap: var(--spacer-1);
+      padding: var(--spacer-1) var(--spacer-3);
+      border-radius: var(--corner-radius-max);
+      background-color: var(--primary-30);
+      color: var(--white);
+      font-weight: 600;
+      font-size: 14px;
+      line-height: 20px;
+      white-space: nowrap;
+
+      &-icon {
+        width: 16px;
+        height: 16px;
+
+        svg {
+          width: 16px;
+          height: 16px;
+          fill: var(--white);
+          color: var(--white);
+        }
+      }
+    }
+
+    // ── CTA button (full-width pill) ────────────────────────────────────────
+    // The button() toolkit helper renders TWO elements: an outer full-width
+    // clickable box (`&-button-main`, carries the priority/kind class) and an
+    // inner text span (`&-button`, plain — see the .btn rule below). The
+    // "current" pill is the one exception: a flat Box.X with no inner span,
+    // given the SAME `-main` class so it shares this block. Colour/chrome
+    // must live on `-main` — it's the element that's actually width:100%;
+    // putting it on the bare `&-button` only painted the inner, text-width
+    // span, leaving the real full-width box a plain "secondary" grey.
+    &-button-main {
+      width: 100%;
+      justify-content: center;
+      align-items: center;
+      cursor: pointer;
+      padding: var(--spacer-3) var(--spacer-6);
+      border-radius: var(--corner-radius-max);
+      border: none;
+      font-weight: 600;
+      font-size: 16px;
+      line-height: 24px;
+
+      &.primary {
+        color: var(--white);
+        background-color: var(--primary-40);
+
+        &:hover {
+          background-color: var(--primary-50);
+        }
+      }
+
+      // Team / Enterprise dark pill (Figma #282538 / text #e4e3ff).
+      &.dark {
+        color: var(--primary-10);
+        background-color: var(--primary-90);
+
+        &:hover {
+          opacity: 0.92;
+        }
+      }
+
+      &.secondary {
+        color: var(--neutral-900);
+        background-color: var(--tertiary-grey-20);
+
+        &:hover {
+          background-color: var(--tertiary-grey-30);
+        }
+      }
+
+      // "Your current plan" pill — ACTIVE look (primary tint), still
+      // non-clickable: it marks where the user is, it isn't an action.
+      &.current {
+        color: var(--primary-50);
+        background-color: rgba(132, 126, 255, 0.16);
+        border: 1px solid var(--primary-30);
+        cursor: default;
+        pointer-events: none;
+      }
+    }
+
+    // Inner text span (button() helper only) — no chrome of its own, just
+    // inherits the outer -main's colour so the label reads correctly
+    // against whichever variant (primary/dark/secondary) is active.
+    &-button.btn {
+      background: transparent;
+      color: inherit;
+
+      .note-content,
+      .label,
+      .inner {
+        color: inherit;
+      }
+    }
+
+    // ── Sub-text under the button ─────────────────────────────────────────
+    &-subtext {
+      font-size: 18px;
+      line-height: 1.4;
+      color: var(--neutral-900);
+    }
+
+    // ── Feature list ──────────────────────────────────────────────────────
+    &-features {
+      gap: var(--spacer-3);
+    }
+
+    &-feature {
+      align-items: center;
+      gap: var(--spacer-3);
+
+      &-icon {
+        flex-shrink: 0;
+        width: 20px;
+        height: 20px;
+
+        svg {
+          width: 20px;
+          height: 20px;
+          color: var(--success);
+          fill: var(--success);
+        }
+      }
+
+      &-text {
+        align-items: baseline;
+        gap: 4px;
+        flex-wrap: wrap;
+        font-size: 14px;
+        line-height: 1.4;
+        color: var(--neutral-900);
+      }
+
+      &-main {
+        font-weight: 600;
+        line-height: 20px;
+      }
+
+      &-sub {
+        font-weight: 400;
+        line-height: 1.4;
+      }
+    }
+  }
+
+  // Subscription status banner (renews-on / cancel + ends-on / resume).
+  // Figma 3050-96156: flat Grey/20 (#f2f2f7) panel, no border — was a
+  // bordered neutral-50 box that additionally switched to an orange/cream
+  // tint for the canceling state (no such treatment exists in the design;
+  // both the active and pending-cancel banners share this same grey).
+  &__sub-banner {
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--spacer-4);
+    margin-top: var(--spacer-4);
+    // 2026-07-29: the banner dwarfed the rest of the page (18px title in a
+    // 16/24 padding box against 14px card text) — bring its type and box in
+    // line with the plan cards.
+    padding: 10px 12px 10px 16px;
+    border-radius: 12px;
+    background: var(--tertiary-grey-20);
+
+    &-text {
+      gap: 4px;
+    }
+
+    &-title {
+      font-weight: 600;
+      font-size: 14px;
+      line-height: 22px;
+      color: var(--tertiary-grey-100); // Grey/black #000000
+    }
+
+    &-desc {
+      font-size: 13px;
+      line-height: 1.4;
+      color: var(--primary-purple-100); // Primary/100 #0b0a21
+    }
+
+    &-action {
+      flex-shrink: 0;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+
+    &-cancel {
+      color: var(--error-500);
+      // Same face as the banner title (it rendered one step smaller and
+      // bolder than everything beside it, which read as a glitch, not a
+      // choice): 14/22 at 500, the page's control size.
+      font-weight: 500;
+      font-size: 14px;
+      line-height: 22px;
+      padding: 8px 16px;
+      border-radius: 8px;
+
+      &:hover {
+        text-decoration: underline;
+      }
+    }
+
+    // Figma 3050-96156: Resume Subscription CTA is primary-50 (#433cc5) —
+    // was the unrelated legacy --primary-500 (#b251fb) purple. Sized with the
+    // slimmed banner.
+    &-resume {
+      color: var(--white);
+      background: var(--primary-50);
+      font-weight: 600;
+      font-size: 14px;
+      line-height: 22px;
+      padding: 10px 20px;
+      border-radius: 4px;
+
+      &:hover {
+        background: var(--primary-90);
+      }
+    }
+  }
+
+  // LAUNCH30 persistent reminder (tester feedback 2026-07-31 #3) — a
+  // FLOATING card, top-right (design mockup), not an in-flow banner: it
+  // must never shift the plan cards below it, and it sits over the
+  // Monthly/Yearly toggle rather than pushing it down.
+  &__promo-pill {
+    position: absolute;
+    top: 8px;
+    right: 0;
+    z-index: 5;
+    width: min(360px, calc(100% - 32px));
+    padding: 14px 16px;
+    border-radius: var(--corner-radius-5);
+    background: var(--normal-bg-elevated);
+    box-shadow: 0 12px 28px -8px rgba(0, 0, 0, 0.18), 0 2px 8px rgba(0, 0, 0, 0.08);
+
+    &-close {
+      // Straddles the card's corner border (design mockup) rather than
+      // sitting inset inside the padding.
+      position: absolute;
+      top: -8px;
+      right: -8px;
+      width: 22px;
+      height: 22px;
+      border-radius: 50%;
+      background: var(--normal-bg-90);
+      border: 1px solid var(--normal-bg-elevated);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+
+      svg {
+        width: 9px;
+        height: 9px;
+        fill: var(--normal-fg-50);
+        stroke: var(--normal-fg-50);
+      }
+
+      &:hover {
+        background: var(--normal-bg-80);
+      }
+    }
+
+    &-row {
+      align-items: center;
+      justify-content: space-between;
+      gap: var(--spacer-4);
+      padding-right: 22px; // clears the close button
+    }
+
+    &-text {
+      gap: 2px;
+      min-width: 0;
+    }
+
+    &-title {
+      font-weight: 600;
+      font-size: 14px;
+      line-height: 1.4;
+      color: var(--normal-fg-800);
+    }
+
+    &-sub {
+      font-size: 12.5px;
+      line-height: 1.4;
+      color: var(--normal-fg-50);
+    }
+
+    &-cta {
+      flex-shrink: 0;
+      cursor: pointer;
+      white-space: nowrap;
+      color: var(--white);
+      background: var(--primary-50);
+      font-weight: 600;
+      font-size: 13.5px;
+      line-height: 1.4;
+      padding: 10px 18px;
+      border-radius: var(--corner-radius-max);
+
+      // --primary-60, matching the modal's own CTA hover: the same brand
+      // ramp step, so the pill and the modal it opens read as one feature.
+      &:hover {
+        background: var(--primary-60);
+      }
+    }
+  }
+
+  // "Have a partner code?" — direct redeem, shown on the Billing page to a
+  // Free payer only (see redeemBox in skeleton/index.js). Uses the same
+  // brand tokens as the promo modal and claim pill so the three read as one
+  // feature rather than three bolted-on boxes.
+  &__redeem {
+    gap: var(--spacer-2);
+    margin-top: var(--spacer-4);
+    padding: var(--spacer-5);
+    border-radius: var(--corner-radius-4);
+    background: var(--normal-bg-90);
+
+    &-title {
+      font-weight: 600;
+      font-size: 14px;
+      line-height: 22px;
+      color: var(--normal-fg-800);
+    }
+    // Collapsed: one quiet line, no card chrome, so it does not compete
+    // with the plan cards it sits above.
+    &.is-collapsed {
+      padding: var(--spacer-3) var(--spacer-4);
+      background: transparent;
+      border: 1px solid var(--border-default);
+    }
+
+    // Post-redeem: the form is gone, only the confirmation remains, so it
+    // needs the padding the toggle row was providing.
+    &.is-done {
+      padding: var(--spacer-3) var(--spacer-4);
+    }
+
+    &-toggle {
+      align-items: center;
+      justify-content: space-between;
+      gap: var(--spacer-3);
+      cursor: pointer;
+    }
+
+    &-toggle-hint {
+      flex-shrink: 0;
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--primary-50);
+    }
+
+
+    &-sub {
+      font-size: 12.5px;
+      line-height: 1.4;
+      color: var(--normal-fg-50);
+    }
+
+    &-pill-bar {
+      gap: var(--spacer-2);
+      margin-top: var(--spacer-3);
+      padding: 3px;
+      border-radius: var(--corner-radius-max);
+      background: var(--normal-bg-80);
+      align-self: flex-start;
+    }
+
+    &-pill-item {
+      cursor: pointer;
+      padding: 6px 18px;
+      border-radius: var(--corner-radius-max);
+      justify-content: center;
+      align-items: center;
+      transition: background 0.15s ease;
+
+      &[data-state="1"] {
+        background: var(--primary-50);
+
+        .settings-billing__redeem-pill-text {
+          color: var(--white);
+        }
+      }
+    }
+
+    &-pill-text {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--normal-fg-20);
+    }
+
+    &-row {
+      gap: var(--spacer-3);
+      align-items: stretch;
+      min-height: 48px;
+      margin-top: var(--spacer-3);
+    }
+
+    &-input {
+      flex: 1 1 auto;
+      min-width: 0;
+      @include drumee-entry-box;
+    }
+
+    // Matches the field it sits beside: same 48px box, same radius, so the
+    // pair reads as one control rather than a pill floating next to an input.
+    &-cta {
+      flex: 0 0 auto;
+      align-self: stretch;
+      display: inline-flex !important;
+      align-items: center;
+      justify-content: center;
+      min-height: 48px;
+      box-sizing: border-box;
+      cursor: pointer;
+      white-space: nowrap;
+      color: var(--white);
+      background: var(--primary-50);
+      font-weight: 600;
+      font-size: 13.5px;
+      line-height: 1.4;
+      padding: 0 var(--spacer-5);
+      border-radius: var(--corner-radius-4, 8px);
+
+      &:hover {
+        background: var(--primary-60);
+      }
+
+      &.is-busy {
+        opacity: 0.7;
+        cursor: default;
+        pointer-events: none;
+      }
+    }
+
+    &-error {
+      font-size: 12.5px;
+      line-height: 1.4;
+      color: var(--error);
+      margin-top: var(--spacer-2);
+    }
+
+    &-success {
+      font-size: 12.5px;
+      line-height: 1.4;
+      color: var(--success);
+      margin-top: var(--spacer-2);
+    }
+  }
+
+
+  &__footer {
+    &-main {
+      margin-top: var(--spacer-5);
+      gap: var(--spacer-5);
+      padding: var(--spacer-5);
+    }
+
+    &-title {
+      font-weight: 600;
+      margin-right: var(--spacer-4);
+      color: var(--neutral-900);
+    }
+
+    &.content {
+      color: var(--neutral-700);
+
+      flex-direction: column;
+    }
+
+    &-email-title {
+      margin-left: var(--spacer-3);
+      &[data-device="mobile"] {
+        margin-left: 0;
+      }
+    }
+
+    &-email {
+      cursor: pointer;
+      text-decoration: underline;
+      // --primary-500 is #b251fb, a pink-violet from the revamp scale that
+      // matches nothing else on this page; every other link and CTA here uses
+      // --primary-50 (#433cc5). The single stray digit made the contact
+      // address read as a different kind of link.
+      color: var(--primary-50);
+      margin-left: var(--spacer-3);
+
+      &:hover {
+        color: var(--primary-60);
+      }
+    }
+
+    // "Manage billing" → Stripe portal. 2026-07-29: promoted from a plain
+    // hyperlink in the banner to the footer slot where "Additional seat
+    // pricing" used to sit, boxed like the banner's Resume CTA.
+    &-manage-billing {
+      align-self: flex-start;
+      cursor: pointer;
+      color: var(--white);
+      background: var(--primary-50);
+      font-weight: 600;
+      font-size: 14px;
+      line-height: 22px;
+      padding: 10px 20px;
+      border-radius: 4px;
+
+      &:hover {
+        background: var(--primary-90);
+      }
+    }
+  }
+
+  &__entry {
+    &-label {
+      font-weight: 600;
+      font-size: 14px;
+      line-height: 22px;
+      color: var(--neutral-900);
+    }
+
+    &-main {
+      gap: var(--spacer-3);
+
+      &--readonly {
+        opacity: 0.7;
+        pointer-events: none;
+      }
+    }
+
+    // Figma: flat grey-filled field (no border) — icon + value, generous padding.
+    &-input-wrapper {
+      width: 100%;
+      height: 54px;
+      border-radius: var(--corner-radius-5); // 12px
+      background-color: var(--tertiary-grey-20);
+      border: none;
+      align-items: center;
+      gap: var(--spacer-3);
+      padding: 0 var(--spacer-6);
+
+      .settings-billing__entry-icon {
+        flex-shrink: 0;
+        width: 22px;
+        height: 22px;
+        padding: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        svg.drumee-picto {
+          fill: none;
+        }
+      }
+
+      .settings-billing__entry-input {
+        flex: 1;
+        border: none;
+        background: transparent;
+        padding: 0;
+        height: 100%;
+
+        input {
+          width: 100%;
+          border: none;
+          background: transparent;
+          padding: 0;
+          color: var(--tertiary-grey-80);
+        }
+      }
+
+      &--readonly {
+        opacity: 0.7;
+        pointer-events: none;
+      }
+    }
+
+    &-input {
+      width: 100%;
+      height: 48px;
+      border-radius: var(--corner-radius-4);
+      padding: 0 var(--spacer-2);
+      border: 1px solid var(--neutral-200);
+
+      input {
+        width: 100%;
+      }
+
+      &--readonly {
+        opacity: 0.7;
+        pointer-events: none;
+      }
+    }
+
+    &-icon {
+      width: 40px;
+      height: 40px;
+      padding: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      svg.drumee-picto {
+        fill: none;
+      }
+    }
+  }
+
+  &__checkout {
+    &-main {
+      width: 100%;
+      gap: var(--spacer-8);
+      align-items: flex-start;
+      // The two columns were locked to one row (nowrap) with a fixed 480px
+      // summary, so as the panel narrowed the form column was squeezed to its
+      // min-content and then the whole row overflowed — measured: 300px of
+      // form at an 820px container, and real overflow by 420px. Wrapping lets
+      // the summary drop below the form before anything is crushed.
+      flex-wrap: wrap;
+    }
+
+    &-section {
+      .settings-billing__entry-icon {
+        svg.drumee-picto {
+          fill: none;
+        }
+        svg {
+          fill: none;
+        }
+      }
+    }
+
+    // TEAM bootstrap: organization name + subdomain collected before the
+    // Stripe redirect (the webhook provisions the org after payment).
+    &-org-section {
+      gap: var(--spacer-3);
+    }
+
+    &-org-ident-row {
+      align-items: flex-end;
+      gap: var(--spacer-2);
+
+      > :first-child {
+        flex: 1;
+      }
+    }
+
+    &-org-ident-suffix {
+      padding-bottom: 12px;
+      white-space: nowrap;
+      @include drumee.typo(
+        $size: 14px,
+        $line: 20px,
+        $weight: 500,
+        $color: var(--normal-fg-50)
+      );
+    }
+
+    &-org-ident-hint {
+      @include drumee.typo(
+        $size: 12px,
+        $line: 16px,
+        $weight: 400,
+        $color: var(--normal-fg-50)
+      );
+    }
+
+    &-left {
+      // min-width:0 lets the column actually shrink — a flex item defaults to
+      // min-width:auto, which is what pinned it at min-content and pushed the
+      // overflow onto the row. The 320px basis is the wrap trigger.
+      flex: 1 1 320px;
+      min-width: 0;
+      gap: var(--spacer-6);
+    }
+
+    // Sticky order-summary panel: the left column grows tall once the
+    // storage-bundles section renders (Pro/Team), pushing "Proceed to
+    // Checkout" below the fold on shorter viewports with no obvious scroll
+    // affordance — users clicking where the button *used to be* land on
+    // nothing and nothing happens. Pinning the panel keeps the CTA reachable
+    // regardless of how long the left column gets.
+    // No independent max-height/overflow here: the panel's own content
+    // (price + a handful of breakdown rows) never grows tall enough to need
+    // its own scroll, and giving it one nested a scrollable region inside
+    // the page's own scroll container — the mouse wheel would get captured
+    // by this panel and the storage-bundles content below the left column
+    // became unreachable. Position: sticky alone keeps it pinned while the
+    // OUTER page scrolls.
+    &-right {
+      // Side by side the summary keeps its 480px and lets the form take the
+      // rest, so it must NOT grow here — allowing that made the summary wider
+      // than the form (700 vs 540 at a 1280 container). The stacked case is
+      // handled by the container query, which gives it the full row.
+      flex: 0 1 480px;
+      min-width: 0;
+      gap: var(--spacer-5);
+      padding: var(--spacer-6);
+      background-color: var(--white);
+      border: 1px solid rgba(0, 0, 0, 0.2);
+      border-radius: var(--corner-radius-5); // 16px
+      position: sticky;
+      top: var(--spacer-6);
+      align-self: flex-start;
+    }
+
+    &-section {
+      gap: var(--spacer-4);
+    }
+
+    &-section-title {
+      font-weight: 600;
+      font-size: 14px;
+      color: var(--neutral-900);
+    }
+
+    &-storage-buttons,
+    &-billing-buttons {
+      width: 100%;
+      gap: var(--spacer-3);
+    }
+
+    // Segmented pill bar (Current plan, Billing Cycle) — Figma 2769-279246.
+    &-pill-bar {
+      width: 100%;
+      padding: var(--spacer-1);
+      border-radius: var(--corner-radius-5); // 12px
+      background-color: var(--tertiary-grey-20);
+      gap: 0;
+    }
+
+    &-pill-item {
+      flex: 1;
+      justify-content: center;
+      align-items: center;
+      padding: var(--spacer-2) var(--spacer-6);
+      border-radius: var(--corner-radius-max);
+      cursor: pointer;
+      gap: 4px;
+
+      &[data-state="1"] {
+        background-color: var(--primary-40);
+
+        .settings-billing__checkout-pill-text {
+          color: var(--white);
+        }
+      }
+    }
+
+    &-pill-text {
+      font-size: 16px;
+      line-height: 1.4;
+      color: var(--tertiary-grey-80);
+      white-space: nowrap;
+    }
+
+    &-pill-discount {
+      font-weight: 600;
+      font-size: 14px;
+      line-height: 24px;
+      color: var(--success);
+    }
+
+    &-storage-button {
+      &-main {
+        flex: 1;
+        width: 50%;
+        padding: var(--spacer-3);
+        border: 2px solid var(--transparent);
+        border-radius: 8px;
+        background-color: var(--white);
+        cursor: pointer;
+        transition: all 0.2s;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+
+        &[data-state="1"] {
+          background-color: var(--primary-100);
+          color: var(--neutral-900);
+          border-radius: var(--corner-radius-3);
+          border: 2px solid var(--primary-400);
+        }
+
+        &[data-state="0"] {
+          color: var(--neutral-600);
+          border-color: var(--transparent);
+          background-color: var(--white);
+        }
+      }
+    }
+
+    &-storage-info {
+      font-size: 12px;
+      color: var(--neutral-600);
+    }
+
+    &-storage-note {
+      font-size: 11px;
+      color: var(--neutral-500);
+    }
+
+    &-section-bundles {
+      gap: var(--spacer-3);
+      &-header {
+        gap: var(--spacer-3);
+        font-size: 10px;
+        font-weight: 600;
+        align-items: center;
+      }
+      &-subtitle {
+        align-items: center;
+        font-weight: 500;
+        font-size: 13px;
+      }
+      &-icon {
+        margin-left: -10px;
+        width: 20px;
+        height: 20px;
+        svg.drumee-picto {
+          fill: none;
+        }
+        svg {
+          fill: none;
+        }
+      }
+      &-note {
+        font-size: 12px;
+        font-weight: 400;
+        color: var(--neutral-600);
+      }
+      &-list {
+        flex-direction: column;
+        gap: var(--spacer-4);
+      }
+      &-item {
+        width: 100%;
+        gap: var(--spacer-4);
+      }
+      &-bundle-item {
+        flex: 1;
+        width: 50%;
+        padding: var(--spacer-4);
+        border: 2px solid var(--neutral-300);
+        border-radius: var(--corner-radius-3);
+        gap: var(--spacer-4);
+        cursor: pointer;
+      }
+    }
+
+    &-section-bundles-header {
+      gap: var(--spacer-3);
+      font-size: 10px;
+      font-weight: 600;
+      align-items: center;
+    }
+
+    &-bundles-list {
+      flex-direction: column;
+      gap: var(--spacer-4);
+    }
+
+    &-section-bundles-list-item {
+      display: flex;
+      gap: var(--spacer-4);
+    }
+
+    &-bundles-item {
+      width: 100%;
+      display: flex;
+      gap: var(--spacer-4);
+    }
+
+    &-bundle-item {
+      flex: 1;
+      width: 50%;
+      padding: var(--spacer-4);
+      border: 2px solid var(--neutral-300);
+      border-radius: var(--corner-radius-3);
+      gap: var(--spacer-4);
+      cursor: pointer;
+      transition: all 0.2s;
+      align-items: center;
+      background-color: var(--white);
+      position: relative;
+
+      &:hover {
+        border-color: var(--primary-500);
+      }
+
+      &[data-state="1"] {
+        border-color: var(--primary-500);
+        border-width: 2px;
+        background-color: var(--white);
+      }
+
+      &[data-state="0"] {
+        border-color: var(--neutral-300);
+      }
+    }
+
+    &-bundle-radio {
+      width: 20px;
+      height: 20px;
+      border: 2px solid var(--neutral-300);
+      border-radius: 50%;
+      position: absolute;
+      top: 8px;
+      right: 8px;
+      flex-shrink: 0;
+      z-index: 2;
+
+      &[data-state="1"] {
+        border-color: var(--primary-500);
+
+        &::after {
+          content: "";
+          position: absolute;
+          top: 50%;
+          left: 50%;
+          transform: translate(-50%, -50%);
+          width: 10px;
+          height: 10px;
+          background-color: var(--primary-500);
+          border-radius: 50%;
+        }
+      }
+
+      &[data-state="0"] {
+        border-color: var(--neutral-300);
+      }
+    }
+
+    &-bundle-content {
+      flex: 1;
+      gap: var(--spacer-2);
+    }
+
+    &-bundle-header {
+      gap: var(--spacer-3);
+      align-items: center;
+      position: relative;
+    }
+
+    &-bundle-title {
+      font-weight: 600;
+      font-size: 14px;
+      color: var(--neutral-900);
+    }
+
+    &-bundle-badge {
+      padding: var(--spacer-1) var(--spacer-3);
+      background-color: var(--green-500);
+      color: var(--white);
+      border-radius: var(--corner-radius-2);
+      font-size: 9px;
+      font-weight: 600;
+      position: absolute;
+      top: -20px;
+      right: -10px;
+      z-index: 3;
+      white-space: nowrap;
+    }
+
+    &-bundle-price {
+      align-items: baseline;
+      gap: var(--spacer-2);
+      font-size: 14px;
+
+      &-amount {
+        font-weight: 700;
+        color: var(--neutral-900);
+      }
+
+      &-period {
+        font-weight: 400;
+        color: var(--neutral-600);
+      }
+    }
+
+    &-bundle-unit {
+      font-size: 12px;
+      color: var(--neutral-600);
+    }
+
+    &-total-label {
+      font-size: 14px;
+      color: var(--neutral-600);
+    }
+
+    &-total-price {
+      align-items: baseline;
+      gap: var(--spacer-2);
+
+      &-amount {
+        font-weight: 700;
+        font-size: 24px;
+        color: var(--neutral-900);
+      }
+
+      &-period {
+        font-weight: 700;
+        font-size: 14px;
+        line-height: 20px;
+        letter-spacing: -0.85px;
+        color: var(--neutral-600);
+      }
+    }
+
+    &-breakdown {
+      align-items: center;
+      border: 1px solid var(--neutral-300);
+    }
+
+    &-breakdown-item {
+      padding: var(--spacer-3);
+      gap: var(--spacer-3);
+      width: 100%;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    &-breakdown-label {
+      flex: 1;
+      font-size: 13px;
+      color: var(--neutral-600);
+    }
+
+    &-breakdown-value {
+      font-weight: 700;
+      font-size: 13px;
+      color: var(--neutral-900);
+
+      &-effective-price-per-seat {
+        color: var(--blue-600);
+      }
+    }
+
+    &-breakdown-label-container {
+      display: flex;
+      flex-direction: column;
+      gap: var(--spacer-3);
+    }
+
+    // Figma: primary-tinted box (primary-40 @10%), plain dark text — not green.
+    &-breakdown-total-storage {
+      background-color: rgba(89, 80, 255, 0.1);
+      padding: var(--spacer-3);
+      border-radius: var(--corner-radius-3);
+      justify-content: space-between;
+
+      &-label {
+        color: var(--neutral-900);
+        font-weight: 600;
+        font-size: 13px;
+        line-height: 20px;
+        letter-spacing: -0.85px;
+        flex: 1;
+        text-align: left;
+      }
+      &-value {
+        color: var(--neutral-900);
+        text-align: right;
+      }
+    }
+
+    // Figma: cyan-tinted box (secondary-blue-50 @16%), not the old blue-100.
+    &-breakdown-effective-price-per-seat {
+      background-color: rgba(101, 208, 234, 0.16);
+      justify-content: start;
+      border-radius: var(--corner-radius-3);
+
+      .settings-billing__checkout-breakdown-value-effective-price-per-seat {
+        color: var(--secondary-blue-80);
+      }
+    }
+
+    &-breakdown-icon {
+      width: 16px;
+      height: 16px;
+      svg.drumee-picto {
+        fill: none;
+      }
+    }
+
+    // Figma CTA colour is primary-50 (#433cc5) — was the unrelated legacy
+    // --primary-500 (#b251fb) purple.
+    &-checkout-button {
+      width: 100%;
+      padding: var(--spacer-4);
+      background-color: var(--primary-50);
+      color: var(--white);
+      border-radius: var(--corner-radius-max);
+      font-weight: 600;
+      justify-content: center;
+      align-items: center;
+      gap: var(--spacer-3);
+      cursor: pointer;
+      transition: all 0.2s;
+      display: flex;
+      flex-direction: row;
+
+      &:hover {
+        background-color: var(--primary-90);
+      }
+
+      &[data-state="0"],
+      &[data-disabled="1"] {
+        opacity: 0.7;
+        cursor: not-allowed;
+        pointer-events: none;
+        background-color: var(--neutral-300);
+        color: var(--neutral-600);
+
+        &:hover {
+          background-color: var(--neutral-300);
+        }
+      }
+
+      svg,
+      .svg-wrapper {
+        width: 16px;
+        height: 16px;
+        flex-shrink: 0;
+        color: var(--white);
+
+        svg {
+          width: 16px;
+          height: 16px;
+          color: var(--white);
+
+          path {
+            stroke: var(--white);
+            fill: none;
+          }
+        }
+      }
+
+      .note-content,
+      .inner {
+        color: var(--white);
+      }
+    }
+
+    &-content-wrapper {
+      width: 100%;
+      gap: var(--spacer-5);
+    }
+  }
+}
+
+// ── Full-page mode (Figma design) ────────────────────────────────────────────
+// settings_billing mounted with page:1 into the desk settings-main-slot renders
+// as a Settings sub-page (not a popup): the widget root IS the scroll container
+// (like .settings-main__ui), with a big page title above the tabs/plans/footer.
+.settings-billing[data-page="1"] {
+  width: 100%;
+  height: 100%;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: var(--spacer-6);
+  background-color: var(--white);
+  // Hide the scrollbar (matches .settings-main).
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+
+  &::-webkit-scrollbar {
+    display: none;
+  }
+
+  // Content block centred (max-width 1280) so it doesn't hug the left with a
+  // big empty gap on the right, or overflow, on wide screens.
+  .settings-billing__main {
+    width: 100%;
+    max-width: 1280px;
+    margin: 0 auto;
+  }
+
+  .settings-billing__page-title {
+    font-family: var(--font-bold);
+    font-size: 32px;
+    line-height: 40px;
+    font-weight: 700;
+    color: var(--neutral-900);
+    margin-bottom: var(--spacer-6);
+  }
+
+  // The tab bar (max-width 400px pill) sits centred under the title (design).
+  .settings-billing__tabs-trigger-main {
+    align-self: center;
+  }
+}
+
+// ── Popup mode ───────────────────────────────────────────────────────────────
+// settings_billing renders a popup shell (title bar + close) whenever mounted
+// with popup:1 — the settings_main overlay AND the desk wrapper-modal (sidebar
+// "Upgrade plan" / admin upsell). onDomRefresh reflects popup mode as
+// data-popup="1" on the widget root, so this card styling is self-contained and
+// no longer depends on being nested under settings_main's overlay. The inline
+// settings_account tab (no popup:1) stays full-width and untouched.
+// NOTE: `&__x` can't nest under an attribute selector (`&` ends in `]`, so
+// `&__main` → `.settings-billing[data-popup="1"]__main`, an invalid selector
+// that fails the Sass build). Use full descendant class names instead.
+.settings-billing[data-popup="1"] {
+  width: auto;
+  flex: 0 0 auto;
+  align-items: stretch;
+  background-color: var(--white);
+  border-radius: 12px;
+  box-shadow: 0 1px 11px rgba(0, 0, 0, 0.13);
+  overflow: hidden;
+  max-height: 88vh;
+
+  .settings-billing__main {
+    width: min(980px, 92vw);
+    max-height: 88vh;
+    gap: 0;
+  }
+
+  .settings-billing__popup-header {
+    align-items: center;
+    justify-content: space-between;
+    padding: var(--spacer-5) var(--spacer-6);
+    border-bottom: 1px solid var(--neutral-200);
+  }
+
+  .settings-billing__popup-title {
+    font-weight: 600;
+    font-size: 18px;
+    color: var(--neutral-900);
+  }
+
+  // cross.svg has no intrinsic size, so an unconstrained Button.Svg renders at
+  // the browser default 300x150 and blows up the header. Pin it to an icon size.
+  .settings-billing__popup-close {
+    width: 20px;
+    height: 20px;
+    flex: 0 0 auto;
+    cursor: pointer;
+
+    svg {
+      width: 20px;
+      height: 20px;
+      display: block;
+    }
+  }
+
+  .settings-billing__body {
+    // flex:1 + min-height:0 is what actually lets overflow-y:auto engage:
+    // without it, a flex column child sizes to its own content height and
+    // never shrinks to the space __main's max-height leaves it, so this
+    // never becomes a scroll container and content past the popup-header
+    // is clipped (by the root's overflow:hidden) with no way to reach it.
+    flex: 1 1 0;
+    min-height: 0;
+    overflow-y: auto;
+    padding: var(--spacer-6);
+    gap: var(--spacer-2);
+  }
+
+  .settings-billing__content-container {
+    margin-top: var(--spacer-5);
+  }
+
+  // Keep the checkout two-column layout from overflowing a narrow popup.
+  .settings-billing__checkout-main {
+    flex-wrap: wrap;
+  }
+}
+
+
+// A row the plan does NOT include. Kept visible (the table shows where a tier
+// stops) but clearly inactive, so it can't be mistaken for an entitlement.
+.settings-billing__plan-feature.excluded {
+  opacity: 0.45;
+
+  .settings-billing__plan-feature-sub,
+  .settings-billing__plan-feature-main {
+    text-decoration: line-through;
+  }
+}
+
+// Comparison table (wide) vs stacked cards (narrow). skeleton/plans.js renders
+// BOTH and CSS picks one.
+//
+// The switch is a CONTAINER query, not a viewport media query. The billing
+// page sits inside the settings panel, so the space the table actually gets is
+// consistently ~160px narrower than the window (measured: 1280 inside a 1440
+// viewport). A viewport breakpoint therefore fires at the wrong moment — it
+// cannot know how much room is left after the sidebar — which is why the table
+// stayed cramped instead of folding. Querying the container measures the real
+// available width.
+.settings-billing__plans {
+  &-main {
+    width: 100%;
+    container-type: inline-size;
+    container-name: billing-plans;
+  }
+
+  // The cards are the only layout now (Figma 2769-213751 removed the
+  // comparison table), so this is simply the plans row — it is no longer
+  // hidden by default waiting for a container query to reveal it.
+  &-narrow { width: 100%; }
+}
+
+.settings-billing__compare {
+  &-main {
+    width: 100%;
+    // Last-resort escape hatch; the container query should fold the layout
+    // before this ever engages.
+    overflow-x: auto;
+  }
+
+  &-row {
+    width: 100%;
+    align-items: stretch;
+    // Breathing room between plan columns so each reads as its own surface
+    // rather than one banded block.
+    gap: 6px;
+  }
+
+  &-header {
+    align-items: stretch;
+  }
+
+  &-cell {
+    flex: 1 1 0;
+    min-width: 108px;
+    align-items: center;
+    justify-content: center;
+    padding: 9px 10px;
+    box-sizing: border-box;
+  }
+
+  // The label column names the row the four plan columns answer. Kept narrow
+  // and snug against the first column — at flex 1.4 / 273px the label text sat
+  // ~200px from the value it labels, so the table read as two loose halves.
+  &-label {
+    flex: 0 0 164px;
+    min-width: 164px;
+    align-items: flex-start;
+    justify-content: center;
+    padding-right: 2px;
+  }
+
+  &-label-text {
+    @include drumee.typo($size: 13px, $line: 18px, $weight: 400, $color: var(--normal-fg-10));
+    font-weight: 500;
+    text-align: left;
+  }
+
+  // Every cell of a plan column carries -col, so the column reads as one
+  // continuous strip down the table: shared tint, side borders, and a row
+  // separator that stops at the column edge instead of running across.
+  &-col {
+    background-color: var(--normal-bg-100, rgba(0, 0, 0, 0.02));
+    border-left: 1px solid var(--normal-bg-20, rgba(0, 0, 0, 0.10));
+    border-right: 1px solid var(--normal-bg-20, rgba(0, 0, 0, 0.10));
+  }
+
+  &-row:not(:last-child) &-col {
+    box-shadow: inset 0 -1px 0 var(--normal-bg-20, rgba(0, 0, 0, 0.06));
+  }
+
+  &-row:last-child &-col {
+    border-bottom: 1px solid var(--normal-bg-20, rgba(0, 0, 0, 0.10));
+    border-radius: 0 0 10px 10px;
+  }
+
+  // The recommended column is lifted out of the row of four.
+  &-col-team {
+    background-color: var(--primary-95, rgba(67, 60, 197, 0.06));
+    border-left-color: var(--primary-50, #433cc5);
+    border-right-color: var(--primary-50, #433cc5);
+  }
+
+  &-header &-col {
+    border-radius: 10px 10px 0 0;
+    border-top: 1px solid var(--normal-bg-20, rgba(0, 0, 0, 0.10));
+  }
+
+  &-header &-col-team {
+    border-top-color: var(--primary-50, #433cc5);
+  }
+
+  &-plan {
+    align-items: center;
+    justify-content: flex-end;
+    gap: 8px;
+    padding: 14px 10px;
+  }
+
+  &-tagline {
+    @include drumee.typo($size: 12px, $line: 16px, $weight: 400, $color: var(--normal-fg-10));
+    font-weight: 400;
+    text-align: center;
+  }
+
+  &-value { gap: 6px; }
+
+  &-mark {
+    width: 15px;
+    height: 15px;
+    flex-shrink: 0;
+
+    svg { width: 100%; height: 100%; }
+  }
+
+  &-text {
+    @include drumee.typo($size: 13px, $line: 18px, $weight: 400, $color: var(--normal-fg));
+    font-weight: 400;
+    text-align: center;
+  }
+
+  &-value.excluded {
+    opacity: 0.45;
+
+    .settings-billing__compare-text { text-decoration: line-through; }
+  }
+}
+
+
+// Header type inside the comparison table.
+//
+// The price/title/CTA elements are reused from the card design, which was
+// sized for a full-width card: a 40px price and a 16px CTA. In a ~240px table
+// column that price ("$499.00" measured 145px) crowds the cell and the CTA
+// wraps to three lines — "Get your sovereign node" measured 64px tall, and the
+// whole header ran to 289px. Scale the type to the column instead. Scoped to
+// the table, so the mobile cards keep the original display sizes.
+.settings-billing__compare-plan {
+  padding: 12px 8px;
+  gap: 6px;
+
+  // The tinted price-header box, resized for a table column.
+  //
+  // The card version is a 164px-tall panel with space-between, sized for a
+  // full-width card. Squeezed into a ~240px column it broke in three ways, all
+  // visible in a screenshot and none of them in the computed values: the 26px
+  // price overflowed the tint's bottom edge, the "/ month" suffix ran out past
+  // its right edge, and the absolutely-positioned Popular badge landed on top
+  // of the title.
+  //
+  // One even padding fixes all three — the box simply has to be big enough for
+  // what is inside it. Text insets come from that padding, so the title and
+  // price carry none of their own; adding per-element padding on top is what
+  // made the earlier attempts drift.
+  .settings-billing__plan-header {
+    padding: 14px;
+    min-height: 0;
+    gap: 6px;
+    overflow: visible;
+    // Fill the space the cell has left over, so every plan's tinted box ends
+    // up the same height. Sizing to content made Sovereign's box 16px taller
+    // than the rest — it carries a "Start from" line the others don't — and
+    // the row of four read as ragged. flex:1 equalises them without hardcoding
+    // a height that a longer label or another language would break.
+    flex: 1;
+    // Title pinned to the top, price to the bottom — the card's own
+    // arrangement, and what the extra height from flex:1 is for. Centring it
+    // (an earlier attempt) floated both away from the edges they belong on.
+    // The Popular badge is absolute, so it sits on the title's line at the
+    // top-right without taking part in this distribution.
+    justify-content: space-between;
+  }
+
+  // --plan-title-lh is the title's line box. The Popular badge is absolutely
+  // positioned, so it has no way to know where that line sits; publishing the
+  // height lets it match instead of guessing. Set wherever the title's type
+  // changes, so the two stay aligned across every breakpoint.
+  --plan-title-lh: 22px;
+
+  .settings-billing__plan-title {
+    font-size: 16px;
+    line-height: var(--plan-title-lh);
+    // Only the Team card carries the Popular badge; keep the title clear of it.
+    padding-right: 8px;
+  }
+
+  // The amount and its "/ month" must stay on one line inside the box: let the
+  // row shrink rather than push the suffix past the tint.
+  .settings-billing__plan-price-row {
+    align-items: baseline;
+    flex-wrap: nowrap;
+    min-width: 0;
+    gap: 4px;
+  }
+
+  // Sit the badge ON the title's line rather than near it: same top as the
+  // title (the header's padding) and the same height as its line box, with the
+  // label centred inside. A fixed top of its own left the badge 8px higher
+  // than the plan name — the two read as misaligned.
+  .settings-billing__plan-badge {
+    top: 14px;
+    right: 10px;
+    height: var(--plan-title-lh);
+    box-sizing: border-box;
+    align-items: center;
+    padding: 0 8px;
+  }
+
+  .settings-billing__plan-price-amount {
+    font-size: 26px;
+    line-height: 32px;
+  }
+
+  .settings-billing__plan-price-period,
+  .settings-billing__plan-price-label {
+    font-size: 11px;
+    line-height: 15px;
+  }
+
+  // Fixed height, border included: the "Your current plan" pill carries a
+  // border the other CTAs don't, so it measured 2px taller and stole that much
+  // from its column's header box — leaving one plan's tint 2px short of the
+  // rest. Equal CTAs keep the headers equal.
+  .settings-billing__plan-button-main {
+    min-width: 0;
+    width: 100%;
+    height: 36px;
+    padding: 0 8px;
+    box-sizing: border-box;
+    font-size: 13px;
+    line-height: 17px;
+  }
+
+  .settings-billing__plan-button,
+  .settings-billing__plan-current-label {
+    font-size: 13px;
+    line-height: 17px;
+    text-align: center;
+  }
+
+  .settings-billing__plan-badge {
+    font-size: 10px;
+    line-height: 14px;
+    padding: 1px 6px;
+  }
+}
+
+// Narrower columns: drop to the smallest comfortable type and let the tagline
+// go — the row labels already say what each column is.
+@container billing-plans (max-width: 1020px) {
+  .settings-billing__compare-plan {
+    .settings-billing__plan-price-amount {
+      font-size: 21px;
+      line-height: 27px;
+    }
+
+    --plan-title-lh: 19px;
+
+    .settings-billing__plan-title {
+      font-size: 14px;
+      line-height: var(--plan-title-lh);
+    }
+
+    .settings-billing__plan-button-main,
+    .settings-billing__plan-button,
+    .settings-billing__plan-current-label {
+      font-size: 12px;
+      line-height: 16px;
+    }
+  }
+
+  .settings-billing__compare-tagline {
+    display: none !important;
+  }
+}
+
+// The stacked-card layout, and its type.
+//
+// Two faults this fixes, both measured:
+//
+// 1. The cards never stacked. Box.G keeps its four columns and merely squeezes
+//    them, so at a 420px container each card was 98px wide — with a 40px price
+//    inside it, which is what overflowed. They now wrap, and go full width once
+//    even two columns stop making sense.
+//
+// 2. Type jumped UP as space ran out. The earlier pass scaled the TABLE header
+//    down to its column but left the cards on the original card scale, so
+//    folding at 820px snapped the price from 21px straight to 40px — bigger
+//    text in less room. The card scale now starts near where the table leaves
+//    off and steps down again with the container, so the size never increases
+//    as the viewport shrinks.
+.settings-billing__plans-narrow {
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: stretch;
+
+  > * {
+    // 200px, was 260: five cards now (Pro joined 2026-08-03). At the page's
+    // ~1280px content width, 5x260 + gaps forced a 4+1 wrap with one card
+    // stranded full-width on its own row; 200 lets all five share the row
+    // and wrap 3+2 -> 2+2+1 as the container narrows.
+    flex: 1 1 200px;
+    min-width: 0; // let a flex item shrink below its content width
+  }
+
+  .settings-billing__plan-title {
+    font-size: 17px;
+    line-height: 23px;
+  }
+
+  .settings-billing__plan-price-amount {
+    font-size: 28px;
+    line-height: 34px;
+  }
+
+  .settings-billing__plan-price-period,
+  .settings-billing__plan-price-label {
+    font-size: 12px;
+    line-height: 16px;
+  }
+
+  .settings-billing__plan-button-main,
+  .settings-billing__plan-button,
+  .settings-billing__plan-current-label {
+    font-size: 14px;
+    line-height: 19px;
+  }
+}
+
+// One card per row: below this two columns leave too little for the price and
+// the CTA to sit on one line each.
+@container billing-plans (max-width: 620px) {
+  .settings-billing__plans-narrow > * {
+    flex: 1 1 100%;
+  }
+
+  .settings-billing__plans-narrow {
+    .settings-billing__plan-price-amount {
+      font-size: 24px;
+      line-height: 30px;
+    }
+
+    .settings-billing__plan-title {
+      font-size: 16px;
+      line-height: 22px;
+    }
+  }
+}
+
+// Wide containers: the header type was tuned to survive a ~200px column, which
+// left it undersized once the columns get roomy (243px at a 1161 container).
+// Step it back up — the threshold is 1100 so the common desk width is already
+// on the larger scale, not just unusually wide windows.
+@container billing-plans (min-width: 1100px) {
+  .settings-billing__compare-plan {
+    padding: 16px 10px;
+    gap: 8px;
+
+    --plan-title-lh: 26px;
+
+    .settings-billing__plan-title {
+      font-size: 19px;
+      line-height: var(--plan-title-lh);
+    }
+
+    .settings-billing__plan-price-amount {
+      font-size: 32px;
+      line-height: 40px;
+    }
+
+    .settings-billing__plan-price-period,
+    .settings-billing__plan-price-label {
+      font-size: 12px;
+      line-height: 16px;
+    }
+
+    .settings-billing__plan-button-main,
+    .settings-billing__plan-button,
+    .settings-billing__plan-current-label {
+      font-size: 14px;
+      line-height: 19px;
+    }
+  }
+
+  .settings-billing__compare-tagline {
+    font-size: 13px;
+    line-height: 18px;
+  }
+}
+
+// Checkout: below the point where a form column and a 480px summary stop
+// fitting side by side, stack them. The summary also drops its sticky pinning
+// — once it sits under the form there is nothing left to scroll past, and a
+// stuck panel would just hover over the page.
+.settings-billing__checkout-promo {
+  width: 100%;
+  margin-top: var(--spacer-4, 16px);
+  margin-bottom: var(--spacer-2, 8px);
+  gap: var(--spacer-2, 8px);
+
+  &-label {
+    @include drumee.typo(
+      $size: 14px,
+      $line: 22px,
+      $weight: 600,
+      $color: var(--neutral-900)
+    );
+  }
+
+  &-row {
+    align-items: stretch;
+    gap: var(--spacer-3, 12px);
+    width: 100%;
+    min-height: 48px;
+  }
+
+  &-input {
+    flex: 1 1 auto;
+    min-width: 0;
+    @include drumee-entry-box;
+  }
+
+  // Text CTA — stretch to the same 48px row height; text dead-center.
+  &-apply {
+    flex: 0 0 auto;
+    align-self: stretch;
+    display: inline-flex !important;
+    align-items: center;
+    justify-content: center;
+    min-height: 48px;
+    padding: 0 var(--spacer-4, 16px);
+    margin: 0;
+    white-space: nowrap;
+    cursor: pointer;
+    border-radius: var(--corner-radius-4, 8px);
+    box-sizing: border-box;
+    @include drumee.typo(
+      $size: 14px,
+      $line: 20px,
+      $weight: 600,
+      $color: var(--primary-50, #433cc5)
+    );
+
+    &:hover {
+      background-color: var(--primary-95, rgba(67, 60, 197, 0.06));
+    }
+
+    &.is-applied {
+      color: var(--normal-fg-50, #6b7280);
+      font-weight: 500;
+
+      &:hover {
+        background-color: var(--neutral-100, rgba(0, 0, 0, 0.04));
+      }
+    }
+  }
+
+  &-error {
+    color: var(--color-danger, #c0392b);
+    font-size: 13px;
+  }
+
+  &-applied {
+    color: var(--color-success, #1f8a4c);
+    font-size: 13px;
+  }
+}
+
+.settings-billing__checkout-total-price {
+  &.has-promo {
+    align-items: baseline;
+    gap: var(--spacer-2, 8px);
+  }
+
+  &-original {
+    text-decoration: line-through;
+    opacity: 0.55;
+    font-size: 0.85em;
+  }
+}
+
+.settings-billing__checkout-breakdown-discount {
+  .settings-billing__checkout-breakdown-value {
+    color: var(--color-success, #1f8a4c);
+  }
+}
+
+.settings-billing__checkout-promo-trial-note {
+  margin: 0 0 var(--spacer-3, 12px);
+  font-size: 13px;
+  opacity: 0.85;
+}
+
+@container billing-content (max-width: 900px) {
+  .settings-billing__checkout-left,
+  .settings-billing__checkout-right {
+    flex: 1 1 100%;
+    width: 100%;
+  }
+
+  .settings-billing__checkout-right {
+    position: static;
+    top: auto;
+  }
+
+  .settings-billing__checkout-main {
+    gap: var(--spacer-6);
+  }
+}
+
+// Fallback for engines without container queries: approximate from the
+// viewport, allowing for the settings sidebar.
+@supports not (container-type: inline-size) {
+  @media screen and (max-width: 1080px) {
+    .settings-billing__checkout-left,
+    .settings-billing__checkout-right {
+      flex: 1 1 100%;
+      width: 100%;
+    }
+
+    .settings-billing__checkout-right {
+      position: static;
+      top: auto;
+    }
+  }
+}

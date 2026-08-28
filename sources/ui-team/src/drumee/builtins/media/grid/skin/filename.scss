@@ -1,0 +1,213 @@
+@use "mixins/drumee";
+
+.media-grid {
+  // Legacy/v2 file-meta wrapper (kept for components that still emit
+  // .filename-wrap / .filename-row markup). New media-grid template uses
+  // .media-grid__meta-row in container.scss instead.
+  .filename-wrap {
+    position: absolute;
+    bottom: 0;
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    z-index: 10;
+  }
+
+  // Folder / workspace / hub label sits in the flow inside its container
+  // (column layout). File filename uses meta-row layout (container.scss).
+  // Per Figma 264:80393 / 264:81896:
+  //   Workspace / Folder label = Geist Regular 14 / line 1.4 / #65656C
+  // Allow up to 2 lines before truncating.
+  &__container.folder .filename,
+  &__container.hub .filename {
+    position: static;
+    bottom: auto;
+    margin-top: 8px;
+    flex: 0 0 auto;
+    z-index: auto;
+    text-align: center;
+  }
+
+  .filename {
+    cursor: pointer;
+    overflow: hidden;
+    padding: var(--spacer-1) var(--spacer-4);
+    width: calc(100% - 0px);
+    @include drumee.typo(
+      $line: 1.4,
+      $size: 14px,
+      $weight: 400,
+      $color: var(--grid-color-folder-name, #65656c)
+    );
+    white-space: normal;
+    word-break: break-word;
+    overflow-wrap: anywhere;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    max-height: calc(14px * 1.4 * 2);
+    text-overflow: ellipsis;
+    bottom: -14px;
+    border-radius: var(--corner-radius-3);
+    &.geek {
+      background-color: rgba(225, 255, 255, 0.45);
+      border-radius: var(--corner-radius-2);
+    }
+  }
+
+  .filename-date {
+    @include drumee.typo(
+      $size: 10px,
+      $weight: 400,
+      $line: 1.4,
+      $color: #65656c
+    );
+    white-space: nowrap;
+    text-align: left;
+    width: 100%;
+    padding: 0 var(--spacer-4);
+  }
+
+  .filename-tooltips {
+    // Theme-aware popup surface. Was --default-bg-block (#f2f2f2, theme-fixed):
+    // in dark mode that light bg paired with the light --default-text-color made
+    // the full-filename tip unreadable. --normal-bg-elevated pairs cleanly with
+    // --default-text-color in both themes.
+    background: var(--normal-bg-elevated);
+    border: 1px solid var(--border-muted);
+    border-radius: var(--border-radius-bottom-smal); // 0 0 4px 4px;
+    display: none;
+    max-height: calc(100% - 5px);
+    max-width: 100%;
+    opacity: 0;
+    overflow-wrap: anywhere;
+    padding: 6px 4px;
+    pointer-events: none;
+    position: absolute;
+    transition: opacity 1ms;
+    white-space: pre-wrap;
+    @include drumee.typo(
+      $line: 14px,
+      $size: 10px,
+      $weight: 400,
+      $color: var(--default-text-color)
+    );
+    bottom: 10px;
+
+    &[data-hover="on"] {
+      // Uniform theme-aware surface for every filetype (was a mix of the
+      // undefined --multimedia-main-filename-bg and fixed --ewhite, both light).
+      background-color: var(--normal-bg-elevated);
+      color: var(--default-text-color);
+      display: block;
+      opacity: 1;
+      overflow-wrap: break-word;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      z-index: 20;
+
+      &.image,
+      &.video,
+      &.audio,
+      &.document,
+      &.vector,
+      &.other {
+        color: var(--default-text-color);
+        background-color: var(--normal-bg-elevated);
+      }
+
+      &.document {
+        max-height: calc(100% - 4px);
+        padding: 4px 2px;
+      }
+    }
+  }
+
+  &__input {
+    @include drumee.typo(
+      $line: 14px,
+      $size: 11px,
+      $color: var(--default-text-color)
+    );
+    width: 100%;
+    position: absolute;
+    z-index: 102;
+    bottom: 0;
+
+    textarea {
+      cursor: pointer;
+      min-height: 27px;
+      width: 100%;
+      height: auto;
+      padding: 2px 6px;
+      border-radius: var(--corner-radius-2);
+      border: 1px solid var(--default-entry-border-bottom);
+      overflow: hidden;
+      resize: none;
+      background-color: var(--rename-input-bg, var(--default-bg));
+      @include drumee.typo(
+        $line: 12px,
+        $size: 11px,
+        $color: var(--default-text-color)
+      );
+      bottom: -10px;
+
+      &::placeholder {
+        @include drumee.typo(
+          $size: 11px,
+          $line: 12px,
+          $weight: 300,
+          $color: var(--default-text-placeholder)
+        );
+      }
+    }
+
+    .input-details {
+      background: var(--rename-input-bg, var(--default-bg));
+      color: #ff4578;
+      position: absolute;
+      bottom: auto;
+      top: 112%;
+      padding: 3px;
+    }
+  }
+}
+
+// Mobile: bump filename to 16px and add lateral padding so the label
+// column stays inside the folder/workspace icon's visual width (icon
+// ~99px in a ~140-180px cell). Desktop keeps the smaller 14px Figma
+// recipe untouched.
+@media (max-width: 480px) {
+  .media-grid {
+    .filename {
+      padding: var(--spacer-1) var(--spacer-5);
+      @include drumee.typo(
+        $line: 1.4,
+        $size: 16px,
+        $weight: 500,
+        $color: var(--grid-color-folder-name, #65656c)
+      );
+      max-height: calc(16px * 1.4 * 2);
+    }
+
+    &__container.folder .filename,
+    &__container.hub .filename {
+      margin-top: 12px;
+    }
+  }
+}
+
+html[data-theme="dark"] .media-grid {
+  &__input {
+    textarea {
+      background-color: var(--normal-bg-elevated);
+      border-color: var(--border-default);
+      color: var(--default-text-color);
+    }
+
+    .input-details {
+      background: var(--normal-bg-elevated);
+    }
+  }
+}

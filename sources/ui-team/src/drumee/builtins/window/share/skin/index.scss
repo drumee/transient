@@ -1,0 +1,136 @@
+@use 'mixins/drumee';
+
+.window-share {
+
+  @include meta.load-css('action-menu');
+  @include meta.load-css('header');
+
+  &.maiden-share {
+    .media-grid, .media-row {
+      &[data-selected="0"] {
+        opacity: 0.4;
+      }
+    }
+  }
+
+  &__body {
+    &[data-dragover="1"] {
+      &:after {
+        background-color: $default-background;
+        border-radius: 3px;
+        border: dashed #476390 1px;
+        content: "";
+        display: block;
+        font-size: 34px;
+        height: 100%;
+        left: 0;
+        margin: auto;
+        opacity: 0.5;
+        padding-top: calc(25% - 17px);
+        position: absolute;
+        text-align: center;
+        top: 0;
+        width: 100%;
+        z-index: 20000;
+      }
+    }
+  }
+
+  &__spinner {
+    background-color: $default-background;
+    border-radius: 4px;
+    box-shadow: 0 5px 8px 1px rgba(63,79,117,.13), 0 0 3px 0 rgba(86,65,113,.08), 0 2px 8px 0 rgba(194,185,203,0);
+    height: 87px;
+    left: 30px;
+    padding: 20px 27px;
+    position: absolute;
+    top: 70px;
+    width: 100px;
+
+    &:after {
+      border-radius: 4px;
+      border: 3px solid #fa8540;
+      content: " ";
+      height: 100%;
+      left: 0;
+      pointer-events: none;  
+      position: absolute;
+      top: 0;
+      width: 100%;
+      z-index: 103;
+    }
+  }
+
+  &.dialog__wrapper--modal {
+    &[data-state="open"] {
+      background-color: $default-background;
+    }
+  }
+
+  .invitation-message {
+    .note-content {
+      &:before {
+        @include drumee.typo($color: var(--egrey-89),$size:14px,$line:28px,$weight:400);
+      }
+    }
+  }
+
+  &__split-body {
+    flex: 1;
+    overflow: hidden;
+    display: flex;
+    flex-direction: row;
+    min-height: 0;
+  }
+
+  &__body {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+  }
+
+}
+
+// Scoped message bubble styles for share (restricted) chat panel
+.window-share .window__chat-panel {
+  .widget-chat__ui {
+    background-color: transparent;
+  }
+  .widget-chatItem__ui {
+    background-color: transparent;
+  }
+  .widget-chatItem__main {
+    &.me, &.other {
+      background-color: transparent;
+      border: none;
+      border-radius: 0;
+      padding: 0;
+    }
+  }
+  .widget-chatItem__conversation-content {
+    padding: 8px 12px;
+    width: fit-content;
+    max-width: 100%;
+    &.me {
+      background-color: var(--restricted, #d65f59);
+      border-radius: 16px 0 16px 16px;
+      align-self: flex-end;
+      .note-content { color: #E4E3FF; }
+    }
+    &.other {
+      background-color: #0B0A21;
+      border-radius: 0 16px 16px 16px;
+      align-self: flex-start;
+      .note-content { color: #FAF6FF; }
+    }
+  }
+  .widget-chatItem__message-date {
+    color: #84848C;
+    font-size: 8px;
+  }
+  .widget-chatItem__date-of-day-content {
+    color: #C6BFFF;
+    font-size: 10px;
+    font-weight: 600;
+  }
+}

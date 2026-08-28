@@ -1,0 +1,711 @@
+@use "mixins/drumee";
+
+.panel-activity {
+  &__ui {
+    // Opens from the RIGHT, same as inbox/contacts (chat-p2p skin) and
+    // trash. position:fixed for the reason documented in chat-p2p: a
+    // parked absolute panel still adds to its ancestors' scrollWidth and
+    // leaves the desk body scrollable sideways onto it.
+    position: fixed;
+    width: 450px;
+    height: 100vh;
+    top: 0;
+    right: 0;
+    background-color: #f2f2f7;
+    border: 1px solid var(--border-muted);
+    box-shadow: 0 1px 11px rgba(0, 0, 0, 0.13);
+    transform: translateX(100%);
+    transition: transform 0.25s ease-out;
+    will-change: transform;
+
+    &[data-state="1"] {
+      transform: translateX(0);
+      pointer-events: auto;
+    }
+
+    &[data-state="0"] {
+      transform: translateX(100%);
+      pointer-events: none;
+    }
+
+    // Mobile: the desktop left-rail slide-in doesn't fit a phone, so the
+    // panel renders as a centered floating card. position:fixed + inset:0
+    // + margin:auto centres it in the viewport. Both transform AND
+    // will-change:transform (set on the base __ui for the desktop slide)
+    // establish a containing block for fixed-position descendants, which
+    // would shrink the full-viewport ::before scrim down to the card box
+    // — so we clear both here. The left panel-container is un-hidden just
+    // for this panel in desk/skin/index.scss. Tap-outside-to-close is
+    // wired in index.js (_onOutsideClick); ::before is visual-only
+    // (pointer-events:none) so those taps reach the content behind.
+    &[data-device="mobile"] {
+      position: fixed;
+      inset: 0;
+      margin: auto;
+      width: min(360px, 92vw) !important;
+      height: min(520px, 78vh) !important;
+      border-radius: 14px;
+      z-index: 10050;
+      box-shadow: 0 8px 40px rgba(0, 0, 0, 0.28);
+      will-change: auto;
+      transition: opacity 0.2s ease;
+
+      // Full-viewport scrim that frosts the desk body behind the card.
+      // Sits at z-index:-1 (below the card content, see __main) so it
+      // never tints the card itself; the topbar/drawer at z 99999 paint
+      // above it and stay crisp. Theme-aware via --overlay-bg. When open it
+      // captures pointer events (see [data-state="1"]) so taps on the scrim
+      // don't fall through and trigger desk-body items behind it.
+      &::before {
+        content: "";
+        position: fixed;
+        inset: 0;
+        z-index: -1;
+        background: var(--overlay-bg);
+        backdrop-filter: blur(6px);
+        -webkit-backdrop-filter: blur(6px);
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity 0.2s ease;
+      }
+
+      &[data-state="0"] {
+        transform: none;
+        opacity: 0;
+        pointer-events: none;
+      }
+
+      &[data-state="1"] {
+        transform: none;
+        opacity: 1;
+        pointer-events: auto;
+      }
+
+      &[data-state="1"]::before {
+        opacity: 1;
+        // Block taps on the scrim from reaching desk-body items behind it.
+        // (Closing is button-only on mobile, so the scrim swallows the tap
+        // without dismissing the panel.)
+        pointer-events: auto;
+      }
+
+      // Opaque card surface painted ABOVE the ::before scrim (in-flow
+      // content outranks the negative-z pseudo), so the dim/blur only
+      // shows outside the card — never washing it out. `inherit` tracks
+      // __ui's background across light/dark. Rounded to match the card;
+      // __main already clips with overflow:hidden.
+      .panel-activity__main {
+        border-radius: 14px;
+        background-color: inherit;
+      }
+
+      // The desktop feed cap (100vh-102px) overflows a fixed-height card;
+      // let the flex column own the scroll instead.
+      .panel-activity__feed {
+        max-height: none;
+        min-height: 0;
+        padding: 0 10px 20px;
+      }
+
+      // ── Enlarge content for touch UX ──────────────────────────────
+      // The desktop panel is sized for a mouse; on a phone the rows,
+      // labels and icon buttons are too small to read and tap. Scale
+      // the header, tabs, toggle and notification rows up to comfortable
+      // mobile sizes (icon buttons → ~40px touch targets).
+      .panel-activity__topbar {
+        height: 100px;
+        padding: 16px;
+        flex-direction: column;
+        gap: 8px;
+      }
+
+      .panel-activity__title {
+        font-size: 19px;
+        line-height: 26px;
+      }
+
+      .panel-activity__mark-read-btn {
+        gap: 6px;
+
+        svg {
+          width: 18px;
+          height: 18px;
+        }
+
+        .label,
+        span,
+        section {
+          font-size: 14px;
+        }
+      }
+
+      .panel-activity__unread-label {
+        font-size: 14px;
+        line-height: 20px;
+      }
+
+      // Toggle scaled 40×20 → 48×28 (thumb 16 → 24); travel stays 20px
+      // so the shared [data-state="1"] transform still lands correctly.
+      .panel-activity__toggle-track {
+        width: 48px;
+        height: 28px;
+      }
+
+      .panel-activity__toggle-thumb {
+        width: 24px;
+        height: 24px;
+      }
+
+      .panel-activity__tabbar {
+        gap: 20px;
+        padding: 14px 16px;
+        justify-content: center;
+      }
+
+      .panel-activity__tab {
+        font-size: 15px;
+        line-height: 15px;
+      }
+
+      .panel-activity__empty {
+        font-size: 14px;
+        line-height: 20px;
+        padding: 48px 16px;
+      }
+
+      // Notification rows (.activity-item from widget/item).
+      .activity-item__row {
+        min-height: 60px;
+        gap: 14px;
+        padding: 10px 14px;
+
+        &.share {
+          min-height: 64px;
+        }
+      }
+
+      .activity-item__avatar-wrap,
+      .activity-item__avatar {
+        width: 44px;
+        height: 44px;
+      }
+
+      .activity-item__badge {
+        width: 18px;
+        height: 18px;
+      }
+
+      .activity-item__text {
+        font-size: 15px;
+        line-height: 21px;
+      }
+
+      .activity-item__time {
+        font-size: 13px;
+        line-height: 18px;
+      }
+
+      .activity-item__actions {
+        width: auto;
+        gap: 12px;
+        height: auto;
+      }
+
+      // Icon buttons → ~40px tap targets (was 20px).
+      .activity-item__bookmark,
+      .activity-item__trash {
+        width: 40px;
+        height: 40px;
+
+        svg {
+          width: 26px;
+          height: 26px;
+        }
+      }
+
+      .activity-item__join {
+        width: 40px;
+        height: 40px;
+
+        svg {
+          width: 18px;
+          height: 18px;
+        }
+      }
+
+      // Close button (mobile only). Pinned to the card's top-right corner,
+      // out of the topbar's flow, so the column header layout is untouched.
+      // Positioned against __ui (the only positioned ancestor).
+      .panel-activity__close-btn {
+        display: flex;
+        position: absolute;
+        top: 12px;
+        right: 12px;
+        width: 36px;
+        height: 36px;
+        padding: 6px;
+        border-radius: 8px;
+        cursor: pointer;
+        color: #65656c;
+        z-index: 2;
+
+        svg {
+          width: 100%;
+          height: 100%;
+          fill: currentColor;
+        }
+
+        &:hover,
+        &:active {
+          background-color: rgba(0, 0, 0, 0.06);
+          color: #0b0a21;
+        }
+      }
+    }
+  }
+
+  // Close button is mobile-only; the desktop panel closes via its nav
+  // toggle, so keep it out of the desktop topbar entirely.
+  &__close-btn {
+    display: none;
+  }
+
+  &__main {
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+  }
+
+  &__topbar {
+    align-items: center;
+    flex-shrink: 0;
+    height: 56px;
+    justify-content: space-between;
+    padding: 0 20px;
+  }
+
+  &__header {
+    align-items: center;
+    justify-content: space-between;
+    padding: var(--spacer-4) var(--spacer-6);
+    color: #0b0a21;
+    background-color: #f2f2f7;
+  }
+
+  &__title {
+    @include drumee.typo(
+      $size: 16px,
+      $weight: 600,
+      $line: 24px,
+      $color: #0b0a21
+    );
+  }
+
+  &__unread-toggle {
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
+    user-select: none;
+  }
+
+  &__toggle-track {
+    width: 40px;
+    height: 20px;
+    border-radius: 12px;
+    background-color: #d1d1d6;
+    padding: 2px;
+    position: relative;
+    transition: background-color 0.2s ease;
+    flex-shrink: 0;
+  }
+
+  &__toggle-thumb {
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: #fff;
+    transition: transform 0.2s ease;
+    transform: translateX(0);
+  }
+
+  &__unread-toggle[data-state="1"] {
+    .panel-activity__toggle-track {
+      background-color: #fa8540;
+    }
+    .panel-activity__toggle-thumb {
+      transform: translateX(20px);
+    }
+  }
+
+  &__topbar-actions {
+    align-items: center;
+    gap: 12px;
+  }
+
+  &__mark-read-btn {
+    display: flex !important;
+    flex-direction: row !important;
+    cursor: pointer;
+    align-items: center;
+    gap: 4px;
+    svg {
+      width: 14px;
+      height: 14px;
+      flex-shrink: 0;
+      color: #65656c;
+    }
+    .label,
+    span,
+    section {
+      font-size: 12px;
+      font-weight: 400;
+      color: #65656c;
+      white-space: nowrap;
+    }
+    &:hover {
+      svg {
+        color: #5950ff;
+      }
+      .label,
+      span,
+      section {
+        color: #5950ff;
+      }
+    }
+  }
+
+  &__unread-label {
+    @include drumee.typo(
+      $size: 12px,
+      $weight: 400,
+      $line: 17px,
+      $color: #0b0a21
+    );
+  }
+
+  &__toggle-btn {
+    width: 40px;
+    height: 20px;
+    border-radius: 12px;
+    background-color: #847eff;
+    padding: 2px;
+    position: relative;
+    cursor: pointer;
+    transition: background-color 0.2s ease;
+
+    &::after {
+      content: "";
+      width: 16px;
+      height: 16px;
+      border-radius: 50%;
+      background: #fff;
+      position: absolute;
+      top: 2px;
+      left: 2px;
+      transition: transform 0.2s ease;
+    }
+
+    &[data-state="0"] {
+      background-color: #d1d1d6;
+
+      &::after {
+        transform: translateX(0);
+      }
+    }
+
+    &[data-state="1"] {
+      background-color: #847eff;
+
+      &::after {
+        transform: translateX(20px);
+      }
+    }
+  }
+
+  &__tabbar {
+    gap: 16px;
+    padding: 12px 20px;
+    flex-shrink: 0;
+    background-color: rgba(0, 0, 0, 0.05);
+  }
+
+  &__tab {
+    @include drumee.typo(
+      $color: #0b0a21,
+      $size: 12px,
+      $weight: 600,
+      $line: 12px
+    );
+    padding: 0 0 4px;
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+    transition:
+      color 0.15s,
+      border-color 0.15s;
+
+    &:hover {
+      color: #5950ff;
+    }
+
+    &[data-state="1"] {
+      color: #5950ff;
+      border-bottom-color: #5950ff;
+      padding-bottom: 6px;
+    }
+  }
+
+  /* ── Notification feed (priority section + smart list) ──── */
+  /* The scroll lives on __feed so the pinned priority items and the
+     paginated list both scroll together and share horizontal padding. */
+  &__feed {
+    flex: 1;
+    overflow-y: auto;
+    max-height: calc(100vh - 102px);
+    padding: 0 8px 16px;
+  }
+
+  &__priority {
+    width: 100%;
+  }
+
+  &__list {
+    flex: none;
+    overflow-y: visible;
+    max-height: none;
+    padding: 0;
+    width: 100%;
+
+    .smart-container {
+      display: flex;
+      flex-direction: column;
+      width: 100%;
+    }
+  }
+
+  &__empty {
+    @include drumee.typo($color: #65656c, $size: 12px, $line: 17px);
+    padding: 40px 16px;
+    text-align: center;
+    width: 100%;
+  }
+
+  &__ui[data-has-priority="1"] &__empty {
+    display: none;
+  }
+}
+
+// ── Dark mode overrides ─────────────────────────────────────────
+html[data-theme="dark"] {
+  .panel-activity {
+    &__ui {
+      background-color: var(--normal-bg-90);
+      box-shadow: 0 1px 11px rgba(0, 0, 0, 0.5);
+    }
+
+    &__header {
+      background-color: var(--normal-bg-90);
+      color: var(--normal-fg-10);
+    }
+
+    &__title {
+      color: var(--normal-fg-10);
+    }
+
+    &__unread-label {
+      color: var(--normal-fg-10);
+    }
+
+    &__toggle-btn[data-state="0"] {
+      background-color: var(--normal-bg-40);
+    }
+
+    &__tabbar {
+      background-color: var(--overlay-bg-05);
+    }
+
+    &__tab {
+      color: var(--normal-fg-10);
+    }
+
+    &__empty {
+      color: var(--normal-fg-50);
+    }
+
+    &__close-btn {
+      color: var(--normal-fg-50);
+
+      &:hover,
+      &:active {
+        background-color: var(--overlay-bg-05);
+        color: var(--normal-fg-10);
+      }
+    }
+  }
+
+}
+
+/* Access-request approve overlay (Figma 63). The widget lifts this node to <body>
+   (_liftArOverlay) so position:fixed centres it over the full viewport — the panel's
+   own slide transform would otherwise trap a fixed/absolute descendant in the rail. */
+.panel-activity__ar-overlay {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(11, 10, 33, 0.45);
+  z-index: 10050;
+
+  &[data-mode="closed"] { display: none; }
+}
+
+/* Approve-access popup shown from an access-request notification (Figma 63) */
+.panel-activity-approve-request {
+  &__panel {
+    width: 380px;
+    max-width: calc(100% - 32px);
+    gap: 16px;
+    padding: 24px;
+    background: #ffffff;
+    border-radius: 12px;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.18);
+  }
+
+  &__header {
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  &__title {
+    @include drumee.typo($size: 18px, $line: 24px, $weight: 600, $color: var(--default-text-color, #0b0a21));
+  }
+
+  &__close {
+    cursor: pointer;
+    @include drumee.typo($size: 20px, $line: 1, $weight: 400, $color: var(--tertiary-grey-60, #84848c));
+    padding: 2px 4px;
+
+    &:hover { opacity: 0.7; }
+  }
+
+  &__info {
+    gap: 10px;
+    padding: 14px;
+    border-radius: 8px;
+    background: var(--normal-bg-80, #f2f2f7);
+  }
+
+  &__info-top {
+    align-items: center;
+    gap: 10px;
+  }
+
+  &__info-avatar {
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    background-size: cover;
+    background-position: center;
+  }
+
+  &__info-text { gap: 2px; }
+
+  &__info-email {
+    @include drumee.typo($size: 14px, $line: 18px, $weight: 600, $color: var(--default-text-color, #0b0a21));
+  }
+
+  &__info-level {
+    @include drumee.typo($size: 12px, $line: 16px, $weight: 400, $color: var(--tertiary-grey-70, #65656c));
+  }
+
+  &__info-message {
+    @include drumee.typo($size: 13px, $line: 18px, $weight: 400, $color: var(--default-text-color, #0b0a21));
+    font-style: italic;
+  }
+
+  &__grant-label {
+    @include drumee.typo($size: 13px, $line: 18px, $weight: 500, $color: var(--tertiary-grey-70, #65656c));
+  }
+
+  &__levels { gap: 8px; }
+
+  &__level-row {
+    align-items: center;
+    justify-content: space-between;
+    cursor: pointer;
+    padding: 10px 12px;
+    border-radius: 8px;
+    background: var(--normal-bg-80, #f2f2f7);
+    user-select: none;
+
+    &[data-selected="yes"] { background: var(--primary-20, #b1adff); }
+    &:hover:not([data-selected="yes"]) { background: var(--normal-bg-70, #ececf2); }
+  }
+
+  &__level-main {
+    align-items: center;
+    gap: 10px;
+  }
+
+  &__level-icon {
+    width: 18px;
+    height: 18px;
+    flex-shrink: 0;
+
+    svg { width: 18px; height: 18px; fill: var(--default-text-color, #0b0a21); }
+  }
+
+  &__level-label {
+    @include drumee.typo($size: 14px, $line: 20px, $weight: 400, $color: var(--default-text-color, #0b0a21));
+  }
+
+  &__level-check {
+    width: 18px;
+    height: 18px;
+    flex-shrink: 0;
+    border-radius: 4px;
+    border: 1.5px solid var(--tertiary-grey-60, #aeaeb2);
+    background: #ffffff;
+    position: relative;
+  }
+
+  &__level-row[data-selected="yes"] &__level-check {
+    background: var(--primary-50, #433cc5);
+    border-color: var(--primary-50, #433cc5);
+
+    &::after {
+      content: '';
+      position: absolute;
+      left: 5px;
+      top: 1.5px;
+      width: 4px;
+      height: 9px;
+      border: solid #ffffff;
+      border-width: 0 2px 2px 0;
+      transform: rotate(45deg);
+    }
+  }
+
+  &__confirm {
+    cursor: pointer;
+    text-align: center;
+    padding: 11px;
+    border-radius: 8px;
+    background: var(--primary-50, #433cc5);
+    @include drumee.typo($size: 14px, $line: 20px, $weight: 600, $color: #ffffff);
+
+    &:hover { filter: brightness(1.08); }
+  }
+
+  &__deny {
+    cursor: pointer;
+    text-align: center;
+    padding: 11px;
+    border-radius: 8px;
+    background: var(--red-500, #ff5a5f);
+    @include drumee.typo($size: 14px, $line: 20px, $weight: 600, $color: #ffffff);
+
+    &:hover { filter: brightness(1.08); }
+  }
+}

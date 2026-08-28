@@ -1,0 +1,578 @@
+@use "sass:meta";
+@use "mixins/drumee";
+
+html {
+  overflow: hidden;
+}
+
+@include meta.load-css("toolkit");
+@include meta.load-css("buttons.scss");
+@include meta.load-css("topbar");
+@include meta.load-css("mobile-topbar");
+@include meta.load-css("mobile-search");
+@include meta.load-css("body");
+@include meta.load-css("desk/dmz-copy-media");
+@include meta.load-css("desk/intro-popup");
+@include meta.load-css("dialog");
+@include meta.load-css("sidebar");
+@include meta.load-css("meeting-toast");
+
+.desk-module {
+  &__ui {
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    font-family: var(--font-main);
+    background-color: var(--normal-bg);
+  }
+
+  &__main {
+    background-color: var(--normal-bg);
+    max-height: 100vh;
+    overflow: auto;
+  }
+
+  &__panel-container {
+    // position:relative activates the z-index stacking context, otherwise
+    // z-index is ignored on static elements and slide-out panels (admin
+    // members, trash, chat) end up painted behind the window manager.
+    position: relative;
+    z-index: 10001;
+    width: 0;
+    top: 0;
+    bottom: 0;
+    overflow: visible;
+  }
+
+  // ── Parked-call dock ─────────────────────────────────────────────────────
+  // Hosts the live call window while the user is elsewhere in the desk. Fixed
+  // to the viewport and above every desk surface — the full-page screen slot
+  // (1500, 20001 with a modal), the slide-out panel containers (10001) and the
+  // sidebar (10002) — because the whole point of moving the window out of the
+  // window manager is to escape `isolation: isolate` there.
+  &__call-dock {
+    // !important on both: this is a Box.X, matched by container.css as
+    // .drumee-widget[data-flow="x"] at 0,2,0, so a single-class hide loses and
+    // an EMPTY dock would sit in the corner as an invisible 300x180 click
+    // blocker at z 20002.
+    display: none !important;
+    // Belt to the display brace, and the part that does NOT depend on browser
+    // support: a fixed 300x180 box at z 20002 pinned to the corner swallows
+    // every click landing there, so the CONTAINER must never intercept pointer
+    // input. Only real docked content opts back in (see `> *` below). Without
+    // this, anything that reveals the dock silently kills clicks in that corner
+    // — which is how this surfaced: it took out the task modal's Update button,
+    // and both buttons once that modal was zoomed full-screen.
+    pointer-events: none;
+    position: fixed;
+    right: 24px;
+    bottom: 24px;
+    z-index: 20002;
+    box-sizing: border-box;
+    width: 300px;
+    height: 180px;
+
+    // Shown only while it actually holds the call.
+    // NOT `:not(:empty)`: ui-core renders a `widget-blank` placeholder as the
+    // emptyView of every empty collection (addons/marionette/collection-view
+    // -> KIND.blank), so this Box.X is NEVER :empty in the DOM even with no
+    // call parked. The reveal rule therefore always matched, un-hiding the box
+    // permanently. Test for a REAL child, not merely any child.
+    &:has(> :not(.widget-blank)) {
+      display: flex !important;
+    }
+
+    // A phone has no room for a 300px tile beside the screen it is covering.
+    @media (max-width: 650px) {
+      right: 12px;
+      bottom: 12px;
+      width: 168px;
+      height: 100px;
+    }
+
+    // The docked window is sized by the dock, not by the inline pixel geometry
+    // it carries as a free-floating window. !important because that inline
+    // geometry (and window/skin/window.scss's 600x320 floor) would otherwise
+    // win, and because Wm.clampWindows may rewrite left/top while it is parked.
+    > * {
+      position: absolute !important;
+      top: 0 !important;
+      left: 0 !important;
+      right: auto !important;
+      bottom: auto !important;
+      width: 100% !important;
+      height: 100% !important;
+      min-width: 0 !important;
+      min-height: 0 !important;
+      margin: 0 !important;
+      // The parked call itself must stay clickable.
+      pointer-events: auto;
+    }
+
+    // ...but ui-core's emptyView placeholder must not be. Higher specificity
+    // than the `> *` above (0,2,0 vs 0,1,0), so it wins without !important.
+    > .widget-blank {
+      pointer-events: none;
+    }
+  }
+
+  &__overlay {
+    position: absolute;
+    width: 100%;
+    height: 100%;
+    z-index: 10010;
+    // Theme-aware scrim (light: rgba(0,0,0,.4) / dark: rgba(20,17,35,.4))
+    // so the backdrop reads correctly in both modes, not just dark.
+    background-color: var(--overlay-bg);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.2s ease;
+
+    // Mobile: pin to the viewport so the backdrop covers the area
+    // behind the mobile-topbar too — not just the desk body.
+    &[data-device="mobile"] {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      width: 100vw;
+      height: 100vh;
+    }
+
+    &[data-state="open"] {
+      opacity: 1;
+      pointer-events: auto;
+    }
+
+    // Mobile: frost the desk body behind the open drawer. The mobile
+    // topbar and the drawer both sit at z-index 99999 (above this 10010
+    // overlay), so they paint on top and stay crisp — only the body
+    // content behind the overlay is blurred, never the topbar.
+    &[data-device="mobile"][data-state="open"] {
+      backdrop-filter: blur(6px);
+      -webkit-backdrop-filter: blur(6px);
+    }
+
+    // Desktop never opens this backdrop; defend against stray writes.
+    &:not([data-device="mobile"]) {
+      background-color: transparent;
+    }
+  }
+
+  &__panel-inner {
+    position: absolute;
+    width: 0;
+    overflow: visible;
+    height: 100%;
+    top: 0;
+    bottom: 0;
+  }
+
+  &__activity-container {
+    width: 100%;
+    height: auto;
+  }
+
+  &__body {
+    height: 100vh;
+    // Right-side slide-out panels (chat-p2p, address-book) park themselves
+    // at `right: -880px` / `-720px` while closed. Without clipping here,
+    // those off-screen panels widen the document and __main's
+    // `overflow: auto` exposes a phantom horizontal scrollbar.
+    overflow: hidden;
+  }
+
+  &__right-side {
+    flex-grow: 1;
+    background-color: var(--normal-bg-100);
+    overflow: hidden;
+  }
+
+  // Desktop top bar is replaced by __mobile-topbar on mobile.
+  &__topbar[data-device="mobile"] {
+    display: none;
+  }
+
+  // A headless workspace pane (full-screen window tab opened from the
+  // sidebar) fills the desk body and carries its own window topbar. The
+  // home-section topbar is only used on the home grid, so hide it while a
+  // workspace pane is open — or while a folder window opened from the home
+  // grid is zoomed, which covers the same area. Toggled in desk
+  // `_syncWorkspaceTopbar`.
+  &__topbar[data-headless="1"] {
+    display: none;
+  }
+
+  // Strip-only mode: with 2+ windows open the active one fully covers the
+  // rest, so the tab strip is the only way to reach a covered window. Bring
+  // the bar back but keep breadcrumb/actions hidden — the workspace pane
+  // carries its own topbar for those. (data-tabstrip set in
+  // `_syncWorkspaceTopbar`; !important because Box children are forced
+  // display:flex by the framework.)
+  // :not(mobile) — this 2-attr selector would otherwise out-specify the
+  // mobile hide rule above (1 attr); mobile keeps its own __mobile-topbar.
+  &__topbar[data-headless="1"][data-tabstrip="1"]:not([data-device="mobile"]) {
+    display: flex;
+
+    .desk-module-topbar__breadcrumb,
+    .desk-module-topbar__actions-cluster {
+      display: none !important;
+    }
+  }
+
+  // Left panel-container. Trash and notifications moved to the right
+  // container (see skeleton/index.js) so all four sidebar slide-outs enter
+  // from the same edge; the only slot left here is settings-panel, which
+  // nothing has ever fed. The container and the `.left` rules below are
+  // therefore inert — kept because removing them is a separate cleanup, not
+  // because anything still renders here. Settings has no mobile layout, so
+  // the slot stays hidden there.
+  &__panel-container.left[data-device="mobile"] {
+    [data-partname="settings-panel"] {
+      display: none;
+    }
+  }
+
+  // Hover nudge that used to keep the left slide-outs flush against the
+  // expanding rail. Nothing visible lives in this container now, but the
+  // transform is left in place deliberately: it would create a containing
+  // block for any position:fixed descendant, so a panel must not be moved
+  // back in here without removing it.
+  &__panel-container.left {
+    transition: transform 0.18s ease;
+  }
+
+  .desk-module-sidebar__rail[data-collapsed="1"]:hover ~ &__panel-container.left {
+    transform: translateX(167px);
+  }
+
+  &__wm-container {
+    width: 100%;
+    height: 100%;
+    position: relative;
+    overflow: visible;
+  }
+
+  &__settings-main-slot {
+    position: absolute;
+    inset: 0;
+    // Sits above window_manager's __layer (z-index 1300, fixed) so the
+    // settings page fully covers the workspace, but below the slide-out
+    // panel containers at 10001.
+    z-index: 1500;
+    // Self-contained stacking context — defensive against any future
+    // descendants that might otherwise escape and rise above the slot.
+    isolation: isolate;
+    pointer-events: none;
+
+    > * {
+      pointer-events: auto;
+    }
+
+    &:empty {
+      display: none;
+    }
+
+    // When an overlay/modal inside the settings page is open, lift the
+    // slot above the sidebar (z-index 10002) and side-panel containers
+    // (10001) so its full-viewport backdrop blur covers everything.
+    &:has([data-state="open"]) {
+      z-index: 20001;
+    }
+  }
+}
+
+// While an upload is running, its progress floater must stay visible over the
+// folder windows — that popup is the only thing telling the user how far along
+// a multi-gigabyte upload is, and burying it behind the window they clicked
+// makes it useless.
+//
+// Third instance of the same trap as the two cases below: `.window-manager__ui`
+// is `isolation: isolate` (wm/skin), so every z-index inside it is only ever
+// compared with its siblings. Dissolving the context lets its children resolve
+// at the document root instead:
+//   • folder grid (`__main`, z auto)      → stays below panels/sidebar   ✓
+//   • upload-progress-layer (z 50002)     → clears the desk slide-out
+//     panels (chat / notification / trash at 10001) too                  ✓
+//
+// This is NOT what made the floater rise above folder windows — that was a
+// missing `!important` on the layer's own z-index (see wm/skin), since the
+// wrapper behavior stamps `data-state="open"` and a global rule then pins any
+// such element to 50000 `!important`. Ordering *within* the WM never needed
+// this rule. It earns its place only for the panels, which live outside the WM.
+//
+// Scoped to `:has(...)` so the context is only dissolved while a floater is
+// actually mounted — the WM keeps its normal isolation the rest of the time.
+.desk-module__body:has(.window-upload-progress) {
+  .window-manager__ui {
+    isolation: auto;
+    z-index: auto;
+  }
+}
+
+// While a window-connect (call popup) is open, the call must float above the
+// slide-out panels (chat-p2p inbox / Notification / Trash, z 10001) and the
+// sidebar (z 10002) — while the workspace folder GRID stays BELOW those panels.
+//
+// The whole WM lives inside `.window-manager__ui`, a stacking context
+// (`isolation: isolate`, see wm/skin). Inside it the folder grid sits in
+// `__main` (z auto), while every window — including the call — sits in the
+// `__layer` "windows-layer", which the global `[data-state="open"]` rule lifts
+// to z 50000. The previous fix lifted `__ui` as a whole to 30000 so the call
+// (in the 50000 layer) cleared the panels — but that dragged the grid (also in
+// `__ui`) up with it, so the grid painted over chat-p2p / Notification / Trash
+// and the expanded sidebar.
+//
+// Instead, simply DISSOLVE `__ui`'s stacking context for the duration of the
+// call. Its children then resolve their z-index at the document root:
+//   • grid (`__main`, z auto)        → below the panels (10001) & sidebar  ✓
+//   • windows-layer (z 50000)        → above the panels                    ✓
+//     carrying the call (and any open folder window, as before) above them.
+// Nothing drags the grid up, so the panels/sidebar no longer need lifting.
+.desk-module__body:has(.window-connect[data-state="1"]) {
+  .window-manager__ui {
+    isolation: auto;
+    z-index: auto;
+  }
+}
+
+// A WM modal (Wm.confirm/alert wrapper-modal, z 20000) lives inside
+// `.window-manager__ui`, which is `isolation: isolate` — so the modal is
+// trapped behind the settings/apps slot (z 1500) that covers the workspace
+// (e.g. the full-page Billing screen). Lifting the whole `__ui` to z 30000
+// freed the modal but dragged the folder GRID (`__main`) up with it, so the
+// grid painted OVER the Billing/Settings layout behind the modal.
+//
+// Same fix as the window-connect case above: DISSOLVE `__ui`'s stacking
+// context instead of lifting it, so its children resolve at the document root
+// — the grid (`__main`, z auto) falls BELOW the slot (1500) and stops
+// bleeding over the settings page. Then lift ONLY the modal (not the grid) so
+// it still clears the slot in every state, including the slot's own
+// overlay-open lift (20001).
+.desk-module__wm-container:has(
+  .window-manager__wrapper-modal[data-state="open"]
+) {
+  .window-manager__ui {
+    isolation: auto;
+    z-index: auto;
+  }
+
+  // 30000 was enough to clear the settings/apps slot, but NOT the window
+  // layer: `.window-manager__layer:has(> [data-state="1"])` lifts to
+  // `50001 !important` (wm/skin) while it hosts the focused window. That layer
+  // carries the window's own `dialog__wrapper` — transparent, `inset: 0`, so it
+  // covers the whole work area without being visible. The confirm therefore
+  // PAINTS (you can see it) but every click lands on that wrapper instead of
+  // the Confirm button: Wm.confirm can be raised from inside a window but never
+  // answered, so the awaited action silently never runs (folder settings →
+  // change member role did nothing).
+  //
+  // `!important` is required to out-cascade the global
+  // `[data-state="open"] { z-index: var(--z-index-context) !important }` in
+  // skin/lib/utils.scss, which otherwise pins this wrapper to 50000.
+  .window-manager__wrapper-modal[data-state="open"] {
+    z-index: var(--z-index-modal, 100000) !important;
+  }
+}
+
+@media (max-width: 650px) {
+  html,
+  body {
+    height: 100%;
+    width: 100%;
+    overflow: hidden;
+  }
+
+  .desk-module {
+    &__main {
+      height: 100vh;
+      height: 100dvh;
+      max-height: 100vh;
+      max-height: 100dvh;
+      overflow: hidden;
+    }
+
+    // Mobile-topbar sits above __body inside __main (column flex). With
+    // both elements taking 100vh, body overflowed by the topbar height
+    // (~48px) and the last row of workspace cards got clipped at the
+    // viewport bottom. Let flex distribute the remaining height instead
+    // of hard-coding 100vh.
+    &__body {
+      flex: 1 1 auto;
+      min-height: 0;
+      min-width: 0;
+      width: 100%;
+      overflow: hidden;
+    }
+
+    &__right-side {
+      flex: 1 1 auto;
+      min-height: 0;
+      min-width: 0;
+      width: 100%;
+    }
+
+    &__wm-container {
+      flex: 1 1 auto;
+      min-height: 0;
+      min-width: 0;
+      overflow: hidden;
+      width: 100%;
+    }
+
+    &__panel-container {
+      inset: 0 auto 0 0;
+      max-width: 100vw;
+      pointer-events: none;
+      position: absolute;
+      width: 0;
+
+      &.right {
+        left: auto;
+        right: 0;
+      }
+    }
+
+    &__panel-inner,
+    &__panel-container > * {
+      max-width: 100vw;
+      pointer-events: auto;
+    }
+
+    &__settings-main-slot {
+      max-width: 100vw;
+      overflow: hidden;
+    }
+  }
+}
+
+// Tablet & mobile (≤ 1024px): the right slide-out container (chat-p2p
+// inbox) overlays the workspace (__right-side) only — not the 231px
+// desktop sidebar column. Giving the container a real width/height lets
+// chat-p2p fill it with position:absolute instead of a 100vw fixed panel
+// that would otherwise cover the sidebar at tablet widths. Placed after
+// the 650px block so it wins where the two ranges overlap.
+@media (max-width: 1024px) {
+  .desk-module {
+    // Containing block for the absolutely-positioned right container —
+    // its box equals __right-side once the 0-width left container and
+    // the sidebar offset are accounted for.
+    &__body {
+      position: relative;
+    }
+
+    &__panel-container.right {
+      position: absolute;
+      top: 0;
+      right: 0;
+      bottom: 0;
+      // Start after the desktop sidebar column. The sidebar now defaults
+      // to the collapsed mini rail (64px, see sidebar.scss __rail); when
+      // expanded/pinned __main floats above this panel (z 10002 > 10001)
+      // so it still reads correctly.
+      left: 64px;
+      width: auto;
+      max-width: none;
+      height: 100%;
+      // The container now spans the whole workspace (__right-side) at
+      // z 10001. Without this it would swallow every click meant for the
+      // window manager — leaving __right-side dead to input in the
+      // 651–1024px range. Keep the container transparent to pointer
+      // events; the open panel (its child) re-enables them. Mirrors the
+      // ≤650px block above.
+      pointer-events: none;
+
+      > * {
+        pointer-events: auto;
+      }
+    }
+
+    // ≤ 800px the sidebar collapses to a fixed drawer and leaves the flex
+    // row, so the workspace spans the full width — overlay from the edge.
+    &__panel-container.right[data-device="mobile"] {
+      left: 0;
+    }
+
+    // Same treatment for the left container, which hosts the trash
+    // slide-out. Two things need it. On tablet the panel fills this box
+    // (panel/trash skin, @media ≤1024px). On phones the panel is a centred
+    // 360px card positioned with left:50% — and a percentage offset needs
+    // a containing block with a real width, which it never had: the
+    // container and the __panel-inner wrapper are both width:0 by default,
+    // so left:50% resolved against 0 and the card sat half off the left
+    // edge. The notifications panel is unaffected either way (position:
+    // fixed, so it ignores this box) and the settings-panel slot is inert
+    // — nothing is ever fed into it.
+    &__panel-container.left {
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      left: 64px;
+      right: 0;
+      width: auto;
+      max-width: none;
+      height: 100%;
+      // Transparent to input so the container cannot swallow clicks meant
+      // for the window manager; the open panel re-enables them. Mirrors
+      // the .right block above.
+      pointer-events: none;
+
+      > * {
+        pointer-events: auto;
+      }
+    }
+
+    &__panel-container.left[data-device="mobile"] {
+      left: 0;
+    }
+
+    // 64px above assumes the mini rail. The rail reserves the full 231px
+    // column in two cases: the user pinned it open, and coarse-pointer
+    // tablets in the 768–1024px band where collapse is suppressed outright
+    // (sidebar.scss $rail-collapse-allowed). Start after it in both.
+    //
+    // The right-hand container can afford to ignore this — the sidebar
+    // overlays its far edge, away from the content. A LEFT-anchored panel
+    // cannot: the overlap lands squarely on the edge its content starts at,
+    // so the panel would open with its first 167px hidden.
+    //
+    // The rail element only exists on desktop (skeleton/sidebar.js returns
+    // the drawer instead when isMobile), so this cannot match — and cannot
+    // override left:0 — on phones.
+    .desk-module-sidebar__rail[data-collapsed="0"] ~ &__panel-container.left {
+      left: 231px;
+    }
+
+    // Negation of sidebar.scss $rail-collapse-allowed
+    // ("(pointer: fine), (max-width: 767px), (min-width: 1025px)") within
+    // this block's 768–1024px band: the two width clauses are false here,
+    // so collapse is allowed exactly when the pointer is fine, and the rail
+    // stays expanded otherwise. Deliberately `not (pointer: fine)` rather
+    // than `(pointer: coarse)` — that would miss `pointer: none`, which
+    // also fails the sidebar's test and expands the rail.
+    //
+    // Lower specificity than the [data-device="mobile"] rule above, so a
+    // coarse phone that reaches 768px still overlays from the edge.
+    @media (min-width: 768px) and (not (pointer: fine)) {
+      &__panel-container.left {
+        left: 231px;
+      }
+    }
+
+    // The rail-hover nudge keeps the panel flush against the expanding
+    // sidebar on desktop. Once the container spans the workspace instead
+    // of hugging the sidebar edge, shifting it 167px only pushes it off
+    // the right. Same selector as the desktop rule so this wins on order.
+    .desk-module-sidebar__rail[data-collapsed="1"]:hover ~ &__panel-container.left {
+      transform: none;
+    }
+
+    // The trash panel used to need this container to supply a width: it was
+    // position:absolute inside a width:0 __panel-inner, so its mobile
+    // `left: 50%` centring resolved against nothing. It is position:fixed
+    // now (panel/trash skin), so 50% resolves against the viewport and the
+    // wrapper can stay zero-width like every other inner — which also means
+    // it no longer swallows clicks meant for the window manager.
+  }
+}

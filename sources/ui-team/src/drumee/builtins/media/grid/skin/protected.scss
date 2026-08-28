@@ -1,0 +1,23 @@
+.protected-container{
+  right: 2.5px;//1px
+  bottom: 6px; //1px;
+  width: 9px; //11px; //14px;
+  height: 12px; //14px;
+  position: absolute;
+  z-index: 100;
+  .icon--protected{
+    fill: var(--default-icon-neutral);
+    width: 100%;
+    height: 100%;
+    margin: 0;
+    top: 0;
+    &.folder{
+      fill: var(--ewhite);
+    }
+    
+    &.image{
+      fill:var(--egrey-2f);// #476390;
+      opacity: 0.6;
+    }
+  }
+}

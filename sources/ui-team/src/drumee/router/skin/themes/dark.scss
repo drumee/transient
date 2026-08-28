@@ -1,0 +1,73 @@
+html[data-theme="dark"] {
+  /* Surface */
+  --normal-bg: #0b0a21;
+  --normal-bg-100: #0b0a21;
+  --normal-bg-90: #282538;
+  --normal-bg-80: #333042;
+  --normal-bg-50: #2d2a6a;
+  --normal-bg-40: #3c3989;
+  --normal-bg-elevated: #333042;
+  --overlay-bg: rgba(20, 17, 35, 0.4);
+  --overlay-bg-05: rgba(255, 255, 255, 0.05);
+  --overlay-fg: #2d2a6a;
+
+  /* Foreground */
+  --normal-fg: #e4e3ff;
+  --normal-fg-10: #e4e3ff;
+  --normal-fg-20: #b1adff;
+  --normal-fg-50: #84848c;
+  --normal-fg-800: #ffffff;
+  --placeholder-fg: #c7c7cc;
+
+  /* Override legacy text vars so any consumer of var(--default-text-color)
+   * (and its aliases --main-default-text / --main-default-typo) inherits a
+   * dark-mode-readable value automatically — no per-component patching. */
+  --default-text-color: #e4e3ff;
+
+  /* Reverse */
+  --reverse-bg: #e4e3ff;
+  --reverse-fg: #282538;
+  --reverse-lb: #b1adff;
+  --reverse-lb-hover: var(--primary-10);
+
+  /* Border */
+  --border-default: rgba(71, 69, 84, 0.4);
+  --border-muted: rgba(255, 255, 255, 0.05);
+  --border-strong: #4642a9;
+  --active-border: #5950ff;
+  --hover-border-40: #5950ff;
+
+  /* Scrollbar — darker track + thumb so the bar reads on dark surfaces instead
+     of the light defaults (consumed by the global override in
+     router/skin/index.scss). */
+  --scrollbar-thumb: var(--border-strong);
+  --scrollbar-track: var(--normal-bg-90);
+
+  /* Accent / state */
+  --avatar-bg: #5950ff;
+  --radio-on-bg: rgba(89, 80, 255, 0.2);
+  --radio-on-border: #5950ff;
+  --hover-bg-40: rgba(89, 80, 255, 0.15);
+  --active-item-bg: rgba(89, 80, 255, 0.1);
+  --folder-fill: #884eff;
+  --signout-fg: #d74e49;
+
+  /* Shadows */
+  --shadow-top-tiny: 0px 1px 2px rgba(0, 0, 0, 0.5);
+  --shadow-left-big: -24px 0 48px rgba(0, 0, 0, 0.5);
+  --shadow-right-big: 24px 0 48px rgba(0, 0, 0, 0.5);
+
+  /* Other */
+  --trash-btn-bg: var(--primary-purple-100);
+  --trash-btn-fg: var(--primary-10);
+  --trash-btn-fg-hover: var(--primary-20);
+
+  /* Grid view — readable filenames + brighter cards on dark surface */
+  --grid-color-name: #ffffff;
+  --grid-color-folder-name: #ffffff;
+  --grid-color-meta: #c7c7cc;
+  --grid-card-bg: rgba(255, 255, 255, 0.08);
+  --grid-card-bg-hover: rgba(255, 255, 255, 0.12);
+  --grid-selected-bg: rgba(255, 255, 255, 0.14);
+  --grid-hover-bg: rgba(255, 255, 255, 0.08);
+}

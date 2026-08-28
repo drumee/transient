@@ -1,0 +1,1148 @@
+@use "sass:meta";
+@use "mixins/drumee";
+@include meta.load-css("attachment");
+@include meta.load-css("menu");
+@include meta.load-css("reply-message");
+@include meta.load-css("reactions");
+
+.widget-chatItem {
+  &__ui {
+    width: 100%;
+    @include drumee.typo($size: 14px, $line: 1.4);
+    display: flex;
+    flex-direction: column;
+    margin-top: 32px;
+    min-height: 38px;
+    padding: 0 4px;
+    // Establish a positioning context so the absolutely-positioned __main
+    // overlay measures its right edge from __ui — keeping quote and bubble
+    // anchored to the same right boundary.
+    position: relative;
+
+    &.me {
+      align-items: flex-end;
+    }
+
+    &.other {
+      align-items: flex-start;
+    }
+  }
+
+  &__main {
+    width: 100%;
+
+    &[data-preattachment="1"] {
+      &::before {
+        content: " ";
+        position: relative;
+        min-height: 100px;
+        height: 103px;
+        width: 100%;
+      }
+    }
+
+    &.forward {
+      background-color: var(--dgc-chat-reply-bg);
+    }
+  }
+
+  // No row tint on selection (per request): a selected message is indicated by
+  // its checkbox check only, so picking messages to forward/delete no longer
+  // paints the row background.
+
+  // When chat widget is in selection mode, every message becomes clickable —
+  // not just the small checkbox.
+  .widget-chat__main[data-selected="1"] & {
+    cursor: pointer;
+
+    &__main:hover {
+      background-color: rgba(250, 133, 64, 0.04);
+      border-radius: 6px;
+    }
+  }
+
+  &__message {
+    &-row {
+      width: 100%;
+    }
+
+    &-container {
+      width: fit-content;
+      max-width: 100%;
+      user-select: text;
+      display: flex;
+      flex-direction: row;
+      align-items: stretch;
+      gap: 16px;
+
+      &.me {
+        flex-direction: row-reverse;
+        margin-left: auto;
+        margin-right: 0;
+        // Shrink to bubble width so the right edge matches the reply quote
+        // (which uses the same width:fit-content + margin-left:auto trick).
+        width: max-content;
+        gap: 0;
+      }
+    }
+
+    &-selector-wrapper {
+      margin-right: 10px;
+      margin: 5px;
+      position: absolute;
+      right: -30px;
+      top: 12px;
+
+      &.selector-wrapper {
+        display: none;
+      }
+    }
+
+    &-content {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      // Fill the 70%-capped container; the old 560px absolute cap is dropped so
+      // the bubble can use the full 70% on wide chat frames.
+      max-width: 100%;
+      min-width: 0;
+
+      &.me {
+        align-items: flex-end;
+        // Same trick as the reply quote — shrink to bubble width so the
+        // container right edge sits exactly where the quote's right edge sits.
+        width: max-content;
+      }
+
+      &.other {
+        align-items: flex-start;
+      }
+    }
+
+    // Bubble + action menu share one vertically-centred row (see &-line). The
+    // menu / quick-bar / emoji picker are hover-revealed, floating ABOVE this
+    // line (absolute, translateY(-100%) — skin/menu.scss + reactions.scss), so
+    // overflow stays visible. The reaction chips and the footer (date + seen
+    // tick) now sit IN FLOW below this line (see &__reaction-row / &__footer-line).
+    &-line {
+      position: relative;
+      display: flex;
+      flex-direction: row;
+      align-items: center;
+      width: fit-content;
+      max-width: 100%;
+      // Floating menu / quick-bar / picker protrude ABOVE the bubble.
+      overflow: visible;
+
+      // Reveal the action menu while hovering anywhere on the line (the bubble
+      // and the floating menu are DOM descendants, so :hover covers them).
+      &:hover {
+        .widget-chatItem-menu__dropdown {
+          opacity: 1;
+          pointer-events: auto;
+        }
+      }
+    }
+
+    &-footer {
+      display: flex;
+      flex-direction: row;
+      align-items: center;
+      gap: 4px;
+      // In flow just below the bubble, always visible (no longer hover-gated).
+      // Aligned to the bubble's side via message-content's align-items.
+      white-space: nowrap;
+
+      &.me {
+        // Date then seen tick, hugging the bubble's right edge.
+        flex-direction: row-reverse;
+      }
+
+      & .readed-icon {
+        visibility: hidden;
+
+        &[data-is_seen="1"] {
+          visibility: visible;
+        }
+
+        &.other {
+          display: none;
+        }
+      }
+    }
+
+    &-date {
+      // Muted grey timestamp #84848c, slightly enlarged (was 8px).
+      @include drumee.typo(
+        $size: 11px,
+        $line: 1.4,
+        $weight: 400,
+        $color: var(--normal-fg-50)
+      );
+    }
+  }
+
+  // Footer (date + seen tick) and readers (read-receipt avatars) share one
+  // row in flow just below the bubble. Aligned to the bubble's side via the
+  // message-content's align-items.
+  &__footer-line {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    gap: 8px;
+
+    &.me {
+      // Footer hugs the bubble's right edge; readers sit to its left.
+      flex-direction: row-reverse;
+    }
+  }
+
+  &__forward-tag-wrapper {
+    padding-top: 5px;
+    margin-bottom: -5px;
+  }
+
+  // Read-receipt avatar row, in flow just below the message bubble so it is
+  // always visible (never covered/clipped by the message box or neighbours).
+  // Aligned to the bubble's side via the message-content's align-items.
+  &__readers {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    gap: 2px;
+
+    &.me {
+      justify-content: flex-end;
+    }
+
+    &.other {
+      justify-content: flex-start;
+    }
+
+    &[data-empty="1"] {
+      display: none;
+    }
+  }
+
+  &__reader-avatar {
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    object-fit: cover;
+    border: 1px solid var(--normal-bg, #fff);
+    background-color: var(--normal-bg-90);
+
+    // Overlap successive avatars slightly (stacked look).
+    & + & {
+      margin-left: -6px;
+    }
+  }
+
+  &__reader-more {
+    margin-left: 4px;
+    @include drumee.typo(
+      $size: 10px,
+      $line: 1.4,
+      $weight: 400,
+      $color: var(--normal-fg-50)
+    );
+  }
+
+  &__icon {
+    &-read {
+      color: var(--dgc-icon-color);
+      height: 14px;
+      left: 3px;
+      width: 14px;
+    }
+
+    &.checkbox {
+      border-radius: var(--checkbox-border-radius);
+      border: 1.5px solid var(--default-checkbox-border);
+      color: var(--default-checkbox-bg);
+      cursor: pointer;
+      height: 15px;
+      width: 15px;
+      margin-right: 14px;
+      margin-left: auto;
+
+      &[data-selected="1"] {
+        border: 1px solid var(--default-checkbox-border);
+        color: var(--default-checkbox-checked);
+
+        svg {
+          visibility: visible;
+        }
+      }
+    }
+
+    &.forward-icon {
+      color: var(--dgc-icon-color);
+      height: 20px;
+      width: 17px;
+    }
+  }
+
+  &__note {
+    &.forward {
+      padding-left: 4px;
+      padding-top: 4px;
+      text-transform: capitalize;
+      @include drumee.typo(
+        $size: 12px,
+        $line: 12px,
+        $color: var(--secondary-text-color)
+      );
+    }
+  }
+
+  &__dategroup,
+  &__date-of-day {
+    align-items: center;
+    width: 100%;
+
+    & .note-content {
+      height: 20px;
+      margin: auto;
+      max-width: 200px;
+      width: 82px;
+      @include drumee.typo(
+        $size: 11px,
+        $line: 20px,
+        $color: var(--tertiary-text-color)
+      );
+      display: flex;
+      flex-direction: row;
+      justify-content: center;
+
+      & section {
+        height: 22px;
+        letter-spacing: 0;
+        margin: auto;
+        min-width: 80px;
+        padding: 5px;
+        text-align: center;
+      }
+    }
+  }
+
+  &__dateofday {
+    height: 20px;
+    margin: auto;
+    max-width: 200px;
+    width: 82px;
+    @include drumee.typo(
+      $size: 11px,
+      $line: 12px,
+      $color: var(--tertiary-text-color)
+    );
+  }
+
+  &__profile {
+    box-shadow: none;
+    width: 32px;
+    height: 32px;
+    flex-shrink: 0;
+    align-self: flex-start;
+    // Anchor for the hover username tooltip.
+    position: relative;
+
+    // Styled username tooltip on avatar hover (replaces the native title).
+    // Shows the full resolved name from data-tooltip, on a single line.
+    &[data-tooltip]:not([data-tooltip=""]):hover::after {
+      content: attr(data-tooltip);
+      position: absolute;
+      left: 0;
+      bottom: calc(100% + 6px);
+      z-index: 100000;
+      padding: 4px 8px;
+      border-radius: 6px;
+      white-space: nowrap;
+      pointer-events: none;
+      background: var(--tooltip-bg, rgba(33, 33, 33, 0.95));
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
+      @include drumee.typo(
+        $size: 11px,
+        $line: 1.4,
+        $weight: 400,
+        $color: var(--tooltip-fg, #ffffff)
+      );
+    }
+
+    // For own messages avatar isn't shown — hide it entirely so the bubble
+    // (and any reply quote) can sit flush with the right edge instead of
+    // leaving a 48px (32px avatar + 16px gap) gutter.
+    &.me {
+      display: none;
+    }
+
+    &-image {
+      width: 32px;
+      height: 32px;
+      border-radius: 12px;
+      object-fit: cover;
+    }
+
+    // The support account's mark, in place of the initials it would otherwise
+    // fall back to — see libs/support.supportMarkup.
+    &-mark {
+      width: 32px;
+      height: 32px;
+    }
+
+    &-initiales {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 32px;
+      height: 32px;
+      border-radius: 12px;
+      color: #fff;
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      user-select: none;
+      line-height: 2;
+    }
+
+    &.user-profile {
+      &__ui {
+        overflow: visible;
+        border-radius: 12px;
+        height: 32px;
+        width: 32px;
+      }
+    }
+
+    & .user-profile {
+      &__icon {
+        height: 100%;
+        @include drumee.typo($size: 9px, $line: 10px);
+      }
+    }
+  }
+
+  // Avatar sits next to the sender name (top of the column), not pushed down to
+  // the bubble. `__profile` is already align-self:flex-start, so no top offset.
+  .widget-chatItem__message-container:has(.widget-chatItem__username-container) {
+    .widget-chatItem__profile {
+      margin-top: 0;
+    }
+  }
+
+  &__username {
+    &-container {
+      padding-bottom: 4px;
+    }
+
+    &-content {
+      // Bolder sender name. NOTE: the typo() mixin only maps weight→font-family
+      // and never emits `font-weight`, so set it explicitly here or it stays normal.
+      @include drumee.typo(
+        $size: 11px,
+        $line: 1.4,
+        $weight: 700,
+        $color: var(--normal-fg-10)
+      );
+      font-weight: 800;
+      max-width: min(100%, 560px);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+  }
+
+  &__content {
+    border-bottom: 1px solid var(--default-separator);
+    width: 100%;
+  }
+
+  &__name {
+    margin-bottom: -3px;
+    padding-top: 5px;
+    text-transform: capitalize;
+    white-space: nowrap;
+    width: 121px;
+    @include drumee.typo(
+      $size: 11px,
+      $line: 10px,
+      $weight: 400,
+      $color: var(--default-text-color)
+    );
+
+    & .inner.note-content {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+  }
+
+  &__messages {
+    height: calc(100% - 80px);
+    width: 100%;
+  }
+
+  &__messenger {
+    height: 80px;
+    width: 100%;
+    z-index: 99;
+  }
+
+  &__conversation {
+    user-select: text;
+    align-items: center;
+
+    max-width: 100%;
+    overflow: hidden;
+    padding: 6px 15px 2px 5px;
+
+    &.call-type {
+      flex-direction: row;
+      display: flex;
+    }
+
+    &.me {
+      justify-content: flex-end;
+    }
+
+    &-content {
+      overflow: hidden;
+      word-wrap: break-word;
+      @include drumee.typo(
+        $size: 12px,
+        $line: 14px,
+        $weight: 400,
+        $color: var(--normal-fg-10)
+      );
+
+      & a {
+        color: var(--secondary-text-color);
+
+        &:hover {
+          color: var(--dgc-chat-hover);
+        }
+      }
+    }
+
+    &-icon {
+      background: transparent;
+      color: transparent;
+      height: 20px;
+      margin-right: 4px;
+      width: 20px;
+    }
+
+    &__call_text {
+      padding: 0px 5px;
+      user-select: none;
+    }
+  }
+
+  &__call-duration {
+    margin-left: 10px;
+    @include drumee.typo(
+      $size: 13px,
+      $line: 14px,
+      $weight: 400,
+      $color: var(--default-text-title)
+    );
+  }
+
+  &__media-attachment {
+    overflow: hidden;
+  }
+
+  &__attachment,
+  &__date,
+  &__name {
+    &.me {
+      flex-direction: row-reverse;
+    }
+  }
+
+  &__conversation-content {
+    padding: 16px;
+    width: fit-content;
+    max-width: 100%;
+    @include drumee.typo(
+      $size: 13px,
+      $line: 1.4,
+      $weight: 400,
+      $color: var(--normal-fg-10)
+    );
+
+    &.me {
+      background-color: var(--chat-bubble-me-bg, #433cc5);
+      color: var(--white);
+      align-self: flex-end;
+      border-radius: 16px 16px 0 16px;
+      box-shadow:
+        0 10px 15px -3px rgba(0, 0, 0, 0.1),
+        0 4px 6px -4px rgba(0, 0, 0, 0.1);
+
+      & a {
+        color: #e4e3ff;
+      }
+
+      // Attachment card + nested reply quote sit on the indigo fill, so their
+      // text must be LIGHT too — their own skins default to theme-aware dark
+      // --normal-fg-*, which is unreadable on indigo (the body above is already
+      // white). Folder/team chat re-pin these dark because there the own bubble
+      // is a light area tint, not indigo.
+      .filename,
+      .media-grid__chatmeta,
+      .media-grid__filesize,
+      .media-grid__meta-sep,
+      .widget-chatItem-reply__note.name,
+      .widget-chatItem-reply__note.name .note-content,
+      .widget-chatItem-reply__note.filename,
+      .widget-chatItem-reply__note.filename .note-content {
+        color: var(--white) !important;
+      }
+
+      .media-grid__reveal,
+      .widget-chatItem-reply__note.conversation .note-content,
+      .widget-chatItem-reply__note.fileext,
+      .widget-chatItem-reply__note.fileext .note-content {
+        color: #e4e3ff !important;
+      }
+    }
+
+    &.other {
+      background-color: var(--normal-bg-90);
+      color: var(--normal-fg-10);
+      box-shadow: 0 1px 1px var(--border-muted);
+      border-radius: 16px 16px 16px 0;
+    }
+  }
+}
+
+// Meeting / file-thread system messages: centered row, larger text, no timestamp
+// Dual approach: class-based (.meeting-event / .file-thread-event) + CSS :has() fallback
+.widget-chatItem__ui.meeting-event,
+.widget-chatItem__ui.file-thread-event,
+.widget-chatItem__ui:has(.widget-chatItem__meeting-card),
+.widget-chatItem__ui:has(.widget-chatItem__file-thread-card) {
+  align-items: center !important;
+  margin-top: 16px;
+
+  .widget-chatItem__main {
+    display: flex !important;
+    justify-content: center !important;
+  }
+
+  .widget-chatItem__message-container {
+    display: flex !important;
+    justify-content: center !important;
+    width: 100%;
+  }
+
+  .widget-chatItem__message-content {
+    display: flex !important;
+    flex-direction: column;
+    align-items: center;
+    // Give the column a stable full width so the file-thread card's
+    // percentage widths resolve against the real chat width (otherwise the
+    // column shrinks to content and width:50% collapses → text overlap).
+    width: 100%;
+  }
+
+  .widget-chatItem__message-footer {
+    display: none !important;
+  }
+
+  // No hover action menu on meeting notices.
+  .widget-chatItem-menu__dropdown {
+    display: none !important;
+  }
+
+  // Hide the sender avatar on system cards (meeting / file-thread) regardless of
+  // own-vs-other side. The avatar element is `__profile` (not `__avatar-wrapper`,
+  // which matches nothing) — own messages already hide it via `__profile.me`, but
+  // the recipient's "other" side showed it until this targeted the real class.
+  .widget-chatItem__profile {
+    display: none !important;
+  }
+}
+
+// The bubble "line" wrapper is a flex item inside message-content's centered
+// column, so by default it shrinks to the card's own content width — two cards
+// with different filenames/labels then resolve different widths and look
+// misaligned. Force the line full-width so the card's width:100% (narrow panel)
+// / width:50% (full Chat tab) resolves against the real chat column and every
+// file-thread card renders the same shape. Scoped to file-thread only; meeting
+// notices intentionally stay content-width.
+.widget-chatItem__ui.file-thread-event .widget-chatItem__message-line,
+.widget-chatItem__ui:has(.widget-chatItem__file-thread-card)
+  .widget-chatItem__message-line,
+.widget-chatItem__ui.meeting-event .widget-chatItem__message-line,
+.widget-chatItem__ui:has(.widget-chatItem__meeting-card)
+  .widget-chatItem__message-line {
+  width: 100%;
+  display: flex;
+  justify-content: center;
+}
+
+// "X started a meeting" — self-contained meeting-event card (Figma 2507-137937):
+// video badge + bold title + live dot | subtitle | primary action button.
+.widget-chatItem__meeting-card {
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 100%;
+  max-width: 320px;
+  padding: 12px;
+  border-radius: 12px;
+  background: var(--card-bg, #ffffff);
+  border: 1px solid var(--overlay-light-mode, rgba(0, 0, 0, 0.05));
+  box-shadow: 0 1px 3px rgba(11, 10, 33, 0.06);
+  text-align: left;
+
+  // Ended meetings read as muted/archived.
+  &.end {
+    .widget-chatItem__meeting-card-badge {
+      background: var(--overlay-light-mode, rgba(0, 0, 0, 0.05));
+    }
+    .widget-chatItem__meeting-card-ico {
+      fill: var(--grey-70, #84848c);
+    }
+    .widget-chatItem__meeting-card-live {
+      border-color: var(--grey-70, #84848c);
+    }
+    .widget-chatItem__meeting-card-dot {
+      background: var(--grey-70, #84848c);
+    }
+  }
+}
+
+.widget-chatItem__meeting-card-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.widget-chatItem__meeting-card-badge {
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+  padding: 4px;
+  border-radius: 8px;
+  background: var(--overlay-brand, rgba(89, 80, 255, 0.1));
+}
+
+.widget-chatItem__meeting-card-ico {
+  width: 16px;
+  height: 16px;
+  fill: var(--primary-40, #5950ff);
+}
+
+.widget-chatItem__meeting-card-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  // drumee.typo doesn't emit font-weight — set it explicitly for the SemiBold title.
+  @include drumee.typo($size: 14px, $line: 20px, $color: #0b0a21);
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+// Live-status dot inside a hairline pill.
+.widget-chatItem__meeting-card-live {
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 10px;
+  height: 10px;
+  border: 0.5px solid var(--primary-40, #5950ff);
+  border-radius: 12px;
+}
+
+.widget-chatItem__meeting-card-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--primary-40, #5950ff);
+  flex-shrink: 0;
+}
+
+.widget-chatItem__meeting-card-sub {
+  @include drumee.typo($size: 12px, $line: 17px, $weight: 400, $color: #65656c);
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.widget-chatItem__meeting-card-foot {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+// Primary action button. Live → "Join meeting" (brand); ended → disabled.
+.widget-chatItem__meeting-card-btn {
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 6px 24px;
+  border-radius: 4px;
+  background: var(--primary-40, #5950ff);
+  cursor: pointer;
+  user-select: none;
+  @include drumee.typo($size: 14px, $line: 20px, $weight: 600, $color: #ffffff);
+  transition: background 0.12s ease;
+
+  &:hover {
+    background: var(--primary-50, #433cc5);
+  }
+
+  &.is-disabled {
+    background: var(--grey-20, #f2f2f7);
+    color: var(--grey-70, #84848c);
+    cursor: default;
+
+    &:hover {
+      background: var(--grey-20, #f2f2f7);
+    }
+  }
+
+  // Joining is slow (folder window + camera/mic + conference bind). Without
+  // feedback the button read as dead and users clicked it repeatedly, which is
+  // exactly what the click guard now swallows — so say it out loud instead.
+  &[data-joining="1"] {
+    pointer-events: none;
+    opacity: 0.65;
+    cursor: progress;
+  }
+}
+
+.widget-chatItem__meeting-card-btn-ico {
+  width: 20px;
+  height: 20px;
+  fill: var(--grey-70, #84848c);
+}
+
+// ── Call event card ──────────────────────────────────────────────────────
+// Same shell as the ENDED meeting-event card above (__meeting-card.end): grey
+// badge, bold title, hairline grey status dot, muted subtitle, disabled pill.
+// A logged call is always a past event, so the brand-coloured "live" variant
+// has no equivalent here and the greys are baked in rather than gated on a
+// modifier class.
+//
+// Sits inside __conversation.call-type, which keeps the row in the normal
+// bubble flow (left for `.other`, right for `.me`) — unlike meeting cards,
+// which the `.meeting-event` root class centres.
+.widget-chatItem__call-card {
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 100%;
+  max-width: 320px;
+  padding: 12px;
+  border-radius: 12px;
+  background: var(--card-bg, #ffffff);
+  border: 1px solid var(--border-default);
+  box-shadow: 0 1px 3px rgba(11, 10, 33, 0.06);
+  text-align: left;
+}
+
+.widget-chatItem__call-card-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.widget-chatItem__call-card-badge {
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+  padding: 4px;
+  border-radius: 8px;
+  background: var(--overlay-light-mode, rgba(0, 0, 0, 0.05));
+
+  // Declined call — filled red badge with a white glyph, instead of the muted
+  // default. The glyph only takes this fill because the template feeds the
+  // NORMALIZED `app-call-end` symbol here; the `raw-` build keeps the source
+  // `fill="black"` on the path, which <use>'s shadow tree puts out of CSS reach.
+  &.declined {
+    background: var(--red-300, #ff6785);
+
+    .widget-chatItem__call-card-ico {
+      fill: var(--white, #ffffff);
+    }
+  }
+}
+
+.widget-chatItem__call-card-ico {
+  width: 16px;
+  height: 16px;
+  fill: var(--grey-70, #84848c);
+}
+
+// Title + duration stack as a column beside the badge, so the duration reads as
+// a caption under the outcome rather than sitting inline with it. The head row
+// stays a flex row; this wrapper is the flexible item within it.
+.widget-chatItem__call-card-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.widget-chatItem__call-card-title {
+  min-width: 0;
+  // drumee.typo doesn't emit font-weight — set it explicitly for the SemiBold title.
+  @include drumee.typo($size: 14px, $line: 20px, $color: #0b0a21);
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.widget-chatItem__call-card-live {
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 10px;
+  height: 10px;
+  border: 0.5px solid var(--grey-70, #84848c);
+  border-radius: 12px;
+}
+
+.widget-chatItem__call-card-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--grey-70, #84848c);
+  flex-shrink: 0;
+}
+
+.widget-chatItem__call-card-sub {
+  @include drumee.typo($size: 12px, $line: 17px, $weight: 400, $color: #65656c);
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.widget-chatItem__call-card-foot {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+// Outcome pill — always the disabled/archived treatment; the call is over, so
+// there is nothing to act on (contrast the meeting card's live "Join meeting").
+.widget-chatItem__call-card-btn {
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 6px 24px;
+  border-radius: 4px;
+  background: var(--grey-20, #f2f2f7);
+  cursor: default;
+  user-select: none;
+  @include drumee.typo($size: 14px, $line: 20px, $weight: 600, $color: #84848c);
+}
+
+.widget-chatItem__call-card-btn-ico {
+  width: 20px;
+  height: 20px;
+  fill: var(--grey-70, #84848c);
+}
+
+// "File chat" folder-visible system card (Figma 2216-170414). Clickable (whole
+// card opens the file chat via data-service="open-file-thread"): paperclip
+// badge | row1: filename ........ "Open thread →" / row2: chat-icon N replies • time.
+// .ftc-name is hydrated live from file_thread_info (rename/delete aware).
+.widget-chatItem__file-thread-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  // Always span the full width of the chat column, everywhere it renders — the
+  // narrow embedded team-chat panel (Files tab) AND the full-screen Chat tab.
+  // No max-width cap so the card tracks the chat panel width exactly (per
+  // request); message-content already gives it a 100%-wide centered column.
+  width: 100%;
+  padding: 12px;
+  border-radius: 12px;
+  background: #fff;
+  cursor: pointer;
+  user-select: none;
+}
+
+// Pending / unavailable card: rendered with data-ft_available="0" and only
+// promoted to "1" once file_thread_info authoritatively confirms the thread
+// exists and the file is still readable (chat-item _hydrateFileThreadCard); a
+// revocation flips it back. Cosmetic only — _openFileThread enforces the flag,
+// because pointer-events cannot stop a keyboard-driven or synthetic click.
+.widget-chatItem__file-thread-card[data-ft_available="0"] {
+  cursor: default;
+  opacity: 0.55;
+
+  .widget-chatItem__ftc-open {
+    visibility: hidden;
+  }
+}
+
+.widget-chatItem__ftc-badge {
+  flex: 0 0 36px;
+  width: 36px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  background: rgba(89, 80, 255, 0.1); // --primary-40 @ 10% (Overlay/brand tint)
+}
+
+.widget-chatItem__ftc-badge-ico {
+  width: 20px;
+  height: 20px;
+  fill: var(--primary-40, #5950ff);
+  color: var(--primary-40, #5950ff);
+}
+
+// Image/vector files: the badge shows the file's vignette thumbnail instead of
+// the paperclip icon (set imperatively in _hydrateFileThreadCard).
+.widget-chatItem__ftc-badge--image {
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+
+  .widget-chatItem__ftc-badge-ico {
+    display: none;
+  }
+}
+
+.widget-chatItem__ftc-info {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+// Row 1: filename (grows, ellipsis) + "Open thread →" pinned to the right.
+.widget-chatItem__ftc-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
+.widget-chatItem__ftc-name {
+  flex: 1 1 auto;
+  font-size: 14px;
+  line-height: 1.4;
+  color: var(--grid-color-name, #0b0a21);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.widget-chatItem__ftc-meta {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--grid-color-meta, #65656c);
+}
+
+.widget-chatItem__ftc-meta-ico {
+  flex: 0 0 14px;
+  width: 14px;
+  height: 14px;
+  fill: var(--grid-color-meta, #65656c);
+  color: var(--grid-color-meta, #65656c);
+}
+
+.widget-chatItem__ftc-dot {
+  opacity: 0.7;
+}
+
+// Sits inline on row 1 next to the filename — small, never wraps or shrinks.
+.widget-chatItem__ftc-open {
+  flex: 0 0 auto;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--primary-40, #5950ff);
+  white-space: nowrap;
+}
+
+.widget-chatItem__file-thread-card:hover .widget-chatItem__ftc-open {
+  text-decoration: underline;
+}
+
+.widget-chatItem__ui.ftc-unavailable .widget-chatItem__ftc-name {
+  opacity: 0.55;
+  text-decoration: line-through;
+}
+
+// Dark theme: --grid-color-name (#0b0a21) would be near-invisible on a dark
+// surface, so override the card background + text for readability.
+html[data-theme="dark"] {
+  .widget-chatItem__file-thread-card {
+    background: rgba(255, 255, 255, 0.06);
+  }
+
+  .widget-chatItem__ftc-name {
+    color: #ececf0;
+  }
+
+  .widget-chatItem__ftc-meta,
+  .widget-chatItem__ftc-meta-ico {
+    color: #9a9aa3;
+    fill: #9a9aa3;
+  }
+}
+
+// File mention link in chat messages
+.file-mention {
+  text-decoration: underline;
+  text-decoration-skip-ink: auto;
+  cursor: pointer;
+  font-weight: 400;
+  color: inherit;
+
+  &:hover {
+    opacity: 0.8;
+  }
+}
+
+// User/contact mention in chat messages
+.user-mention {
+  color: #847eff;
+  font-weight: 500;
+  cursor: pointer;
+
+  &:hover {
+    opacity: 0.8;
+    text-decoration: underline;
+  }
+}
+
+// Mention color per bubble context
+.widget-chatItem__conversation-content {
+  &.other .file-mention {
+    color: #d65f59;
+  }
+}

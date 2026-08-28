@@ -1,0 +1,94 @@
+/** ================================================================== *
+#   Copyright Xialia.com  2011-2021
+#   FILE : /src/drumee/builtins/window/addressbook/widget/search/skin/index.scss
+#   TYPE : Component style
+# ===================================================================**/
+@use "mixins/drumee";
+
+.addressbook-widget-search {
+  &__ui {
+    background-color: var(--normal-bg-90);
+    font-family: var(--font-main);
+    padding: var(--spacer-4);
+    z-index: 99;
+    border: 1px solid var(--neutral-300);
+    border-radius: var(--corner-radius-3);
+  }
+
+  &__main {
+    background-color: inherit;
+  }
+
+  &__container {
+    background-color: inherit;
+    width: 100%;
+  }
+
+  &__header {
+    margin-bottom: 7px;
+  }
+
+  &__title {
+    @include drumee.typo(
+      $size: 14px,
+      $line: 14px,
+      $weight: 300,
+      $color: var(--default-text-title)
+    );
+    margin: 5px auto;
+    padding-top: 10px;
+  }
+
+  &__icon {
+    color: var(--default-icon-neutral);
+    cursor: pointer;
+    height: 11px;
+    margin: 10px 10px 0px 0px;
+    position: absolute;
+    right: 0;
+    width: 11px;
+
+    &:hover {
+      color: var(--default-icon-hover);
+    }
+
+    &.close-icon {
+      color: var(--default-thinline-icon);
+      margin: 0px -2px 0 0;
+
+      &:hover {
+        color: var(--default-thinline-icon-hover);
+      }
+    }
+  }
+
+  & .contact-item {
+    &__name {
+      @include drumee.typo(
+        $size: 13px,
+        $line: 16px,
+        $color: var(--normal-fg-10)
+      );
+      letter-spacing: 0;
+    }
+
+    &__icon {
+      margin-top: 0px;
+
+      &.raw-drumee_projectroom {
+        height: 21px;
+        width: 25px;
+        top: 5px;
+      }
+
+      &.editbox_list-circle {
+        height: 29px;
+        width: 29px;
+      }
+
+      svg {
+        fill: var(--default-user-icon);
+      }
+    }
+  }
+}

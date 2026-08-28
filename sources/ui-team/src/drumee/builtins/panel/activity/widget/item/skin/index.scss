@@ -1,0 +1,224 @@
+@use 'mixins/drumee';
+
+.activity-item {
+  &__group {
+    width: 100%;
+  }
+
+  &__row {
+    align-items: center;
+    border-radius: 8px;
+    cursor: pointer;
+    gap: 12px;
+    min-height: 48px;
+    padding: 8px 12px;
+    transition: background-color 0.12s;
+    width: 100%;
+
+    &.share {
+      min-height: 52px;
+      padding-top: 4px;
+    }
+
+    &:hover {
+      background-color: rgba(0, 0, 0, 0.04);
+    }
+  }
+
+  &__avatar-wrap {
+    flex-shrink: 0;
+    height: 32px;
+    position: relative;
+    width: 32px;
+  }
+
+  &__avatar {
+    border-radius: 12px;
+    flex-shrink: 0;
+    height: 32px;
+    overflow: hidden;
+    width: 32px;
+  }
+
+  &__badge {
+    align-items: center;
+    border-radius: 12px;
+    bottom: -4px;
+    display: flex;
+    height: 14px;
+    justify-content: center;
+    position: absolute;
+    right: -4px;
+    width: 14px;
+
+    &::after {
+      background: #fff;
+      content: "";
+      display: block;
+      height: 6px;
+      width: 7px;
+    }
+
+    &.mention {
+      background: #5950ff;
+      border: 2px solid rgba(0, 0, 0, 0.05);
+
+      &::after {
+        background: transparent;
+        border: 1.5px solid #fff;
+        border-radius: 50%;
+        height: 5px;
+        width: 5px;
+      }
+    }
+
+    &.share {
+      background: #d65f59;
+
+      &::after {
+        clip-path: polygon(0 35%, 58% 35%, 58% 0, 100% 50%, 58% 100%, 58% 65%, 0 65%);
+      }
+    }
+  }
+
+  &__text-block {
+    flex: 1;
+    justify-content: center;
+    min-width: 0;
+    overflow: hidden;
+  }
+
+  &__text {
+    @include drumee.typo($size: 12px, $weight: 400, $line: 17px, $color: #0b0a21);
+    max-width: 100%;
+    overflow: hidden;
+
+    .note-content {
+      -webkit-box-orient: vertical;
+      -webkit-line-clamp: 2;
+      display: -webkit-box;
+      max-width: 100%;
+      overflow: hidden;
+      overflow-wrap: anywhere;
+      text-overflow: ellipsis;
+    }
+  }
+
+  &__link {
+    margin: 0 3px;
+
+    &.mention {
+      color: #5950ff;
+    }
+
+    &.restricted {
+      color: #d65f59;
+    }
+
+    &.link-share {
+      color: #ffa8dc;
+    }
+  }
+
+  &__time {
+    @include drumee.typo($color: #65656c, $size: 10px, $weight: 400, $line: 14px);
+    margin-top: 1px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    width: 100%;
+  }
+
+  &__actions {
+    align-items: center;
+    flex-shrink: 0;
+    gap: 8px;
+    justify-content: flex-end;
+  }
+
+  &__join {
+    box-sizing: border-box;
+    align-items: center;
+    background: var(--button-accept, #18ac72);
+    border-radius: 50%;
+    color: #fff;
+    cursor: pointer;
+    display: flex;
+    flex-shrink: 0;
+    height: 28px;
+    width: 28px;
+    padding: 7px;
+    justify-content: center;
+    transition: opacity 0.15s ease;
+
+    svg {
+      height: 100%;
+      width: 100%;
+      fill: currentColor;
+    }
+
+    &:hover {
+      opacity: 0.85;
+    }
+  }
+
+  &__bookmark,
+  &__trash {
+    height: 20px;
+    width: 20px;
+
+    svg {
+      height: 20px;
+      width: 20px;
+    }
+  }
+
+  &__bookmark {
+    color: #d1d1d6;
+    cursor: pointer;
+    transition: color 0.15s ease;
+
+    &:hover {
+      color: #fa8540;
+    }
+
+    &[data-state="1"] {
+      color: #fa8540;
+    }
+  }
+
+  &__trash {
+    color: #d74e49;
+    cursor: pointer;
+    transition: opacity 0.15s ease;
+
+    &:hover {
+      opacity: 0.75;
+    }
+  }
+}
+
+// ── Dark mode overrides ─────────────────────────────────────────
+html[data-theme="dark"] {
+  .activity-item {
+    &__row:hover {
+      background-color: var(--hover-bg-40);
+    }
+
+    &__text {
+      color: var(--normal-fg-10);
+    }
+
+    &__time {
+      color: var(--normal-fg-50);
+    }
+
+    &__bookmark {
+      color: var(--normal-fg-50);
+    }
+
+    &__badge.mention {
+      border-color: var(--border-muted);
+    }
+  }
+}

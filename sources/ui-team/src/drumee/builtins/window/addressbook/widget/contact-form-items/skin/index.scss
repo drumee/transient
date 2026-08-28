@@ -1,0 +1,69 @@
+@use 'mixins/drumee';
+
+.addressbook-widget-contact-formItems {
+  &__ui {
+    background-color: inherit;
+
+    &:hover {
+      * {
+        background-color: var(--default-background-hover);
+        color: var(--default-text-hover);
+
+        svg {
+          border-radius: var(--border-radius-tiny);
+        }
+
+        &.checkbox[data-state="1"] {
+          box-shadow: none;
+          color: var(--checkbox-checked-reverse);
+          border: 1px solid var(--checkbox-checked-border-reverse);
+          border-radius: var(--border-radius-checkbox);
+        }
+      }
+    }
+  }
+
+  &__main {
+    background-color: inherit;
+  }
+
+  &__container {
+    background-color: inherit;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0px 14px;
+  }
+
+  &__note {
+    @include drumee.typo($size: 12px, $line: 24px, $weight: 300, $color: var(--default-text-color));
+    max-width: 105px;
+    width: 100%;
+    @include drumee.overflow-text;
+
+    .inner {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+  }
+
+  &__icon {
+    margin-bottom: 0px;
+    box-shadow: none;
+    border-radius: var(--border-radius-checkbox);
+    cursor: pointer;
+    border: 1px solid var(--default-checkbox-border);
+    color: var(--default-checkbox-background);
+
+    svg {
+      width: 14px;
+      height: 14px;
+    }
+
+    &[data-state="1"] {
+      box-shadow: none;
+      border: 1px solid var(--default-checkbox-border);
+      color: var(--default-checkbox-checked);
+    }
+  }
+}

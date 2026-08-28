@@ -1,0 +1,567 @@
+@use "mixins/drumee";
+
+.chat-p2p {
+  &__ui {
+    width: 880px;
+    height: 100vh;
+    top: 0px;
+    right: 0;
+    // position:fixed + transform parking keeps the closed panel out of
+    // every ancestor's scroll box. position:absolute (containing block:
+    // the 0-width slot inside __body) still leaks into body.scrollWidth
+    // because layout includes positioned descendants, so __main and
+    // __body remain horizontally scrollable via touchpad gesture even
+    // with overflow:hidden — that's the "scroll ngang vẫn thấy inbox"
+    // bug. Fixed positioning is relative to the viewport and never
+    // contributes to any ancestor scrollWidth.
+    position: fixed;
+    transform: translateX(100%);
+    background-color: var(--normal-bg);
+    border-left: 1px solid var(--border-muted);
+    transition: transform 0.5s;
+    box-shadow: var(--shadow-left-big);
+
+    &[data-anim="in"] {
+      transform: translateX(0);
+    }
+
+    &[data-anim="out"] {
+      transform: translateX(100%);
+    }
+  }
+
+  &__main {
+    background-color: inherit;
+    height: 100%;
+    width: 100%;
+  }
+
+  // ── Left sidebar ────────────────────────────────────────────────
+
+  &__sidebar {
+    background-color: var(--normal-bg-90);
+    border-right: 1px solid var(--border-muted);
+    flex-shrink: 0;
+    height: 100%;
+    overflow: hidden;
+    width: 320px;
+  }
+
+  &__sidebar-header {
+    align-items: center;
+    flex-shrink: 0;
+    justify-content: space-between;
+    padding: 24px;
+  }
+
+  &__inbox-title {
+    @include drumee.typo(
+      $size: 24px,
+      $weight: 600,
+      $color: var(--normal-fg-10)
+    );
+    line-height: 1.1;
+  }
+
+  &__sidebar-actions {
+    align-items: center;
+    flex-shrink: 0;
+    gap: 16px;
+  }
+
+  &__close-btn {
+    // Sidebar close button is mobile/tablet only — the media query below
+    // reveals it. On desktop the close button stays in the chat header.
+    display: none;
+    color: var(--normal-fg-50);
+    cursor: pointer;
+    align-items: center;
+    justify-content: center;
+    height: 21px;
+    width: 20px;
+    align-self: center;
+
+    svg {
+      width: 20px;
+      height: 20px;
+      display: block;
+    }
+
+    &:hover {
+      color: var(--normal-fg-20);
+    }
+  }
+
+  &__compose-wrapper {
+    position: relative;
+    align-items: center;
+  }
+
+  &__compose-btn {
+    color: var(--active-border);
+    height: 21px;
+    width: 20px;
+    cursor: pointer;
+    align-self: center;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+
+    svg {
+      width: 20px;
+      height: 21px;
+      display: block;
+    }
+
+    &:hover {
+      opacity: 0.8;
+    }
+  }
+
+  &__compose-popup {
+    // position:fixed escapes the sidebar's overflow:hidden box.
+    // top/right are set inline by _toggleComposePopup based on the
+    // compose-btn's viewport rect (the 0/0 here are placeholders).
+    position: fixed;
+    top: 0;
+    right: 0;
+    width: 320px;
+    max-height: 360px;
+    background-color: var(--normal-bg);
+    border: 1px solid var(--border-muted);
+    border-radius: 8px;
+    box-shadow: 0 12px 24px rgba(0, 0, 0, 0.16);
+    padding: 8px;
+    gap: 8px;
+    z-index: 99999;
+    visibility: hidden;
+    opacity: 0;
+    pointer-events: none;
+    transform: translateY(-4px);
+    transition:
+      opacity 0.15s,
+      transform 0.15s;
+
+    &[data-state="1"] {
+      visibility: visible;
+      opacity: 1;
+      pointer-events: auto;
+      transform: translateY(0);
+    }
+  }
+
+  &__compose-search {
+    flex-shrink: 0;
+    width: 100%;
+
+    input {
+      width: 100%;
+      padding: 8px 12px;
+      border: 1px solid var(--border-muted);
+      border-radius: 6px;
+      background-color: var(--normal-bg-90);
+      @include drumee.typo($size: 13px, $color: var(--normal-fg-10));
+      outline: none;
+
+      &:focus {
+        border-color: var(--active-border);
+      }
+    }
+  }
+
+  &__compose-list {
+    flex: 1;
+    min-height: 0;
+    max-height: 280px;
+    overflow: hidden;
+
+    .smart-container {
+      height: 100%;
+    }
+
+    .no-contact {
+      align-items: center;
+      justify-content: center;
+      padding: 16px;
+      @include drumee.typo($size: 13px, $color: var(--normal-fg-50));
+    }
+  }
+
+  // ── Filter tabs ─────────────────────────────────────────────────
+
+  &__filters {
+    align-items: center;
+    flex-shrink: 0;
+    gap: 8px;
+    padding: 0 24px 24px;
+  }
+
+  &__filter-btn {
+    border-radius: 12px;
+    cursor: pointer;
+    padding: 5px 13px;
+    background-color: var(--overlay-bg-05);
+    @include drumee.typo(
+      $size: 10px,
+      $weight: 600,
+      $color: var(--normal-fg-50)
+    );
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+    font-family: var(--font-mono, var(--font-medium));
+
+    &[data-radio="on"],
+    &[data-state="1"] {
+      background-color: rgba(89, 80, 255, 0.1);
+      border: 1px solid rgba(89, 80, 255, 0.1);
+      @include drumee.typo(
+        $size: 10px,
+        $weight: 600,
+        $color: var(--active-border)
+      );
+      text-transform: uppercase;
+      letter-spacing: 0.4px;
+      font-family: var(--font-mono, var(--font-medium));
+    }
+
+    svg {
+      display: none;
+    }
+  }
+
+  // ── Contact list ─────────────────────────────────────────────────
+
+  &__contact-list {
+    flex: 1;
+    min-height: 0;
+    overflow: hidden;
+    padding: 0 12px;
+
+    .smart-container {
+      height: 100%;
+    }
+
+    .no-contact {
+      align-items: center;
+      height: 100%;
+      justify-content: center;
+      @include drumee.typo($size: 13px, $color: var(--normal-fg-50));
+    }
+  }
+
+  &__all-read-empty {
+    display: none !important;
+    align-items: center;
+    justify-content: center;
+    flex: 1;
+    min-height: 0;
+    padding: 24px;
+    text-align: center;
+    @include drumee.typo($size: 13px, $color: var(--normal-fg-50));
+
+    &[data-state="1"] {
+      display: flex !important;
+    }
+  }
+
+  // When all-read is showing, hide the empty contact-list to avoid double space
+  &__sidebar:has(&__all-read-empty[data-state="1"]) &__contact-list {
+    flex: 0 0 auto;
+  }
+
+  // ── Right chat area ──────────────────────────────────────────────
+
+  &__chat-area {
+    background-color: var(--normal-bg);
+    border-left: 1px solid var(--border-muted);
+    flex: 1;
+    height: 100%;
+    min-width: 0;
+    overflow: hidden;
+  }
+
+  // ── Chat header ──────────────────────────────────────────────────
+
+  &__chat-header {
+    align-items: center;
+    backdrop-filter: blur(6px);
+    background-color: var(--overlay-bg-05);
+    border-bottom: 1px solid var(--border-muted);
+    flex-shrink: 0;
+    justify-content: space-between;
+    height: 80px;
+    padding: 0 32px;
+  }
+
+  &__header {
+    align-items: center;
+    justify-content: space-between;
+    width: 100%;
+  }
+
+  &__header-info {
+    align-items: center;
+    gap: 16px;
+
+    .user-profile__ui[data-online="1"]:before,
+    .user-profile__ui[data-online="2"]:before {
+      background-color: var(--primary-30);
+      border-radius: 50%;
+      box-shadow: 0 0 0 1px var(--normal-bg);
+      content: " ";
+      height: 8px;
+      right: 0;
+      position: absolute;
+      bottom: 0;
+      width: 8px;
+      z-index: 9;
+      left: auto;
+      top: auto;
+    }
+  }
+
+  &__header-profile {
+    &.user-profile__ui {
+      border-radius: 8px;
+      height: 40px;
+      min-width: 40px;
+      width: 40px;
+      border: 1px solid var(--border-default);
+      & .user-profile__main {
+        border-radius: 8px;
+      }
+    }
+
+    &.icon {
+      width: 40px;
+      height: 40px;
+      min-width: 40px;
+
+      svg {
+        width: 100%;
+        height: 100%;
+      }
+    }
+  }
+
+  &__header-text {
+    justify-content: center;
+    gap: 2px;
+  }
+
+  &__header-name {
+    @include drumee.typo(
+      $size: 18px,
+      $weight: 700,
+      $color: var(--normal-fg-10)
+    );
+    line-height: 22.5px;
+  }
+
+  // Support's avatar: the Drumee mark instead of the auto-coloured initials an
+  // ordinary contact gets. Sized to the 40px UserProfile tile it replaces, so
+  // the header does not reflow when the conversation changes. No background —
+  // the asset carries its own.
+  &__header-support-avatar {
+    align-items: center;
+    flex-shrink: 0;
+    height: 40px;
+    justify-content: center;
+    width: 40px;
+  }
+
+  &__header-support-avatar-ico {
+    height: 32px;
+    width: 32px;
+  }
+
+  &__header-name-row {
+    align-items: center;
+    gap: 8px;
+  }
+
+  &__header-status {
+    @include drumee.typo(
+      $size: 10px,
+      $weight: 600,
+      $color: var(--active-border)
+    );
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+    font-family: var(--font-mono, var(--font-medium));
+  }
+
+  // Talking TO support: an expectation line replaces the presence dot, so it
+  // is running copy rather than a status token — no uppercase, no tracking.
+  // Its own class, not a modifier of __header-status: _onPeerData rewrites
+  // anything matching that class when a presence broadcast arrives.
+  // Green, like a presence line, because it stands in for one: this is the
+  // slot the peer's online status occupies for every other conversation.
+  &__header-support-note {
+    @include drumee.typo($size: 12px, $color: var(--success));
+  }
+
+  // Marks a support conversation in the chat header. The inbox row carries
+  // the same pill (chatcontact-item skin) so both views read alike.
+  &__support-pill {
+    @include drumee.typo($size: 9px, $color: var(--active-border));
+    font-weight: 700;
+    align-self: center;
+    background-color: var(--primary-30);
+    border-radius: 3px;
+    flex-shrink: 0;
+    letter-spacing: 0.6px;
+    line-height: 14px;
+    padding: 0 5px;
+    text-transform: uppercase;
+    white-space: nowrap;
+  }
+
+  &__header-actions {
+    align-items: center;
+    gap: 16px;
+  }
+
+  &__header--empty {
+    justify-content: flex-end;
+  }
+
+  &__header-btn {
+    color: var(--normal-fg-50);
+    cursor: pointer;
+    padding: 4px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+
+    svg {
+      width: 20px;
+      height: 20px;
+      display: block;
+    }
+
+    &:hover {
+      color: var(--normal-fg-20);
+    }
+  }
+
+  // Back button is mobile/tablet only — the media query below reveals it.
+  &__back-btn {
+    display: none;
+  }
+
+  // ── Chat panel ───────────────────────────────────────────────────
+
+  &__chat-panel {
+    flex: 1;
+    min-height: 0;
+    overflow: hidden;
+
+    & > .widget-chat__ui {
+      height: 100%;
+      width: 100%;
+    }
+
+    // Inbox DM has no browsable folder context for its shared files, so drop the
+    // "Show in folder" reveal (and its leading "·" separator) from attachment
+    // cards — leave just the file size on the meta line. Folder team-chat and
+    // bigchat keep the reveal (the file lives in a folder there).
+    .media-grid__reveal,
+    .media-grid__meta-sep {
+      display: none;
+    }
+  }
+
+  &__overlay-wrapper[data-mode="open"] {
+    height: 100%;
+    position: absolute;
+    width: 100%;
+    z-index: 60000;
+
+    & .overlay {
+      background: var(--transparency-container-overlay);
+      height: 100%;
+      position: absolute;
+      width: 100%;
+      z-index: 110;
+    }
+
+    & .chat-overlay {
+      align-items: center;
+      height: 100%;
+      justify-content: center;
+      margin: auto;
+      position: absolute;
+      width: 100%;
+    }
+  }
+
+  // ── Responsive: single pane on tablet & mobile (≤ 1024px) ──────────
+  // The panel fills the viewport and shows ONE pane at a time. `mview`
+  // on the __ui root toggles which: "sidebar" (inbox) or "chat"
+  // (conversation). The back button in the chat header returns to the
+  // inbox. Above 1024px the attribute is inert and both panes show
+  // side-by-side as before.
+  @media (max-width: 1024px) {
+    // Fill the desk's right panel-container (sized to __right-side) rather
+    // than the full viewport — keeps the panel off the 231px desktop
+    // sidebar at tablet widths. Stays position-based so the translateX
+    // slide animation still parks it off the container's right edge.
+    &__ui {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      max-width: 100%;
+    }
+
+    &__sidebar {
+      border-right: none;
+      width: 100%;
+    }
+
+    &__chat-area {
+      border-left: none;
+      width: 100%;
+    }
+
+    &__back-btn {
+      display: flex;
+    }
+
+    // Move the close button into the sidebar: reveal the sidebar one,
+    // hide the chat-header one.
+    &__close-btn {
+      display: flex;
+    }
+
+    &__chat-close-btn {
+      display: none;
+    }
+
+    // Compose popup adapts to small screens: widen toward the available
+    // width but never overflow the viewport, and cap height to the viewport
+    // so it stays on-screen on short landscape phones. Anchor stays
+    // JS-driven (right edge of the sidebar, top under the compose button).
+    &__compose-popup {
+      width: min(360px, calc(100vw - 16px));
+      max-width: calc(100vw - 16px);
+      max-height: min(70vh, 480px);
+    }
+
+    // Let the contact list use the available height instead of the fixed
+    // 280px desktop cap, so more contacts show on tall mobile screens.
+    &__compose-list {
+      max-height: min(56vh, 360px);
+    }
+
+    &__ui[data-mview="sidebar"] &__chat-area {
+      display: none;
+    }
+
+    &__ui[data-mview="chat"] &__sidebar {
+      display: none;
+    }
+  }
+}

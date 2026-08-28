@@ -1,0 +1,168 @@
+@use 'mixins/drumee';
+
+.widget-member-rolesMenu {
+  &__ui {
+    background-color: inherit;
+    top: 6px;
+  }
+
+  &__main {
+    background-color: inherit;
+  }
+
+  &__container {
+    background-color: inherit;
+  }
+
+  &__wrapper {
+    &[data-state="1"] {
+      & .trigger-icon {
+        color: var(--default-icon-active);
+      }
+    }
+
+    & .menu-topic-items {
+      background-color: var(--default-background);
+      border-radius: var(--border-radius);
+      max-height: 250px;
+      max-width: 160px;
+      min-width: 160px;
+      width: 100% !important;
+      box-shadow: 0px 12px 24px 0px var(--neutral-300);
+
+      &__wrapper {
+        left: -15px;
+        padding: 10px;
+        top: 17px;
+
+      }
+
+      // &:before {
+      //   background-color: var(--default-background);
+      //   box-shadow: var(--shadow-before);
+      //   content: "";
+      //   height: 10px;
+      //   left: 18px;
+      //   position: absolute;
+      //   top: -5px;
+      //   transform: rotate(45deg);
+      //   width: 10px;
+      // }
+
+      // &:after {
+      //   background: var(--default-background);
+      //   border-radius: var(--default-border-radius-top);
+      //   content: "";
+      //   height: 10px;
+      //   left: 0;
+      //   position: absolute;
+      //   top: 0;
+      //   width: 100%;
+      // }
+    }
+  }
+
+
+  &__icon {
+    color: var(--default-icon-neutral);
+    cursor: pointer;
+
+    &.trigger-icon {
+      height: 17px;
+      margin: 2px 0px 0px 10px;
+      width: 22px;
+    }
+
+    &:hover {
+      color: var(--default-icon-hover);
+    }
+  }
+
+  &__item {
+    cursor: pointer;
+    margin-bottom: 1px;
+    padding: 8px 8px 8px 10px;
+
+    &:hover {
+      background-color: var(--default-background-hover);
+      color: var(--default-text-hover);
+
+      & .widget-member-rolesMenu__note {
+        color: var(--default-text-reverse);
+      }
+
+      & svg {
+        fill: var(--default-icon-reverse);
+      }
+    }
+  }
+
+  &-item {
+    &__list {
+      max-height: 170px;
+      min-width: 160px;
+
+      & .drumee-loading-wrapper {
+        left: 50%;
+        top: 50%;
+      }
+    }
+
+    &__wrapper {
+      justify-content: space-evenly;
+
+      &.button {
+        align-items: center;
+        background-color: var(--primary-400);
+        border-radius: var(--corner-radius-max);
+        cursor: pointer;
+        display: flex;
+        height: 28px;
+        width: 68px;
+        font-size: 14px;
+        line-height: 20px;
+        color: var(--btn-commit-text);
+        justify-self: center;
+        margin: 5px auto;
+        transition: background-color 1s;
+
+        &:hover {
+          background-color: var(--primary-500);
+        }
+      }
+    }
+
+    &__list-wrapper {
+      height: 100%;
+      width: 100%;
+      background-color: var(--white);
+      border-radius: var(--corner-radius-3);
+      background-color: var(--default-background);
+    }
+
+    &__list.roles {
+      justify-content: center;
+      max-height: 170px;
+      min-height: 60px;
+    }
+
+    &__note {
+      font-size: 14px;
+      line-height: 18px;
+      font-weight: 300;
+
+      &.title {
+        justify-content: center;
+        line-height: 36px;
+        font-weight: 500;
+      }
+
+      &.name {
+        justify-content: center;
+        padding-bottom: 15px;
+        padding-left: 4px;
+        width: 100%;
+      }
+    }
+  }
+}

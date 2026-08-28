@@ -1,0 +1,26 @@
+@use 'mixins/drumee.scss';
+
+.window-filter{
+  &__header{
+    border-bottom: none;
+    background-color: var(--filter-background-header);
+    &-control{
+      .icon{
+        color: var(--default-icon-reverse);
+      }
+    }
+  }
+  &__title{
+    margin: auto;
+    justify-content: center;
+    color: var(--default-text-reverse);
+    &.text{
+      align-items: center;
+      @include drumee.typo($size:18px,$line:24px,$weight:400,$color: var(--default-text-reverse));
+      .icon{
+        position: relative;
+        right: 0px;
+      }
+    }
+  }
+}

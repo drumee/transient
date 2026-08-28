@@ -1,0 +1,183 @@
+/** ================================================================== *
+#   Copyright Xialia.com  2011-2020
+#   FILE : /src/drumee/builtins/window/addressbook/widget/invite-notification/skin/index.scss
+#   TYPE : Component style
+# ===================================================================**/
+@use 'mixins/drumee';
+
+.addressbook-widget-invite-notification {
+  &__ui {
+    border-radius: var(--border-radius);
+    align-items: center;
+    background-color: inherit;
+    background: var(--default-background);
+    justify-content: center;
+    margin: auto;
+    min-height: 350px;
+    width: 600px;
+  }
+
+  &__main,
+  &__container {
+    border-radius: var(--border-radius);
+    background-color: inherit;
+    height: 100%;
+    width: 100%;
+  }
+
+  &__header {
+    height: 40px;
+    padding: 16px 16px 8px 16px;
+  }
+
+  &__content {
+    height: 100%;
+    justify-content: center;
+    max-height: 230px;
+    min-height: 180px;
+    width: 100%;
+  }
+
+  &__buttons-wrapper {
+    height: 50px;
+    justify-content: center;
+    top: 20px;
+    width: 100%;
+  }
+
+  &__icon {
+    cursor: pointer;
+
+    &.navigate {
+      color: var(--egrey-89);
+      height: 10px;
+      width: 10px;
+    }
+
+    &.close {
+      color: var(--default-thinline-icon);
+      height: 12px;
+      position: absolute;
+      right: 16px;
+      width: 12px;
+    }
+
+    &:hover {
+      color: var(--default-thinline-icon-hover);
+    }
+  }
+
+  &__note {
+    &.invite-count {
+      padding: 0px 8px 0px 8px;
+      top: -5px;
+
+      & .note-content {
+        background: #556E7F; //var(--egreen);
+        border-radius: 50%;
+        height: 20px;
+        text-align: center;
+        width: 20px;
+        @include drumee.typo($size: 12px, $weight: 300, $line: 20px, $color: var(--default-text-reverse));
+      }
+    }
+
+    &.fullname {
+      @include drumee.typo($size: 24px, $weight: 300, $line: 28px, $color: var(--eorange));
+      margin: auto;
+      overflow: hidden;
+      padding: 0 25px;
+      text-transform: capitalize;
+      width: fit-content;
+
+      & .inner.note-content {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+    }
+
+    &.static-text {
+      margin: auto;
+      @include drumee.typo($size: 18px, $weight: 300, $line: 26px, $color: var(--default-text-color));
+
+      .inner {
+        @include drumee.typo($size: 18px, $weight: 300, $line: 26px, $color: var(--default-text-color));
+      }
+    }
+
+    &.title {
+      text-transform: capitalize;
+      padding-bottom: 15px;
+      @include drumee.typo($size: 14px, $line: 14px, $color: var(--default-text-title));
+    }
+
+    &.content {
+      overflow-y: auto;
+      padding-bottom: 5px;
+      @include drumee.typo($size: 14px, $line: 20px, $color: var(--default-text-color));
+    }
+  }
+
+  &__name {
+    padding-bottom: 13px;
+  }
+
+  &__static-text {
+    padding: 13px 0 40px 0;
+  }
+
+  &__message {
+    background-color: var(--default-block-background);
+    border-radius: var(--border-radius);
+    margin: auto;
+    max-height: 105px;
+    max-width: 320px;
+    min-height: 80px;
+    min-width: 300px;
+    padding: 10px 8px;
+  }
+
+  &__button-cancel,
+  &__button-confirm {
+    align-items: center;
+    height: 35px;
+    justify-content: center;
+    min-width: 125px;
+    font-size: 15px;
+    padding: 7px;
+    border-radius: var(--corner-radius-max);
+  }
+
+  &__button-cancel {
+    border: 1px solid var(--neutral-200);
+    color: var(--neutral-600);
+    margin-right: 50px;
+
+    &:hover {
+      background-color: var(--neutral-300);
+    }
+  }
+
+  &__button-confirm {
+    background-color: var(--primary-500);
+    color: var(--white);
+    border: 1px solid var(--corner-radius-max);
+
+    &:hover {
+      background-color: var(--primary-600);
+    }
+
+    // &.informed {
+    //   align-items: center;
+    //   height: 28px;
+    //   margin-left: 0px;
+    //   width: 68px;
+
+    //   &:hover {
+    //     border: 2px solid var(--btn-rollback-border-hover);
+    //     color: var(--btn-rollback-text-hover);
+    //   }
+    // }
+  }
+}

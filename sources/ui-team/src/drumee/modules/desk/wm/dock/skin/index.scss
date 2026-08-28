@@ -1,0 +1,768 @@
+@use "sass:meta";
+@use "mixins/drumee";
+@include meta.load-css("forbiden");
+
+/* Theme 2 */
+// .theme-blue .grad-start { stop-color: #36D1DC; }
+// .theme-blue .grad-end { stop-color: #5B86E5; }
+
+// /* Theme 3 */
+// .theme-red .grad-start { stop-color: #FF512F; }
+// .theme-red .grad-end { stop-color: #DD2476; }
+
+.desk-dock {
+  &__ui {
+    bottom: var(--spacer-5);
+    display: flex;
+    flex-direction: row;
+    justify-content: center;
+    position: fixed;
+    width: 400px;
+    left: 50%;
+    transform: translateX(-50%);
+
+    // Hide the entire bottom dock on mobile — the mobile UI has its own
+    // navigation surfaces (topbar + sidebar), the dock duplicates them
+    // and the mobile-launcher variant was dead code revived in 232258b7.
+    // Both triggers needed: `data-device="mobile"` fires on real iOS/
+    // Android, but Chrome DevTools mobile emulator (viewport ~430px,
+    // desktop UA) returns `desktop` from Visitor.device() — the media
+    // query catches that case so the dock stays hidden during testing.
+    &[data-device="mobile"] {
+      display: none !important;
+    }
+
+    @media (max-width: 650px) {
+      & {
+        display: none !important;
+      }
+    }
+  }
+
+  &__container {
+    &.searchbox {
+      overflow: hidden;
+      width: 120px;
+      transition: width 1s;
+
+      &[data-state="0"] {
+        width: 0;
+      }
+    }
+  }
+
+  &__searchbox-input {
+    width: 100%;
+    overflow: hidden;
+    padding: var(--spacer-4);
+    height: 44px;
+
+    input {
+      padding: 0 var(--spacer-4);
+      border-radius: var(--corner-radius-1);
+    }
+  }
+
+  // Vertical divider - reusable class
+  &--divider {
+    &-left::before,
+    &-right::after {
+      background-color: var(--dock-divider-color);
+      content: " ";
+      height: 70%;
+      width: 1px;
+      position: absolute;
+      top: 50%;
+      transform: translateY(-50%);
+    }
+
+    &-left::before {
+      left: 0px;
+    }
+
+    &-right::after {
+      right: 0px;
+    }
+  }
+
+  &__icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+
+    svg {
+      display: block;
+      margin: 0 auto;
+      align-self: center;
+    }
+
+    &.addressbook,
+    &.bigchat {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+  }
+
+  &__main {
+    // Dock bar hidden across all breakpoints.
+    display: none !important;
+    background-color: var(--dock-main-background);
+    border-radius: 9999px;
+    align-items: center;
+    justify-content: center;
+    max-width: 100vw;
+    padding: var(--spacer-2);
+
+    &::before {
+      border-radius: 9999px;
+      content: "";
+      height: 100%;
+      position: absolute;
+      top: 0px;
+      width: 100%;
+    }
+  }
+
+  &__action {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  &__helper {
+    &-container {
+      position: absolute;
+      cursor: pointer;
+      top: -55px;
+      background-color: var(--dock-main-background);
+      border-radius: 8px;
+      height: 30px;
+      align-items: center;
+      padding: 0 10px;
+      transition: background-color 0.2s ease;
+
+      &[data-state="open"] {
+        z-index: 50 !important;
+        background-color: var(--dock-main-background) !important;
+
+        &::before {
+          background: var(--dock-main-background) !important;
+        }
+
+        .desk-dock__helper-text {
+          color: var(--dock-text-color) !important;
+        }
+      }
+
+      &::before {
+        background: var(--dock-main-background);
+        bottom: -4px;
+        content: " ";
+        height: 10px;
+        left: calc(50% - 7px);
+        position: absolute;
+        transform: rotate(45deg);
+        width: 12px;
+        z-index: 1;
+        transition: background 0.2s ease;
+        border-radius: 0 0 3px 0;
+      }
+
+      &::after {
+        // To prevent close on mouse out
+        background: transparent;
+        top: 100%;
+        content: " ";
+        height: 18px;
+        width: 100%;
+        z-index: 100;
+        position: absolute;
+        left: 0;
+      }
+    }
+
+    &-icon {
+      height: 30px;
+      width: 30px;
+      padding: 4px;
+
+      svg.helper {
+        width: 100%;
+        height: 100%;
+        color: var(--dock-helper-icon-color);
+        fill: var(--dock-helper-icon-color);
+        stroke: var(--dock-helper-icon-color);
+      }
+    }
+
+    &-text {
+      white-space: nowrap;
+      @include drumee.typo(
+        $line: 15px,
+        $size: 12px,
+        $color: var(--dock-text-color)
+      );
+      transition: color 0.2s ease;
+    }
+  }
+
+  &__container.application {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+
+    &::after {
+      background-color: var(--default-bg); //var(--ewhite);
+      content: " ";
+      height: 90%;
+      width: 1px;
+    }
+
+    &.launcher {
+      position: relative;
+
+      &[data-device="desktop"] {
+        &::after {
+          display: none;
+        }
+      }
+    }
+
+    &.launcher {
+      z-index: 100;
+    }
+
+    .menu-topic-items__wrapper {
+      border-radius: var(--corner-radius-4);
+      border-width: 1px;
+      padding: var(--spacer-5);
+      gap: var(--spacer-1);
+      background-color: var(--white);
+      z-index: -1 !important;
+      box-shadow: var(--shadow-main);
+      bottom: 0;
+
+      &[data-device="mobile"] {
+        transform: translate(-50px, -60px) !important;
+      }
+    }
+  }
+
+  &__container.nav-container,
+  &__container.trash-container,
+  &__container.application.launcher {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+  }
+
+  &__button {
+    align-items: center;
+    cursor: pointer;
+    display: flex;
+    flex-direction: row;
+    height: 70px;
+    justify-content: center;
+    width: 70px;
+    position: relative;
+
+    &[data-device="mobile"] {
+      width: 40px;
+      height: 40px;
+
+      svg {
+        height: 16px;
+        width: 16px;
+      }
+    }
+
+    svg {
+      color: var(--default-icon-reverse);
+      height: 20px;
+      width: 20px;
+      display: block;
+      margin: 0 auto;
+      transition:
+        transform 0.2s ease,
+        color 0.2s ease;
+      border-radius: 0;
+      position: relative;
+    }
+
+    &.launcher {
+      svg.addressbook {
+        padding: 0;
+        margin-left: 0;
+        margin-right: 0;
+      }
+
+      svg.bigchat {
+        transform: rotateY(180deg);
+      }
+    }
+
+    .label {
+      overflow: hidden;
+      text-align: center;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      width: 100%;
+      @include drumee.typo(
+        $line: 15px,
+        $size: 12px,
+        $color: var(--default-text-reverse)
+      );
+    }
+
+    &:hover {
+      &[data-device="mobile"] {
+        &::before {
+          content: "";
+          position: absolute;
+          top: 50%;
+          left: 50%;
+          transform: translate(-50%, -50%);
+          width: 30px;
+          height: 30px;
+          background-color: var(--default-bg);
+          border-radius: 50%;
+          z-index: 0;
+        }
+      }
+
+      &::before {
+        content: "";
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        width: 50px;
+        height: 50px;
+        background-color: var(--default-bg);
+        border-radius: 50%;
+        z-index: 0;
+      }
+
+      svg {
+        transform: scale(1.2);
+        color: var(--dock-icon-hover-color);
+        z-index: 1;
+        position: relative;
+      }
+
+      svg.bigchat {
+        transform: scale(1.2) rotateY(180deg) !important;
+      }
+
+      &.bigchat svg.bigchat {
+        transform: scale(1.2) rotateY(180deg) !important;
+      }
+
+      .desk-dock__tooltips {
+        color: var(--dock-text-color) !important;
+        background-color: var(--dock-main-background) !important;
+        border-radius: var(--corner-radius-3) !important;
+
+        &::before {
+          background: var(--dock-main-background) !important;
+        }
+      }
+
+      .desk-dock__tooltips::before {
+        border-radius: 0 0 3px 0;
+      }
+
+      .desk-dock__helper-container {
+        background-color: var(--dock-main-background) !important;
+        border-radius: 8px !important;
+
+        &::before {
+          background: var(--dock-main-background) !important;
+        }
+
+        .desk-dock__helper-text {
+          color: var(--dock-text-color) !important;
+        }
+      }
+    }
+
+    &.maker {
+      &.note {
+        svg {
+          padding: 0;
+        }
+      }
+
+      &.website {
+        svg {
+          color: var(--website-main);
+        }
+      }
+    }
+
+    &.launcher {
+      &.contact {
+        svg {
+          margin-left: 0;
+          padding: 0;
+        }
+      }
+
+      &.bigchat {
+        svg.bigchat {
+          margin-right: 0;
+          transform: rotateY(180deg);
+        }
+      }
+
+      &.schedule {
+        svg {
+          margin-left: 0;
+        }
+      }
+
+      &.conference {
+        svg {
+          margin-right: 0;
+        }
+      }
+    }
+
+    & .launcher-icon {
+      &[data-is-active="on"] {
+        svg {
+          color: var(--eviolet) !important;
+        }
+      }
+    }
+
+    &.trash {
+      &[data-over="yes"] {
+        border: 2px solid var(--eviolet);
+        border-radius: var(--border-radius);
+
+        svg {
+          color: var(--eviolet);
+        }
+
+        &:after {
+          border-radius: var(--border-radius);
+          content: " ";
+          height: 100%;
+          left: 0;
+          position: absolute;
+          top: 0;
+          width: 100%;
+        }
+      }
+
+      svg {
+        padding: 0;
+      }
+
+      &:hover {
+        &[data-device="mobile"] {
+          &::before {
+            content: "";
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 30px;
+            height: 30px;
+            background-color: var(--default-bg);
+            border-radius: 50%;
+            z-index: 0;
+          }
+        }
+
+        &::before {
+          content: "";
+          position: absolute;
+          top: 50%;
+          left: 50%;
+          transform: translate(-50%, -50%);
+          width: 50px;
+          height: 50px;
+          background-color: var(--default-bg);
+          border-radius: 50%;
+          z-index: 0;
+        }
+
+        svg {
+          transform: scale(1.2);
+          color: var(--dock-icon-hover-color);
+          z-index: 1;
+          position: relative;
+        }
+      }
+    }
+
+    &.hub {
+      width: 65px;
+    }
+  }
+
+  &__tooltips {
+    background-color: var(--dock-main-background);
+    border-radius: var(--corner-radius-3);
+    opacity: 1;
+    padding: var(--spacer-3);
+    position: absolute;
+    top: -55px;
+    white-space: nowrap;
+    z-index: 10;
+    user-select: none;
+    transition:
+      background-color 0.2s ease,
+      color 0.2s ease;
+    @include drumee.typo(
+      $size: 11px,
+      $line: 14px,
+      $weight: 400,
+      $color: var(--dock-text-color)
+    );
+
+    &::before {
+      background: var(--dock-main-background);
+      bottom: -4px;
+      content: " ";
+      height: 10px;
+      left: calc(50% - 7px);
+      position: absolute;
+      transform: rotate(45deg);
+      width: 12px;
+      z-index: 1;
+      transition: background 0.2s ease;
+      border-radius: 0 0 3px 0;
+    }
+  }
+
+  &__folder-items {
+    background-color: var(--normal-bg);
+    border-radius: 4px;
+    box-shadow: 0 1px 11px 0 rgba(0, 0, 0, 0.13);
+    padding: 8px;
+    gap: 4px;
+    min-width: 123px;
+  }
+
+  &__folder-item {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px;
+    border-radius: 4px;
+    cursor: pointer;
+    width: 100%;
+
+    &:hover {
+      background-color: var(--normal-bg-90);
+    }
+
+    &.small {
+      gap: 4px;
+    }
+
+    &-icon {
+      pointer-events: none;
+      width: 16px;
+      height: 16px;
+      color: var(--normal-fg-10);
+      flex-shrink: 0;
+
+      .media-grid__container {
+        .badge {
+          width: 28px;
+          height: 21px;
+          bottom: 10px;
+          left: 10px;
+        }
+      }
+    }
+
+    &-text {
+      white-space: nowrap;
+      @include drumee.typo(
+        $size: 12px,
+        $weight: 600,
+        $line: 1,
+        $color: var(--normal-fg-10)
+      );
+    }
+
+    &-small-icon {
+      width: 24px;
+      height: 24px;
+      color: var(--neutral-50);
+    }
+  }
+
+  @media (max-width: 650px) {
+    .desk-dock__container.application.maker {
+      display: none;
+    }
+
+    .desk-dock__container.mobile-launcher {
+      display: flex;
+    }
+
+    .desk-dock__container.application.launcher {
+      display: none;
+    }
+
+    // .launcher {
+    //   & .calendar, & .addressbook , & .schedule {
+    //     display:none;
+    //   }
+    // }
+  }
+
+  &__mobile-launch-wrapper {
+    @media (max-width: 650px) {
+      .desk-dock__container.application.maker {
+        display: flex !important;
+        padding-bottom: 8px;
+      }
+
+      .desk-dock__container.application.launcher {
+        display: flex !important;
+      }
+
+      .desk-dock__container.application {
+        &::after {
+          background-color: transparent !important;
+        }
+
+        &.hub {
+          &::after {
+            display: none;
+          }
+        }
+      }
+
+      .launcher {
+        & .calendar,
+        & .addressbook,
+        & .schedule {
+          display: flex !important;
+        }
+      }
+    }
+
+    & .menu-topic-items__wrapper {
+      background-color: rgba(47, 47, 47, 0.37);
+      backdrop-filter: blur(27px);
+      border-radius: 5px;
+      bottom: 39px;
+      display: flex;
+      flex-direction: row;
+      overflow: visible !important;
+      padding-bottom: 5px;
+      position: absolute !important;
+      left: -28px;
+      transform: translateX(-19%);
+      margin-bottom: 13px;
+
+      &[data-device="mobile"] {
+        left: -28px;
+      }
+
+      & .menu-topic-items {
+        padding-top: 3px;
+        transform: matrix(1, 0, 0, 1, 0, 0) !important;
+      }
+
+      & .desk-dock__docker-menu {
+        display: flex;
+        flex-direction: column;
+
+        &[data-device="mobile"] {
+          padding: 5px;
+        }
+
+        &.hub {
+          flex-direction: row;
+        }
+      }
+    }
+
+    &.hub {
+      & .menu-topic-items__wrapper {
+        bottom: 40px;
+        left: 12px;
+        margin-bottom: 22px;
+        max-width: 190px;
+      }
+    }
+  }
+
+  &__container.mobile-launcher {
+    display: none;
+  }
+
+  &__button.launcher.mobile-launcher {
+    padding: 15px;
+  }
+
+  @media (min-width: 651px) {
+    &__ui {
+      display: none;
+    }
+  }
+
+  @media (max-width: 650px) {
+    &__ui {
+      bottom: calc(12px + env(safe-area-inset-bottom, 0px));
+      max-width: 400px;
+      pointer-events: none;
+      width: calc(100vw - 24px);
+      z-index: 20000;
+    }
+
+    &__main {
+      max-width: 100%;
+      overflow: visible;
+      padding: 4px;
+      pointer-events: auto;
+    }
+
+    &__button {
+      height: 44px;
+      width: 44px;
+    }
+
+    &__button.launcher.mobile-launcher {
+      padding: 12px;
+    }
+
+    &__container.searchbox {
+      max-width: min(140px, calc(100vw - 230px));
+    }
+
+    &__mobile-launch-wrapper {
+      & .menu-topic-items__wrapper {
+        left: 50%;
+        max-width: calc(100vw - 24px);
+        overflow-x: auto !important;
+        transform: translateX(-50%);
+
+        &[data-device="mobile"] {
+          left: 50%;
+        }
+      }
+    }
+  }
+}
+
+@media (max-width: 650px) {
+  .window-manager__ui:has(.window-manager__layer .window__ui[data-state="1"]),
+  .window-manager__ui:has(.window-manager__layer .player__ui[data-state="1"]),
+  .window-manager__ui:has(.window-manager__wrapper-modal[data-state="open"]) {
+    .desk-dock__ui {
+      display: none;
+    }
+  }
+}

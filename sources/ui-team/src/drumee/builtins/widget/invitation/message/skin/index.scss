@@ -1,0 +1,121 @@
+@use 'mixins/drumee';
+
+.invitation-message {
+  &__ui {
+    height: auto;
+    width: 260px;
+    padding: 25px 25px 15px;
+    margin: 0 auto;
+    background-color: var(--default-bg-block);
+    box-shadow: var(--drumee-shadow-box);
+    border-radius: var(--border-radius);
+    position: absolute;
+
+    &:before {
+      content: " ";
+      width: 10px;
+      height: 10px;
+      background-color: var(--default-bg-block);
+      position: absolute;
+      top: -5px;
+      left: 150px;
+      transform: rotate(45deg);
+    }
+  }
+
+  &__button {
+    min-width: 68px;
+    width: auto;
+    align-items: center;
+    justify-content: center;
+    height: 28px;
+    background-color: var(--btn-commit-background);
+    border-radius: var(--border-radius);
+    @include drumee.typo($line: 20px, $size: 14px, $color: var(--btn-commit-text));
+
+    &:hover {
+      background-color: var(--btn-commit-background-hover);
+    }
+  }
+
+  &__textarea {
+    width: 100%;
+    height: auto;
+    border: none;
+    background-color: transparent;
+    min-height: 0;
+    overflow-y: hidden;
+    overflow-x: hidden;
+    margin: 0 auto;
+    padding: 0 2px;
+    @include drumee.typo($color: var(--default-text-color), $size: 14px, $line: 28px, $weight: 400);
+
+    textarea {
+      height: 35px;
+      min-height: 35px;
+      border: none;
+      resize: none;
+      cursor: text;
+      width: 100%;
+      margin: 0 auto;
+      padding: 6px 2px;
+      border-bottom: 1px solid var(--default-entry-border-bottom);
+      flex-shrink: 0;
+      background: transparent;
+      letter-spacing: 0;
+      overflow-wrap: break-word;
+      @include drumee.typo($line: 18px, $size: 14px, $color: var(--default-text-color));
+
+      @include drumee.placeholder-input {
+        @include drumee.typo($color: var(--default-text-placeholder), $size: 14px, $line: 28px, $weight: 300);
+      }
+    }
+
+    &.input {
+      width: 100%;
+      height: auto;
+      min-height: 0em;
+      overflow-y: visible;
+      padding: 0 2px;
+      @include drumee.typo($color: var(--default-text-color), $size: 14px, $line: 28px, $weight: 400);
+    }
+
+    .entry-text {
+      width: 100%;
+      min-height: 0em;
+    }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  }
+}

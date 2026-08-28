@@ -1,0 +1,43 @@
+/* ==================================================================== *
+* Widget style automatically generated on 2026-04-01T14:02:19.133Z
+* npm run add-widget -- --fig=breadcrumb.item --dest=src/drumee/modules/desk/breadcrumb/item
+* ==================================================================== */
+@use 'mixins/drumee';
+
+.breadcrumb-item {
+  &__ui {
+    background-color: inherit;
+    cursor: pointer;
+    user-select: none;
+  }
+
+  &__main {
+    align-items: center;
+    min-width: 0;
+  }
+
+  &__filename {
+    @include drumee.typo($color: var(--normal-fg-10), $size: 13px, $line: 18px, $weight: 400);
+    max-width: 180px;
+    overflow: hidden;
+    padding-left: 8px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  &__separator {
+    @include drumee.typo($color: var(--normal-fg-20), $size: 13px, $line: 18px);
+    height: 18px;
+    padding-left: 8px;
+    width: 13px;
+  }
+
+  &__main[data-current="1"] {
+    .breadcrumb-item__filename {
+      color: var(--normal-fg);
+      font-weight: 700;
+    }
+  }
+
+
+}

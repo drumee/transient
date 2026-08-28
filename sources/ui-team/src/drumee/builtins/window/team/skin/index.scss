@@ -1,0 +1,218 @@
+@use "mixins/drumee.scss";
+@use "peers.scss";
+@use "topbar.scss";
+@use "change-owner.scss";
+// @import "./vars.scss";
+
+.window-team {
+  &__ui {
+    &[data-device="mobile"] {
+      width: 360px !important;
+      height: 500px !important;
+      left: 50% !important;
+      transform: translateX(-50%) translateY(15%);
+    }
+
+    &[data-content="folder"] {
+      & .window-team-topbar__menu {
+        display: none;
+      }
+
+      & .window-topbar__title .svg-wrapper {
+        visibility: hidden;
+      }
+    }
+  }
+
+  .topbar-folder-icon {
+    display: flex;
+    align-items: center;
+    flex-shrink: 0;
+    width: 28px;
+    height: 24px;
+
+    svg.folder-shape {
+      width: 100%;
+      height: auto;
+      fill: var(--area-private);
+    }
+  }
+
+  &__split-body {
+    &[data-tab="chat"] {
+      .window__files-panel {
+        display: none;
+      }
+      .window__chat-panel {
+        flex: 1;
+      }
+    }
+  }
+
+  &__header {
+    background-color: var(--normal-bg-80);
+
+    &-title {
+      max-width: 163px;
+      align-items: center;
+      @include drumee.typo(
+        $size: 18px,
+        $line: 24px,
+        $weight: 400,
+        $color: var(--default-text-reverse)
+      );
+
+      .name {
+        align-items: flex-start;
+        @include drumee.overflow-text;
+
+        @media (min-width: 626px) {
+          justify-content: center;
+          max-width: 300px;
+        }
+      }
+
+      .icon {
+        width: 21px;
+        height: 21px;
+        padding: 4px;
+        position: relative;
+        right: 0px;
+        flex-shrink: 0;
+      }
+    }
+
+    &-control {
+      .icon {
+        color: var(--default-icon-reverse);
+      }
+
+      &:hover {
+        color: var(--default-icon-hover);
+      }
+    }
+  }
+}
+
+.window-team {
+  .window-body__tab-bar-item {
+    &[data-state="1"] {
+      border: 1px solid var(--area-private);
+    }
+    &:hover {
+      color: var(--area-private);
+    }
+  }
+
+  .widget-chatItem__conversation-content {
+    &.me {
+      // Light private tint + pinned dark text — matches the folder team-chat own
+      // bubble (shared --chat-bubble-* tokens). The raw --area-private #eb6159 is
+      // too dark for the near-black body text; the tint keeps it legible and the
+      // foreground is pinned to theme-independent dark constants (the bubble fill
+      // is fixed in both themes).
+      background-color: var(--chat-bubble-private);
+      color: var(--primary-purple-100);
+
+      .note-content,
+      .user-mention {
+        color: var(--primary-purple-100);
+      }
+
+      a {
+        color: var(--primary-purple-50);
+      }
+
+      // Attachment card + reply quote on the light private tint — pin dark so
+      // they read (mirrors folder team-chat; base chat-item pins these light for
+      // the indigo inbox/bigchat bubble).
+      .filename,
+      .media-grid__chatmeta,
+      .media-grid__filesize,
+      .media-grid__meta-sep,
+      .widget-chatItem-reply__note.name,
+      .widget-chatItem-reply__note.name .note-content,
+      .widget-chatItem-reply__note.filename,
+      .widget-chatItem-reply__note.filename .note-content {
+        color: var(--primary-purple-100) !important;
+      }
+
+      .media-grid__reveal {
+        color: var(--primary-purple-50) !important;
+      }
+
+      .widget-chatItem-reply__note.conversation .note-content,
+      .widget-chatItem-reply__note.fileext,
+      .widget-chatItem-reply__note.fileext .note-content {
+        color: var(--tertiary-grey-80) !important;
+      }
+    }
+  }
+}
+
+// Scoped message bubble styles for team chat panel
+// Moved to widget-chatItem to improve reusability
+/** This way of styling is not reusable */
+// .window-team .window__chat-panel {
+//   .widget-chat__ui {
+//     background-color: transparent;
+//   }
+//   .widget-chatItem__ui {
+//     background-color: transparent;
+//   }
+//   .widget-chatItem__main {
+//     &.me, &.other {
+//       background-color: transparent;
+//       border: none;
+//       border-radius: 0;
+//       padding: 0;
+//     }
+//   }
+//   .widget-chatItem__conversation-content {
+//     padding: 8px 12px;
+//     width: fit-content;
+//     max-width: 100%;
+//     &.me {
+//       background-color: var(--private, #884eff);
+//       border-radius: 16px 0 16px 16px;
+//       align-self: flex-end;
+//       .note-content { color: #E4E3FF; }
+//     }
+//     &.other {
+//       background-color: #0B0A21;
+//       border-radius: 0 16px 16px 16px;
+//       align-self: flex-start;
+//       .note-content { color: #FAF6FF; }
+//     }
+//   }
+//   .widget-chatItem__message-date {
+//     color: #84848C;
+//     font-size: 8px;
+//   }
+//   .widget-chatItem__date-of-day-content {
+//     color: #C6BFFF;
+//     font-size: 10px;
+//     font-weight: 600;
+//   }
+//   .lib-messenger__icon.attach {
+//     display: none;
+//   }
+//   .lib-messenger__container {
+//     background-color: #0b0a21;
+//     border-radius: 8px;
+//     padding: 10px 12px;
+//   }
+//   .lib-messenger__content {
+//     background-color: transparent;
+//   }
+//   .lib-messenger__main {
+//     background-color: #0b0a21;
+//     border-radius: 8px;
+//   }
+//   .lib-messenger__content .note-content {
+//     color: #E4E3FF;
+//     &:empty:before {
+//       color: #6b7280;
+//     }
+//   }
+// }

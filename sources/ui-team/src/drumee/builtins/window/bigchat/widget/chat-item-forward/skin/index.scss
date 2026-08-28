@@ -1,0 +1,371 @@
+/** ================================================================== *
+#   Copyright Xialia.com  2011-2020
+#   FILE : /src/drumee/builtins/window/bigchat/widget/chat-item-forward/skin/index.scss
+#   TYPE : Component style
+# ===================================================================**/
+@use 'mixins/drumee';
+
+.chat-item-forward {
+  // Compact card that HUGS its content (like the sibling create/rename-folder
+  // dialogs) — the wrapper-dialog centers it. The old `height:100%` on every
+  // part forced the card to fill the whole dialog overlay, leaving big empty
+  // gaps. A bounded max-height keeps a long recipient list inside the card and
+  // lets the LIST scroll, instead of stretching the popup.
+  &__ui {
+    position: relative; // contains the absolutely-positioned close icon
+    display: flex;
+    flex-direction: column;
+    height: auto;
+    width: min(420px, calc(100% - 32px));
+    max-height: min(640px, calc(100% - 32px));
+    overflow: hidden;
+    border-radius: 16px;
+    background-color: var(--default-background);
+    // Soft shadow + outline so the modal stays distinguishable from the
+    // folder panel behind it in both light and dark modes.
+    box-shadow:
+      0 18px 38px rgba(0, 0, 0, 0.16),
+      0 6px 12px rgba(0, 0, 0, 0.08);
+    border: 1px solid var(--default-separator, rgba(0, 0, 0, 0.08));
+  }
+
+  // main/container fill the card and pass the height budget down so the list
+  // (not the whole popup) is what scrolls when recipients overflow.
+  &__main,
+  &__container {
+    background-color: inherit;
+    border-radius: 16px;
+    flex: 1 1 auto;
+    min-height: 0;
+    width: 100%;
+  }
+
+  &__header {
+    align-items: center;
+    flex: 0 0 auto;
+    justify-content: space-between;
+    padding: 16px 16px 0;
+  }
+
+  &__switch {
+    flex: 0 0 auto;
+    justify-content: center;
+    padding-top: 12px;
+  }
+
+  // Holds the search + scrolling list; grows within the bounded card, shrinks so
+  // the list (not the popup) scrolls when recipients overflow. position:relative
+  // anchors the search-results overlay to the content box (see below).
+  &__content {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow: hidden;
+    padding: 12px 0 16px;
+    position: relative;
+
+    & *::-webkit-scrollbar {
+      height: 100%;
+      width: 3px;
+    }
+
+    & *::-webkit-scrollbar-thumb {
+      background-color: var(--default-scrollbar-color);
+      cursor: pointer;
+    }
+  }
+
+  &__footer {
+    align-items: center;
+    flex: 0 0 auto;
+    padding: 0;
+  }
+
+  &__room-content {
+    flex: 1 1 auto;
+    min-height: 0;
+    padding: 0 16px;
+    row-gap: 12px;
+    width: 100%;
+
+    &[data-mode="closed"] {
+      display: none;
+    }
+  }
+
+  // Search pill (Figma 2307-52459) — full-width rounded field with the glyph
+  // inline; the underline entry is gone.
+  &__search-wrapper {
+    align-items: center;
+    background-color: var(--grid-card-bg, rgba(0, 0, 0, 0.05));
+    border-radius: 8px;
+    column-gap: 8px;
+    flex: 0 0 auto;
+    height: auto;
+    min-height: 44px;
+    padding: 10px 12px;
+    width: 100%;
+  }
+
+  &__search {
+    flex: 1 1 auto;
+    min-width: 0;
+    padding: 0;
+    width: 100%;
+
+    & input {
+      background: transparent;
+      border: none;
+      width: 100%;
+      @include drumee.typo($size: 16px, $line: 1.4, $color: var(--normal-fg-10, #34343a));
+
+      &::placeholder {
+        @include drumee.typo($size: 16px, $line: 1.4, $weight: 400, $color: var(--normal-fg-50, #65656c));
+      }
+    }
+  }
+
+  // List fills the remaining card height and scrolls internally; the smart
+  // inner container is the actual scroll viewport.
+  &__list {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow: hidden;
+    width: 100%;
+
+    & .smart-container {
+      border-radius: var(--border-radius);
+      height: 100%;
+      margin: 0;
+      overflow-y: auto;
+      padding: 0;
+      width: 100%;
+    }
+  }
+
+  &__note {
+    &.title {
+      @include drumee.typo($size: 24px, $line: 1.1, $color: var(--normal-fg-10, #34343a)); // Figma Headings/H6
+      font-weight: 600;
+      justify-content: flex-start;
+      text-align: left;
+      width: 100%;
+    }
+    
+    &.switch-title {
+      align-items: center;
+      cursor: pointer;
+      height: 100%;
+      justify-content: center;
+      max-height:28px;// 25px;
+      max-width: 90px;//80px;
+      min-height:28px;
+      min-width: 90px;
+      width: 100%;
+      margin-left: 3%;
+      margin-right: 2%;
+      @include drumee.typo($size: 15px, $line: 14px, $weight: 300, $color: var(--default-text-inactive) ); //$size: 13px,var(--egrey-89)
+
+      &[data-state="1"] {
+        border-radius:var(--border-radius);
+        @include drumee.typo($size: 14px, $line: 14px, $color: var(--default-text-color));//$size: 13px,
+        background-color: var(--button-background-active);//var(--egrey-e8);
+        //border: 1px solid var(--egrey-e8);//$dgc-chatroom-scbtn;
+      }
+    }
+
+    &.search-title {
+      @include drumee.typo($size: 14px, $line: 28px, $weight: 300, $color: var(--default-text-title));//$size: 12px $line: 14px,
+      justify-content: center;
+      width: 100%;
+      top: 20px;
+      border-radius:var(--default-border-radius-top);
+     // background-color: #f7f7f9;
+      height: 100%;
+      padding: 10px 10px 10px 21px;//10px;
+      width: 100%;
+      max-width: 280px;
+      margin: 1px 40px;
+    }
+  }
+
+  &__icon {
+    color: var(--default-icon-neutral);
+    cursor: pointer;
+    height: 16px;
+    width: 16px;
+
+    &.close {
+      color:var(--default-thinline-icon);
+      // Larger hit target — 12px icon was too small to reliably click.
+      height: 20px;
+      width: 20px;
+      padding: 4px;
+      position: absolute;
+      right: 8px;
+      top: 8px;
+      // Lift above header note so click reaches the button itself.
+      z-index: 2;
+      cursor: pointer;
+      pointer-events: auto;
+      &:hover{
+        color:var(--default-thinline-icon-hover);
+      }
+    }
+
+    &.search-icon {
+      color: var(--normal-fg-50, #65656c);
+      flex: 0 0 auto;
+      height: 20px;
+      width: 20px;
+    }
+
+    // Close-search button — top-right of the results overlay (which is the
+    // positioned ancestor), not the old magic offsets tuned for the big popup.
+    &.search-close-icon {
+      color: var(--default-thinline-icon);
+      height: 12px;
+      position: absolute;
+      right: 8px;
+      top: 8px;
+      width: 12px;
+      z-index: 1;
+      &:hover {
+        color: var(--default-thinline-icon-hover);
+      }
+    }
+  }
+
+  &__confirm-wrapper {
+    width: 100%;
+  }
+
+  // Full-width primary CTA (Figma 2307-52459). Uses --primary-50 (#433cc5, the
+  // design's Primary/50 indigo) — NOT --primary-500, which the revamp palette
+  // redefines to magenta (#b251fb); the old fallback never applied.
+  &__button-confirm {
+    @include drumee.typo($size: 16px, $line: 24px, $color: #ffffff);
+    align-items: center;
+    background-color: var(--primary-50, #433cc5);
+    border: 1px solid var(--primary-50, #433cc5);
+    border-radius: 4px;
+    cursor: pointer;
+    font-weight: 600;
+    justify-content: center;
+    margin: 0 12px 12px;
+    max-height: 48px;
+    min-height: 44px;
+    padding: 12px 24px;
+    transition: background-color 120ms ease, border-color 120ms ease;
+    width: calc(100% - 24px);
+
+    &:hover {
+      background-color: var(--primary-60, #4642a9);
+      border-color: var(--primary-60, #4642a9);
+    }
+
+    &[data-disabled="1"] {
+      cursor: not-allowed;
+      opacity: 0.55;
+
+      &:hover {
+        background-color: var(--primary-50, #433cc5);
+        border-color: var(--primary-50, #433cc5);
+      }
+    }
+  }
+
+  .drumee-spinner {
+		height: 35px;
+    margin: auto;
+    top: 20px;
+    width : 35px;
+  }
+
+  // Search results overlay — covers ONLY the list area (below the search field),
+  // anchored to the content box so it never sits over the search input. The old
+  // top:18%/height:90% was tuned for the legacy full-height popup and, once the
+  // card became compact, dropped right onto the input — making search unusable.
+  &__search-result-wrapper {
+    background: var(--default-background);
+    position: absolute;
+    top: 64px;     // clears content pad-top (12) + search pill (~44) + gap
+    left: 16px;
+    right: 16px;
+    bottom: 16px;
+    z-index: 99;
+    overflow: hidden;
+
+    &[data-mode="closed"] {
+      display: none;
+    }
+  }
+}
+
+// Dark-mode override — the popup uses the legacy `--default-*` palette which
+// is hard-coded to white in vars/default.scss and never re-declared inside
+// the dark theme block. Without this override the modal stays bright-white
+// on top of the dark folder panel.
+html[data-theme="dark"] {
+  .chat-item-forward {
+    &__ui {
+      background-color: var(--normal-bg-90, #282538);
+      border: 1px solid var(--border-default, rgba(255, 255, 255, 0.08));
+      box-shadow:
+        0 18px 38px rgba(0, 0, 0, 0.6),
+        0 6px 12px rgba(0, 0, 0, 0.4);
+    }
+
+    &__main,
+    &__container,
+    &__search-result-wrapper {
+      background-color: var(--normal-bg-90, #282538);
+    }
+
+    // Search pill — a faint light overlay so it lifts off the dark modal.
+    &__search-wrapper {
+      background-color: rgba(255, 255, 255, 0.06);
+    }
+
+    &__note {
+      &.title { color: var(--reverse-bg, #e4e3ff); }
+      &.search-title { color: var(--normal-fg-10, #e4e3ff); }
+      &.switch-title {
+        color: var(--normal-fg-50, #84848c);
+        &[data-state="1"] {
+          color: var(--normal-fg-10, #e4e3ff);
+          background-color: var(--hover-bg-40, rgba(89, 80, 255, 0.15));
+        }
+      }
+    }
+
+    &__search input {
+      color: var(--normal-fg-10, #e4e3ff);
+      border-bottom-color: var(--border-default, rgba(255, 255, 255, 0.12));
+      &::placeholder { color: var(--placeholder-fg, #c7c7cc); }
+    }
+
+    &__icon {
+      &.close,
+      &.search-close-icon { color: var(--normal-fg-50, #c7c7cc); }
+      &.close:hover,
+      &.search-close-icon:hover { color: var(--normal-fg-10, #ffffff); }
+      &.search-icon { color: var(--normal-fg-50, #c7c7cc); }
+    }
+  }
+
+  // List items inside the forward popup. Name (--normal-fg-10) and presence
+  // (--normal-fg-50) already resolve correctly per theme, and the filled
+  // checkbox reuses --primary-50. On dark the hover/selected highlight is a
+  // tinted fill (the light grid overlay is invisible on the dark modal, and the
+  // light selected white-box + grey border would not read here).
+  .chat-forward-list-item {
+    &__list:hover {
+      background-color: var(--hover-bg-40, rgba(89, 80, 255, 0.15));
+    }
+
+    &__list:has(.checkbox[data-state="1"]) {
+      background-color: var(--hover-bg-40, rgba(89, 80, 255, 0.15));
+      border-color: transparent;
+    }
+  }
+}

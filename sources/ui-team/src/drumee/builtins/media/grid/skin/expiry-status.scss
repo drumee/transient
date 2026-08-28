@@ -1,0 +1,23 @@
+@use 'mixins/drumee';
+
+.media-grid {
+  &-expiry-status {
+    &__icon {
+      &.expiry-status {
+        color: var(--default-icon-reverse);
+        // cursor: help;
+        height: 18px;
+        width: 18px;
+        position: absolute;
+        right: 26px;
+        top: 20px;
+
+        & svg {
+          border: 0.8px solid var(--default-icon-reverse);
+          border-radius: 50%;
+        }
+
+      }
+    }
+  }
+}

@@ -1,0 +1,222 @@
+@use "mixins/drumee";
+
+// Meeting notification card (Figma "Meeting title / Meeting Description").
+// Centred dialog rather than a corner toast: icon badge, title + live dot,
+// description, meta line (avatars · invited · start time), then Dismiss / Join.
+//
+// Serves both reminder flavours off one block via data-variant — the pre-start
+// heads-up ("soon") is currently held back client-side, so only "now" and the
+// invite variant reach the screen today.
+//
+// Surface colours come from the theme tokens so the card follows light/dark;
+// the brand purple stays literal because it carries meaning.
+.desk-meeting-toast {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 100000;
+  box-sizing: border-box;
+  width: 440px;
+  max-width: calc(100vw - 32px);
+  padding: 28px 32px 24px;
+  gap: 0;
+  align-items: center;
+  border-radius: 20px;
+  background: var(--normal-bg-elevated, #ffffff);
+  border: 1px solid var(--border-default, #e5e5ea);
+  box-shadow: 0 24px 64px rgba(11, 10, 33, 0.24);
+  cursor: default;
+  animation: desk-meeting-toast-in 160ms ease-out both;
+
+  &__close {
+    position: absolute;
+    top: 18px;
+    right: 18px;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    border-radius: 6px;
+    cursor: pointer;
+    opacity: 0.55;
+
+    svg {
+      width: 15px;
+      height: 15px;
+      fill: var(--normal-fg, #0b0a21);
+    }
+
+    &:hover {
+      opacity: 1;
+      background: var(--hover-bg-40, rgba(0, 0, 0, 0.06));
+    }
+  }
+
+  // Rounded lavender badge holding the camera glyph.
+  &__icon {
+    align-items: center;
+    justify-content: center;
+    width: 64px;
+    height: 64px;
+    border-radius: 16px;
+    background: var(--overlay-brand, rgba(89, 80, 255, 0.1));
+
+    svg {
+      width: 30px;
+      height: 30px;
+      fill: none;
+      stroke: var(--primary-40, #5950ff);
+      stroke-width: 2;
+    }
+  }
+
+  &__body {
+    align-items: center;
+    width: 100%;
+    margin-top: 16px;
+    gap: 6px;
+  }
+
+  &__title-row {
+    align-items: center;
+    justify-content: center;
+    max-width: 100%;
+    gap: 10px;
+  }
+
+  &__title {
+    @include drumee.typo($size: 22px, $line: 28px, $color: var(--normal-fg, #0b0a21));
+    font-weight: 700;
+    text-align: center;
+    // A long meeting name must not push the live dot out of the card.
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  // "In progress" dot — a ring with a filled centre, as in the design.
+  &__live {
+    flex-shrink: 0;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    border: 2px solid var(--primary-40, #5950ff);
+    box-shadow: inset 0 0 0 2px var(--normal-bg-elevated, #ffffff);
+    background: var(--primary-40, #5950ff);
+  }
+
+  &__desc {
+    @include drumee.typo($size: 15px, $line: 22px, $color: var(--normal-fg, #0b0a21));
+    text-align: center;
+    // Agendas can be long — show a couple of lines, then ellipsize.
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+
+  &__meta {
+    align-items: center;
+    justify-content: center;
+    flex-wrap: wrap;
+    margin-top: 6px;
+    gap: 8px;
+  }
+
+  // Overlapping avatar stack.
+  &__avatars {
+    align-items: center;
+  }
+
+  &__avatar {
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    background-size: cover;
+    background-position: center;
+    border: 2px solid var(--normal-bg-elevated, #ffffff);
+
+    & + & {
+      margin-left: -10px;
+    }
+  }
+
+  &__avatar-more {
+    align-items: center;
+    justify-content: center;
+    min-width: 28px;
+    height: 28px;
+    padding: 0 6px;
+    margin-left: -10px;
+    border-radius: 50%;
+    border: 2px solid var(--normal-bg-elevated, #ffffff);
+    background: var(--overlay-brand, rgba(89, 80, 255, 0.16));
+    @include drumee.typo($size: 12px, $line: 16px, $color: var(--primary-40, #5950ff));
+    font-weight: 600;
+  }
+
+  &__count {
+    @include drumee.typo($size: 14px, $line: 20px, $color: var(--primary-40, #5950ff));
+    font-weight: 500;
+  }
+
+  &__dot {
+    @include drumee.typo($size: 14px, $line: 20px, $color: var(--normal-fg-50, #84848c));
+  }
+
+  &__when {
+    @include drumee.typo($size: 14px, $line: 20px, $color: var(--normal-fg, #0b0a21));
+  }
+
+  // Two equal actions filling the card width.
+  &__actions {
+    width: 100%;
+    margin-top: 24px;
+    gap: 12px;
+  }
+
+  &__dismiss,
+  &__join {
+    flex: 1 1 0;
+    min-width: 0;
+    align-items: center;
+    justify-content: center;
+    height: 52px;
+    border-radius: 10px;
+    cursor: pointer;
+    white-space: nowrap;
+    @include drumee.typo($size: 16px, $line: 22px);
+    font-weight: 600;
+  }
+
+  &__dismiss {
+    background: var(--hover-bg-40, #f1f1f4);
+    color: var(--normal-fg, #0b0a21);
+
+    &:hover {
+      opacity: 0.85;
+    }
+  }
+
+  &__join {
+    background: var(--primary-40, #5950ff);
+    color: #ffffff;
+
+    &:hover {
+      opacity: 0.9;
+    }
+  }
+}
+
+@keyframes desk-meeting-toast-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -46%);
+  }
+
+  to {
+    opacity: 1;
+    transform: translate(-50%, -50%);
+  }
+}
