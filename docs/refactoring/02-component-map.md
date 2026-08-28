@@ -1,6 +1,8 @@
 # Component Map
 
-| Component | Repo/path | Responsibility / dependencies | Classification | Risk |
+The classification column classifies the responsibility named in the first column. “Repo/path” identifies current evidence and implementation locations only. It is not a move list: each location may mix OS, module, SDK, control-plane, deployment and legacy concerns and must be decomposed at symbol/behavior boundaries during an approved implementation phase.
+
+| Responsibility | Current evidence location | Current implementation / dependencies | Responsibility classification | Risk |
 |---|---|---|---|---|
 | Request/session/ACL | `sources/server-core/lib/{session,input,output,acl}.js` | Hosts service execution on essentials | `KEEP_OS` | High |
 | Dynamic service dispatch | `sources/server-team/router/rest/index.js`, `service.js` | Registers ACL modules/plugins | `KEEP_OS` | Critical |
@@ -28,3 +30,5 @@
 | Licence/custom/offline schemas | `sources/schemas/{licence,costums,offline}/**` | Specialized/unclear | `INVESTIGATE` | High |
 
 Nothing is classified `LEGACY` without call-site or history proof.
+
+In particular, `sources/server-team/router/rest/index.js`, UI Team shell/Window Manager files, and mixed schema directories are not thereby designated future OS files. They currently contain behavior from which the `KEEP_OS` responsibility must be isolated while non-OS behavior remains with its owning module or layer.

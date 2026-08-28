@@ -4,6 +4,8 @@
 
 `SOURCE_MANIFEST.md` was checked on 2026-08-28. Its 21 repository names equal the 21 immediate directories under `sources/`; every recorded SHA is present as a Git commit and its tree exactly matches `HEAD:sources/<name>`. Remote branch-tip identity cannot be re-proved from a subtree snapshot, so the recorded `main` branch is accepted as import provenance rather than independently verified state.
 
+Classification applies to responsibilities, not current files or repositories. A `KEEP_OS` label below means that the evidenced capability must exist in the future minimal OS. It does not mean the cited file should remain intact, move wholesale, or define the final repository boundary.
+
 ```text
 browser (ui-team) -> server-team -> server-core -> server-essentials
                          |                              |
@@ -18,7 +20,7 @@ browser (ui-team) -> server-team -> server-core -> server-essentials
 
 `sources/server-team/service.js` starts REST, creates core `Input`, `Output`, and `Session`, loads essentials `Cache`, calls `Acl.loadModules(__dirname)` and `Acl.loadPlugins()`, then dispatches through `Acl.run(session)`. `sources/server-team/index.js` is the push/page server. `sources/server-team/package.json` confirms dependencies on server-core, server-essentials and schema utilities.
 
-ACL JSON is catalog and dispatch metadata. `sources/server-team/router/rest/index.js` registers built-in `acl/`, then reads the endpoint plugin configuration under `sysEnv().plugins_dir` and registers each plugin `acl/`. A process lock prevents later registration unless forced; signal handling forces reload. Implementation paths come from `modules.private/public` (for example `sources/loby/acl/signup.json`). Dispatch/discovery is `KEEP_OS`; Team service implementations are not.
+ACL JSON is catalog and dispatch metadata. `sources/server-team/router/rest/index.js` registers built-in `acl/`, then reads the endpoint plugin configuration under `sysEnv().plugins_dir` and registers each plugin `acl/`. A process lock prevents later registration unless forced; signal handling forces reload. Implementation paths come from `modules.private/public` (for example `sources/loby/acl/signup.json`). The dispatch/discovery responsibility is `KEEP_OS`; the cited Team files are its current implementation evidence, not a proposed file boundary.
 
 `sources/server-core/lib/index.js` exports request/session/ACL/entity/MFS primitives. `sources/server-essentials/lib/index.js` exports MariaDB, cache/Redis, environment, logging, messaging, network, mail/template and utilities. These are existing `SDK_OR_ESSENTIALS`; no replacement core is proposed.
 
@@ -26,7 +28,7 @@ ACL JSON is catalog and dispatch metadata. `sources/server-team/router/rest/inde
 
 `sources/ui-team/src/drumee/api.js` establishes bootstrap, service and WebSocket paths. `sources/ui-core/letc/index.js` installs LETC/Backbone/Marionette and globals including `Kind`, `Skeletons`, `Visitor`, and `DrumeeMFS`. `sources/ui-team/src/drumee/index.web.js` registers the large dynamic seed map and starts the app.
 
-The UI is integrated: `builtins/window/**` contains Window Manager-facing windows; `builtins/media/core.js` combines MFS presentation, upload and drag/drop; `src/drumee/seeds.js` imports Finder/folder, chat, meetings, tasks, editors and utilities. LETC host/Window Manager primitives are `KEEP_OS`; Finder/signin/previewers are candidate `SYSTEM_MODULE`s; chat/tasks/meetings are `TEAM_MODULE`s.
+The UI is integrated: `builtins/window/**` contains Window Manager-facing windows; `builtins/media/core.js` combines MFS presentation, upload and drag/drop; `src/drumee/seeds.js` imports Finder/folder, chat, meetings, tasks, editors and utilities. The responsibility to host LETC applications and manage windows is `KEEP_OS`; this does not classify every file under the current window directories as OS code. Finder/signin/previewers are candidate `SYSTEM_MODULE`s; chat/tasks/meetings are `TEAM_MODULE`s.
 
 `ui-core` is the LETC/kind runtime (`sources/ui-core/letc/kind/index.js`), `ui-essentials` supplies transport (`sources/ui-essentials/socket/service.js`), `ui-toolkit` reusable widgets, and `ui-styles` Sass. They are `SDK_OR_ESSENTIALS`, with global-state migration risk.
 

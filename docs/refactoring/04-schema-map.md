@@ -2,11 +2,13 @@
 
 Inventory: about 269 files in `common`, 714 in `yellow_page`, 108 in `hub`, and 194 in `drumate`. Placement is not ownership proof.
 
+The proposed-ownership column classifies schema responsibilities and data contracts, not whole directories or current SQL files. Mixed files and procedure families require finer-grained dependency analysis before any extraction.
+
 | Family | Consumers / evidence | Proposed ownership |
 |---|---|---|
-| Entity/domain/vhost/shard registry | yp `entity`, `domain`, `vhost`, `drumate`, `hub`; `get_entity/get_db_name/get_user/get_hub` used by runtime/setup/CLI | Minimal OS |
-| Authentication/session/ACL | yp auth/session; common permission + `acl_check` used by core | Minimal OS |
-| MFS/media/version/permission/trash | `common/tables/{media,file_version,permission,trash_media}.sql`, `mfs_*.sql`; server-core/CLI | Minimal OS |
+| Entity/domain/vhost/shard registry | yp `entity`, `domain`, `vhost`, `drumate`, `hub`; `get_entity/get_db_name/get_user/get_hub` used by runtime/setup/CLI | `KEEP_OS` responsibility; exact objects `INVESTIGATE` |
+| Authentication/session/ACL | yp auth/session; common permission + `acl_check` used by core | `KEEP_OS` responsibility; exact objects `INVESTIGATE` |
+| MFS/media/version/permission/trash | `common/tables/{media,file_version,permission,trash_media}.sql`, `mfs_*.sql`; server-core/CLI | `KEEP_OS` responsibility; exact objects `INVESTIGATE` |
 | Provisioning/templates/factory | yp entity/drumate creation, `templates/factory`, setup-schemas | OS contract + deployment; daemon details `INVESTIGATE` |
 | Base membership | hub member/remove/show and drumate join/leave/show hubs | Minimal hosting subset; exact cut `INVESTIGATE` |
 | Chat/channel/P2P | common channel, hub channel, drumate p2p tables/procedures | `TEAM_MODULE` |

@@ -2,6 +2,8 @@
 
 This proposal requires approval and does not define final repository splits.
 
+`KEEP_OS` describes capabilities the minimal environment must provide. The present files cited by the mapping are evidence of those capabilities, not predetermined contents of `target/os` or a future repository.
+
 ```text
 Control Plane / CLI
         | stable administrative contracts
@@ -16,7 +18,7 @@ existing Core / Essentials / LETC SDK
 deployment consumes versioned runtime + distribution + modules
 ```
 
-The Minimal OS (`KEEP_OS`) contains boot/configuration, request/session/context, identity/entity/hub context, ACL enforcement, service dispatch, backend/frontend discovery adapters, event/WebSocket transport, MFS semantic primitives and storage adapter, LETC integration, browser router/shell and Window Manager primitives. It excludes user applications and administration.
+The Minimal OS must own the `KEEP_OS` responsibilities: boot/configuration, request/session/context, identity/entity/hub context, ACL enforcement, service dispatch, backend/frontend discovery adapters, event/WebSocket transport, MFS semantic primitives and storage adapter, LETC host integration, browser routing/shell hosting and Window Manager primitives. Current implementations may be split, adapted, reproduced, or left partly with modules; no file-level destination is selected by this responsibility list.
 
 Core/SDK remains based on `server-core`, `server-essentials`, `ui-core`, `ui-essentials`, `ui-toolkit`, and `ui-styles`; no new low-level replacement is proposed.
 
@@ -26,6 +28,6 @@ The Control Plane contains CLI concepts, administrative contracts and user/hub/s
 
 Deployment contains Docker/native packaging, configuration, artifact acquisition, install ordering, backup/restore and upgrade/rollback. It consumes runtime, distribution and module artifacts rather than Team repository layout.
 
-Schemas follow capability ownership: entity/identity/session/ACL/MFS/provisioning primitives remain minimal; module schema/migrations ship with modules. Provisioning must apply the distribution's module schemas to new and existing entity databases.
+Schemas follow capability ownership: the entity/identity/session/ACL/MFS/provisioning responsibilities required for hosting belong to the minimal platform, but the exact current SQL objects implementing them remain subject to dependency mapping. Module schema/migrations ship with modules. Provisioning must apply the distribution's module schemas to new and existing entity databases.
 
 Compatibility remains `sources/ui-team + sources/server-team + sources/schemas`. Service contracts, schema behavior, boot routes, MFS semantics, CLI DB behavior and both self-host channels remain protected during incremental coexistence.
