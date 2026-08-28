@@ -1,0 +1,15 @@
+.DS_Store
+*.swp
+*.swo
+*~
+.env
+.env.*
+!.env.example
+
+# Local analysis/output
+.tmp/
+tmp/
+coverage/
+
+# Dependencies generated while testing imported sources
+node_modules/
