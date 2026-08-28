@@ -1,0 +1,41 @@
+{
+  "name": "@drumee/server-essentials",
+  "version": "1.3.6",
+  "description": "Drumee server essential components",
+  "main": "lib/index.js",
+  "scripts": {
+    "test": " npm run test:modules && npm run test:db && npm run test:cache",
+    "show:cache": "node lib/test/cache.js",
+    "show:sysEnv": "node lib/test/sysEnv.js",
+    "test:crypto": "node lib/test/subtleCrypto.js",
+    "test:email": "node lib/test/email.js",
+    "test:template": "node lib/test/template.js",
+    "test:db": "node lib/test/db.js",
+    "test:modules": "node lib/test/cache.js",
+    "release": "git push && npm publish --access public && npm version patch"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git@github.com:drumee/server-essentials.git"
+  },
+  "bugs": {
+    "url": "https://github.com/drumee/server-essentials/issues"
+  },
+  "author": "Somanos Sar <somanos@drumee.com>",
+  "license": "AGPL V3",
+  "dependencies": {
+    "backbone": "^1.4.0",
+    "file-type": "^21.3.3",
+    "googleapis": "^173.0.0",
+    "https": "^1.0.0",
+    "istextorbinary": "^9.5.0",
+    "jsonfile": "^5.0.0",
+    "lodash": "^4.17.21",
+    "mariadb": "^3.5.2",
+    "nodemailer": "^8.0.5",
+    "redis": "^4.6.6",
+    "sanitize-html": "^2.10.0",
+    "shelljs": "^0.8.5",
+    "syslog-client-tls": "^1.2.1"
+  }
+}
