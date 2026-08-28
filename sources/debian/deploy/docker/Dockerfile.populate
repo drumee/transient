@@ -1,0 +1,36 @@
+# Drumee schemas-populate image — run-once. Stocks the entity pool from the
+# schemas genesis templates and creates the system accounts + RSA keypair, by
+# running setup-schemas' real bootstrap code (see container-populate.js).
+#
+# Built on top of the server-pod image because it reuses that image's @drumee
+# node_modules (server-essentials/server-core) and server-team's offline/factory.
+#
+#   docker buildx build -f deploy/docker/Dockerfile.populate \
+#     --build-context helpers=deploy/docker \
+#     --build-context setup=/path/to/setup-schemas \
+#     --build-context schemas=/path/to/schemas \
+#     --build-arg SERVER_IMAGE=<registry>/server-pod:<tag> -t .../schemas-populate:<tag> .
+# SERVER_IMAGE lets publishing point the base at the registry-qualified server-pod
+# image; defaults to the locally-built one.
+ARG SERVER_IMAGE=drumee/server-pod:local
+FROM ${SERVER_IMAGE}
+
+USER root
+RUN apt-get update && apt-get install -y --no-install-recommends mariadb-client \
+    && rm -rf /var/lib/apt/lists/*
+
+ENV MAIN=/srv/drumee/runtime/server/main
+# setup-schemas (lib + asset) and the schemas genesis templates.
+COPY --from=setup . ${MAIN}/setup-schemas/
+COPY --from=schemas templates/factory /factory
+COPY --from=helpers container-populate.js ${MAIN}/container-populate.js
+COPY --from=helpers container-factory.js ${MAIN}/container-factory.js
+COPY --from=helpers populate-entrypoint.sh /usr/local/bin/drumee-populate
+
+# punycode is required by setup-schemas/lib/drumate.js (userland, not the Node
+# built-in) and is absent from the server image's node_modules.
+RUN npm install --prefix ${MAIN} punycode \
+    && chmod +x /usr/local/bin/drumee-populate
+
+ENV SS_DIR=${MAIN}/setup-schemas SERVER_MAIN=${MAIN} GENESIS_DIR=/factory
+ENTRYPOINT ["drumee-populate"]

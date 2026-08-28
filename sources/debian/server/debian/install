@@ -1,0 +1,4 @@
+files/usr/* usr
+files/etc/* etc
+files/srv/* srv
+files/var/* var

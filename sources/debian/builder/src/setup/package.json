@@ -1,0 +1,31 @@
+{
+  "name": "@drumee/setup",
+  "version": "1.0.1",
+  "description": "Drumee Common Setup Utilities",
+  "main": "index.js",
+  "scripts": {
+    "dev": "drumee-server-devel",
+    "release": "git push && npm publish --access public && npm version patch"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/drumee/setup.git"
+  },
+  "keywords": [
+    "Drumee",
+    "Infrastructure",
+    "Collaborative",
+    "WebOs",
+    "fullstack",
+    "sdk"
+  ],
+  "author": "Somanos Sar <somanos@drumee.com>",
+  "license": "AGPL-3.0-or-later",
+  "bugs": {
+    "url": "https://github.com/drumee/setup/issues"
+  },
+  "homepage": "https://github.com/drumee/setup#readme",
+  "devDependencies": {
+    "@drumee/server-dev-tools": "^1.1.13"
+  }
+}

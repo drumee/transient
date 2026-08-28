@@ -1,0 +1,8 @@
+# scripts/ is a Docker build context for scripts/Dockerfile.seed (build-seed.sh)
+# and scripts/Dockerfile.seed-check (check-seed.sh). Each build copies just its own
+# entrypoint from here; every other seed-builder asset comes from the `helpers=`
+# context (deploy/docker). Send the daemon the minimum: exclude everything, then
+# re-include the two entrypoints the builds need.
+*
+!seed-entrypoint.sh
+!seed-check-entrypoint.sh

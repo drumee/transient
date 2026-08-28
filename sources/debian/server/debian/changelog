@@ -1,0 +1,82 @@
+drumee-server-pod (2.9.73) stable; urgency=medium
+
+  * Release 2.9.73 (synced from release-manifest.yaml)
+
+ -- Somanos Sar <somanos.sar@drumee.com>  Sat, 25 Jul 2026 12:01:38 +0200
+
+drumee-server-pod (2.9.61) stable; urgency=medium
+
+  * Release 2.9.61 (synced from release-manifest.yaml)
+
+ -- Somanos Sar <somanos.sar@drumee.com>  Sun, 28 Jun 2026 23:39:27 +0700
+
+drumee-server-pod (2.9.44) stable; urgency=medium
+  * fix typing indicator and read state
+  * Changed acl/activity to allow lesser privilege
+  * Disable browser caching for the HTML shell page
+  * Updated NPM
+ -- Somanos Sar <somanos.sar@drumee.com>  Fri, 29 May 2026 15:31:10 +0700
+
+drumee-server-pod (2.9.43) stable; urgency=medium
+  * Fixec acitivity
+  * Fixec acitivity
+  * Enhance MfsActivity class to include author details: author_id, author_firstname, author_lastname, and author_email.
+  * Removed patches
+ -- Somanos Sar <somanos.sar@drumee.com>  Tue, 26 May 2026 22:38:38 +0700
+
+drumee-server-pod (2.9.42) stable; urgency=medium
+  * Fixed html syntax in templates
+  * Feature/admin console (#27)
+  * Feature/admin console (#26)
+  * fix(runtime): hot-reload UI manifest via mtime-cached read
+ -- Somanos Sar <somanos.sar@drumee.com>  Sat, 23 May 2026 15:41:21 +0700
+
+drumee-server-pod (2.9.41) stable; urgency=medium
+  * feat(email): implement email notification preference handling
+  * fix(conference): also broadcast meeting start when first joiner in shared workspace
+  * feat(conference): broadcast conference.start to hub members on meeting start
+  * fix(contact): use forward_proc to flip inviter status on invite_accept
+ -- Somanos Sar <somanos.sar@drumee.com>  Thu, 21 May 2026 16:00:30 +0700
+
+drumee-server-pod (2.9.39) stable; urgency=medium
+  * Fixed private/hub + channel.post
+  * fix(hub-invite): route existing-user invite link through signup page
+  * fix(acl): move relocate method field to service level
+  * fix(chat): copy folder-scoped attachments to staging, keep originals
+ -- Somanos Sar <somanos.sar@drumee.com>  Wed, 20 May 2026 10:44:15 +0700
+
+drumee-server-pod (2.9.38) stable; urgency=medium
+  * fix(acl): move relocate method field to service level
+  * fix(chat): copy folder-scoped attachments to staging, keep originals
+  * fix(chat): add sender firstname/lastname to P2P post and forward responses
+  * fix(adminpanel): allow domain admins to kick out/delete members
+ -- Somanos Sar <somanos.sar@drumee.com>  Wed, 20 May 2026 01:09:19 +0700
+
+drumee-server-pod (2.9.37) stable; urgency=medium
+  * Changed bootstrap
+  * fix(dmz): forward dmz_expiry status even when share is expired
+  * Update scope from hub to domain for these endpoints: hub_member_stats, hub_member_list, get_workspace_overview, hub_member_remove
+ -- Somanos Sar <somanos.sar@drumee.com>  Tue, 19 May 2026 09:28:56 +0700
+
+drumee-server-pod (2.9.36) stable; urgency=medium
+  * Update scope from hub to domain for these endpoints: hub_member_stats, hub_member_list, get_workspace_overview, hub_member_remove
+  * fix(chat): grant permission=3 (read|anonymous) to P2P attachment recipient
+  * fix(hub): surface email delivery failure as failed invitee
+  * fix: await message sending in form, role, and sharebox services
+ -- Somanos Sar <somanos.sar@drumee.com>  Mon, 18 May 2026 12:04:47 +0700
+
+drumee-server-pod (2.9.35) stable; urgency=medium
+  * fix(email/contact): render admin_removal template via lodash + skip name clobber
+  * debug(chat): promote delete path logs from debug to info for visibility
+  * fix(contact): delete_contact reliably notifies the other party
+  * fix(contact): wrap invite_get activity-id query result with toArray
+ -- Somanos Sar <somanos.sar@drumee.com>  Sun, 17 May 2026 10:44:24 +0700
+
+drumee-server-pod (2.9.34) stable; urgency=medium
+  * fix(channel): list_notifications hub query and add delete debug log
+  * fix(chat): address 4 P2P issues: delete, mention, attachment access, forward
+  * Removed ui vendor + updated essentials version to handle mariadb recent version
+  * Feature/contacts (#22)
+  * fix(chat): cross-DB attachment lookup for P2P receiver via peer_id
+ -- Somanos Sar <somanos.sar@drumee.com>  Sun, 17 May 2026 10:36:40 +0700
+

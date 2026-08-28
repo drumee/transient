@@ -1,0 +1,6 @@
+drumee-caddy (1.0.0) stable; urgency=medium
+
+  * Initial package: Caddy built with caddy-dns provider modules, wired to
+    drumee-infra's tls_method=caddy.
+
+ -- Somanos Sar <somanos.sar@drumee.com>  Wed, 29 Jul 2026 11:22:30 +0200

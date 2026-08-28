@@ -1,0 +1,75 @@
+#!/bin/bash
+
+set -e
+mode=build 
+source /etc/drumee/drumee.sh 
+
+for arg in "$@"
+do
+	case $arg in
+		--start=*)
+			start="yes"
+			shift
+			;;
+		--name=*)
+			name="${arg#*=}"
+			shift
+      ;;
+		--force=*)
+			force="yes"
+			shift
+      ;;
+	esac
+done
+
+
+script_path=$0
+script_name=$(basename $0)
+if [ $(whoami) != "root" ]
+then 
+  echo "PERMISSION DENIED: $script_path requires root privilege"
+  exit 1
+fi 
+
+# ------------------------------
+# 
+# --------------------------------
+usage() {
+  echo "Usage $script_name --name=username --mode=[dist|build]"
+  exit 1
+}
+
+case $mode in
+  build|dist)
+    ;;
+  *)
+    usage
+esac
+
+
+if [[ $script_path =~ ^\/ ]]; then
+  script_dir=$(dirname $script_path)
+else 
+  if [[ $script_path =~ ^\.\/ ]]; then
+    script_path=$(echo $script_path | sed -e "s/^\.//")
+    script_dir="$(pwd)$(dirname $script_path)"
+  else 
+    script_dir=$(pwd)/$(dirname $script_path)
+  fi
+fi 
+
+if [ -f /etc/drumee/infrastructure/servers/$name.conf ]; then
+  if [ -z $force ]; then 
+    echo Server $name already exist. Use --force
+    exit 1
+  fi 
+fi 
+
+/usr/share/drumee/setup/add-server --name=$name --mode=$mode
+
+if [ ! -f /etc/drumee/infrastructure/acme/$name.conf ]; then
+  /usr/share/acme/acme.sh/acme.sh --issue -d $name -d "*.$name" \
+    --config-home /etc/acme/store --dns dns_ovh \
+    --cert-home /usr/share/acme/certs
+fi 
+

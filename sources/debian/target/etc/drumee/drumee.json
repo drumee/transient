@@ -1,0 +1,17 @@
+{
+  "ca_server":"letsencrypt",
+  "domain_name": "",
+  "domain_desc": "",
+  "data_dir": "/data",
+  "db_user": "www-data",
+  "system_user": "www-data",
+  "system_group": "www-data",
+  "drumee_root": "/srv/drumee",
+  "cache_dir": "/srv/drumee/cache",
+  "acme_dir": "/usr/share/acme",
+  "acme_dns": "dns_ovh",
+  "acme_email_account": null,
+  "own_ssl":0,
+  "own_certs_dir":null,
+  "credential_dir": "/etc/drumee/credential"
+}

@@ -1,0 +1,49 @@
+drumee-infra (1.2.11) unstable; urgency=medium
+  * Changed cront jobs to handle tmp files cleaning
+
+-- Somanos Sar <somanos.sar@drumee.com>  Thu, 01 May 2025 01:23:00 +0000
+
+drumee-infra (1.2.10) unstable; urgency=medium
+  * Updated from essentials
+
+-- Somanos Sar <somanos.sar@drumee.com>  Mon, 31 Mar 2025 01:23:00 +0000
+
+drumee-infra (1.2.9) unstable; urgency=medium
+  * Fixed NS forwarding
+
+-- Somanos Sar <somanos.sar@drumee.com>  Wed, 26 Mar 2025 01:23:00 +0000
+
+drumee-infra (1.2.8) unstable; urgency=medium
+
+  * Normalize base dir
+
+-- Somanos Sar <somanos.sar@drumee.com>  Thu, 27 Feb 2025 01:23:00 +0000
+
+drumee-infra (1.2.7) unstable; urgency=medium
+
+  * Fine tune localhost
+
+drumee-infra (1.2.6) unstable; urgency=medium
+
+  * Migration into localhost
+
+drumee-infra (1.2.5) unstable; urgency=medium
+
+  * Prepare local host integration
+
+drumee-infra (1.2.4) stable; urgency=medium
+
+  * disabled direct access to Jitsi Ui
+  * fixed access by URL
+
+
+drumee-infra (1.2.3) stable; urgency=medium
+
+  * Prepare docker
+
+drumee-infra (1.2.0) stable; urgency=medium
+
+  * Use source from github
+  * Rename helper to setup
+
+-- Somanos Sar <somanos.sar@drumee.com>  Wed, 07 Aug 2024 01:23:00 +0000

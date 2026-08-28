@@ -1,0 +1,14 @@
+[Unit]
+Description=Drumee Infrastructure
+Documentation=man:drumee(1)
+After=nginx.service
+
+[Service]
+Type=idle
+ExecStart=/etc/init.d/drumee start
+ExecReload=/etc/init.d/drumee reload
+ExecStop=-/etc/init.d/drumee stop 
+KillMode=mixed
+
+[Install]
+WantedBy=multi-user.target

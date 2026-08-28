@@ -1,0 +1,14 @@
+[Unit]
+Description=Periodically publish Caddy's certificate into Drumee's certs directory
+Documentation=file:///usr/share/doc/drumee-caddy/README.md
+
+[Timer]
+# Caddy renews well before expiry and gives no hook we can rely on across
+# versions, so poll. Twice a day is far more often than a 60-day renewal needs,
+# and the exporter is a no-op when nothing changed.
+OnBootSec=5min
+OnUnitActiveSec=12h
+Persistent=true
+
+[Install]
+WantedBy=timers.target

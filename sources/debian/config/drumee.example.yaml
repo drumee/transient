@@ -1,0 +1,131 @@
+# Drumee instance configuration — single source of truth.
+#
+# Copy to drumee.yaml, edit, then render the deployment artifacts:
+#
+#   node config/render.mjs all --config config/drumee.yaml --out-dir ./out
+#
+# Produces:  out/.env  out/docker-compose.yml  out/install.conf
+#
+# Format contract (keep it simple — the bundled parser supports this subset):
+#   * 2-space indentation, exactly two levels (section -> key: value)
+#   * scalars: strings, integers, true/false, null (or empty) for "generate/none"
+#   * inline lists only:  key: [a, b, c]
+#   * '#' starts a comment (not allowed inside an unquoted value)
+
+instance:
+  description: My Great Drumee Team
+  domain: example.com
+  local_mode: false
+  admin_email: admin@example.com
+
+network:
+  ip4: auto                # 'auto' = detect at install time, or set e.g. 203.0.113.10
+  ip6: auto
+  services: []
+
+tls:
+  mode: acme               # acme | own | self-signed
+  acme_email: ssl@example.com
+  # own_cert_path: /etc/drumee/ssl   # required only when mode: own
+  #
+  # Native channel only. The certificate issued is a WILDCARD (example.com plus
+  # *.example.com), so the challenge is always DNS-01 — there is no HTTP-01 path.
+  # Pick how the challenge record is written:
+  #   nsupdate (default) this host runs BIND9 as the zone master. Needs the NS
+  #                      records delegated here AND inbound udp/53, so it does
+  #                      not work behind a home router.
+  #   api                the record is created through your DNS provider's API.
+  #                      Outbound only, so it works behind NAT with no port
+  #                      forwarding; no local DNS server is installed.
+  # dns_challenge: nsupdate
+  #
+  # Required with dns_challenge: api. Path ON THE TARGET HOST to a shell file
+  # exporting ACME_PROVIDER (an acme.sh dnsapi name minus the "dns_" prefix)
+  # plus that provider's credentials. Holds secrets: create it yourself, 0600.
+  #   export ACME_PROVIDER=ovh
+  #   export OVH_AK=... OVH_AS=... OVH_CK=...
+  # acme_env_file: /etc/drumee/credential/dns-api.env
+  #
+  # Or let Caddy do it instead of nginx+acme.sh. Needs the drumee-caddy package
+  # (a Caddy compiled with the caddy-dns modules); it takes 80/443, issues over
+  # DNS-01 itself — wildcards included — and nginx moves to 8080/8443 behind it.
+  # dns_provider names a module the binary was built with. The API token is NOT
+  # configured here: debconf asks for it (see docs/native-channel.md).
+  # terminator: caddy
+  # dns_provider: ovh
+
+storage:
+  data_dir: /data
+  db_dir: /srv/db
+  backup_location: /srv/backup
+  exchange_location: /exchangearea
+
+database:
+  host: mariadb            # 'mariadb' for containers, 'localhost' for native
+  port: 3306
+  name: drumee
+  user: drumee-app
+  password: null           # null = generate a strong random password
+
+redis:
+  host: redis
+  port: 6379
+  password: null
+
+email:
+  host: smtp.example.com
+  port: 587
+  secure: false
+  user: butler
+  password: null
+
+optional_services:
+  jitsi: false
+  prosody: false
+  coturn: false
+
+# Reach this instance from outside without opening a port on the router. The
+# node holds an outbound connection to a coordination server, which pairs it
+# with clients so both sides punch their firewall at the same instant. Traffic
+# is peer-to-peer and end-to-end encrypted; the relay is a fallback only.
+# Both channels: native installs the systemd units, containers get a 'wireguard'
+# compose service (host netns + NET_ADMIN). Either way the host needs the
+# wireguard kernel module, and this cannot be combined with instance.local_mode.
+wireguard:
+  enabled: false
+  coordinator: coord.drumee.tech
+  listen_port: 51820      # must stay fixed: the NAT mapping is learned from it
+  reflector_port: 51821
+
+ports:
+  api: 24000             # service.js REST listener (--restPort), proxied at /-/*
+  ui: 23000              # index.js page + WebSocket listener (--pushPort)
+
+images:
+  registry: ghcr.io/drumee   # where publish-images.sh pushed (use 'drumee' for local :local images)
+
+versions:
+  product: 1.0.0         # release-train version: the tag ALL images share. Pin for
+                         # reproducible deploys + rollback. Use 'latest' to track newest.
+  # Optional per-component overrides (default to product); normally unset:
+  # server: 1.0.0
+  # ui: 1.0.0
+  # schemas: 1.0.0
+  # static: 1.0.0
+
+# --- Server plugins (optional) ----------------------------------------------
+# Each plugin installs under /srv/drumee/runtime/plugins/server/<endpoint>/<name>
+# and serves at /-/<endpoint>/svc/<module>.<method>. Listed here, they are written
+# to plugins.json on render and installed automatically (drumee plugin apply).
+# `source` may be a git URL (optionally #ref), a local dir, or a .tgz/.zip.
+# plugins:
+#   - name: hello
+#     endpoint: acme
+#     source: https://github.com/acme/drumee-hello.git#v1.0.0
+#   - name: local-tool
+#     endpoint: acme
+#     source: ./my-plugins/local-tool
+#
+# Or manage them imperatively any time (native: `drumee plugin …`):
+#   drumee-ctl plugin add https://github.com/acme/drumee-hello.git#v1.0.0 --endpoint=acme
+#   drumee-ctl plugin list | remove acme/hello | disable acme/hello

@@ -1,0 +1,7 @@
+# Demo Caddyfile — HTTP only on :80 (no ACME, works on localhost).
+# Mirrors the real topology: everything routes to server-pod (which serves both
+# the UI pages and /-/svc/* REST). The whoami stub answers any path, so both
+# routes return 200. Used only by tests/demo-stack.sh.
+:80 {
+	reverse_proxy server-pod:80
+}

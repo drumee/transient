@@ -1,0 +1,11 @@
+Source: drumee-schemas-patch
+Section: non-free
+Priority: optional
+Maintainer: Somanos Sar <somanos.sar@drumee.com>
+Standards-Version: 1.0.0
+Homepage: https://drumee.com
+
+Package: drumee-schemas-patch
+Architecture: all
+Depends: ${misc:Depends}, binutils, nodejs, drumee-schemas, mariadb-server, mariadb-client
+Description: Drumee Schemas Patch

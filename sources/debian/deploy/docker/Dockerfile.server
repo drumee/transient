@@ -1,0 +1,69 @@
+# Drumee server-pod image — runs index.js (pages + WebSocket) and service.js
+# (REST API) via pm2-runtime.
+#
+# Build context is the server-team source repo. Helper files (entrypoint,
+# ecosystem) come from a named build context so they don't need to live in the
+# source tree:
+#
+#   docker buildx build -f deploy/docker/Dockerfile.server \
+#     --build-context helpers=deploy/docker \
+#     --build-arg INSTALL_DEPS=0 \            # 0 = node_modules already in context
+#     -t drumee/server-pod:<tag> /path/to/server-team
+#
+# INSTALL_DEPS=1 (default) runs `npm ci` — needs access to the private @drumee
+# registry. Set 0 to reuse an existing local node_modules (offline / dev build).
+#
+# Size notes (kept deliberately):
+#   - runtime is node:22-slim (full bookworm added ~1GB for nothing the app uses)
+#   - app files are COPY --chown'ed (a separate `chown -R` RUN duplicates the
+#     whole ~650MB layer via copy-on-write)
+#   - no `npm prune --omit=dev`: the only devDep subtree is ~200KB, and
+#     schemas-populate borrows runtime deps from this image — not worth the risk.
+
+# ---------- build stage ----------
+FROM node:22-bookworm AS build
+ARG INSTALL_DEPS=1
+WORKDIR /app
+COPY . /app
+RUN if [ "$INSTALL_DEPS" = "1" ]; then npm ci || npm install; fi \
+    && npm run build --if-present \
+    && rm -rf /app/.git
+
+# ---------- runtime stage ----------
+FROM node:22-slim AS runtime
+# MEDIA_DEPS=1 (default) installs the media/processing tools the server needs in
+# production (server/debian/control Depends:). Set 0 for a fast build/smoke image.
+ARG MEDIA_DEPS=1
+RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates \
+    && if [ "$MEDIA_DEPS" = "1" ]; then apt-get install -y --no-install-recommends \
+         graphicsmagick poppler-utils libreoffice dcraw p7zip-full ffmpeg inotify-tools; fi \
+    && rm -rf /var/lib/apt/lists/* \
+    && npm install -g pm2
+
+ENV DRUMEE_ROOT_DIR=/srv/drumee \
+    DRUMEE_SERVER_HOME=/srv/drumee/runtime/server \
+    DRUMEE_UI_HOME=/srv/drumee/runtime/ui \
+    DRUMEE_DATA_DIR=/data \
+    DRUMEE_SYSTEM_USER=www-data
+ENV HOME=$DRUMEE_SERVER_HOME
+
+COPY --chown=www-data:www-data --from=build /app/ $DRUMEE_SERVER_HOME/main/
+COPY --from=helpers entrypoint.sh /usr/local/bin/drumee-entrypoint
+COPY --from=helpers ecosystem.config.js $DRUMEE_SERVER_HOME/ecosystem.config.js
+# Only the small writable dirs are created/chowned here — never `chown -R` over
+# the app tree (it would duplicate the entire layer).
+RUN chmod +x /usr/local/bin/drumee-entrypoint \
+    && mkdir -p /data /etc/drumee/credential $DRUMEE_UI_HOME/main \
+    && chown www-data:www-data /data /etc/drumee /etc/drumee/credential \
+         /srv/drumee /srv/drumee/runtime $DRUMEE_SERVER_HOME $DRUMEE_UI_HOME $DRUMEE_UI_HOME/main
+
+USER www-data
+WORKDIR $DRUMEE_SERVER_HOME
+# Healthcheck probes the page listener (index.js), which serves / with 200 once
+# the app is up. Do NOT probe /-/svc/* — REST replies 401 without a session and
+# curl -f treats that as failure, marking the container permanently unhealthy.
+HEALTHCHECK --interval=15s --timeout=5s --start-period=60s --retries=5 \
+  CMD curl -fsS "http://127.0.0.1:${UI_PORT:-23000}/" >/dev/null || exit 1
+
+ENTRYPOINT ["drumee-entrypoint"]
+CMD ["pm2-runtime", "start", "ecosystem.config.js"]

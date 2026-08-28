@@ -1,0 +1,31 @@
+# Drumee ui-build image — NOT a long-running service. It webpack-builds the LETC
+# frontend assets and, at container start, copies them into a shared volume that
+# server-pod serves from $DRUMEE_UI_HOME. The compose runs it once (restart: no).
+#
+#   docker buildx build -f deploy/docker/Dockerfile.ui \
+#     --build-arg INSTALL_DEPS=0 \
+#     -t drumee/ui-build:<tag> /path/to/ui-team
+#
+# Mirrors ui/build.sh: `webpack --config webpack.js` with BUILD_TARGET=app,
+# ENDPOINT=main, UI_BUILD_PATH=<out>/main.
+
+# ---------- build stage ----------
+FROM node:22-bookworm AS build
+ARG INSTALL_DEPS=1
+ENV UI_BUILD_MODE=production \
+    UI_BUILD_PATH=/opt/ui/main \
+    UI_SRC_PATH=/app \
+    BUILD_TARGET=app \
+    ENDPOINT=main
+WORKDIR /app
+COPY . /app
+RUN mkdir -p "$UI_BUILD_PATH" \
+    && if [ "$INSTALL_DEPS" = "1" ]; then npm ci || npm install; fi \
+    && npx webpack --config webpack.js \
+    && rm -f "$UI_BUILD_PATH/app/stats.json"
+
+# ---------- runtime stage (one-shot asset publisher) ----------
+FROM alpine:3 AS runtime
+COPY --from=build /opt/ui/ /opt/ui/
+# On start, publish assets into the mounted shared volume, then exit 0.
+CMD ["sh", "-c", "mkdir -p /ui-assets && cp -a /opt/ui/. /ui-assets/ && echo '[ui-build] assets published to /ui-assets' "]

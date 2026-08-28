@@ -1,0 +1,33 @@
+# Drumee infra-init image — run-once. Renders the canonical optional-service
+# configs (Jitsi/Prosody/Coturn, Postfix/OpenDKIM, BIND) with setup-infra's own
+# engine, into mounted volumes the service containers consume. See
+# deploy/docker/infra-init-entrypoint.sh and docs/infra-init.md.
+#
+# Built FROM server-pod so it reuses that image's @drumee/* node_modules (infra.js
+# needs @drumee/server-essentials). Adds the one missing public dep (@assetval/ip)
+# and opendkim-tools (DKIM keygen). setup-infra is placed under the server main
+# dir so its require('@drumee/...') resolves from the image's node_modules.
+#
+#   docker buildx build -f deploy/docker/Dockerfile.infra-init \
+#     --build-context helpers=deploy/docker --build-context infra=/path/to/setup-infra \
+#     --build-arg SERVER_IMAGE=<registry>/server-pod:<tag> -t drumee/infra-init:<tag> .
+ARG SERVER_IMAGE=drumee/server-pod:local
+FROM ${SERVER_IMAGE}
+
+USER root
+RUN apt-get update && apt-get install -y --no-install-recommends opendkim-tools \
+    && rm -rf /var/lib/apt/lists/*
+
+# setup-infra lives at /opt (not under the server tree), so point NODE_PATH at the
+# image's node_modules for its require('@drumee/...') + @assetval/ip resolution.
+ENV SETUP_INFRA_DIR=/opt/setup-infra \
+    NODE_PATH=/srv/drumee/runtime/server/main/node_modules
+COPY --from=infra . ${SETUP_INFRA_DIR}/
+COPY --from=helpers infra-root-shim.js ${SETUP_INFRA_DIR}/infra-root-shim.js
+COPY --from=helpers infra-init-entrypoint.sh /usr/local/bin/drumee-infra-init
+# @assetval/ip is the only setup-infra dep missing from the server image's
+# node_modules; install it where setup-infra can resolve it.
+RUN npm install --prefix /srv/drumee/runtime/server/main @assetval/ip \
+    && chmod +x /usr/local/bin/drumee-infra-init
+
+ENTRYPOINT ["drumee-infra-init"]

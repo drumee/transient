@@ -1,0 +1,8 @@
+drumee-patch (1.1.6) stable; urgency=medium
+  * Added bin/update-manifest
+  * Added bin/make-changelog
+  * added yp patches/alter_socket_add_mtime
+  * fix(chat): contact_chat_rooms join on c.uid instead of c.entity
+  * fix(chat): extend p2p_delete_me to support recipient deletes
+ -- Somanos Sar <somanos.sar@drumee.com>  Sat, 16 May 2026 09:32:06 +0700
+

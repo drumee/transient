@@ -1,0 +1,36 @@
+#!/bin/bash
+set -e
+
+source /etc/drumee/drumee.sh
+if [[ "$DRUMEE_DB_BACKUP" =~ ^.+:/.+ ]]; then
+  base=$DRUMEE_DATA_DIR/tmp/backup
+  mkdir -p $base
+else
+  if [[ "$DRUMEE_DB_BACKUP" =~ ^/.+ ]]; then
+    base=$DRUMEE_DB_BACKUP
+  fi
+fi
+
+if [ -d "$base" ]; then
+  current="$base/current"
+  orig="$base/orig"
+  if [[ -e $orig ]]; then
+    rm -rf $orig
+  fi
+  if [[ -e $current ]]; then
+    mv $current $orig
+  fi
+  SECONDS=0
+  LOG=$base/backup.log
+  date >$LOG
+  mkdir -p ${current} 
+  mariabackup --backup --user=root --target-dir=${current} --open-files-limit=655350 >>${LOG} 2>>${LOG}
+  echo "completed in ${SECONDS} seconds"
+  touch $current/status.txt
+  mariabackup --prepare --target-dir=${current} >>${LOG} 2>>${LOG}
+  echo "ok" >${current}/status.txt
+fi
+
+if [ -d "$DRUME_DB_BACKUP" ]; then
+  rsync -ar $current/ $DRUMEE_DB_BACKUP/
+fi

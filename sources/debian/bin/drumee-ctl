@@ -1,0 +1,190 @@
+#!/bin/bash
+# drumee-ctl — channel-aware lifecycle operator for a Drumee deployment.
+#
+#   drumee-ctl status            health summary
+#   drumee-ctl doctor            deeper checks with actionable hints
+#   drumee-ctl backup            timestamped DB + data + config backup
+#   drumee-ctl restore <file>    restore from a backup archive
+#   drumee-ctl upgrade [tag]     backup, then pull/install and restart
+#   drumee-ctl rollback          restore the most recent pre-upgrade backup
+#
+# Detects the channel automatically:
+#   container — a docker compose project (DRUMEE_DIR or cwd has docker-compose.yml)
+#   native    — /etc/drumee/drumee.sh present (pm2-managed host install)
+#
+# This is the lifecycle tool; the existing `drumee` command (server-pod) remains
+# the pm2 process wrapper (start/stop/restart/log).
+set -euo pipefail
+
+DRUMEE_DIR="${DRUMEE_DIR:-.}"
+log()  { printf '\033[1;36m==>\033[0m %s\n' "$*"; }
+ok()   { printf '  \033[1;32mOK\033[0m   %s\n' "$*"; }
+warn() { printf '  \033[1;33mWARN\033[0m %s\n' "$*"; }
+bad()  { printf '  \033[1;31mFAIL\033[0m %s\n' "$*"; }
+die()  { printf '\033[1;31merror:\033[0m %s\n' "$*" >&2; exit 1; }
+
+detect_channel() {
+  if [ -f "$DRUMEE_DIR/docker-compose.yml" ] && docker compose version >/dev/null 2>&1; then
+    echo container
+  elif [ -f /etc/drumee/drumee.sh ]; then
+    echo native
+  else
+    die "no Drumee deployment found (set DRUMEE_DIR to a compose dir, or run on a native host)"
+  fi
+}
+
+compose() { ( cd "$DRUMEE_DIR" && docker compose --env-file .env "$@" ); }
+
+# Read a variable from the rendered .env (container channel).
+envval() { grep -E "^$1=" "$DRUMEE_DIR/.env" 2>/dev/null | head -1 | cut -d= -f2- | tr -d '"'; }
+# Root DB credentials for admin operations (dump/restore/health).
+db_root_args() { local p; p="$(envval DB_ROOT_PASSWORD)"; [ -n "$p" ] && printf -- '-uroot -p%s' "$p" || printf -- '-uroot'; }
+
+backup_dir() {
+  if [ -f "$DRUMEE_DIR/.env" ]; then
+    grep -E '^BACKUP_LOCATION=' "$DRUMEE_DIR/.env" 2>/dev/null | cut -d= -f2- | tr -d '"' || true
+  elif [ -f /etc/drumee/drumee.sh ]; then
+    . /etc/drumee/drumee.sh; echo "${BACKUP_LOCATION:-/srv/backup}"
+  fi
+}
+
+# ----------------------------------------------------------------- status/doctor
+cmd_status() {
+  local ch; ch="$(detect_channel)"
+  log "channel: $ch"
+  if [ "$ch" = container ]; then
+    compose ps
+  else
+    . /etc/drumee/drumee.sh
+    command -v pm2 >/dev/null && HOME="${DRUMEE_SERVER_HOME:-/srv/drumee/runtime/server}" pm2 list || warn "pm2 not found"
+  fi
+}
+
+cmd_doctor() {
+  local ch; ch="$(detect_channel)"
+  log "Diagnosing $ch deployment"
+  if [ "$ch" = container ]; then
+    docker info >/dev/null 2>&1 && ok "docker daemon reachable" || bad "docker daemon unreachable"
+    [ -f "$DRUMEE_DIR/.env" ] && ok ".env present" || bad ".env missing — run render.mjs"
+    compose ps --format '{{.Service}} {{.State}}' 2>/dev/null | while read -r svc state; do
+      [ "$state" = running ] && ok "service $svc running" || warn "service $svc: $state"
+    done
+    compose exec -T mariadb sh -c "mariadb $(db_root_args) -e 'SELECT 1'" >/dev/null 2>&1 \
+      && ok "mariadb answering" || warn "mariadb not answering yet"
+    compose exec -T redis redis-cli ping >/dev/null 2>&1 && ok "redis answering" || warn "redis not answering"
+  else
+    . /etc/drumee/drumee.sh
+    local dom="${DRUMEE_DOMAIN_NAME:-}"
+    command -v mariadb >/dev/null && mariadb -e "SELECT 1" >/dev/null 2>&1 && ok "mariadb answering" || warn "mariadb check failed"
+    command -v redis-cli >/dev/null && redis-cli ping >/dev/null 2>&1 && ok "redis answering" || warn "redis check failed"
+    [ -n "$dom" ] && check_tls "$dom"
+  fi
+  check_disk
+}
+
+check_disk() {
+  local use; use="$(df -P "${DRUMEE_DIR:-/}" 2>/dev/null | awk 'NR==2{gsub("%","",$5);print $5}')"
+  [ -n "${use:-}" ] || return 0
+  if [ "$use" -ge 90 ]; then bad "disk ${use}% full"; else ok "disk ${use}% used"; fi
+}
+
+check_tls() {
+  local dom="$1"
+  command -v openssl >/dev/null || { warn "openssl missing, skip TLS check"; return; }
+  local end
+  end="$(echo | openssl s_client -servername "$dom" -connect "$dom:443" 2>/dev/null \
+    | openssl x509 -noout -enddate 2>/dev/null | cut -d= -f2)"
+  [ -n "$end" ] && ok "TLS cert for $dom valid until $end" || warn "could not read TLS cert for $dom"
+}
+
+# ----------------------------------------------------------------- backup/restore
+cmd_backup() {
+  local ch; ch="$(detect_channel)"
+  local dest; dest="$(backup_dir)"; dest="${dest:-/srv/backup}"
+  [ -n "$dest" ] || die "no BACKUP_LOCATION configured"
+  mkdir -p "$dest"
+  local stamp="$1"; stamp="${stamp:-manual}"   # caller may pass a label
+  local ts; ts="$(date +%Y%m%d-%H%M%S)"
+  local arc="$dest/drumee-${stamp}-${ts}.tgz"
+  local work; work="$(mktemp -d)"; trap 'rm -rf "$work"' RETURN
+  log "Backing up to $arc"
+  if [ "$ch" = container ]; then
+    compose exec -T mariadb sh -c "exec mariadb-dump $(db_root_args) --all-databases" > "$work/db.sql"
+    cp "$DRUMEE_DIR/.env" "$work/.env" 2>/dev/null || true
+    tar czf "$work/data.tgz" -C "$(grep -E '^DRUMEE_DATA_DIR=' "$DRUMEE_DIR/.env" | cut -d= -f2- | tr -d '"')" . 2>/dev/null || true
+  else
+    . /etc/drumee/drumee.sh
+    mariadb-dump -uroot --all-databases > "$work/db.sql"
+    tar czf "$work/data.tgz" -C "${DRUMEE_DATA_DIR:-/data}" . 2>/dev/null || true
+    cp -r /etc/drumee "$work/etc-drumee" 2>/dev/null || true
+  fi
+  tar czf "$arc" -C "$work" .
+  ok "backup complete: $arc"
+  echo "$arc"
+}
+
+cmd_restore() {
+  local file="${1:-}"; [ -f "$file" ] || die "usage: drumee-ctl restore <backup.tgz>"
+  local ch; ch="$(detect_channel)"
+  local work; work="$(mktemp -d)"; trap 'rm -rf "$work"' RETURN
+  log "Restoring from $file"
+  tar xzf "$file" -C "$work"
+  [ -f "$work/db.sql" ] || die "archive missing db.sql"
+  if [ "$ch" = container ]; then
+    compose exec -T mariadb sh -c "exec mariadb $(db_root_args)" < "$work/db.sql"
+  else
+    . /etc/drumee/drumee.sh
+    mariadb -uroot < "$work/db.sql"
+    [ -f "$work/data.tgz" ] && tar xzf "$work/data.tgz" -C "${DRUMEE_DATA_DIR:-/data}"
+  fi
+  ok "restore complete — restart services to pick up changes"
+}
+
+# ----------------------------------------------------------------- upgrade/rollback
+cmd_upgrade() {
+  local ch; ch="$(detect_channel)"
+  log "Pre-upgrade backup"
+  cmd_backup "preupgrade" >/dev/null
+  if [ "$ch" = container ]; then
+    compose pull
+    compose up -d
+  else
+    apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --only-upgrade drumee || \
+      die "apt upgrade failed (rollback with: drumee-ctl rollback)"
+    command -v drumee >/dev/null && drumee restart || true
+  fi
+  ok "upgrade complete"
+}
+
+cmd_rollback() {
+  local dest; dest="$(backup_dir)"; dest="${dest:-/srv/backup}"
+  local latest; latest="$(ls -1t "$dest"/drumee-preupgrade-*.tgz 2>/dev/null | head -1)"
+  [ -n "$latest" ] || die "no pre-upgrade backup found in $dest"
+  warn "rolling back data to $latest (image/package versions are not auto-reverted)"
+  cmd_restore "$latest"
+}
+
+cmd_plugin() {
+  # Run the channel-agnostic manager INSIDE server-pod (where node lives) against
+  # the host-mounted ./plugins volume, then restart server-pod from the host.
+  local self_dir; self_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  [ -f "$self_dir/drumee-plugin" ] || die "drumee-plugin not found next to drumee-ctl"
+  compose exec -T \
+    -e PLUGIN_DIR=/srv/drumee/runtime/plugins/server \
+    -e RESTART_CMD=true -e PLUGIN_OWNER=root \
+    server-pod bash -s -- "$@" < "$self_dir/drumee-plugin"
+  case "${1:-}" in add|remove|enable|disable|apply) compose restart server-pod ;; esac
+}
+
+# ----------------------------------------------------------------------- dispatch
+cmd="${1:-}"; shift || true
+case "$cmd" in
+  status)   cmd_status "$@" ;;
+  doctor)   cmd_doctor "$@" ;;
+  backup)   cmd_backup "${1:-manual}" ;;
+  restore)  cmd_restore "$@" ;;
+  upgrade)  cmd_upgrade "$@" ;;
+  rollback) cmd_rollback "$@" ;;
+  plugin)   cmd_plugin "$@" ;;
+  *) die "usage: drumee-ctl status|doctor|backup|restore <f>|upgrade|rollback|plugin <add|list|remove|…>" ;;
+esac

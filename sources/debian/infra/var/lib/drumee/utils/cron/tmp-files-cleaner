@@ -1,0 +1,41 @@
+#!/bin/bash
+
+if [ ! -f /etc/drumee/drumee.sh ]; then
+  echo "Drumee environment file not found"
+fi
+
+source /etc/drumee/drumee.sh
+if [ -d "$DRUMEE_TMP_DIR" ]; then
+  if [[ $DRUMEE_TMP_DIR =~ /.+tmp ]];then
+    echo "cleaning old files in $DRUMEE_TMP_DIR"
+    find $DRUMEE_TMP_DIR -ctime +15 -delete
+  fi 
+fi
+
+if [ -d "$DRUMEE_RUNTIME_DIR" ]; then
+  runtime_tmp=$DRUMEE_RUNTIME_DIR/tmp
+  if [ $runtime_tmp != /tmp ];then
+    echo "cleaning old files in $runtime_tmp"
+    find $runtime_tmp -ctime +15 -delete
+  fi 
+fi
+
+tmp_data="$DRUMEE_DATA_DIR/mfs/tmp/"
+if [ -d $tmp_data ]; then
+  if [[ $tmp_data =~ /.+tmp ]];then
+    echo "cleaning old files in $tmp_data"
+    find $tmp_data -ctime +15 -delete
+  fi
+fi 
+
+tmp_dl="$DRUMEE_DATA_DIR/mfs/__download__/"
+if [ ! -z $DRUMEE_DATA_DIR -a -d $tmp_dl ]; then
+  echo "cleaning old files in $tmp_dl"
+  find $tmp_dl -ctime +15 -delete
+fi 
+
+if [ -d "$DRUMEE_DB_BACKUP_DIR" ]; then
+  echo "cleaning old files in $DRUMEE_DB_BACKUP_DIR"
+  find $DRUMEE_DB_BACKUP_DIR -ctime +3 -delete
+fi
+

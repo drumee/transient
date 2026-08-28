@@ -1,0 +1,29 @@
+#!/bin/sh
+# postrm for drumee-caddy
+set -e
+
+case "$1" in
+    purge)
+    systemctl disable drumee-caddy.service >/dev/null 2>&1 || true
+    systemctl disable drumee-caddy-export-certs.timer >/dev/null 2>&1 || true
+    systemctl daemon-reload || true
+    # The generated Caddyfile is ours to remove. Caddy's ACME account and
+    # certificate store under /var/lib/caddy is NOT: re-issuing on a reinstall
+    # would burn rate limits for no reason. Remove it by hand if you mean to.
+    rm -f /etc/drumee/caddy/Caddyfile
+    rmdir /etc/drumee/caddy 2>/dev/null || true
+    echo "drumee-caddy: purged. Kept /var/lib/caddy (ACME account + certificates)"
+    echo "  and /etc/drumee/credential/caddy-dns.env (owned by drumee-infra)."
+    ;;
+
+    remove|upgrade|failed-upgrade|abort-install|abort-upgrade|disappear)
+    ;;
+    *)
+        echo "postrm called with unknown argument \`$1'" >&2
+        exit 1
+    ;;
+esac
+
+#DEBHELPER#
+
+exit 0

@@ -1,0 +1,32 @@
+# Drumee schemas-init image — run-once database initializer + schema patcher.
+# Lean: a MariaDB client + the factory templates + the schema/patch corpus + the
+# init script. It does NOT run the Node patch engine (that assumes a local
+# socket); seeding and patching happen over TCP. See deploy/docker/schemas-init.sh.
+#
+# Build context is the schemas source repo. The init script comes from a named
+# build context:
+#
+#   docker buildx build -f deploy/docker/Dockerfile.schemas \
+#     --build-context helpers=deploy/docker \
+#     -t drumee/schemas:<tag> /path/to/schemas
+FROM debian:bookworm-slim
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      mariadb-client ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# Factory seed templates (data-free schema) — used on fresh installs.
+COPY templates/factory/ /factory/
+# Schema class dirs + the active patch manifest — used to upgrade EXISTING
+# installs (schemas-init applies patches/manifest.txt when its hash changes).
+COPY yellow_page/ /schemas/yellow_page/
+COPY hub/        /schemas/hub/
+COPY drumate/    /schemas/drumate/
+COPY common/     /schemas/common/
+COPY utils/      /schemas/utils/
+COPY mailserver/ /schemas/mailserver/
+COPY patches/    /schemas/patches/
+
+COPY --from=helpers schemas-init.sh /usr/local/bin/schemas-init
+RUN chmod +x /usr/local/bin/schemas-init
+
+ENTRYPOINT ["schemas-init"]

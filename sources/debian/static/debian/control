@@ -1,0 +1,11 @@
+Source: drumee-static
+Section: non-free
+Priority: optional
+Maintainer: Somanos Sar <somanos.sar@drumee.com>
+Standards-Version: 1.0.1
+Homepage: https://drumee.com
+
+Package: drumee-static
+Architecture: all
+Depends: ${misc:Depends}, binutils, nodejs, git, drumee-infra
+Description: Drumee Static Files

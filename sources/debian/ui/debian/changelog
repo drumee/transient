@@ -1,0 +1,154 @@
+drumee-ui-pod (3.3.50) stable; urgency=medium
+
+  * Release 3.3.50 (synced from release-manifest.yaml)
+
+ -- Somanos Sar <somanos.sar@drumee.com>  Sat, 25 Jul 2026 12:01:38 +0200
+
+drumee-ui-pod (3.3.1) stable; urgency=medium
+  * Bugfix/contacts (#181)
+  * Bugfix/contacts (#180)
+  * feat(meeting): unified People/Chat side panel + resizable window
+  * welcome: fix accept_invite service name
+  * fix(move): show home folders in destination list
+ -- Somanos Sar <somanos.sar@drumee.com>  Sat, 06 Jun 2026 22:32:09 +0700
+
+drumee-ui-pod (3.3.0) stable; urgency=medium
+  * fix(chat-p2p): match contact-list status lookup on stringified peerId
+  * feat(document-player): open Office files in edit mode by default and speed up first open
+  * fix(chat-p2p): show live online status in header and contact list
+  * Fixed main router Subrouters were not called upon changes
+  * turn on overlay of admin console
+ -- Somanos Sar <somanos.sar@drumee.com>  Fri, 29 May 2026 15:25:39 +0700
+drumee-ui-pod (3.3.26) stable; urgency=medium
+
+  * Release 3.3.26 (synced from release-manifest.yaml)
+
+ -- Somanos Sar <somanos.sar@drumee.com>  Sun, 28 Jun 2026 23:39:27 +0700
+
+drumee-ui-pod (3.2.49) stable; urgency=medium
+  * V2 fix UI (#115)
+  * Fix media row date display, debug artifact, and fullscreen error handling
+  * Remove unused fallback for author email in getSender function to streamline author identification in activity widget.
+  * Remove unused activity-fix-verified.png and add comments in window manager to clarify the purpose of the end-of-data event handling.
+ -- Somanos Sar <somanos.sar@drumee.com>  Tue, 26 May 2026 22:00:26 +0700
+
+drumee-ui-pod (3.2.48) stable; urgency=medium
+  * Fixed loadWorkspace
+  * Fixed loadWorkspace
+  * Small fixes
+  * feat(chat): scope chat panel to file with mention indexing
+ -- Somanos Sar <somanos.sar@drumee.com>  Mon, 25 May 2026 23:23:15 +0700
+
+drumee-ui-pod (3.2.47) stable; urgency=medium
+  * fix(wm): dedupe home-grid workspace window in windowsLayer
+  * fix(media): cross-hub drop into open workspace window posts media.copy
+  * Removed chat widget/tab from folder when area=personal
+  * Added secondary windows layer dedicated to worksapces open fron the sidebare.
+ -- Somanos Sar <somanos.sar@drumee.com>  Sun, 24 May 2026 19:33:30 +0700
+
+drumee-ui-pod (3.2.46) stable; urgency=medium
+  * Fixed Hub name alignment
+  * Fixed panel auto close capture click from any target
+  * fix(panel/activity): update unread count logic for notifications
+  * style(sidebar): add dark mode overrides for sidebar components
+  * fix(sidebar): incremental live updates for workspaces and folder tree
+ -- Somanos Sar <somanos.sar@drumee.com>  Sat, 23 May 2026 18:54:48 +0700
+
+drumee-ui-pod (3.2.45) stable; urgency=medium
+  * Small changes desk
+  * Changed wm -- loadworkspace
+  * Changed window_folder -- add back close button
+  * fix(folder): prevent meeting re-launch loop on leave from notification panel
+  * fix(meeting): prevent leave-call loop when attendee clicks leave
+ -- Somanos Sar <somanos.sar@drumee.com>  Thu, 21 May 2026 23:31:42 +0700
+
+drumee-ui-pod (3.2.44) stable; urgency=medium
+  * Fixed missing privilege in loadWorkspace
+  * refactor(folder): drop debug log + reuse mapped member list
+  * Fixed Wm.loadWorkspace
+  * fix: ensure meeting join popup always appears regardless of Notification API
+  * chore(folder): log isAdmin gate to debug permission matrix render
+ -- Somanos Sar <somanos.sar@drumee.com>  Thu, 21 May 2026 17:58:36 +0700
+
+drumee-ui-pod (3.2.43) stable; urgency=medium
+  * fixed chat_item missing username
+  * chore(chat): remove sender-debug console logs
+  * Feature/admin console (#102)
+  * fix(chat): fall back to area when type missing + log sender render gate
+  * fix(chat): propagate type so message list renders sender header; split Display Name into firstname/lastname
+ -- Somanos Sar <somanos.sar@drumee.com>  Thu, 21 May 2026 13:25:23 +0700
+
+drumee-ui-pod (3.2.42) stable; urgency=medium
+  * fix(locale): add EXPORT_BACKUP_PREPARING key to all locales
+  * fix(locale): add DOWNLOAD_ALL and EXPORT_SELECT_DATA keys to all locales
+  * feat(export-data): footer Download button exports all data at once
+  * Open widget from notification
+ -- Somanos Sar <somanos.sar@drumee.com>  Wed, 20 May 2026 20:16:37 +0700
+
+drumee-ui-pod (3.2.41) stable; urgency=medium
+  * fix(locale): add EXPORT_BACKUP_PREPARING key to all locales
+  * fix(locale): add DOWNLOAD_ALL and EXPORT_SELECT_DATA keys to all locales
+  * feat(export-data): footer Download button exports all data at once
+  * Open widget from notification
+  * Open widget from notification
+ -- Somanos Sar <somanos.sar@drumee.com>  Wed, 20 May 2026 20:14:24 +0700
+
+drumee-ui-pod (3.2.40) stable; urgency=medium
+  * Changed window/utils -- handle hub.invite ws event
+  * desk/workspace-list: refresh sidebar when invite is received
+  * Changed Desk -- handle bredcrumb going home
+  * Changed admin console - temporarily disable
+  * Changed admin console - set temporary placehoder
+ -- Somanos Sar <somanos.sar@drumee.com>  Wed, 20 May 2026 12:45:37 +0700
+
+drumee-ui-pod (3.2.39) stable; urgency=medium
+  * fix: dark-mode visibility for settings panel, confirm dialog, alert
+  * feat: wire folder permissions matrix to real server endpoints
+  * Small changes
+  * fix(desk_module): enhance avatar and username update logic
+ -- Somanos Sar <somanos.sar@drumee.com>  Wed, 20 May 2026 02:15:53 +0700
+
+drumee-ui-pod (3.2.38) stable; urgency=medium
+  * feat(icons): add new context menu icons for info, open window, and QR code
+  * fix(meeting): wire raise-hand toggle + fix avatar sizing and join toast
+  * fix(invite): send correct privilege key so role selection is honoured by server
+  * Fixed chat + trash confirm
+  * fix(apps-main): hide Reward Hub button from admin console header
+ -- Somanos Sar <somanos.sar@drumee.com>  Wed, 20 May 2026 01:12:18 +0700
+
+drumee-ui-pod (3.2.37) stable; urgency=medium
+  * Updated from @drumee/ui-core
+  * Fixed chat notification
+  * Feature/admin console (#95)
+  * fix(icons): remove duplicate red-stroke path from logo-drumee-icon
+ -- Somanos Sar <somanos.sar@drumee.com>  Tue, 19 May 2026 21:59:10 +0700
+
+drumee-ui-pod (3.2.36) stable; urgency=medium
+  * Small changes
+  * Feature/admin console (#94)
+  * fix(window-folder): keep Folder Settings; move Manage Access to a share icon
+  * fix(manage-access): copy-link toast uses Wm.acknowledge, not a popup
+ -- Somanos Sar <somanos.sar@drumee.com>  Tue, 19 May 2026 09:27:27 +0700
+
+drumee-ui-pod (3.2.35) stable; urgency=medium
+  * Changed locale
+  * fix(desk-search): hide personal hub from topbar suggestions
+  * debug(audit-export): log row count + fallback window.open on click failure
+  * fix(audit-logs): wire CSV download + add missing range locale keys
+ -- Somanos Sar <somanos.sar@drumee.com>  Mon, 18 May 2026 12:14:35 +0700
+
+drumee-ui-pod (3.2.34) stable; urgency=medium
+  * fix(invite-popup): commit emails on outside click and wrap chips
+  * Features/v2 inside folder (#91)
+  * refactor(confirm): redesign dialog with icon bubble, close button, left-aligned body
+  * fix(workspace/sidebar): wire share permissions; fix Add dropdown + gsap import
+ -- Somanos Sar <somanos.sar@drumee.com>  Sun, 17 May 2026 12:43:03 +0700
+
+drumee-ui-pod (3.2.33) stable; urgency=medium
+  * Cleanup debug
+  * WIP
+  * Feature/contacts (#89)
+  * fix(chat): pass args.type to action-buttons and peer_id to attachment API
+  * fix(activity): correct _K.activitys to _K.notifications for sound playback
+ -- Somanos Sar <somanos.sar@drumee.com>  Thu, 14 May 2026 15:12:38 +0700
+

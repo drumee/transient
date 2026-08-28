@@ -1,0 +1,15 @@
+{
+  "name": "@drumee/schemas-patcher",
+  "version": "1.1.3",
+  "description": "Drumee schemas patcher",
+  "main": "schemas-patch/bin/patch.js",
+  "scripts": {
+  },
+  "dependencies": {
+    "@drumee/server-essentials": "^1.1.68",
+    "shelljs": "^0.8.5"
+  },
+  "devDependencies": {
+    "@drumee/dev-tools": "^0.1.26"
+  }
+}

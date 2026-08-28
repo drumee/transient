@@ -1,0 +1,18 @@
+Source: drumee-bootstrap
+Section: non-free
+Priority: optional
+Maintainer: Somanos Sar <somanos.sar@drumee.com>
+Build-Depends: debhelper (>= 11)
+Standards-Version: 1.2.6
+Homepage: https://drumee.org
+
+Package: drumee-bootstrap
+Architecture: all
+Depends: ${misc:Depends}, debconf (>= 0.5) | debconf-2.0
+Description: Drumee interactive bare-metal installer
+ Interactive first-run installer for a bare-metal or fresh-VM Drumee
+ deployment. Runs a guided debconf setup wizard that configures the full
+ Drumee stack (domain, networking, SSL, storage, and services) from
+ pre-built artifacts. For a pre-configured, non-interactive (apt/IaC)
+ install use the drumee-infra package built from the infra/ directory,
+ optionally driven by an install.conf preseed (see config/render.mjs).

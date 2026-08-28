@@ -1,0 +1,38 @@
+[Unit]
+Description=Drumee Caddy (TLS terminator, DNS-01 capable)
+Documentation=file:///usr/share/doc/drumee-caddy/README.md
+After=network-online.target
+Wants=network-online.target
+# nginx is the upstream; Caddy can start first and will simply retry proxying.
+After=nginx.service
+
+[Service]
+Type=notify
+User=caddy
+Group=caddy
+# Certificates are obtained over DNS-01, so the credentials come from here. The
+# file is 0600 root-owned; systemd reads it before dropping privileges.
+EnvironmentFile=/etc/drumee/credential/caddy-dns.env
+# Regenerate the Caddyfile from conf.d/caddy.json on every start, so
+# `dpkg-reconfigure drumee-infra` + restart is enough to apply a change.
+ExecStartPre=/usr/sbin/drumee-caddy-config
+ExecStart=/usr/sbin/drumee-caddy run --environ --config /etc/drumee/caddy/Caddyfile
+ExecReload=/usr/sbin/drumee-caddy reload --config /etc/drumee/caddy/Caddyfile --force
+# Best effort: on a restart the certificate usually already exists, so publish it
+# immediately instead of waiting for the timer. The '-' keeps a failure harmless.
+ExecStartPost=-/usr/bin/systemctl start drumee-caddy-export-certs.service
+Restart=on-abnormal
+RestartSec=5s
+
+# Only capability needed: bind 80/443 as a non-root user.
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/caddy /etc/drumee/caddy
+LimitNOFILE=1048576
+
+[Install]
+WantedBy=multi-user.target

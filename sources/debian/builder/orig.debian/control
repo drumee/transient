@@ -1,0 +1,13 @@
+Source: drumee
+Section: web
+Priority: optional
+Maintainer: Somanos Sar <somanos.sar@drumee.com>
+Uploaders: Ranjith Ranjithkumar <ranjith@drumee.com>
+Standards-Version: 1.2.5
+Homepage: https://drumee.org
+
+Package: drumee
+Architecture: all
+Pre-Depends: g++, gyp, openssh-client, libcurl4, nodejs, nginx, mariadb-server, mariadb-client, mariadb-backup
+Depends: ${misc:Depends}, binutils, apt-utils, git, cron, libncurses6, git, openssh-client, libcurl4
+Description: Setup Drumee infrastructure and environment

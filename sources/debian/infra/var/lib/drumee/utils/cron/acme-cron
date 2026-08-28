@@ -1,0 +1,10 @@
+#!/bin/bash
+
+set -e
+source /etc/drumee/drumee.sh
+if [ -d "$CERTS_DIR" ]; then
+  $ACME_DIR/acme.sh --cron --home $ACME_DIR --config-home $ACME_DIR/configs --cert-home $CERTS_DIR  --dns ${ACME_DNS}
+  chown -R $DRUMEE_SYSTEM_USER:$DRUMEE_SYSTEM_GROUP $CERTS_DIR 
+  nginx -t
+  service nginx reload
+fi

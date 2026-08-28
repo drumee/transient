@@ -1,0 +1,12 @@
+Source: drumee-schemas
+Section: non-free
+Priority: optional
+Maintainer: Somanos Sar <somanos.sar@drumee.com>
+Standards-Version: 2.6.7
+Homepage: https://drumee.com
+
+Package: drumee-schemas
+Architecture: all
+Depends: ${misc:Depends}, binutils, nodejs (>= 20),
+    mariadb-server, mariadb-client, mariadb-backup, drumee-infra
+Description: Drumee Schemas

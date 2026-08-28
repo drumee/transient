@@ -1,0 +1,85 @@
+drumee-schemas (2.6.99) stable; urgency=medium
+  * TMP BUILD FROM REVAMP
+ -- Somanos Sar <somanos.sar@drumee.com>  Thu, 04 Dec 2025 10:00:00 +000
+
+drumee-schemas (2.6.7) stable; urgency=medium
+
+  * Handle unknow filetype
+ -- Somanos Sar <somanos.sar@drumee.com>  Tue, 14 Feb 2025 10:00:00 +000
+
+drumee-schemas (2.6.6) stable; urgency=medium
+
+  * Improve detection during installation
+ -- Somanos Sar <somanos.sar@drumee.com>  Tue, 14 Feb 2025 10:00:00 +000
+
+drumee-schemas (2.6.5) stable; urgency=medium
+
+  * Update setup-schemas
+ -- Somanos Sar <somanos.sar@drumee.com>  Tue, 11 Feb 2025 10:00:00 +000
+
+drumee-schemas (2.6.4) stable; urgency=medium
+
+  * Build with patches until 1.0.12
+
+ -- Somanos Sar <somanos.sar@drumee.com>  Mon, 10 Feb 2025 10:00:00 +000
+
+drumee-schemas (2.6.3) stable; urgency=medium
+
+  * Chqnged filecap precedence in media attributes  
+
+ -- Somanos Sar <somanos.sar@drumee.com>  Mon, 27 Jan 2025 10:00:00 +000
+
+drumee-schemas (2.6.2) stable; urgency=medium
+
+  * fixed parent_path 
+
+ -- Somanos Sar <somanos.sar@drumee.com>  Thu, 08 Jan 2025 10:00:00 +0000
+
+drumee-schemas (2.6.1) stable; urgency=medium
+
+  * changed desk_create_hub
+
+ -- Somanos Sar <somanos.sar@drumee.com>  Thu, 17 Dec 2024 10:00:00 +0000
+
+drumee-schemas (2.6.0) stable; urgency=medium
+
+  * Add changelog
+
+ -- Somanos Sar <somanos.sar@drumee.com>  Tue, 10 Dec 2024 10:00:00 +0000
+
+drumee-schemas (2.5.8) stable; urgency=medium
+
+  * Update filecap
+
+ -- Somanos Sar <somanos.sar@drumee.com>  Wed, 27 Oct 2024 10:00:00 +0000
+
+drumee-schemas (2.5.7) stable; urgency=medium
+
+  * Added changelog logics
+
+ -- Somanos Sar <somanos.sar@drumee.com>  Mon, 25 Oct 2024 10:00:00 +0000
+
+drumee-schemas (2.5.6) stable; urgency=medium
+
+  * New schemas build
+
+ -- Somanos Sar <somanos.sar@drumee.com>  Wed, 25 Oct 2024 10:00:00 +0000
+
+drumee-schemas (2.5.5) stable; urgency=medium
+
+  * Fixed Admin setup
+
+ -- Somanos Sar <somanos.sar@drumee.com>  Wed, 23 Oct 2024 10:00:00 +0000
+
+drumee-schemas (2.5.3) stable; urgency=medium
+
+  * Added patches manifest
+
+ -- Somanos Sar <somanos.sar@drumee.com>  Wed, 03 Oct 2024 10:00:00 +0000
+
+
+drumee-schemas (2.5.2) stable; urgency=medium
+
+  * Hot fix
+
+ -- Somanos Sar <somanos.sar@drumee.com>  Wed, 03 Oct 2024 10:00:00 +0000

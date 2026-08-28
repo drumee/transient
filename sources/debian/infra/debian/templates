@@ -1,0 +1,209 @@
+Template: drumee-infra/description
+Type: string
+Default: My Great Drumee Team
+Description: Please enter a label for this Drumee instance
+ A human-friendly name for your team or instance.
+
+Template: drumee-infra/domain
+Type: string
+Default: example.com
+Description: Please enter the domain name
+ This is the domain name your Drumee instance will use.
+
+Template: drumee-infra/local_mode
+Type: boolean
+Default: true
+Description: Please confirm only local network
+ You have provided "local" as domain name. That means your Drumee instance
+ won't be reachable from the public Internet.
+
+Template: drumee-infra/service
+Type: string
+Description: Please enter the list of services to enable
+ Comma-separated list of optional services to enable for this instance.
+
+Template: drumee-infra/ip4
+Type: select
+Choices: ${__IP4_LIST__}, other
+Default: other
+Description: Please select your server IPv4 address
+ If you set a private address, your Drumee won't be reachable from the public Internet.
+
+Template: drumee-infra/public_ip4
+Type: string
+Description: Please enter your server IPv4 address
+ If you set a private address, your Drumee won't be reachable from the public Internet.
+
+Template: drumee-infra/ip6
+Type: select
+Choices: ${__IP6_LIST__}, other
+Default: other
+Description: Please select your server IPv6 address
+ If you select a private address, your Drumee won't be reachable from the public Internet.
+
+Template: drumee-infra/public_ip6
+Type: string
+Description: Please enter your server IPv6 address
+ If you set a private address, your Drumee won't be reachable from the public Internet.
+
+Template: drumee-infra/admin_email
+Type: string
+Default: admin@example.com
+Description: Please enter the administrator email
+ This address is used as the administrator login identifier and to send
+ technical notifications to.
+
+Template: drumee-infra/acme_email
+Type: string
+Default:
+Description: Please enter the ACME email account
+ If you are not using your own SSL certificates, Drumee uses ZeroSSL to
+ automatically issue your SSL certificates. This email is provided to
+ zerossl.com as the account identifier.
+
+Template: drumee-infra/db_dir
+Type: string
+Default: /srv/db
+Description: Please enter the path to your Drumee database
+ This storage area must not be shared with another application or a native
+ system path such as /usr, /sys, ...
+
+Template: drumee-infra/data_dir
+Type: string
+Default: /data
+Description: Please enter the path to your Drumee filesystem storage
+ This storage area must not be shared with another application or a native
+ system path such as /usr, /sys, ...
+
+Template: drumee-infra/backup_location
+Type: string
+Description: Please enter the location of your Drumee backup
+ It should be located on a different partition from the data storage.
+ For example /my-backup or remote.server.backup:/my-backup.
+
+Template: drumee-infra/exchange_location
+Type: string
+Default: /exchangearea
+Description: Please enter the location of your exchange area
+ A directory to transfer files between the host filesystem and the Drumee
+ filesystem. It must not be shared with a native system path such as /usr, /sys, ...
+
+Template: drumee-infra/tls_method
+Type: select
+Choices: acme-dns-server, acme-dns-api, caddy, own, self-signed
+Default: acme-dns-server
+Description: How should TLS certificates be obtained?
+ Drumee needs a WILDCARD certificate (example.com plus *.example.com), which
+ can only be issued through a DNS-01 challenge — never over HTTP. There are
+ two ways to answer that challenge:
+ .
+ acme-dns-server: this machine runs its own authoritative DNS server (BIND9)
+ and answers the challenge locally. Requires that the domain's NS records are
+ delegated here and that inbound UDP port 53 reaches this machine — so it does
+ NOT work behind a home router.
+ .
+ acme-dns-api: the challenge record is created through your DNS provider's API
+ (any provider supported by acme.sh). This needs only outbound access, so it
+ works behind NAT with no port forwarding at all. No local DNS server is set
+ up in this mode.
+ .
+ caddy: Caddy obtains and renews the certificates itself, using the DNS
+ provider module it was built with, and terminates TLS on ports 80/443 in front
+ of nginx (nginx moves to internal ports). Also outbound-only, so it works
+ behind NAT. Requires the drumee-caddy package; without it this choice is
+ refused and nginx keeps ports 80/443.
+ .
+ own: you already have wildcard certificates and will point Drumee at them.
+ .
+ self-signed: no public certificate — for a LAN-only or test instance. Only
+ meaningful together with a local domain; on a public domain a certificate is
+ still requested (use "own" to supply your own instead).
+
+Template: drumee-infra/acme_env_file
+Type: string
+Default: /etc/drumee/credential/dns-api.env
+Description: Please enter the path to the DNS provider credentials file
+ A shell file that will be sourced before the certificate is requested. It must
+ export ACME_PROVIDER (an acme.sh dnsapi name, without the "dns_" prefix, e.g.
+ ovh, cloudflare, gandi_livedns) plus the variables that provider needs.
+ .
+ For example, for OVH:
+ .
+   export ACME_PROVIDER=ovh
+   export OVH_AK=... OVH_AS=... OVH_CK=...
+ .
+ Create the file with mode 0600 before this package is configured. If it is
+ missing, Drumee falls back to running a local DNS server instead.
+
+Template: drumee-infra/caddy_domain
+Type: string
+Description: Please enter the domain to certify with Caddy
+ The certificate covers this domain and its subdomains (a wildcard is possible
+ because Caddy validates over DNS). Defaults to this instance's domain; change
+ it only if the certificate should be issued for a different zone.
+
+Template: drumee-infra/caddy_dns_provider
+Type: string
+Description: Please enter the Caddy DNS provider module
+ The name of the caddy-dns module the drumee-caddy binary was built with, for
+ example ovh, cloudflare, gandi, desec or route53. It must match a module that
+ is actually compiled in; see the drumee-caddy package documentation for the
+ list it ships with.
+
+Template: drumee-infra/caddy_dns_api_key
+Type: password
+Description: Please enter the DNS provider API key or token
+ Used by Caddy to create the DNS challenge record. It is written to
+ /etc/drumee/credential/caddy-dns.env with mode 0600 and is never echoed back.
+ .
+ Providers needing more than one value (an application key plus a secret, for
+ instance) take the extra values in that file; enter the primary token here and
+ complete the file afterwards.
+
+Template: drumee-infra/own_ssl
+Type: boolean
+Default: false
+Description: Do you have your own SSL certificates?
+ Superseded by drumee-infra/tls_method; kept so existing preseeds keep working.
+ Setting it true is equivalent to choosing "own".
+
+Template: drumee-infra/own_ssl_path
+Type: string
+Description: Please enter the location of your SSL certificates
+ Certificates must be wildcard and cover every name Drumee serves:
+ example.com, *.example.com, jit.example.com, *.jit.example.com,
+ vendors.example.com and *.vendors.example.com.
+ .
+ Each subdomain needs its own wildcard entry: a wildcard matches a single label,
+ so *.example.com does NOT cover anything below vendors.example.com.
+
+Template: drumee-infra/wireguard_enabled
+Type: boolean
+Default: false
+Description: Enable WireGuard peer coordination?
+ Lets this instance be reached from outside without opening any port on the
+ local router. The node keeps an outbound connection to a coordination
+ server, which pairs it with clients so both sides punch their firewall at
+ the same instant. Traffic stays peer-to-peer and end-to-end encrypted; a
+ relay is used only when the direct path cannot be established.
+
+Template: drumee-infra/wireguard_coordinator
+Type: string
+Default: coord.drumee.tech
+Description: Please enter the coordination server host
+ Hostname of the Drumee coordination server. It handles signaling only and
+ never sees the content of your traffic.
+
+Template: drumee-infra/wireguard_listen_port
+Type: string
+Default: 51820
+Description: Please enter the WireGuard listen port
+ UDP port used by this node. It must stay fixed: the agent learns its public
+ NAT mapping by probing from this exact port, and a changing port would make
+ that mapping useless.
+
+Template: drumee-infra/wireguard_reflector_port
+Type: string
+Default: 51821
+Description: Please enter the coordination server reflector port
+ UDP port of the endpoint reflector on the coordination server.

@@ -1,0 +1,11 @@
+{
+	"arch":"single",
+	"sys_languages":["en", "fr", "km", "ru", "zh"],
+	"conference":{
+		"hosts": {
+			"domain": "",
+			"muc": ""
+		},
+		"bosh": ""
+	}
+}

@@ -1,0 +1,6 @@
+src/
+src/*
+build/
+build/*
+tmp/*
+tmp/

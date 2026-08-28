@@ -1,0 +1,91 @@
+#!/bin/bash
+# Build and push all Drumee images to a registry, tagged by version (+ latest).
+# Used by CI on release and runnable by hand.
+#
+#   REGISTRY=ghcr.io/drumee TAG=2.9.45 scripts/publish-images.sh
+#
+# Env:
+#   REGISTRY  (default ghcr.io/drumee)   image namespace
+#   TAG       (required)                 version tag, e.g. a git tag or manifest version
+#   PUSH      (default 1)                1 = buildx --push; 0 = --load (local only)
+#   ALSO_LATEST (default 1)              also tag/push :latest
+#   ALSO_STABLE (default 1)              also tag/push :stable (the moving release channel)
+#   *_SRC     source checkouts (default ~/<repo>)
+#   MEDIA_DEPS (default 1)               include media tools in server-pod (prod)
+#
+# Requires: docker buildx, and (for PUSH=1) a prior `docker login` to REGISTRY.
+set -euo pipefail
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+REGISTRY="${REGISTRY:-ghcr.io/drumee}"
+TAG="${TAG:?set TAG to the release version}"
+PUSH="${PUSH:-1}"
+ALSO_LATEST="${ALSO_LATEST:-1}"
+ALSO_STABLE="${ALSO_STABLE:-1}"
+MEDIA_DEPS="${MEDIA_DEPS:-1}"
+# 0 reuses the checkout's node_modules (installed with registry auth on the
+# host/runner); 1 runs `npm ci` inside the build (needs in-build @drumee auth).
+INSTALL_DEPS="${INSTALL_DEPS:-0}"
+SERVER_SRC="${SERVER_SRC:-$HOME/server-team}"
+UI_SRC="${UI_SRC:-$HOME/ui-team}"
+SCHEMAS_SRC="${SCHEMAS_SRC:-$HOME/schemas}"
+SETUP_SCHEMAS_SRC="${SETUP_SCHEMAS_SRC:-$HOME/setup-schemas}"
+SETUP_INFRA_SRC="${SETUP_INFRA_SRC:-$HOME/setup-infra}"
+STATIC_SRC="${STATIC_SRC:-$HOME/static}"
+
+say() { printf '\033[1;36m==>\033[0m %s\n' "$*"; }
+docker buildx version >/dev/null 2>&1 || { echo "docker buildx required" >&2; exit 1; }
+
+out_flag=(--load); [ "$PUSH" = 1 ] && out_flag=(--push)
+tags() { local n="$1"; printf -- '-t %s/%s:%s ' "$REGISTRY" "$n" "$TAG"
+  [ "$ALSO_STABLE" = 1 ] && printf -- '-t %s/%s:stable ' "$REGISTRY" "$n"
+  [ "$ALSO_LATEST" = 1 ] && printf -- '-t %s/%s:latest ' "$REGISTRY" "$n"; }
+
+say "Registry=$REGISTRY Tag=$TAG Push=$PUSH"
+
+say "server-pod"
+docker buildx build -f "$root/deploy/docker/Dockerfile.server" \
+  --build-context "helpers=$root/deploy/docker" \
+  --build-arg "INSTALL_DEPS=$INSTALL_DEPS" --build-arg "MEDIA_DEPS=$MEDIA_DEPS" \
+  $(tags server-pod) "${out_flag[@]}" "$SERVER_SRC"
+
+say "ui-build"
+docker buildx build -f "$root/deploy/docker/Dockerfile.ui" \
+  --build-arg "INSTALL_DEPS=$INSTALL_DEPS" $(tags ui-build) "${out_flag[@]}" "$UI_SRC"
+
+say "schemas"
+docker buildx build -f "$root/deploy/docker/Dockerfile.schemas" \
+  --build-context "helpers=$root/deploy/docker" \
+  $(tags schemas) "${out_flag[@]}" "$SCHEMAS_SRC"
+
+say "schemas-populate (FROM published server-pod)"
+docker buildx build -f "$root/deploy/docker/Dockerfile.populate" \
+  --build-context "helpers=$root/deploy/docker" \
+  --build-context "setup=$SETUP_SCHEMAS_SRC" \
+  --build-context "schemas=$SCHEMAS_SRC" \
+  --build-arg "SERVER_IMAGE=$REGISTRY/server-pod:$TAG" \
+  $(tags schemas-populate) "${out_flag[@]}" "$root/deploy/docker"
+
+say "wireguard (coordination agent; bootstrap.sh + agent.js from infra/)"
+docker buildx build -f "$root/deploy/docker/Dockerfile.wireguard" \
+  --build-context "wg=$root/infra/var/lib/drumee/wireguard" \
+  $(tags wireguard) "${out_flag[@]}" "$root/deploy/docker"
+
+if [ -d "$SETUP_INFRA_SRC" ]; then
+  say "infra-init (FROM published server-pod)"
+  docker buildx build -f "$root/deploy/docker/Dockerfile.infra-init" \
+    --build-context "helpers=$root/deploy/docker" --build-context "infra=$SETUP_INFRA_SRC" \
+    --build-arg "SERVER_IMAGE=$REGISTRY/server-pod:$TAG" \
+    $(tags infra-init) "${out_flag[@]}" "$root/deploy/docker"
+else
+  say "skip infra-init (no source at $SETUP_INFRA_SRC)"
+fi
+
+if [ -d "$STATIC_SRC" ]; then
+  say "static"
+  docker buildx build -f "$root/deploy/docker/Dockerfile.static" \
+    $(tags static) "${out_flag[@]}" "$STATIC_SRC"
+else
+  say "skip static (no source at $STATIC_SRC)"
+fi
+
+say "Done. Images under $REGISTRY tagged :$TAG${ALSO_LATEST:+ (+ :latest)}"

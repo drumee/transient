@@ -1,0 +1,11 @@
+Source: drumee-server-pod
+Section: non-free
+Priority: optional
+Maintainer: Somanos Sar <somanos.sar@drumee.com>
+Standards-Version: 2.9.7
+Homepage: https://drumee.org
+
+Package: drumee-server-pod
+Architecture: all
+Depends: ${misc:Depends}, nginx, redis-server, redis, node-redis, inotify-tools, graphicsmagick, libgraphicsmagick1-dev, poppler-utils, libreoffice, dcraw, curl, p7zip-full, ffmpeg, drumee-schemas, drumee-static
+Description: Drumee Server

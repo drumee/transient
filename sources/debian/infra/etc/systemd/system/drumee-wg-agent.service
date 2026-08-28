@@ -1,0 +1,23 @@
+[Unit]
+Description=Drumee WireGuard agent (peer coordination)
+Documentation=man:drumee(1)
+After=drumee-wg-bootstrap.service network-online.target
+Requires=drumee-wg-bootstrap.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/node /var/lib/drumee/wireguard/agent.js
+Restart=always
+RestartSec=5
+# The agent shells out to `wg` and `ip` to program peers on wg0.
+AmbientCapabilities=CAP_NET_ADMIN
+CapabilityBoundingSet=CAP_NET_ADMIN
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/etc/drumee/credential/wireguard
+ProtectHome=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

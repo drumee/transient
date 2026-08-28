@@ -1,0 +1,14 @@
+# Drumee static assets (drumee-static) — run-once publisher.
+# Serves /-/static/* and /-/images/* (splash CSS, fonts, logo). The app's own UI
+# styles ship in the webpack bundles; this package is for the pre-boot splash and
+# branding assets. In production nginx serves these from /srv/drumee/static.
+#
+# Build context is the `static` source repo (github.com/drumee/static):
+#   docker buildx build -f deploy/docker/Dockerfile.static -t drumee/static:<tag> /path/to/static
+#
+# At container start it copies the assets into the shared static volume, then exits.
+FROM alpine:3
+# The static repo's tree is published under /srv/drumee/static in the .deb; mirror
+# that here so /-/static/<x> -> <volume>/<x> and /-/images/<x> -> <volume>/images/<x>.
+COPY . /opt/static/
+CMD ["sh", "-c", "mkdir -p /static-assets && cp -a /opt/static/. /static-assets/ && echo '[static] assets published to /static-assets'"]

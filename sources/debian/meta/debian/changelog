@@ -1,0 +1,6 @@
+drumee (1.0.0) stable; urgency=medium
+
+  * Initial metapackage: installs the full Drumee runtime as a single
+    `apt install drumee`.
+
+ -- Somanos Sar <somanos.sar@drumee.com>  Fri, 30 May 2026 00:00:00 +0000

@@ -1,0 +1,11 @@
+Template: mypackage/domain
+Type: string
+Default: example.com.uu
+Description: Please enter the domain name
+ This is the domain name your application will use.
+
+Template: mypackage/domain2
+Type: string
+Default: /dev/aa
+Description: Please enter the partition
+ This is the domain name your application will use.
