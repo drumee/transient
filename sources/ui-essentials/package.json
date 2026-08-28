@@ -1,0 +1,24 @@
+{
+  "name": "@drumee/ui-essentials",
+  "version": "1.0.2",
+  "description": "Drumee Frontend Common Library",
+  "main": "./index.js",
+  "repository": {
+    "type": "git",
+    "url": "git@github.com:drumee/ui-essentials.git"
+  },
+  "keywords": [
+    "Drumee Frontend Library"
+  ],
+  "scripts": {
+    "release": "git push && npm publish --access public && npm version patch"
+  },
+  "author": "Somanos Sar <somanos.sar@drumee.com>",
+  "dependencies": {
+    "@drumee/ui-styles": "^1.0.1",
+    "filesize": "^11.0.13"
+  },
+  "devDependencies": {
+    "@drumee/ui-dev-tools": "^1.0.19"
+  }
+}
