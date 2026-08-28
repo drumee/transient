@@ -1,0 +1,50 @@
+{
+  "id": "whats-drumee",
+  "title": "What’s Drumee?",
+  "blocks": [
+    { "type": "h1", "text": "What’s Drumee:" },
+
+    {
+      "type": "p",
+      "text": "Drumee is a privacy-first cloud desktop that gives you full control over your data, where it lives, who can access it, and how it is used."
+    },
+    {
+      "type": "p",
+      "text": "Your workspace is encrypted, local-hostable, and never harvested for ads or AI training. Combined with AI auto-organization, Drumee delivers a clean, private, all-in-one digital workspace."
+    },
+
+    { "type": "h2", "text": "The Problem We Solve" },
+
+    {
+      "type": "p",
+      "text": "Modern work is fragmented across dozens of apps: Google Drive, Slack, Zoom, Dropbox, and Notion. Files are unorganized, data is scattered, privacy is compromised, and workers waste hours searching instead of creating."
+    },
+
+    {
+      "type": "quote",
+      "text": "People don’t organize their drive. Their drive becomes unsearchable. Work slows down."
+    },
+
+    { "type": "h2", "text": "In Simple Words" },
+
+    {
+      "type": "p",
+      "text": "Drumee is a **privacy-first collaborative and storage app**: an all-in-one workspace that feels like your computer but is accessible anywhere, with built-in messaging, file sharing, calls, and collaboration."
+    },
+
+    { "type": "h2", "text": "Key Features" },
+
+    {
+      "type": "ul",
+      "items": [
+        "**AI-powered auto-organization** that keeps your drive clean without effort",
+        "**Natural-language search** that understands intent, not filenames",
+        "**A privacy-first architecture** with flexible hosting (cloud or local-hosted)",
+        "**Encrypted messaging, calls, and storage**",
+        "**Zero data harvesting or behavioral tracking**",
+        "**AI that never trains on your data unless you explicitly allow it**",
+        "**A plugin ecosystem** that adapts to how you work"
+      ]
+    }
+  ]
+}

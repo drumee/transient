@@ -1,0 +1,375 @@
+{
+  "id": "core-principles",
+  "title": "Core Principles",
+  "blocks": [
+    { "type": "h1", "text": "What is Drumee?" },
+
+    {
+      "type": "p",
+      "text": "Drumee is a secure cloud workspace that brings  **files, conversations, notes, and contacts** together in one place."
+    },
+    {
+      "type": "p",
+      "text": "Instead of switching between file storage, chat tools, and note apps, Drumee organizes everything around **folders and people**, with privacy and access control built in by default."
+    },
+
+    {
+      "type": "p",
+      "text": "Drumee is designed for:"
+    },
+
+    {
+      "type": "ul",
+      "items": [
+        "Individuals who want a private cloud space",
+        "Teams collaborating on shared files",
+        "Users who need to share content securely with external people"
+      ]
+    },
+
+    { "type": "h1", "text": "How Drumee Works (Core Principles)" },
+
+    { "type": "h2", "text": "1. Workspace" },
+
+    {
+      "type": "p",
+      "text": "Your workspace is your **personal cloud environment**. Everything you do in Drumee happens inside this workspace."
+    },
+
+    {
+      "type": "p",
+      "text": "Inside a workspace, you can:"
+    },
+
+    {
+      "type": "ul",
+      "items": [
+        "Create folders",
+        "Upload files",
+        "Chat with collaborators",
+        "Write notes",
+        "Manage contacts and settings"
+      ]
+    },
+
+    { "type": "h2", "text": "2. Folders Are the Center of Everything" },
+
+    {
+      "type": "p",
+      "text": "In Drumee, folders are more than storage."
+    },
+    {
+      "type": "ul",
+      "items": [
+        "Files",
+        "Messages (chat)",
+        "Shared access with specific people"
+      ]
+    },
+
+    {
+      "type": "p",
+      "text": "Each folder has its **own privacy rules**."
+    },
+
+    { "type": "h1", "text": "Folder Types" },
+
+    {
+      "type": "h3",
+      "text": "Private Folder"
+    },
+    {
+      "type": "ul",
+      "items": [
+        "Only visible to you",
+        "No one else can access it",
+        "Best for personal documents, drafts, or sensitive files"
+      ]
+    },
+
+    { "type": "h3", "text": "External Folder" },
+
+    {
+      "type": "ul",
+      "items": [
+        "Can be shared with other users",
+        "Used for collaboration",
+        "Includes both files and chat messages"
+      ]
+    },
+
+    {
+      "type": "p",
+      "text": "When you create a folder, you choose its type based on how you want to use it."
+    },
+
+    { "type": "h1", "text": " Files & Storage" },
+
+    { "type": "h3", "text": "Uploading Files" },
+
+    {
+      "type": "p",
+      "text": "You can upload files directly into any folder you own or have access to."
+    },
+
+    {
+      "type": "p",
+      "text": "Supported use cases include:"
+    },
+
+    {
+      "type": "ul",
+      "items": ["Documents", "Images", "Videos", "Notes"]
+    },
+
+    { "type": "h3", "text": "Storage Overview" },
+
+    {
+      "type": "p",
+      "text": "In **Settings → Storage**, you can:"
+    },
+
+    {
+      "type": "ul",
+      "items": [
+        "See how much storage you’ve used",
+        "SView usage by file type (video, image, note, all files)",
+        "Upgrade your plan if needed"
+      ]
+    },
+
+    { "type": "h1", "text": "Chat & Communication" },
+
+    { "type": "h3", "text": "Folder-Based Chat" },
+
+    {
+      "type": "p",
+      "text": "Every shared folder includes a chat panel."
+    },
+
+    {
+      "type": "p",
+      "text": "This means:"
+    },
+    {
+      "type": "ul",
+      "items": [
+        "Conversations stay tied to files",
+        "No need to search for context",
+        "Messages belong to the work, not a separate app"
+      ]
+    },
+
+    { "type": "h3", "text": "Sending Messages" },
+
+    {
+      "type": "ul",
+      "items": [
+        "Messages appear with timestamps",
+        "Delivery and read status are shown",
+        "Chats update in real time"
+      ]
+    },
+
+    { "type": "h1", "text": "Contacts" },
+
+    { "type": "h3", "text": "What Are Contacts?" },
+
+    {
+      "type": "p",
+      "text": "Contacts are the people you interact with in Drumee."
+    },
+    {
+      "type": "p",
+      "text": "You can:"
+    },
+
+    {
+      "type": "ul",
+      "items": [
+        "Add contacts",
+        "Invite new users",
+        "Organize contacts using tags"
+      ]
+    },
+
+    { "type": "h3", "text": "Managing Invitations" },
+
+    {
+      "type": "ul",
+      "items": [
+        "**Pending invitations** show users who haven’t joined yet",
+        "**Archived contacts** are hidden but not deleted"
+      ]
+    },
+
+    { "type": "h1", "text": "Notes" },
+
+    { "type": "h3", "text": "Creating Notes" },
+
+    {
+      "type": "p",
+      "text": "Notes are lightweight documents used for:"
+    },
+
+    {
+      "type": "ul",
+      "items": ["Personal reminders", "Meeting notes", "Quick ideas"]
+    },
+
+    {
+      "type": "p",
+      "text": "Each note includes:"
+    },
+
+    {
+      "type": "ul",
+      "items": [
+        "PA creation timestamp",
+        "Editable content",
+        "Manual save option"
+      ]
+    },
+    {
+      "type": "p",
+      "text": "Notes are stored securely inside your workspace."
+    },
+
+    { "type": "h1", "text": "Activity & Notifications" },
+
+    {
+      "type": "p",
+      "text": "The **Activity panel** shows:"
+    },
+
+    {
+      "type": "ul",
+      "items": ["Recent actions", "Updates related to files and messages"]
+    },
+    {
+      "type": "p",
+      "text": "You can:"
+    },
+    {
+      "type": "ul",
+      "items": [
+        "Review what happened while you were away",
+        "Mark all notifications as read"
+      ]
+    },
+
+    { "type": "h1", "text": "Customizing Your Workspace" },
+
+    { "type": "h3", "text": "Background & Theme" },
+    {
+      "type": "p",
+      "text": "You can personalize how Drumee looks:"
+    },
+
+    {
+      "type": "ul",
+      "items": [
+        "Choose a built-in background",
+        "Upload your own image (up to 10 MB)",
+        "Select a color theme"
+      ]
+    },
+
+    {
+      "type": "p",
+      "text": "Customization only affects your own workspace view."
+    },
+
+    { "type": "h1", "text": "Account Settings" },
+
+    { "type": "h3", "text": "Profile" },
+    {
+      "type": "p",
+      "text": "In **Settings → Profile**, you can:"
+    },
+
+    {
+      "type": "ul",
+      "items": [
+        "Update your name",
+        "Change your avatar",
+        "Manage your email and country"
+      ]
+    },
+
+    { "type": "h3", "text": "Security" },
+    {
+      "type": "p",
+      "text": "In **Settings → Security**, you can:"
+    },
+
+    {
+      "type": "ul",
+      "items": [
+        "Change your password",
+        "Enable multi-factor authentication (MFA)",
+        "Log out from the current device"
+      ]
+    },
+
+    {
+      "type": "p",
+      "text": "MFA adds an extra layer of protection to your account."
+    },
+
+    { "type": "h1", "text": "Privacy & Access Control" },
+
+    {
+      "type": "p",
+      "text": "Drumee is privacy-first by design."
+    },
+    {
+      "type": "p",
+      "text": "Key rules:"
+    },
+
+    {
+      "type": "ul",
+      "items": [
+        "Private folders are never shared",
+        "External folders are accessible only to invited users",
+        "Access is controlled at the folder level",
+        "You decide who can see and interact with your content"
+      ]
+    },
+
+    { "type": "h1", "text": "Typical Use Cases" },
+
+    { "type": "h3", "text": "Personal Workspace" },
+
+    {
+      "type": "ul",
+      "items": [
+        "Private folders for documents",
+        "Notes for daily planning",
+        "Customized background"
+      ]
+    },
+
+    { "type": "h3", "text": "Team Collaboration" },
+
+    {
+      "type": "ul",
+      "items": [
+        "External folders for shared projects",
+        "Folder-based chat for discussions",
+        "Controlled access for each collaborator"
+      ]
+    },
+
+    { "type": "h3", "text": "External Sharing" },
+
+    {
+      "type": "ul",
+      "items": [
+        "Share files without exposing your entire workspace",
+        "Keep conversations and files in one place"
+      ]
+    }
+  ]
+}

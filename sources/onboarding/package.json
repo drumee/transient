@@ -1,0 +1,18 @@
+{
+  "name": "drumee-onboarding",
+  "version": "1.0.0",
+  "description": "Drumee onboarding pages",
+  "scripts": {
+    "sass:home": "sass src/scss/home.scss dist/css/home.css",
+    "sass:features": "sass src/scss/features.scss dist/css/features.css",
+    "sass:build": "sass src/scss/home.scss dist/css/home.css && sass src/scss/features.scss dist/css/features.css",
+    "sass:build:prod": "sass --style=compressed src/scss/home.scss dist/css/home.css && sass --style=compressed src/scss/features.scss dist/css/features.css",
+    "sass:watch": "sass --watch src/scss:dist/css",
+    "dev": "sass --watch src/scss:dist/css",
+    "serve": "python3 -m http.server 8080",
+    "start": "python3 -m http.server 8080"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC"
+}

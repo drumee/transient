@@ -1,0 +1,320 @@
+{
+  "id": "general-terms-of-use",
+  "title": "General Terms of Use",
+  "blocks": [
+    { "type": "h1", "text": "GENERAL TERMS OF USE – DRUMEE" },
+
+    {
+      "type": "p",
+      "text": "IT IS IMPORTANT THAT YOU READ THESE GENERAL TERMS OF USE CAREFULLY BEFORE DOWNLOADING THE DRUMEE SOFTWARE."
+    },
+    {
+      "type": "p",
+      "text": "IF YOU DO NOT WISH TO ACCEPT THE TERMS OF THESE GENERAL CONDITIONS, YOU MUST NOT CLICK ON “I ACCEPT” OR DOWNLOAD THE SOFTWARE."
+    },
+    {
+      "type": "p",
+      "text": "BY CLICKING ON “I ACCEPT” AND DOWNLOADING THE SOFTWARE, YOU AGREE TO COMPLY WITH THE TERMS OF THESE GENERAL CONDITIONS, WHICH CONSTITUTE A CONTRACT BETWEEN THE COMPANY “XIALIA” AND YOURSELF."
+    },
+
+    { "type": "h2", "text": "1. Definitions" },
+    {
+      "type": "p",
+      "text": "The terms defined in this article and used in these General Terms of Use shall have the following meanings:"
+    },
+    {
+      "type": "ul",
+      "items": [
+        "“GTU”: refers to these General Terms of Use.",
+        "“Client”: refers to any legal entity that has entered into a Contract with the Company.",
+        "“Contract”: refers to the service agreement entered into between the Company and the Client, under which the User is authorized to use the Software in accordance with the License.",
+        "“License”: refers to the right to use the Software granted to the User (via the Client) for the duration provided for in these GTU.",
+        "“Software”: refers to the software solution “Drumee” provided to the Client by the Company, consisting of a collaborative system.",
+        "“Party(ies)”: refers to the Company and the Administrator User, individually or collectively.",
+        "“Services”: refers to the services offered by the Software as described herein.",
+        "“Company” (or “THIDIMA”): refers to the company distributing the Software: THIDIMA, a public limited company registered with the Valais Commercial Register under number CHE-336.437.933, with its registered office at c/o Fiduciaire Fidag SA, Rue de la Blancherie 2, 1950 Sion, Switzerland.",
+        "“Guest User”: refers to any natural person authorized by the Client to use the Software in the course of their professional activity, as a member of the Client’s staff, an external guest, etc.",
+        "“Administrator User”: refers to a natural person who is a member of the Client’s staff, authorized by the Client to download and/or use the Software, and benefiting from the most extensive Services on the Software, in particular access to an administration interface.",
+        "“User”: refers indiscriminately to any user authorized by the Client to use the Software, whether an Administrator User or a Guest User."
+      ]
+    },
+
+    { "type": "h2", "text": "2. Scope of Application" },
+    {
+      "type": "p",
+      "text": "2.1 These GTU define the terms and conditions under which:"
+    },
+    {
+      "type": "ul",
+      "items": [
+        "the Administrator User is authorized to download and use the Software;",
+        "the Guest User is authorized to use the Software."
+      ]
+    },
+    {
+      "type": "p",
+      "text": "2.2 These GTU are provided to the Client at the time the Contract is entered into, it being specified that the Client guarantees compliance with these GTU by any User to whom it grants access to the Software. Any use of the Software by a User implies full and unconditional acceptance of these GTU. They are also provided to the Administrator User for acceptance before the latter may download the Software."
+    },
+    {
+      "type": "p",
+      "text": "2.3 The relationship between the Parties shall always be governed by the latest version of the GTU in force on the date of use of the Software by the User. In the event of any modification to these GTU, the new GTU shall be communicated to the Client, who shall be responsible for communicating them to the Users to whom it grants access to the Software."
+    },
+
+    { "type": "h2", "text": "3. Description of the Software" },
+    {
+      "type": "p",
+      "text": "The Software is an “Autonomous Collaborative System”, natively equipped with the main collaborative tools commonly used by companies for remote work and distributed teams. Based on the new web operating system Drumee OS, it can be installed on any type of private infrastructure, NAS, or servers. It enables companies to eliminate reliance on cloud services for collaborative work and to regain confidentiality over their data, which is no longer entrusted to third-party companies."
+    },
+    {
+      "type": "p",
+      "text": "It includes an administration interface allowing the Client, via the Administrator User, to manage all User access to the Software and their associated rights."
+    },
+
+    { "type": "h2", "text": "4. Access to the Software" },
+    {
+      "type": "p",
+      "text": "Once the Contract has been concluded by the Client and the price paid to the Company in accordance with THIDIMA’s General Terms and Conditions of Sale, the Administrator User designated by the Client receives an access key with a license number by email."
+    },
+    {
+      "type": "p",
+      "text": "The Administrator User is invited to click on the web link provided in order to activate the license and use the Software on their IT infrastructure."
+    },
+    {
+      "type": "p",
+      "text": "Before using the Software, the Administrator User must read and expressly accept these GTU."
+    },
+    {
+      "type": "p",
+      "text": "Once the GTU have been accepted, the Administrator User may use the Software, access the Services, and create access for Guest Users via the administration interface."
+    },
+
+    { "type": "h2", "text": "5. Services Provided by the Software" },
+
+    {
+      "type": "h3",
+      "text": "5.1 Services Available to the Administrator User"
+    },
+    {
+      "type": "p",
+      "text": "The Administrator User has access to an administration console enabling them to manage their IT organization, with the following main features:"
+    },
+    {
+      "type": "ul",
+      "items": [
+        "Creation, modification, deletion, and blocking of internal accounts",
+        "Security settings – passwords and two-factor authentication",
+        "Access to Guest User accounts only with their authorization"
+      ]
+    },
+
+    { "type": "h3", "text": "5.2 Services Available to All Users" },
+    {
+      "type": "p",
+      "text": "Once access to the Software has been created by the Administrator User, the Guest User may access the following Services:"
+    },
+    {
+      "type": "ul",
+      "items": [
+        "File management: classification, viewing, transfer, sharing, shared spaces",
+        "Communication: sharing, chat, calls, video",
+        "Organization: contact directory, shared calendar (under development)"
+      ]
+    },
+
+    { "type": "h3", "text": "5.3 Service Developments" },
+    {
+      "type": "p",
+      "text": "The Administrator User acknowledges that the Software may evolve and that the Services may be adapted accordingly."
+    },
+    {
+      "type": "p",
+      "text": "Any improvement, removal, or substantial modification of Services offered on the Software shall be notified to the Client and/or the Administrator User."
+    },
+    {
+      "type": "p",
+      "text": "The Administrator User is informed that the provision of Software updates is not systematic and may be subject to the Client subscribing to an additional plan including evolutionary maintenance of the Software."
+    },
+
+    { "type": "h2", "text": "6. User Obligations" },
+
+    {
+      "type": "h3",
+      "text": "6.1 Obligations of the Administrator User Regarding Use of the Software"
+    },
+    {
+      "type": "p",
+      "text": "In using the Software, the Administrator User undertakes to:"
+    },
+    {
+      "type": "ul",
+      "items": [
+        "not use the Software for fraudulent purposes or purposes not provided for in these GTU;",
+        "not impersonate another person or attempt to access any administrator account other than their own;",
+        "not conduct system analysis equivalent to reverse engineering, nor develop or market, directly or indirectly through the Client, products identical or similar to the Software that may compete with the Company;",
+        "not upload viruses or files that may compromise the integrity of the Software;",
+        "not transmit any unsolicited electronic messages, including chain emails or advertising messages, nor any content containing computer viruses or any other code designed to interrupt, destroy, or limit the functionality of any software, computer, or telecommunications tool;",
+        "comply with the conditions, instructions, and general rules communicated by THIDIMA for proper use of the Software;",
+        "and, more generally, use the platform reasonably, in compliance with these GTU and applicable regulations."
+      ]
+    },
+    {
+      "type": "p",
+      "text": "The Client and/or the Administrator User guarantees compliance with the above obligations by the Guest Users to whom access to the Software is granted."
+    },
+
+    {
+      "type": "h3",
+      "text": "6.2 Obligations Relating to Content Distributed by the User on the Software"
+    },
+    {
+      "type": "p",
+      "text": "It is recalled that the Company assumes no responsibility whatsoever for content distributed on the Software, whether as publisher or host."
+    },
+    {
+      "type": "p",
+      "text": "The User and/or the Client is therefore solely responsible for the content published on the Software, including data, databases, text, photos, videos, etc., that may be published in the course of using the Services."
+    },
+
+    { "type": "h2", "text": "7. Intellectual Property" },
+    {
+      "type": "p",
+      "text": "7.1 All intellectual property rights relating to the Software and all its components (source code, object code, graphical interface, documentation, the “DRUMEE” trademark, logos, etc.) are the full and exclusive property of the Company, its officers, and/or its partners."
+    },
+    {
+      "type": "p",
+      "text": "7.2The User undertakes not to infringe these rights."
+    },
+    {
+      "type": "p",
+      "text": "In particular, the User is prohibited from:"
+    },
+    {
+      "type": "ul",
+      "items": [
+        "copying the Software or any element thereof;",
+        "distributing copies of the Software or its content to third parties;",
+        "using the Software specifications to create or allow the creation of a program with the same purpose;",
+        "modifying, altering, revising, or decompiling the Software for any purpose;",
+        "making the Software documentation available to third parties, directly or indirectly, in any form or for any reason;",
+        "using passwords and/or identifiers for purposes other than authentication;",
+        "assigning, renting, sub-renting, or transferring the right of use to a third party;",
+        "failing to comply with the Software’s functionalities."
+      ]
+    },
+
+    { "type": "h2", "text": "8. Personal Data" },
+    {
+      "type": "p",
+      "text": "For the purposes of this article, “Personal Data” of the User includes, in particular, their last name, first name, telephone number, email address, postal address, and photograph."
+    },
+    {
+      "type": "p",
+      "text": "During maintenance operations required for the proper functioning of the Software, the Company may have access to Users’ Personal Data within the meaning of the French Data Protection Act of January 6, 1978 as amended, and the General Data Protection Regulation (GDPR)."
+    },
+    {
+      "type": "p",
+      "text": "To learn more about the Company’s privacy policy and how Personal Data is processed, Users are invited to consult the privacy policy available on the website: https://drumee.org"
+    },
+
+    { "type": "h2", "text": "9. Warranties – Liability" },
+    {
+      "type": "p",
+      "text": "9.1 The User is deemed to have full knowledge of the Services accessed and expressly acknowledges having received all necessary information from the Company for using the Software, particularly regarding precautions for its implementation and use. Although THIDIMA takes all necessary precautions to provide accurate information, such information has no contractual value, and THIDIMA’s liability shall not be incurred on this basis."
+    },
+
+    {
+      "type": "p",
+      "text": "9.2 The Company shall not be held liable for content published by the User on the Software, the User being the editor and the Client the host of such content. The User and/or the Client guarantees the Company against all direct and indirect, material and immaterial damages resulting from such content."
+    },
+    {
+      "type": "p",
+      "text": "9.3 THIDIMA shall under no circumstances be liable for any damage whatsoever (including, without limitation, loss of profits or loss of information) arising from the use or inability to use the Software, even if THIDIMA has been advised of the possibility of such damage."
+    },
+    {
+      "type": "p",
+      "text": "9.4 THIDIMA shall not be liable for indirect damages, including commercial, moral, or financial loss, loss of profits, loss of opportunity, data inaccuracy or corruption, or the cost of obtaining substitute products or services."
+    },
+    {
+      "type": "p",
+      "text": "9.5 THIDIMA shall not be liable for the implementation of IT security measures (antivirus, firewall, etc.) required to protect User workstations, nor for any resulting consequences (such as Software slowdowns)."
+    },
+    {
+      "type": "p",
+      "text": "9.6 The User is solely responsible for their use of the Services, to the exclusion of THIDIMA. Any damages resulting from data transferred to the Software are therefore not the responsibility of THIDIMA. The User acknowledges that data circulating on the internet may be subject to regulations or protected by intellectual property rights."
+    },
+    {
+      "type": "p",
+      "text": "9.7 In the event that the Company’s liability is invoked, in particular due to malfunction of the Software, the Company may, at its sole discretion, remedy the issue by correcting the defect or updating the Software."
+    },
+
+    { "type": "h2", "text": "10. Term" },
+    {
+      "type": "p",
+      "text": "Access to the Software by the Administrator User is effective from activation of the subscription. Access by the Guest User is effective from the creation of their account by the Administrator User."
+    },
+    {
+      "type": "p",
+      "text": "The Administrator User’s License is not limited in time."
+    },
+    {
+      "type": "p",
+      "text": "Access to the Software by Users is entirely managed by the Administrator User. In particular, access may be suspended or terminated at any time at the Client’s discretion."
+    },
+    {
+      "type": "p",
+      "text": "Any use of the Software without a valid License constitutes an act of infringement and engages the User’s civil liability towards the Company."
+    },
+
+    { "type": "h2", "text": "11. Governing Law and Jurisdiction" },
+    {
+      "type": "p",
+      "text": "11.1 These GTU and the relationship between the Company and the User are governed by Swiss law."
+    },
+    {
+      "type": "p",
+      "text": "11.2 Any dispute arising herefrom shall be submitted to the competent courts."
+    },
+    {
+      "type": "p",
+      "text": "11.3 If the Company provides an English translation of these GTU, the User acknowledges that the version in the original language shall prevail in the event of any contradiction."
+    },
+
+    {
+      "type": "p",
+      "text": "11.3 In the event that the Company provides an English translation of these GTU, the User acknowledges that all its components (source code, object code, graphical interface, documentation, the “DRUMEE” trademark, logos, etc.) are the full and exclusive property of the Company, its officers, and/or its partners."
+    },
+    {
+      "type": "p",
+      "text": "The User undertakes not to infringe these rights."
+    },
+    {
+      "type": "p",
+      "text": "In particular, the User is prohibited from:"
+    },
+    {
+      "type": "ul",
+      "items": [
+        "copying the Software or any element thereof;",
+        "distributing copies of the Software or its content to third parties;",
+        "using the Software specifications to create or allow the creation of a program with the same purpose;",
+        "modifying, altering, revising, or decompiling the Software for any purpose;",
+        "making the Software documentation available to third parties, directly or indirectly, in any form or for any reason;",
+        "using passwords and/or identifiers for purposes other than authentication;",
+        "assigning, renting, sub-renting, or transferring the right of use to a third party;",
+        "failing to comply with the Software’s functionalities."
+      ]
+    },
+
+    { "type": "h2", "text": "Waiver" },
+    {
+      "type": "p",
+      "text": "No tolerance by either Party of any breach by the other shall be deemed a waiver of any rights granted under these GTU."
+    },
+
+    { "type": "h2", "text": "Evidence" },
+    {
+      "type": "p",
+      "text": "In the event of a dispute, the Parties agree that emails and exchanges via the Software constitute original written evidence and waive any challenge to their evidential value, subject only to disputes as to authenticity."
+    }
+  ]
+}

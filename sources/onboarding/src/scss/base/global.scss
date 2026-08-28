@@ -1,0 +1,32 @@
+@use "sass:map";
+@use "../abstracts/colors";
+@use "../abstracts/breakpoints" as *;
+
+:root {
+  --page-bg: var(--neutral-100);
+  --panel: #ffffff;
+  --brand: var(--primary-900);
+  --accent: var(--primary-500);
+  --muted: var(--neutral-600);
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html,
+body {
+  width: 100%;
+  height: 100%;
+  overflow: auto;
+  background: #fff;
+  font-family: "Inter", sans-serif;
+  color: #110945;
+}
+
+body.nav-locked {
+  overflow: hidden;
+  touch-action: none;
+}

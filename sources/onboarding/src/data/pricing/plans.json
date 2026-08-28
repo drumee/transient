@@ -1,0 +1,110 @@
+{
+  "plans": [
+    {
+      "name": "Free",
+      "period": "Monthly",
+      "title": "Free",
+      "description": "",
+      "features": [
+        { "key": "storage", "name": "Storage", "value": "20 GB" },
+        { "key": "editor-access", "name": "Editor access", "value": false },
+        { "key": "admin-roles", "name": "Admin roles", "value": "None" },
+        { "key": "guest-access", "name": "Guest access", "value": false },
+        {
+          "key": "version-history",
+          "name": "Version history",
+          "value": "None"
+        },
+        { "key": "activity-logs", "name": "Activity logs", "value": false },
+        {
+          "key": "permissions-roles",
+          "name": "Permissions & roles",
+          "value": false
+        },
+        {
+          "key": "workspace-isolation",
+          "name": "Workspace isolation",
+          "value": false
+        },
+        {
+          "key": "priority-performance",
+          "name": "Priority performance",
+          "value": false
+        }
+      ]
+    },
+    {
+      "name": "Pro",
+      "period": "Monthly",
+      "title": {
+        "monthly": "Start from $16.99 / month",
+        "yearly": "Start from $14.44 / month"
+      },
+      "description": "5 seats included, each additional seat $5",
+      "features": [
+        { "key": "storage", "name": "Storage", "value": "20 GB" },
+        {
+          "key": "editor-access",
+          "name": "Editor access",
+          "value": "5 included"
+        },
+        { "key": "admin-roles", "name": "Admin roles", "value": "1" },
+        { "key": "guest-access", "name": "Guest access", "value": true },
+        {
+          "key": "version-history",
+          "name": "Version history",
+          "value": "7 days"
+        },
+        { "key": "activity-logs", "name": "Activity logs", "value": false },
+        {
+          "key": "permissions-roles",
+          "name": "Permissions & roles",
+          "value": true
+        },
+        {
+          "key": "workspace-isolation",
+          "name": "Workspace isolation",
+          "value": false
+        },
+        {
+          "key": "priority-performance",
+          "name": "Priority performance",
+          "value": false
+        }
+      ]
+    },
+    {
+      "name": "Enterprise",
+      "period": "Monthly",
+      "title": "Contact sales",
+      "description": "Custom pricing for your team",
+      "features": [
+        { "key": "storage", "name": "Storage", "value": "Custom" },
+        { "key": "editor-access", "name": "Editor access", "value": "Custom" },
+        { "key": "admin-roles", "name": "Admin roles", "value": "Yes" },
+        { "key": "guest-access", "name": "Guest access", "value": true },
+        {
+          "key": "version-history",
+          "name": "Version history",
+          "value": "Up to 90 days"
+        },
+        { "key": "activity-logs", "name": "Activity logs", "value": true },
+        {
+          "key": "permissions-roles",
+          "name": "Permissions & roles",
+          "value": true
+        },
+        {
+          "key": "workspace-isolation",
+          "name": "Workspace isolation",
+          "value": true
+        },
+        {
+          "key": "priority-performance",
+          "name": "Priority performance",
+          "value": true
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,237 @@
+{
+  "id": "user-guide",
+  "title": "Drumee User Guide",
+  "blocks": [
+    { "type": "h1", "text": "Drumee User Guide" },
+
+    {
+      "type": "p",
+      "text": "This document explains how to use **Drumee** based on the currently visible features in the interface. Drumee is a cloud workspace that combines **file management, chat, contacts, notes, and personal settings** in one place."
+    },
+
+    { "type": "h2", "text": "1. Getting Started" },
+    { "type": "h3", "text": "1.1 Accessing Drumee" },
+
+    {
+      "type": "ol",
+      "items": [
+        "Open Drumee in your browser.",
+        "Log in using your email account.",
+        "Once logged in, you will see the **main workspace** with a top navigation bar and interactive panels."
+      ]
+    },
+
+    { "type": "h2", "text": "2. File & Folder Management" },
+    { "type": "h3", "text": "2.1 Creating Folders" },
+
+    {
+      "type": "p",
+      "text": "When creating a new folder, Drumee offers multiple options depending on how you want to use the folder."
+    },
+
+    {
+      "type": "ul",
+      "items": [
+        "**Create an external folder** — use this when you want to share files with people outside your workspace.",
+        "**Create a private folder** — only you can access this folder. Ideal for personal or sensitive documents.",
+        "**Create the folder** — confirms the folder creation with your selected visibility."
+      ]
+    },
+
+    {
+      "type": "p",
+      "text": "Folders appear in your workspace and can be used for file storage, collaboration, and chat contexts."
+    },
+
+    { "type": "h2", "text": "3. Chat & Collaboration" },
+    { "type": "h3", "text": "3.1 Chat Interface" },
+
+    {
+      "type": "p",
+      "text": "Each folder in Drumee can act as a **chat space**. This allows you to communicate with collaborators directly inside the folder where files are stored."
+    },
+
+    {
+      "type": "ul",
+      "items": [
+        "Messages appear on the right panel.",
+        "You can send text messages in real time.",
+        "Chat remains tied to the folder and its files."
+      ]
+    },
+
+    {
+      "type": "p",
+      "text": "Example use case: create a folder → invite collaborators → chat and share files in one place."
+    },
+
+    { "type": "h3", "text": "3.2 Message Status" },
+
+    {
+      "type": "ul",
+      "items": [
+        "Sent messages show timestamps.",
+        "Delivered and read status is visible next to messages."
+      ]
+    },
+
+    { "type": "h2", "text": "4. Contacts Management" },
+    { "type": "h3", "text": "4.1 Contacts Panel" },
+
+    {
+      "type": "p",
+      "text": "The Contacts window allows you to manage people in your workspace."
+    },
+
+    {
+      "type": "ul",
+      "items": [
+        "**All contacts** — displays everyone you have added.",
+        "**Tags** — organize contacts into groups.",
+        "**Pending invitations** — view people you have invited but who have not yet joined.",
+        "**Archives** — archived contacts that are hidden but not deleted."
+      ]
+    },
+
+    { "type": "h3", "text": "4.2 Adding Contacts" },
+
+    {
+      "type": "ol",
+      "items": [
+        "Click **Contact +** in the top banner.",
+        "Enter the contact details.",
+        "Send the invitation."
+      ]
+    },
+
+    { "type": "h2", "text": "5. Notes" },
+    { "type": "h3", "text": "5.1 Creating Notes" },
+
+    {
+      "type": "p",
+      "text": "Notes open in a dedicated window and are designed for quick writing and personal organization."
+    },
+
+    {
+      "type": "ul",
+      "items": [
+        "Each note includes a **timestamp**.",
+        "Notes can be used for personal reminders.",
+        "Notes can be used for meeting notes.",
+        "Notes can be used for quick drafts."
+      ]
+    },
+
+    { "type": "h3", "text": "5.2 Saving Notes" },
+
+    {
+      "type": "ul",
+      "items": [
+        "Click the **save icon** to store the note.",
+        "Notes are automatically stored in your workspace."
+      ]
+    },
+
+    { "type": "h2", "text": "6. Activity & Notifications" },
+    { "type": "h3", "text": "6.1 Activity Panel" },
+
+    {
+      "type": "ul",
+      "items": [
+        "Shows recent actions and updates.",
+        "Use **Mark as all read** to clear notifications."
+      ]
+    },
+
+    {
+      "type": "p",
+      "text": "This helps you keep track of messages, file updates, and system actions."
+    },
+    { "type": "h2", "text": "7. Customizing Your Workspace" },
+    { "type": "h3", "text": "7.1 Background Customization" },
+
+    {
+      "type": "ul",
+      "items": [
+        "Click **Customize Background**.",
+        "Choose from built-in images or **upload your own image** (maximum 10 MB).",
+        "Select a **theme color**.",
+        "Click **Apply & Save** to confirm."
+      ]
+    },
+
+    { "type": "h2", "text": "8. Profile & Account Settings" },
+
+    {
+      "type": "p",
+      "text": "Access account settings from the top-right user menu."
+    },
+
+    { "type": "h3", "text": "8.1 Profile" },
+
+    {
+      "type": "p",
+      "text": "You can update your personal information, including your name and avatar."
+    },
+
+    {
+      "type": "p",
+      "text": "Click **Apply all and save** to confirm changes."
+    },
+
+    { "type": "h2", "text": "9. Storage Management" },
+    { "type": "h3", "text": "9.1 Viewing Storage Usage" },
+
+    {
+      "type": "ul",
+      "items": [
+        "Go to **Settings → Storage**.",
+        "View total storage used and remaining quota.",
+        "See storage usage by file type: Video, Image, Note, All files."
+      ]
+    },
+
+    { "type": "h3", "text": "9.2 Upgrading Storage" },
+    {
+      "type": "ul",
+      "items": ["Click **Upgrade plan** to increase your storage capacity."]
+    },
+
+    { "type": "h2", "text": "10. Security Settings" },
+    { "type": "h3", "text": "10.1 Password Management" },
+    {
+      "type": "ul",
+      "items": ["Change your password from **Settings → Security**."]
+    },
+
+    { "type": "h3", "text": "10.2 Multi-Factor Authentication (MFA)" },
+    {
+      "type": "ul",
+      "items": [
+        "CEnable MFA for additional account security.",
+        "MFA adds an extra verification step during login."
+      ]
+    },
+
+    { "type": "h3", "text": "10.3 Logout" },
+    {
+      "type": "ul",
+      "items": [
+        "Use **Logout** to securely end your session on the current device."
+      ]
+    },
+
+    { "type": "h2", "text": "11. Best Practices" },
+
+    {
+      "type": "ul",
+      "items": [
+        "Use **private folders** for sensitive files.",
+        "Use **external folders** for collaboration with outside users.",
+        "Organize contacts with tags for faster communication.",
+        "Enable **MFA** to protect your account.",
+        "Monitor storage usage regularly."
+      ]
+    }
+  ]
+}

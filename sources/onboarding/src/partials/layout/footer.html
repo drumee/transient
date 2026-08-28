@@ -1,0 +1,115 @@
+<!-- Footer Section -->
+<section class="cta-stack" aria-label="How it works and call to action">
+  <!-- How it work Section -->
+  <section class="how-it-works how-it-works--overlay" aria-labelledby="how-it-works-title">
+    <div class="how-it-works__container">
+      <div class="how-it-works__left">
+        <div class="how-it-works__icon" aria-hidden="true">
+          <img src="/src/assets/new/images/group-folder.png" alt="" loading="lazy" />
+        </div>
+
+        <h2 class="how-it-works__title" id="how-it-works-title">
+          How it works
+        </h2>
+        <p class="how-it-works__subtitle">Simple. Secure. Private.</p>
+      </div>
+
+      <div class="how-it-works__right" aria-label="Steps">
+        <ul class="steps">
+          <li class="step">
+            <img src="/src/assets/new/images/list-1.png" alt="" loading="lazy" />
+            <p>Create your account with your email in seconds.</p>
+          </li>
+
+          <li class="step">
+            <img src="/src/assets/new/images/list-2.png" alt="" loading="lazy" />
+            <p>Drag, drop and manage your files in your private cloud.</p>
+          </li>
+
+          <li class="step">
+            <img src="/src/assets/new/images/list-3.png" alt="" loading="lazy" />
+            <p>
+              Set up your apps and start storing your data in a fully private
+              and secure environment.
+            </p>
+          </li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <footer class="footer" aria-label="Footer call to action">
+    <div class="footer__bg-secondary" aria-hidden="true">
+      <img src="/src/assets/new/backgrounds/tutorial.jpg" alt="" loading="lazy" />
+    </div>
+
+    <!-- <div class="footer__tutorial">
+      <button class="tutorial-button tutorial-button--light" type="button">
+        <span class="tutorial-button__thumb">
+          <img
+            src="/src/assets/new/backgrounds/tutorial.jpg"
+            alt="Tutorial preview"
+            loading="lazy"
+          />
+          <img
+            src="/src/assets/new/icons/play.png"
+            alt="Play"
+            class="tutorial-button__icon"
+          />
+        </span>
+
+        <span class="tutorial-button__text">Watch the Tutorial</span>
+      </button>
+    </div> -->
+
+    <div class="footer__bg">
+      <div class="footer__content">
+        <h2 class="footer__title">Own your cloud. Own your rules.</h2>
+
+        <form class="footer__form" action="" method="post" novalidate>
+          <input readonly id="cta-email" type="email" name="email" placeholder="Enter email address" class="footer__input"
+            autocomplete="email" />
+            <a class="footer__button feature__btn"  href="https://app.drumee.org/-/#/welcome/signup">Explore now</a>
+        </form>
+
+        <nav class="footer__socials" aria-label="Social links">
+          <a class="footer__social" href="https://discord.gg/5ZFx2H22d" aria-label="Discord">
+            <img src="/src/assets/new/logos/discord-logo.png" alt="" loading="lazy" />
+          </a>
+
+          <a class="footer__social" href="https://x.com/drumeeOS" aria-label="X">
+            <img src="../../../src/assets/new/logos/x-logo.png" alt="" loading="lazy" />
+          </a>
+
+          <a class="footer__social" href="https://www.linkedin.com/company/drumee" aria-label="LinkedIn">
+            <img src="/src/assets/new/logos/linkedin-logo.png" alt="" loading="lazy" />
+          </a>
+        </nav>
+      </div>
+
+      <div class="footer__separator" role="separator" aria-hidden="true"></div>
+
+      <div class="footer__brand" aria-label="Brand logo">
+        <img src="/src/assets/new/logos/footer-logo.png" alt="drumee" loading="lazy" />
+      </div>
+    </div>
+  </footer>
+</section>
+
+<!-- Video modal Section -->
+
+<div class="video-modal" id="videoModal" aria-hidden="true">
+  <div class="video-modal__overlay" data-video-close></div>
+
+  <div class="video-modal__content" role="dialog" aria-modal="true">
+    <button class="video-modal__close" type="button" aria-label="Close video" data-video-close>
+      ✕
+    </button>
+
+    <div class="video-modal__player">
+      <video id="tutorialVideo" controls preload="metadata" poster="/src/assets/new/backgrounds/tutorial.jpg">
+        <source src="/src/assets/new/videos/hero-section.mp4" type="video/mp4" />
+      </video>
+    </div>
+  </div>
+</div>
