@@ -1,0 +1,98 @@
+#!/bin/bash
+worker=$(basename $0)
+script_name=$(readlink -f $0)
+script_dir=$(dirname $script_name)
+script_tag=$(echo $script_dir | sed -e "s/\//-/g")
+
+source $script_dir/syncer
+src_dir=$PWD
+
+pid=$$
+env_dir="$src_dir/.dev-tools.rc"
+env_file="$env_dir/devel.sh"
+
+export IGNORE_FILE=$env_dir/ignored.txt
+target=$1
+if [ "$target" = "" ]; then
+  if [[ "$worker" =~ deploy ]]; then
+    target=deploy.sh
+  else
+    target=devel.sh
+  fi
+else
+  if [[ "$target" =~ ^.+\.(sh|bash)$ ]]; then
+    target=$target
+  else
+    target=${target}.sh
+  fi
+fi
+
+env_file=$env_dir/$target
+echo Using env file from $env_file
+
+if [ -f "$env_file" ]; then
+  source $env_file
+else
+  echo "Resource file was not found"
+  exit 1
+fi
+
+if [ "$DEST_USER" = "" ]; then
+  DEST_USER=$USER
+fi
+
+if [ "$DEST_DIR" = "" ]; then
+  echo "DEST_DIR env variable must set"
+  exit 1
+fi
+
+
+if [ "$SRC_PATH" = "" ]; then
+  SRC_PATH=$src_dir
+fi
+
+plist=$(ps -ax | grep -w ${script_dir}/watch.js | grep -v grep | awk '{print $1}')
+echo PLIST=$plist
+if [ "$plist" != "" ]; then
+  echo there is already a watcher with $plist
+  exit 1
+fi
+
+export reload_after_update="$env_dir/reload.sh"
+if [ "$AFTER_SYNC" != "" ]; then
+  export reload_after_update="$env_dir/$AFTER_SYNC"
+fi
+
+# Trigger sync at start
+(sleep 5 && touch $SRC_PATH/package.json)&
+if [[ "$NO_WATCH" =~ yes ]]; then
+  echo "Deploying files from $SRC_PATH, shall locally sync to $DEST_DIR"
+  deployOnSameHost $SRC_PATH $DEST_DIR $USER $USER/service
+else
+  if [[ "$worker" =~ deploy ]]; then
+    if [ -z "$DEST_HOST" ]; then
+      echo "Deploying files from $SRC_PATH, shall locally sync to $DEST_DIR"
+      deployOnSameHost $SRC_PATH $DEST_DIR $USER $USER/service
+    else
+      dest_dir="${DEST_USER}@${DEST_HOST}:${DEST_DIR}"
+      ssh ${DEST_HOST} mkdir -p ${DEST_DIR}
+      echo "Deploying files from $SRC_PATH, shall remotely deploy to $dest_dir"
+      deployOnRemoteHost $SRC_PATH $DEST_USER $DEST_HOST $DEST_DIR 
+    fi
+    if [ -x $reload_after_update ]; then
+      $reload_after_update
+    fi
+  else
+    if [ -z "$DEST_HOST" ]; then
+      echo "Watching files from $SRC_PATH, shall locally sync to $DEST_DIR"
+      ${script_dir}/watch.js --dir=$SRC_PATH --on-change="deployOnSameHost $SRC_PATH $DEST_DIR"
+    else
+      dest_dir="${DEST_USER}@${DEST_HOST}:${DEST_DIR}"
+      ssh ${DEST_HOST} mkdir -p ${DEST_DIR}
+      echo "Watching files from $SRC_PATH, shall remotely sync to $dest_dir"
+      ${script_dir}/watch.js --dir=$SRC_PATH --on-change="deployOnRemoteHost $SRC_PATH $DEST_USER $DEST_HOST $DEST_DIR"
+    fi
+  fi
+fi
+
+sleep 5

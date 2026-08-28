@@ -1,0 +1,21 @@
+#!/bin/bash
+script_dir=$(dirname $(readlink -f $0))
+base_dir=$(dirname $script_dir)
+module_dir=$(dirname $(dirname $base_dir))
+src_dir=$(dirname $module_dir)
+bin_dir=$module_dir/.bin
+mkdir -p $bin_dir
+if [ -d $bin_dir ]; then
+  cd $bin_dir
+  ln -sf ../@drumee/server-dev-tools/bin/watcher ./drumee-server-devel
+  ln -sf ../@drumee/server-dev-tools/bin/watcher ./drumee-server-deploy
+  ln -sf ../@drumee/server-dev-tools/bin/plugin.js ./drumee-server-plugin
+  ln -sf ../@drumee/server-dev-tools/bin/endpoint.js ./drumee-server-endpoint
+  chmod +x drumee-server-devel
+  chmod +x drumee-server-deploy
+  chmod +x drumee-server-plugin
+  chmod +x drumee-server-endpoint
+  if [ ! -d $src_dir/.dev-tools.rc ]; then
+    cp -r $base_dir/.dev-tools.tpl $src_dir/.dev-tools.rc
+  fi
+fi

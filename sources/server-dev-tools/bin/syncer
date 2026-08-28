@@ -1,0 +1,104 @@
+#!/bin/bash
+script_dir=$(dirname $(readlink -f $0))
+
+# -------------------------------------------------------------------
+# Prevent overwriting system files
+# Only targets under /srv, /var and /home are allowed
+#-------------------------------------------------------------------
+function checSanity(){
+  src_path=$1/
+  dest_path=$2/
+  if [ ! -d $src_path ]; then
+    echo source not found $src_path
+    exit 1
+  fi
+
+  if [[ "$dest_path" =~ ^/(bin|sbin|usr\/bin|usr\/sbin|proc|dev|boot|etc|root|run|System|cores/)/+.+$ ]]; then
+    echo Looks like you are trying to install into a system-related directory, $dest_path
+    echo This may ahrm you system integrity. Please select another destination folder
+    exit 1
+  fi
+}
+
+# Actually sync src to destination accordingly to preset
+#
+function applySync(){
+  src_path=$1
+  dest_path=$2
+  if [[ ! "$1" =~ ^/.+/$ ]]; then
+    src_path=$1/
+  fi
+  if [[ ! "$2" =~ ^/.+/$ ]]; then
+    dest_path=$2/
+  fi
+  
+
+  date +"Updating: %H:%M:%S"
+  echo "SYNCING $src_path -> $dest_path "
+
+  if [ "SYNC_OPTIONS" = "" ]; then
+    SYNC_OPTIONS="--delete"
+  elif [ "SYNC_OPTIONS" = "merge" ]; then
+    SYNC_OPTIONS=""
+  fi 
+  
+  ignore=${src_path}.dev-tools.rc/ignore.txt
+  if [ ! -f "$ignore" ]; then 
+    ignore=${src_path}.dev-tools.rc/ignored.txt
+  fi 
+
+  if [ -f "$ignore" ]; then
+    SYNC_OPTIONS="$SYNC_OPTIONS --delete-excluded"
+    rsync -arvp $SYNC_OPTIONS --exclude-from="${ignore}" $src_path $dest_path
+  else
+    rsync -arvp $SYNC_OPTIONS $src_path $dest_path
+  fi
+
+  date +"Updated: %H:%M:%S"
+  if [ -x "$reload_after_update" ]; then
+    date +"Reloading: %H:%M:%S"
+    $reload_after_update
+  fi
+
+}
+
+# -------------------------------------------------------------------
+# Deploy source into destination location and restart the new code
+# Source and destination are on the same host
+#-------------------------------------------------------------------
+function deployOnSameHost(){
+  src_path=$1
+  dest_path=$2
+  checSanity $src_path $dest_path
+
+  if [ ! -d $dest_path ]; then
+    mkdir -p $dest_path
+  fi
+  applySync $src_path $dest_path
+}
+
+# -------------------------------------------------------------------
+# Deploy source into destination location and restart the new code
+# Source and destination are on diferrent hosts
+#-------------------------------------------------------------------
+function deployOnRemoteHost(){
+  src_path=$1
+  dest_user=$2
+  dest_host=$3
+  dest_path=$4
+
+  checSanity $src_path $dest_path
+  if [ "$dest_user" = "" ]; then
+    dest_user=$USER;
+  fi
+
+  target="${dest_user}@${dest_host}:${dest_path}"
+  applySync $src_path $target
+}
+
+
+function stopWatching() { 
+  echo "Caught SIGTERM signal!" 
+  exit
+}
+

@@ -1,0 +1,24 @@
+{
+  "name": "@drumee/server-dev-tools",
+  "version": "1.1.37",
+  "description": "Drumee Server Development Helper",
+  "scripts": {
+    "postinstall": "bin/postinstall",
+    "release": "git push && npm publish --access public && npm version patch"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git@github.com:drumee/server-dev-tools.git"
+  },
+  "author": "Somanos Sar <somanos@drumee.com>",
+  "license": "MIT",
+  "dependencies": {
+    "argparse": "^2.0.1",
+    "jsonfile": "^6.1.0",
+    "shelljs": "^0.8.5",
+    "yargs": "^17.7.2"
+  },
+  "devDependencies": {
+    "@drumee/server-essentials": "^1.2.3"
+  }
+}
