@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# sources/** is the immutable compatibility baseline.
+# Escape hatch exists only for an intentional baseline maintenance operation.
+if [[ "${ALLOW_SOURCES_COMMIT:-0}" == "1" ]]; then
+  exit 0
+fi
+
+if git diff --cached --name-only --diff-filter=ACMRD |
+     grep -q '^sources/'; then
+  cat >&2 <<'EOF'
+
+COMMIT BLOCKED
+
+sources/** is the immutable Drumee compatibility baseline.
+Do not modify or commit files below sources/.
+
+New implementation belongs under target/**.
+Mapping documentation belongs under docs/refactoring/**.
+
+If this is an intentional baseline-maintenance operation:
+  ALLOW_SOURCES_COMMIT=1 git commit ...
+
+EOF
+  exit 1
+fi
