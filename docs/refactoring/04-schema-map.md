@@ -22,5 +22,11 @@ The proposed-ownership column classifies schema responsibilities and data contra
 | Mailserver/licence | dedicated trees | `DEPLOYMENT` / `INVESTIGATE` |
 | Custom/offline/deprecated | special trees | `INVESTIGATE`, not proven legacy |
 | Patches | global/per-class patch trees | Same owner as changed object; ordering is critical |
+| Sandbox application schema | `sandbox-server/schemas`: token/email/avatar/domain-pool procedures and seed dump | Owned by sandbox capability; target DB/install scope must be declared |
+| Loby application schema | signup/onboarding tables, procedures, migrations and patch manifest under `loby/schemas` | Owned by split loby service modules; current shared application DB and migration order must be made explicit |
+| Onboarding-server schema | legacy onboarding tables/procedures overlapping loby | `LEGACY`; retain as migration-lineage evidence, with loby owning the successor schema |
+| Marketplace schema | No `sources/marketplace/schemas` directory despite payment code using a configured payment DB | `INVESTIGATE`; office integration itself relies on OS MFS schemas |
 
 `setup-schemas/lib/schema.js::create_entity` allocates a pooled entity, creates its database/storage/MFS root and marks it clean. `setup-schemas/lib/drumate.js::create` calls `drumate_create` and seeds folders; `createHub` calls the owner shard's `desk_create_hub` and parses mixed result sets. `organization.js` creates domain/system/admin/guest state. Qualified procedure names and result shapes must remain compatible while module-aware templates and migrations are introduced.
+
+The reference implementations prove why schema identity/versioning is mandatory. Loby and onboarding-server share ten filenames: `countries.sql` and `get_countries.sql` are byte-identical, while the other eight differ. Loby additionally owns newer signup and onboarding step procedures/migrations. Sandbox calls procedures as `sandbox.*`, whereas loby/onboarding derive an application database from `ob_conf`; marketplace payment code opens a configured DB but ships no mapped schema. A module descriptor must name database class/instance, install order and migration lineage rather than merely listing a `schemas/` directory.

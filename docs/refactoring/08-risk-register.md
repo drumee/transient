@@ -24,3 +24,10 @@
 | Plugin integrity/rollback | `HIGH` | Debian script shallow clones/copies/deletes without transaction |
 | Missing automated baseline coverage | `CRITICAL` | server-team/CLI/signin lack package tests |
 | Apparent duplicates/deprecated code | `MEDIUM` | Usage not proven; retain and investigate |
+| Reference package identity collisions | `CRITICAL` | Marketplace identifies as `@drumee/loby`; loby/marketplace point to analytics-server; descriptor identity cannot inherit package metadata blindly |
+| Legacy onboarding migration | `CRITICAL` | Loby supersedes onboarding-server, but their divergent same-named schemas require an explicit deployed-data migration/upgrade path |
+| Hidden host contracts in frontend examples | `HIGH` | Signin and sandbox-ui consume global LETC/router/session objects without compatibility declarations |
+| Sandbox public provisioning/destruction | `CRITICAL` | `sandbox.json` exposes create/remove to anyone/public-api and service code mutates domains, users, hubs and disk |
+| Marketplace callback/security boundary | `CRITICAL` | Anonymous ACL endpoints rely on JWT/HMAC and MFS permission checks in service code; preserve service-specific policy |
+| Marketplace unregistered payment code | `HIGH` | `service/lib/payment.js` lacks mapped ACL, schema and Stripe dependency; do not treat it as live behavior without runtime evidence |
+| Static onboarding accidentally reintroduced | `LOW` | Source is retained only by baseline immutability; target distributions must not package it |

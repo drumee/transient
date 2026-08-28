@@ -10,6 +10,8 @@ The native channel builds `.deb` files; the meta package selects dependencies. M
 
 `bin/drumee-ctl` detects Compose/native and performs status, doctor, backup/restore, upgrade/rollback and plugin delegation. `bin/drumee-plugin` installs server plugin source, manages `.disabled`, and restarts. This is separate from `sources/cli`; npm CLI packaging/integration is not proven and is `INVESTIGATE`.
 
+Reference repositories add deployment requirements that the current server-only plugin operator does not model. Signin and sandbox-ui need frontend artifact installation and public-path/host compatibility; loby needs application schemas, migrations, sysconf and credentials; marketplace needs document-server endpoints, JWT secrets and callback reachability. Legacy onboarding-server data may need migration into loby but must not be installed as a target module. The static onboarding site must not be included in target distributions. `sources/marketplace/docker-compose.yaml` mounts MFS directly into OnlyOffice and is a component-local example, not evidence that the main Debian distribution currently installs marketplace.
+
 Future deployment needs versioned runtime artifacts, a distribution manifest, module descriptors/artifacts, schema migrations and integrity/compatibility metadata. It must preserve configuration, secrets, MFS mounts, schema init, factory, backup/restore and both channels. No format redesign is approved.
 
 Required compatibility checks: fresh install, initial admin/hub creation, restart, backup/restore, upgrade/rollback, plugin persistence, schema patching and migration of supported existing installations on both channels.

@@ -31,7 +31,15 @@ The classification column classifies the responsibility named in the first colum
 | Packaging/self-hosting | `sources/debian/**` | Docker/native config, packages and lifecycle | `DEPLOYMENT` | Critical |
 | Debian plugin operator | `sources/debian/bin/drumee-plugin` | File-based server plugin lifecycle | `DEPLOYMENT`; future owner `INVESTIGATE` | High |
 | Licence/custom/offline schemas | `sources/schemas/{licence,costums,offline}/**` | Specialized/unclear | `INVESTIGATE` | High |
+| Sandbox provisioning service | `sources/sandbox-server/acl/sandbox.json`, `service/**`, `schemas/**` | Public demo creation/removal, domain/user/hub/MFS provisioning and WebSocket progress | Demo/business capability `INVESTIGATE`; provisioning primitives remain separately classified | Critical |
+| Sandbox standalone UI | `sources/sandbox-ui/{index.html,app/**,webpack.js}` | Standalone LETC application loaded after host router readiness | Demo application `INVESTIGATE`; host mechanisms are separate `KEEP_OS` responsibilities | High |
+| Loby entry services | `sources/loby/{acl,service,schemas}/**` | Signup, OAuth, invite, onboarding and plan/organization upgrade | Mixed `SYSTEM_MODULE`, `TEAM_MODULE` policy and `INVESTIGATE`; split by service family | Critical |
+| Signin frontend package | `sources/signin/src/**` | Host-loaded sign-in/router/guest kinds and locales | `SYSTEM_MODULE` | High |
+| Office editor integration | `sources/marketplace/acl/*.json`, `service/{onlyoffice,euroffice}.js` | Third-party document editing over MFS, callbacks, JWT and physical content updates | `SYSTEM_MODULE` candidate | Critical |
+| Marketplace payment library | `sources/marketplace/service/lib/payment.js` | Stripe/payment DB/quota/profile handling; no mapped ACL registration | `INVESTIGATE` | Critical |
+| Superseded onboarding/analytics plugin | `sources/onboarding-server/**` | Older onboarding state and analytics implementation superseded by loby | `LEGACY` | High migration risk |
+| Static onboarding/marketing site | `sources/onboarding/**` | Public HTML/Sass/JSON marketing, docs and pricing pages; retained only as immutable source evidence | Excluded from target/runtime/distributions | Low architectural risk |
 
-Nothing is classified `LEGACY` without call-site or history proof.
+`onboarding-server` is classified `LEGACY` by the confirmed supersession decision: loby is its replacement. No other component is classified `LEGACY` without call-site, history or an equivalent explicit ownership decision.
 
 In particular, `sources/server-team/router/rest/index.js`, UI Team boot/Window Manager files, and mixed schema directories are not thereby designated future OS files. UI Team is the integrated compatibility application, not an existing minimal shell. Its current files contain evidence from which the browser-host responsibility may eventually be isolated while Team behavior remains with modules/distribution code. The ACL engine's ownership likewise does not pull the rules it evaluates into the OS.

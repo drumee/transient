@@ -26,6 +26,8 @@ Core/SDK remains based on `server-core`, `server-essentials`, `ui-core`, `ui-ess
 
 Candidate system modules are Finder, signin/loby, generic previewers/editors, and possibly contacts/sharing after investigation. Team modules are chat/channels, meetings/rooms/signaling, tasks, collaboration notifications/workflows and Team-specific billing. Team is a distribution manifest composing the OS, selected system modules and all compatibility-required Team modules.
 
+Reference repositories refine this hypothesis: signin is a frontend system-module candidate; Loby must be split by entry/auth, onboarding and plan/policy responsibilities; marketplace office editors are optional system modules with explicit MFS/external-service capabilities; sandbox is a demo/provisioning application rather than an OS component; onboarding-server is a `LEGACY` predecessor superseded by loby; and the static onboarding site is excluded from the target runtime, module graph and distributions.
+
 The Control Plane contains CLI concepts, administrative contracts and user/hub/settings/MFS administration. Module lifecycle enters it only after approval. The OS never imports it. DB mode may remain transitional but does not define the stable contract.
 
 Deployment contains Docker/native packaging, configuration, artifact acquisition, install ordering, backup/restore and upgrade/rollback. It consumes runtime, distribution and module artifacts rather than Team repository layout.
