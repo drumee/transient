@@ -4,7 +4,7 @@
 
 Phase 1 adds a package-free, read-only characterization layer plus explicitly guarded live tests. The default command is `scripts/test-baseline-all.sh`. It reads the immutable baseline and uses temporary directories only; it does not start Drumee, connect to MariaDB, or mutate tenant data unless the live integration variables below are deliberately supplied.
 
-The harness freezes current behavior at architectural boundaries. Source-contract tests are used where the imported snapshot cannot run without a complete Drumee installation. They are not substitutes for the listed live scenarios; Phase 2 readiness depends on running those scenarios in the disposable reference environment.
+The harness is baseline evidence, a regression reference and a source of intentionally selected kernel contracts. It freezes current behavior at architectural boundaries without making every Team-era behavior the definition of the new minimal kernel. Source-contract tests are used where the imported snapshot cannot run without a complete Drumee installation. They are not substitutes for the listed live scenarios when later Team/self-hosting compatibility claims are made.
 
 ## Commands
 
@@ -20,16 +20,18 @@ The harness freezes current behavior at architectural boundaries. Source-contrac
 
 All scripts use `set -euo pipefail`, are non-interactive, and propagate failures.
 
-The reproducible container environment is wrapped by `scripts/test-env/{check,build,up,status,e2e,logs,down,reset}.sh` and documented in `13-test-environment.md`. After `up.sh`, source `.tmp/test-env/baseline/runtime.env` to provide the live server/UI URLs to this harness. Current environment status is `NOT READY`: Debian non-image validation passes, but the imported server/UI build contexts lack the `node_modules` required by the immutable `INSTALL_DEPS=0` image builder, so image build and live E2E have not run.
+The reproducible container environment is wrapped by `scripts/test-env/{check,stage-build-src,build,up,status,e2e,capture-rest-golden,browser-baseline,gate,logs,down,reset}.sh` and documented in `13-test-environment.md`. `e2e.sh` delegates to `sources/debian/tests/e2e-local.sh` and is the authoritative automated baseline path; `up.sh` is optional persistent loopback-only support for browser/manual behavior. `build.sh` prepares node dependencies only in `.tmp/test-env/build-src/**`, then passes those contexts to the immutable Debian builder. After a healthy `up.sh`, source `.tmp/test-env/baseline/runtime.env` to provide the live server/UI URLs to this harness.
+
+Current environment status is `NOT READY`: images build and the Debian E2E has run, but `schemas-populate` exits 1. The retained persistent-stack log traces the failure through `sources/server-team/offline/factory/schema.js::publish_search_projection()` to the imported `mfs_search_projection_rebuild` procedure's `SEARCH_PROJECTION_REBUILD_ACTIVE_TRANSACTION` signal (`sources/schemas/common/procedures/mfs/mfs_search_projection_rebuild.sql`). Fixed account creation then receives `EMPTY_FACTORY`. The wrapper records rather than repairs this immutable baseline behavior.
 
 ## Test matrix
 
 | Surface | Test | Level | Automated | Destructive | Status |
 |---|---|---|---|---|---|
 | Server boot | initialization order, session failures, panic codes (`sources/server-team/service.js`) | Compatibility | Yes | No | Pass |
-| Server boot | live `yp.get_env` smoke | Integration | Yes with `DRUMEE_TEST_BASE_URL` | No | Environment required |
+| Server boot | live `yp.get_env` smoke | Integration | Yes with `DRUMEE_TEST_BASE_URL` | No | Blocked by baseline populate failure |
 | Dispatch | valid, malformed, unknown module/method; loby/sandbox discovery (`router/rest/index.js::getModule/loadModules`) | Compatibility | Yes | No | Pass |
-| Dispatch/session | public and authenticated live calls | Integration | Yes with URL/token | No | Environment required |
+| Dispatch/session | sanitized REST golden: public/error/denied/authenticated contracts | Integration | Yes with URL/test auth | No | Blocked; capture only after live pass |
 | ACL | entire Team/loby/sandbox ACL catalog; representative anyone/anonymous/read/write/admin/owner | Compatibility | Yes | No | Pass with frozen defects |
 | ACL | observable denied access | Integration | Yes with live server | No | Environment required |
 | Drumate provisioning | `drumate_create`, `EMPTY_FACTORY`, folder initialization | Compatibility | Yes | No | Pass |
@@ -48,7 +50,7 @@ The reproducible container environment is wrapped by `scripts/test-env/{check,bu
 | Team frontend | entry/bootstrap/seeds/Drumee start contract | Compatibility | Yes | No | Pass |
 | Team frontend | HTML and bootstrap endpoint smoke | Integration | Yes with UI URL | No | Environment required |
 | Window Manager | active window/open/raise/layers/workspace path contract | Compatibility | Yes | No | Pass |
-| Window Manager | open/close/focus/multiple-window browser behavior | Browser integration | Manual pending existing browser environment | No | Gap |
+| Window Manager | open/close/focus/multiple-window browser behavior | Browser integration | Deterministic manual checklist + explicit approval | No | Blocked; `browser-baseline.sh` records result |
 | Finder/MFS | open workspace/file code paths and MFS live lifecycle | Compatibility/integration | Partial | Guarded for mutation | Gap: DnD/preview |
 | Backend modules | Team, loby and sandbox ACL discovery/resolution | Compatibility | Yes | No | Pass |
 | Frontend modules | signin plugin/router readiness and sandbox standalone readiness/kind loading | Compatibility | Yes | No | Pass |
@@ -57,6 +59,10 @@ The reproducible container environment is wrapped by `scripts/test-env/{check,bu
 | Full self-host | container bring-up and disposable native install | Integration/manual | Existing Debian commands | Yes/system-changing | Environment required |
 
 ## Environment requirements
+
+### Strict gate
+
+`scripts/test-baseline-all.sh` remains the broad safe characterization command, but it may validly skip live tests. It is therefore not a Phase 2 readiness decision. Use `scripts/test-env/gate.sh`; it reports `PASS`, `FAIL`, or `SKIP / NOT CONFIGURED` separately for safe tests, Debian E2E, provisioning, MFS, CLI DB, REST golden, empty-factory, and browser evidence. It exits nonzero for any mandatory `SKIP`.
 
 ### Safe/default suite
 
@@ -123,9 +129,9 @@ These are documented, not repaired.
 
 ## Coverage gaps
 
-- The current checkout has no running MariaDB/Redis/Drumee environment, so live boot, session, ACL denial, provisioning, pool consumption, shard/schema state and live MFS tests were not executed here.
+- The imported images were built and the authoritative disposable E2E ran, but schema population is blocked by `SEARCH_PROJECTION_REBUILD_ACTIVE_TRANSACTION`; consequently REST, session, ACL denial, live provisioning, shard/schema state and live MFS tests cannot currently execute in this baseline environment.
 - No reusable browser automation dependency exists at the repository root. HTML/bootstrap availability and Window Manager source contracts are covered; actual open/close/focus/multiple-window behavior, Finder browsing, drag/drop and preview remain browser-integration gaps.
-- The live REST probe accepts the current observable error envelope broadly because no approved golden response fixture exists. The first authoritative disposable run should record sanitized status/body shapes as fixtures.
+- No approved REST golden exists because the first authoritative Debian live run did not reach REST. `capture-rest-golden.sh` now records sanitized status/body envelopes once it does, and the live test becomes exact against that fixture.
 - Provisioning cleanup is best-effort through current CLI commands. Because DB/disk operations are non-transactional, a failed scenario can require manual disposal of the entire instance.
 - Cross-hub MFS copy/move is catalogued but not mutated automatically without two approved disposable hubs and explicit ACL identities.
 - Full Docker bring-up, backup/restore, upgrade/rollback and native package installation are environment-changing and remain delegated to the existing Debian integration suites.
@@ -135,6 +141,8 @@ These are documented, not repaired.
 
 The unsafe-to-refactor areas remain live provisioning and rollback, factory recovery, schema/template application order, physical MFS partial failure, observable ACL policy (especially secure-share and over-limit), Team boot/Window Manager behavior in a browser, existing-install upgrades, and Docker/native parity. Contract presence tests reduce accidental drift but do not prove runtime equivalence.
 
-## Phase 2 recommendation
+## Readiness interpretation
 
-`NOT READY` until the guarded integration suite has passed on the authoritative disposable Debian baseline and the critical browser scenarios have either automated coverage or an approved, recorded manual baseline. The safe suite is ready for CI now and establishes the reproducible starting point for those runs.
+The current Team-baseline gate remains **NOT READY** until the authoritative disposable Debian E2E passes, guarded provisioning/MFS/CLI DB tests pass, REST goldens are recorded, and critical browser scenarios have automated coverage or an approved manual baseline. `scripts/test-env/gate.sh` is the machine-enforced decision for that baseline scope: zero mandatory skips and zero failures are required.
+
+That status is a critical constraint on later Team migration and self-hosting assertions. It is not a requirement to reproduce the entire Team product before defining the first no-Team kernel slice. The first extraction must instead add focused tests for selected application-neutral contracts—especially generic backend dispatch and the `Kind.loadPlugin` / `bootstrap.plugin` handshake—and must document every deliberate incompatibility. The safe suite remains ready for CI and establishes the reproducible starting point for those later comparisons.

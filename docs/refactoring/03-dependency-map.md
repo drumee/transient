@@ -28,3 +28,18 @@ Hidden coupling includes browser globals (`Kind`, `Wm`, `bootstrap`, `Visitor`),
 The main cycles are semantic: setup provisions entities that runtime mutates; CLI duplicates setup/shell create/purge behavior; all three mutate yp, shard databases and disk. UI Team also consumes service-name maps and bootstrap state from Server Team as an implicit cross-repository API. No package-loader cycle was proven.
 
 Reference-repository coupling is also inconsistent. Sandbox-server duplicates setup/provisioning and destructive storage logic; loby supersedes and absorbs a newer fork of legacy onboarding-server schema/service behavior; marketplace bypasses ordinary MFS service calls by extending core `Mfs` and writing node content; signin and sandbox-ui consume undeclared host globals. These are compatibility constraints to normalize, not patterns to standardize unchanged.
+
+## Initial kernel dependency direction
+
+The planned first vertical slice is deliberately directional and does not require the Team packages at runtime:
+
+```text
+server-essentials  ←  server-runtime  ←  hello backend
+ui-essentials      ←  ui-runtime      ←  hello frontend
+```
+
+`server-essentials` remains independently reusable: generic MariaDB/configuration/logging functionality must not acquire Hub, Drumate, MFS, Drumee ACL, dispatcher, plugin-discovery or Team dependencies. `ui-essentials` remains the generic frontend layer. `server-runtime` and `ui-runtime` are transitional extraction workspaces, sourced selectively from `server-core`, `ui-core`, and generic seams currently mixed into Team; they are not copies of those repositories.
+
+The existing module contracts to preserve first are separate. Backend startup reads plugin ACL directories and registers module descriptors (`sources/server-team/router/rest/index.js::loadPlugins`); `Acl.getModule` and `Acl.run` resolve `module.method`, choose a public/private worker, lazy-require/cache it, apply permission, then execute it. Frontend `sources/ui-core/letc/kind/index.js::Kind.loadPlugin` calls `bootstrap.plugin`, loads the returned bundle path with `loadJS`, then waits for `Kind.registerAddons` to emit `addons:registered`. `sources/server-team/service/bootstrap.js::plugin` currently supplies that path from a frontend `index.json` entry.
+
+Thus the initial dependency contracts are deliberately distinct: backend `acl/*.json` versus frontend `index.json` plus bundle. A universal manifest is deferred until the `hello` slice proves both independently. MFS, Finder and Window Manager are not dependencies of that slice: MFS is intentionally introduced after `hello`; Finder and Window Manager remain post-MFS questions.

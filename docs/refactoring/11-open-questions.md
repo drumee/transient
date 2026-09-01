@@ -18,7 +18,7 @@ All remain `INVESTIGATE` until code/history/runtime evidence or approval resolve
 14. What auth/pairing/authorization/audit model should the future API backend use?
 15. Should module lifecycle live in npm CLI, `drumee-ctl`, a platform service, or layers of all three?
 16. What remove/disable data-retention and migration rollback semantics apply?
-17. Which APIs, routes, WebSocket events and SQL result shapes are the supported Team compatibility surface?
+17. Which APIs, routes, WebSocket events and SQL result shapes are intentionally selected later Team compatibility contracts, rather than automatic first-kernel requirements?
 18. Which existing installation versions must Docker/native upgrades cover?
 19. Which reference patterns are normative? Current recommendation: ACL/service and entry/kind declarations are evidence to normalize; none of the seven repositories is a complete canonical module contract.
 20. What final repositories/names follow validated extraction? `transient` must not determine them.
@@ -30,3 +30,12 @@ All remain `INVESTIGATE` until code/history/runtime evidence or approval resolve
 26. Is sandbox intentionally public in supported deployments, and which quotas/rate limits/cleanup guarantees bound its domain/user/MFS authority?
 27. Is marketplace `service/lib/payment.js` reachable through an unimported ACL or external loader, and where are its payment schemas and Stripe dependency declared?
 28. Is marketplace's EurOffice secure-share behavior part of the secure-share policy module, the editor module, or an adapter between them?
+29. What minimum `server-core` context/session/ACL symbols can host `hello` without Hub, Drumate, MFS or Team services?
+30. What minimum `Host`, `Visitor` and `Organization` state is required to preserve the client/server identity and ACL model for an independent module?
+31. Which `ui-core` static kinds are essential for generic LETC rendering, and which `builtin_kinds` are MFS/application-specific addons?
+32. Can the current `bootstrap.plugin` resolution logic operate from a runtime-owned installed-plugin root without Team endpoint/layout assumptions?
+33. Beyond identified secure-share and over-limit branches, which portions of `Acl.run` are generic dispatch and which encode Team policy?
+34. What version/compatibility relationship is required between a backend ACL descriptor, a frontend `index.json` entry and independently built plugin artifacts?
+35. What minimal MFS semantics, storage behavior and ACL surface does `marketing` actually require after `hello`?
+36. After MFS exists, are Finder and Window Manager modules, or does a proven resource-host primitive belong in the frontend kernel?
+37. Which selected Team contracts remain valuable regression evidence after the new kernel is validated by `hello` and `marketing`?

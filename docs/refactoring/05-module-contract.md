@@ -8,33 +8,28 @@ Frontend modules use a separate `index.json` entry resolved by `server-team/serv
 
 Deployment supplies a third lifecycle: `sources/debian/bin/drumee-plugin` installs source from Git/local/archive, runs npm install, lists/removes and toggles `.disabled`. It does not prove UI/schema integration, compatibility checks, transactional upgrade or rollback. `sources/cli` has no module commands.
 
-## STANDARDIZE
+## STANDARDIZE — initial kernel
 
-Normalize existing concepts into one descriptor, retaining adapters for ACL, UI index, seeds and Debian layouts:
+Preserve, document and test the two existing discovery contracts before attempting to normalize metadata:
 
-```yaml
-identity: stable-id
-name: display-name
-version: semver
-compatibility: { runtime: range, contracts: range }
-dependencies: []
-backend: { acl: [], services: [] }
-schemas: { databaseClasses: {}, install: [], migrations: [] }
-frontend: { entry: path, kinds: [], windows: [], locales: [], assets: [] }
-lifecycle: { install: declarative-step, upgrade: declarative-step }
+```text
+backend:  acl/*.json → registered descriptor → module.method dispatch
+frontend: index.json → bootstrap.plugin → { path } → bundle → Kind.registerAddons
 ```
 
-The smallest shared contract is metadata, artifact locations, compatibility, dependencies and state. Runtime, schema provisioner, distribution builder, CLI and deployment may use separate adapters.
+The generic backend side is `sources/server-team/router/rest/index.js::{loadPlugins,getModule,run}`: ACL descriptors are registered at startup, then a request selects public/private implementation, lazy-loads/caches its worker and executes only after authorization. The generic frontend side is `sources/ui-core/letc/kind/index.js::{loadPlugin,registerAddons}` paired with `sources/server-team/service/bootstrap.js::plugin`: an installed plugin's `index.json` entry resolves to a bundle URL, whose execution registers addons.
+
+The first standard shared vocabulary is only logical identity, artifact location and independently declared compatibility. It must not replace either on-disk descriptor in the first `server-runtime`/`ui-runtime` iteration. Runtime, provisioner, deployment and later control plane may use separate adapters.
 
 Module ACL entries declare policy to the host but do not become OS policy. Secure-share policy remains unclassified; billing/over-limit policy belongs to Team or a separately approved policy module.
 
-## ADD
+## ADD — after `hello` proves the vertical slice
 
-Add integrity/provenance, dependency/conflict/order rules, installed vs enabled state, endpoint/tenant scope, idempotent schema ownership, permissions/capabilities, health hooks, rollback metadata and explicit install/upgrade/enable/disable/remove data-retention semantics.
+Investigate integrity/provenance, dependency/conflict/order rules, installed vs enabled state, endpoint/tenant scope, idempotent schema ownership, permissions/capabilities, health hooks, rollback metadata and explicit install/upgrade/enable/disable/remove data-retention semantics. A future shared descriptor may contain those concepts, but it is not designed or introduced before `hello` validates the current backend/frontend handshake.
 
-## DEPRECATE
+## DEPRECATE — only after adapters and evidence exist
 
-Only after adapters exist: split backend/UI discovery, mutable installs without integrity, `.disabled` as the sole state, implicit schema ownership and package scripts as lifecycle contracts.
+Only after adapters exist: mutable installs without integrity, `.disabled` as the sole state, implicit schema ownership and package scripts as lifecycle contracts. Do not deprecate the separate ACL JSON and frontend `index.json` contracts merely to make them look uniform.
 
 Future CLI lifecycle is `INVESTIGATE`. The command/resource/backend seam can present it, but no functioning API backend or stable lifecycle API exists. The stable implementation should be authenticated, audited and transactional—not direct DB writes.
 

@@ -2,9 +2,13 @@
 
 ## Status
 
-The baseline wrapper is implemented and its non-image tests pass. It is currently **NOT READY** to run the full Phase 1 suite from this checkout because `sources/server-team/node_modules` and `sources/ui-team/node_modules` are absent. The authoritative builder sets `INSTALL_DEPS=0` and reuses those dependency trees (`sources/debian/scripts/build-images-local.sh`, `sources/debian/deploy/docker/Dockerfile.{server,ui}`). The wrapper will not install into or otherwise mutate `sources/**`.
+The wrapper is implemented, builds the imported sources through a disposable dependency-bearing staging area, and has a strict gate that treats an unexecuted live scenario as failure. It is currently **NOT READY** for full Phase 1 Team-baseline compatibility execution: the authoritative Debian E2E ran and failed during `schemas-populate`.
 
-Docker 29.2.0, Compose 5.0.2, buildx 0.31.1 and Node.js 22.22.0 are available on the tested host. Docker daemon access succeeds when authorized. `scripts/test-env/debian-tests.sh` ran the existing Debian `tests/run-all.sh` from a disposable copy and passed 12 checks with no failures. Image build and `e2e-local.sh` were not run because `check.sh` correctly stopped at the missing dependency contexts.
+This environment remains the authoritative reference for the imported Team/self-hosting baseline. It is not a requirement that the first minimal kernel reproduce every Team behavior before `hello`; it supplies evidence, later regression coverage and selected contracts for that kernel work.
+
+The tested workstation has Docker 29.2.0, Compose 5.0.2, buildx 0.31.1, Node.js 22.22.0 and npm 11.18.0. `scripts/test-env/debian-tests.sh` ran the existing `sources/debian/tests/run-all.sh` from a disposable validation copy: 298 passed, 0 failed. `scripts/test-env/build.sh` completed and produced the local images. `scripts/test-env/e2e.sh` then produced 3 passes and 5 failures: `schemas-init`, `ui-build`, and the factory watermark passed; `schemas-populate`, server health, Team HTML, REST, and admin login failed.
+
+The persistent diagnostic stack retained the failure log. Factory entity creation calls `sources/server-team/offline/factory/schema.js::create_entity`, which calls `publish_search_projection()` after the entity SQL and MFS root. That method invokes `mfs_search_projection_rebuild`; the imported procedure deliberately signals `SEARCH_PROJECTION_REBUILD_ACTIVE_TRANSACTION` if `@@in_transaction = 1` (`sources/schemas/common/procedures/mfs/mfs_search_projection_rebuild.sql`). The affected entities are not marked clean, so the subsequent fixed-account creations in `sources/setup-schemas/lib/organization.js::{createNobody,createGuest,createSystemUser}` receive `EMPTY_FACTORY`; `createSystemUser` then dereferences the missing user and exits. This is a reproducible baseline defect/incompatibility on this Docker/MariaDB path, not a wrapper change. No baseline source was altered to bypass it.
 
 ## Architecture
 
@@ -25,6 +29,8 @@ Phase 1 compatibility harness + sources/debian/tests/e2e-local.sh
 
 `sources/debian` remains the deployment implementation. The wrapper supplies paths and isolated configuration; it does not duplicate Dockerfiles or patch the renderer/Compose model. Like the authoritative E2E, the persistent stack omits Caddy to avoid ports 80/443 and publishes the server's UI and REST listeners directly on configurable loopback-only ports.
 
+The scope is deliberately the immutable Team baseline. Future `server-runtime` / `ui-runtime`, `hello` and `marketing` tests must use their own target artifacts and focused kernel contracts; this wrapper remains useful when a later decision selects a Team, deployment or provisioning behavior for regression comparison.
+
 ## Authoritative path validation
 
 `sources/debian/scripts/build-images-local.sh` accepts:
@@ -44,6 +50,22 @@ Phase 1 compatibility harness + sources/debian/tests/e2e-local.sh
 
 No external sibling checkout or automatic GitHub clone is used. Missing `setup-infra` is passed as the nonexistent imported path so the existing optional skip executes.
 
+## Dependency staging
+
+`sources/debian/scripts/build-images-local.sh` builds the server and UI contexts with `INSTALL_DEPS=0` (`sources/debian/deploy/docker/Dockerfile.server` and `Dockerfile.ui`), so it requires usable `node_modules` in the supplied context. The imports do not have dependency trees and `sources/ui-team` has no lockfile. `build.sh` therefore runs `stage-build-src.sh` before the Debian builder when source dependency trees are absent:
+
+```text
+sources/server-team, sources/ui-team
+       │ exact copy; source remains read-only
+       ▼
+.tmp/test-env/build-src/{server-team,ui-team}
+       │ npm ci only here
+       ▼
+build-images-local.sh with SERVER_SRC/UI_SRC set to staging paths
+```
+
+The staging script verifies a recursive source-content diff after installation, ignoring only `node_modules`, `.git`, the harness-provided UI lockfile, and npm's generated `.dev-tools.rc`. `sources/server-team/package-lock.json` is the imported lock. The reviewed UI lock and its provenance are committed as `tests/fixtures/build-locks/ui-team-package-lock.json` and `ui-team-lock-metadata.json`; the metadata pins the SHA-256 of the imported UI `package.json`, Node/npm versions and the resolution command. npm 11 requires `--dangerously-allow-all-scripts=true` for the lockfile's pinned native installation hooks; this is confined to the disposable contexts. `.tmp/test-env/build-src/dependency-resolution.env` records the source-tree ID, lock hashes, tool versions and exact install command for each run.
+
 ## Prerequisites
 
 - Linux.
@@ -52,7 +74,7 @@ No external sibling checkout or automatic GitHub clone is used. Missing `setup-i
 - Node.js 20 or newer.
 - At least 20 GiB free (conservative image/runtime preflight).
 - Imported source directories listed above.
-- Exact dependency trees already present in the immutable `server-team` and `ui-team` build contexts, because Debian's local builder uses `INSTALL_DEPS=0` to avoid private-registry access.
+- Registry access to resolve the committed lockfiles when the disposable staging contexts do not already exist. The wrapper never installs into `sources/**`.
 
 Run:
 
@@ -71,6 +93,9 @@ scripts/test-env/build.sh          # explicit source mapping -> drumee/*:local
 scripts/test-env/up.sh             # persistent isolated baseline stack
 scripts/test-env/status.sh         # jobs, health, HTTP/REST and pool counts
 scripts/test-env/e2e.sh            # authoritative disposable e2e-local.sh
+scripts/test-env/capture-rest-golden.sh # record sanitized REST contract after a live pass
+scripts/test-env/browser-baseline.sh # optional persistent/manual browser baseline recorder
+scripts/test-env/gate.sh           # strict Phase 1 readiness gate; SKIP fails
 scripts/test-env/logs.sh            # core service logs
 scripts/test-env/logs.sh factory    # one service
 scripts/test-env/down.sh            # containers, volumes, DB and MFS state
@@ -78,7 +103,7 @@ scripts/test-env/reset.sh           # down + rendered runtime state
 REMOVE_TEST_IMAGES=1 scripts/test-env/reset.sh  # additionally remove :local images
 ```
 
-`build.sh` calls `check.sh` first and exports every `*_SRC` path into `transient/sources/**`. `MEDIA_DEPS=1 scripts/test-env/build.sh` opts into the heavy runtime tools. A non-local `TAG` can build images, but the existing E2E requires `TAG=local` and the wrapper warns accordingly.
+`build.sh` calls `check.sh` first, stages only the dependency-bearing server/UI contexts when needed, and exports every `*_SRC` path. Schema, setup-schema, static, and optional setup-infra paths always point directly to `transient/sources/**`; the staged server/UI files are byte-for-byte checked against their imports. `MEDIA_DEPS=1 scripts/test-env/build.sh` opts into the heavy runtime tools. A non-local `TAG` can build images, but the existing E2E requires `TAG=local` and the wrapper warns accordingly.
 
 `up.sh` defaults to:
 
@@ -137,9 +162,39 @@ All generated state is under:
 
 The wrapped authoritative E2E verifies MariaDB and Redis dependency startup; successful `schemas-init`, `ui-build`, and `schemas-populate`; healthy `server-pod`; Team HTML; REST response; admin login through `session_login_next`; and both factory pools at their watermark (`sources/debian/tests/e2e-local.sh`). `status.sh` exposes the same persistent-stack signals and returns nonzero for failed jobs, unhealthy server, unavailable endpoints, or pools below the deterministic count.
 
+`e2e.sh` is the authoritative automated gating path. It delegates to the imported `e2e-local.sh`, which creates and destroys its own temporary directory, Compose containers, and volumes, deliberately omits the proxy, and does not bind the ordinary development ports. `up.sh` is instead an optional persistent, loopback-only diagnostic/browser environment. It uses the same Debian renderer and images, but retains its runtime state until `down.sh` or `reset.sh` is explicitly requested.
+
+### REST golden capture
+
+After an authoritative live environment is healthy and an explicitly test-only authenticated session/header is available, run:
+
+```bash
+DRUMEE_TEST_BASE_URL=http://127.0.0.1:<api-port> \
+DRUMEE_TEST_AUTH_HEADER_VALUE='Bearer <test-only-value>' \
+scripts/test-env/capture-rest-golden.sh
+```
+
+It records exactly six sanitized observations in `tests/fixtures/rest/baseline.json`: `yp.get_env`, unknown module, unknown method, malformed service, representative ACL denial, and an authenticated read. The normalizer retains status/envelope/error semantics but reduces arbitrary response values to types and redacts credentials, tokens, host-specific IDs and identities. Once present, `tests/integration/server-live.test.js` requires exact normalized equality rather than accepting a broad status/error range. No fixture was recorded in this run because the authoritative stack never reached REST availability.
+
+### Browser/manual baseline
+
+`browser-baseline.sh` is intentionally interactive and only applies to the optional persistent stack after it is healthy. It writes ignored evidence to `.tmp/test-env/results/browser-baseline.tsv`, covering Window Manager open/close/focus/multiple-window behavior, Finder navigation, MFS file open, drag/drop copy-or-move, and preview. The command requires every result to be `PASS` and an explicit reviewer `YES` before it writes a passing result marker. The corresponding deterministic checklist is `tests/fixtures/manual-browser-checklist.md`. This run could not perform it because baseline schema population did not succeed.
+
+### Strict Phase 1 gate
+
+`scripts/test-env/gate.sh` reports `PASS`, `FAIL`, or `SKIP / NOT CONFIGURED` for every mandatory surface and exits nonzero unless every one is `PASS`:
+
+```text
+safe tests; Debian E2E; provisioning; MFS live; CLI DB; REST golden;
+empty-factory lifecycle; browser baseline
+```
+
+It consumes results only when they identify the current immutable source tree, so stale evidence cannot make a changed baseline appear ready. Provisioning/MFS/CLI DB require their existing explicit disposable-instance guards. The gate intentionally treats missing environment variables, absent authentication/golden data, or unrecorded browser approval as `SKIP`, and every mandatory `SKIP` is a failure.
+
 ## Known limitations
 
-- The imported build contexts currently lack `node_modules`, so image build cannot proceed without an approved reproducible dependency import. The wrapper will not fetch or mutate them.
+- Staging needs access to the package registry to resolve the imported server lock and reviewed UI lock. This is a reproducible preparation step, but the imports do not themselves carry an offline dependency cache.
+- On the tested baseline, `schemas-populate` is blocked by the active-transaction search-projection failure described above. Until that baseline compatibility issue is understood and resolved upstream or a compatible runtime combination is identified, no REST golden, live provisioning/MFS/CLI DB, or browser evidence can be captured from this stack.
 - `sources/setup-infra` is absent. The existing builder skips `infra-init`; local mode does not exercise optional mail/DNS/Jitsi infrastructure.
 - `MEDIA_DEPS=0` omits LibreOffice, FFmpeg and related heavy tools, so media conversion/editor behavior needs a separate explicit build.
 - The environment exercises the container channel only. Native Debian installation remains covered by metadata/render checks and requires a disposable VM.
@@ -149,4 +204,6 @@ The wrapped authoritative E2E verifies MariaDB and Redis dependency startup; suc
 
 ## Readiness decision
 
-**NOT READY for full Phase 1 compatibility execution** on the current checkout. The wrappers and non-image validation are ready; readiness requires restoring the exact dependency-bearing immutable build contexts, then successfully running `build.sh`, `e2e.sh`, `up.sh`, `status.sh`, and the configured Phase 1 integration suite.
+**NOT READY for full Phase 1 Team-baseline compatibility execution** on the tested baseline. Image building and authoritative E2E are now exercised, and the failure is captured. Readiness requires a passing authoritative `e2e-local.sh` baseline, successful configured provisioning/MFS/CLI DB tests, sanitized REST golden capture, approved browser evidence, and a strict gate with no mandatory skips. This task does not modify the immutable baseline to make those conditions true.
+
+This does not redefine the initial architectural target: the minimal kernel begins with selected no-Team contracts and `hello`. It does mean that later claims of Team or self-hosting compatibility cannot be marked ready until this baseline gate passes.
