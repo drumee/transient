@@ -31,6 +31,16 @@ server-runtime                              ui-runtime
 
 `server-essentials` must remain usable by a non-Drumee Node/MariaDB service. In particular, it must not acquire dependencies on Hub, Drumate, Drumee ACL, MFS semantics, `module.method`, plugin discovery, or Team behavior. The existing generic MariaDB API belongs at that independent boundary (`sources/server-essentials/lib/mariadb.js`). `ui-essentials` remains the generic frontend foundation for the same reason.
 
+### Phase 2 Essentials version policy
+
+The baseline and the new kernel have deliberately different dependency purposes. `sources/server-team/package.json` and `sources/server-core/package.json` declare `@drumee/server-essentials` `^1.3.1`, and their imported locks resolve `1.3.1`; the current imported Essentials source is `1.3.6` (`sources/server-essentials/package.json`). The historical lock is evidence for baseline reproduction only. It is not a version constraint on `server-runtime`.
+
+Phase 2 must use the current imported `server-essentials` API. A candidate extracted from `server-core` or generic Team loader code that assumes older behavior must be adapted in a documented, transitional `server-runtime` seam and receive a focused test. Do not downgrade Essentials, duplicate its generic database/cache/logging functionality, or add a Team-only compatibility branch to Essentials.
+
+The inspected `Mariadb` public surface is unchanged between the baseline staging copy at `1.3.1` and current `1.3.6`: both expose `await_proc`, `await_func`, `await_query`, `await_run`, `query` and transaction-backed execution (`sources/server-essentials/lib/mariadb.js`). The known active-transaction issue therefore remains a provisioning/MFS risk, not evidence that the new kernel must use `1.3.1`.
+
+There is an observed ACL-semantic difference to characterize before reusing generic descriptor conversion: historical `1.3.1` maps `permissionValue('write')` to `0b0001000`, while current `1.3.6` maps it to `0b0000100`; the corresponding cumulative `privilegeValue('write')` is `0b0001111` versus `0b0000111`. Legacy aliases such as `get` are also absent from the current tables (`sources/server-essentials/lib/lex/{permission,privilege}.js`). `sources/server-team/router/rest/index.js::Acl.getModule` converts ACL strings through `permissionValue`, and `sources/server-core/lib/acl.js::{check_source,check_dest}` passes the numeric value into SQL ACL checks. Phase 2 must select and test the current semantics for the no-Team kernel; preserving legacy mappings, if ever required, belongs in an explicit temporary runtime adapter with an architectural rationale.
+
 `sources/server-core` and `sources/ui-core` are evidence and extraction sources. Neither is presumed to survive wholesale or under its current package name.
 
 ## 3. Backend extraction boundary

@@ -29,6 +29,8 @@ server-runtime                              ui-runtime
 
 `server-essentials` remains independently reusable outside Drumee. Its generic MariaDB, connection, transaction, pooling, result and generic-error APIs (`sources/server-essentials/lib/mariadb.js`) must not acquire Hub, Drumate, Drumee ACL, MFS, module dispatch, plugin discovery or Team dependencies. `ui-essentials` remains the generic frontend foundation on the same principle.
 
+Phase 2 consumes the current imported `server-essentials` implementation beneath `server-runtime`. The `1.3.1` resolution in the historical Team/Core locks is baseline evidence, not a constraint on this new kernel. Any source assumption that differs from the current generic API is adapted and tested at a temporary `server-runtime` seam; generic database, cache and logging primitives are reused rather than copied.
+
 ## Kernel boundary and sequencing
 
 The first backend runtime candidates are boot/configuration, request/session/context, generic ACL-engine integration, module descriptor registration and resolution, `module.method` dispatch, public/private worker selection, lazy worker loading/cache, and the generic frontend-plugin resolver. The current evidence is split between `sources/server-core/lib/{session,input,output,acl,exception}.js`, `sources/server-team/router/rest/index.js::{loadPlugins,getModule,run}`, and `sources/server-team/service/bootstrap.js::plugin`.

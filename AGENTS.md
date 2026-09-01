@@ -833,6 +833,12 @@ The deciding question is:
 
 The MariaDB API and related generic database primitives are specifically considered valuable standalone capabilities and must remain independently usable.
 
+### Phase 2 `server-essentials` version policy
+
+The dependency version resolved by the historical Team build does **not** constrain the new minimal kernel. Phase 2 must use the current imported `server-essentials` implementation as the generic lower layer for `server-runtime`; it must not downgrade Essentials merely because `server-team` or `server-core` used an older lockfile resolution.
+
+When an extracted `server-core` or generic-loader symbol assumes an older Essentials behavior, the implementation phase must identify the exact difference, inspect the current Essentials API, adapt at a clearly marked transitional seam in `server-runtime`, and add a focused test. Do not modify baseline sources or add a Team-only backward-compatibility hack to `server-essentials`. Reuse existing generic MariaDB, connection, query/procedure, transaction, pooling, configuration, logging, cache/Redis, error and result primitives instead of copying them into `server-runtime`.
+
 ### Reference application sequence
 
 Before the first real business application, create exactly one minimal kernel-validation module:
@@ -846,13 +852,14 @@ No additional synthetic application is required before marketing.
 The intended sequence is:
 
 ```text
-Phase A   extract/iterate server-runtime and ui-runtime toward the minimal kernel
-Phase B   validate backend/frontend plugin contracts with hello
-Phase C   extract the minimal backend MFS/context capabilities required by real applications
-Phase D   build marketing as the first real application
-Phase E   stabilize the kernel from real application needs
-Phase F   extract Finder / Window Manager only after MFS semantics exist
-Phase G   migrate/extract Team capabilities one module at a time
+Phase 1     baseline evidence
+Phase 1.5   minimal-kernel boundary stabilization
+Phase 2     extract/iterate server-runtime and ui-runtime against current Essentials
+Phase 3     validate backend/frontend plugin contracts with hello
+Phase 4     extract intentional minimal MFS/context capabilities
+Phase 5     build marketing as the first real application
+Phase 6     stabilize the kernel from real application needs
+Phase 7+    extract Finder / Window Manager only after MFS semantics exist, then migrate Team capabilities one at a time
 ```
 
 ### `hello` module
@@ -1538,24 +1545,11 @@ study source
 → test compatibility
 ```
 
-## Kernel extraction subphase — Phase 1.5
+## Minimal-kernel boundary stabilization — Phase 1.5
 
-Before normalized module-contract work proceeds, perform:
+Before extraction, complete the documentation and focused contract-test design needed to distinguish the smallest application-neutral backend/frontend seams. Phase 1.5 does **not** create `target/foundation/server-runtime/`, `target/foundation/ui-runtime/`, or `hello`; those are Phase 2/3 implementation work after explicit approval.
 
-```text
-Phase 1.5 — Minimal backend/frontend kernel extraction
-```
-
-The purpose is to establish **both** transitional extraction workspaces:
-
-```text
-target/foundation/server-runtime/
-target/foundation/ui-runtime/
-```
-
-and use them to extract the smallest Drumee kernel capable of running an independent `hello` module without `server-team` or `ui-team`.
-
-Initial sources are:
+Phase 1.5 must establish the following direction from source:
 
 ```text
 sources/server-core                 sources/ui-core
@@ -1573,6 +1567,7 @@ server-runtime                      ui-runtime
 Phase 1.5 must not:
 
 - alter `sources/**`;
+- create files under `target/**` or start `hello`;
 - absorb `server-team` or `ui-team`;
 - use Team compatibility as the primary design constraint;
 - make `server-essentials` Drumee-dependent;
@@ -1585,23 +1580,32 @@ Phase 1.5 must not:
 
 Phase 1.5 is complete only when:
 
-- [ ] `server-runtime` builds reproducibly;
-- [ ] `ui-runtime` builds reproducibly;
 - [ ] the first minimal backend and frontend kernel boundaries are documented;
-- [ ] `hello` runs without `server-team` and without `ui-team`;
-- [ ] backend `hello.ping` works through the extracted `module.method` dispatch path;
-- [ ] the backend plugin descriptor/ACL registration and lazy service loading path are covered;
-- [ ] frontend `Kind.loadPlugin()` calls the extracted `bootstrap.plugin` resolver;
-- [ ] `bootstrap.plugin` resolves a logical plugin name to the frontend bundle entry/path;
-- [ ] `loadJS()` loads the bundle and the addon registration handshake completes;
-- [ ] the requested `hello` kind is rendered in a minimal host without Window Manager;
-- [ ] `Host`, `Visitor`, and `Organization` are available where required for the frontend Drumee/ACL context;
-- [ ] Essentials-only standalone tests pass without Drumee Core;
+- [ ] current `server-essentials` is identified as the Phase 2 generic dependency, with historical-version differences documented;
+- [ ] backend ACL descriptor/lazy-loading and frontend logical-plugin/addon handshakes have focused test plans;
+- [ ] MFS-specific built-in kinds, Team/desktop policy and provisioning are explicitly outside the first no-Team slice;
+- [ ] the transitional nature of both runtime workspaces is documented.
+
+## First runtime extraction — Phase 2
+
+After Phase 1.5 receives explicit approval, establish both transitional extraction workspaces:
+
+```text
+target/foundation/server-runtime/
+target/foundation/ui-runtime/
+```
+
+Use the current `server-essentials` implementation beneath `server-runtime`, not the historical Team lockfile resolution. The Phase 2 extraction must retain the initial backend ACL/descriptor/lazy-worker and frontend `index.json`/addon contracts, without Team policy, MFS presentation, Finder, Desktop or Window Manager.
+
+Phase 2 is complete only when:
+
+- [ ] `server-runtime` and `ui-runtime` build reproducibly;
+- [ ] focused current-Essentials tests cover any adaptation from historical `server-core` assumptions;
 - [ ] ownership/provenance of every extracted `server-core` and `ui-core` area remains traceable;
 - [ ] no Drumee-specific dependency has leaked into `server-essentials`;
-- [ ] MFS-specific built-in kinds and Team/desktop policy remain outside the first `ui-runtime` boundary;
-- [ ] Team-specific backend policies remain outside `server-runtime`;
-- [ ] the transitional nature of both runtime workspaces is documented.
+- [ ] Team-specific backend policies remain outside `server-runtime` and MFS/application kinds remain outside the first `ui-runtime` boundary.
+
+`hello` is Phase 3 proof, not a Phase 2 completion criterion.
 
 ---
 
@@ -1645,14 +1649,14 @@ The monorepo exists precisely so cross-cutting refactors can remain atomic while
 
 The migration must be incremental.
 
-Preferred sequence:
+For a selected capability after the no-Team kernel has been established, the preferred sequence is:
 
 ```text
 identify boundary
 → add compatibility tests
 → extract one capability
 → integrate it dynamically
-→ reconstruct Team behavior
+→ reconstruct selected Team behavior where applicable
 → verify compatibility
 → proceed to next capability
 ```
@@ -1690,7 +1694,7 @@ What must move with it?
 
 ## Compatibility
 
-How does Drumee Team continue to use it?
+For a Team capability or a selected later Team contract, how does Drumee Team continue to use it? The isolated Phase 2/3 kernel must instead explain why it has no Team dependency.
 
 ## Control Plane
 
@@ -1722,7 +1726,7 @@ No extraction is considered planned without these answers.
 
 # 25. Reconstruction of Drumee Team
 
-A major goal of the monorepo is to enable this test:
+A later validation goal of the monorepo is to enable this test:
 
 ```text
 target/os
@@ -1744,7 +1748,7 @@ sources/schemas
 
 Compatibility tests should progressively compare both environments.
 
-This reconstruction is the primary proof that modularization has not damaged Drumee Team.
+This reconstruction is a later proof that modularization has not damaged Drumee Team. It is not a prerequisite for validating the isolated no-Team kernel with `hello`.
 
 ---
 
@@ -2454,8 +2458,8 @@ CLI DB backend tests
 CLI API backend tests
 MFS import/export tests
 server-essentials standalone tests outside Drumee
-server-runtime kernel-contract tests during Phase 1.5
-ui-runtime plugin-loading and addon-registration tests during Phase 1.5
+server-runtime kernel-contract tests during Phase 2
+ui-runtime plugin-loading and addon-registration tests during Phase 2
 self-hosting build
 Docker deployment
 native Debian deployment
@@ -2628,4 +2632,4 @@ The new minimal kernel is the primary architectural target. `server-team` is mig
 
 # 41. Summary instruction for coding agents
 
-> Work only inside the `transient` monorepo. Treat `sources/**` as an immutable baseline containing the current Drumee ecosystem, including Team, schemas, provisioning, CLI, dynamic module examples, and self-hosting distribution code. During the mapping phase, modify only `docs/refactoring/**` and `SOURCE_MANIFEST.md` when needed. Analyze the current system from source code before proposing changes. Classify every major capability as OS primitive, system module, Team module, SDK/essentials, business module, control plane, deployment, legacy, or investigate. Treat `cli` as a first-class control-plane candidate and map its DB/API backends, provisioning dependencies, MFS/storage behavior and runtime/service interactions without assuming plugin lifecycle support that is not present in source. Treat Drumee Team as a migration source and later compatibility target, not as the primary architectural target. The primary target is a minimal, application-neutral Drumee kernel capable of hosting new independent modules. Preserve `debian` as the current self-hosting/distribution layer. Preserve `server-essentials` as an independently reusable, non-Drumee-specific server package; never introduce Hub, Drumate, MFS, Drumee ACL or module-runtime dependencies into its generic boundary merely to simplify the transition. Use `target/foundation/server-runtime` and `target/foundation/ui-runtime` as the Phase 1.5 extraction workspaces for iterating from current `server-core` and `ui-core` behavior toward a minimal backend/frontend Drumee kernel while depending on independent `server-essentials` and `ui-essentials`. Preserve the current plugin mechanics first: backend ACL/descriptor registration with lazy `module.method` service loading, and frontend `Kind.loadPlugin()` → `bootstrap.plugin` → `{path}` → `loadJS()` → `Kind.registerAddons()` handshake. Keep `Host`, `Visitor`, and `Organization` in the minimal frontend context where required for ACL semantics, but keep MFS presentation, Finder, Desktop, and Window Manager out of the first `hello` slice. Validate the new kernel first with exactly one minimal reference module, `hello`; add minimal MFS semantics next as required, then use `marketing` as the first real application to drive additional kernel requirements. Only after the kernel is stable should `server-team` be decomposed and migrated module by module. `server-runtime` and `ui-runtime` are not automatically final package boundaries. After mapping, stop and request architectural review. During later implementation, build all new architecture under `target/**`, never modify `sources/**`, and postpone final repository extraction until the OS, modules, control plane, Team reconstruction, independent Essentials boundary and self-hosting boundaries have been validated through compatibility tests.
+> Work only inside the `transient` monorepo. Treat `sources/**` as an immutable baseline containing the current Drumee ecosystem, including Team, schemas, provisioning, CLI, dynamic module examples, and self-hosting distribution code. During the mapping phase, modify only `docs/refactoring/**` and `SOURCE_MANIFEST.md` when needed. Analyze the current system from source code before proposing changes. Classify every major capability as OS primitive, system module, Team module, SDK/essentials, business module, control plane, deployment, legacy, or investigate. Treat `cli` as a first-class control-plane candidate and map its DB/API backends, provisioning dependencies, MFS/storage behavior and runtime/service interactions without assuming plugin lifecycle support that is not present in source. Treat Drumee Team as a migration source and later compatibility target, not as the primary architectural target. The primary target is a minimal, application-neutral Drumee kernel capable of hosting new independent modules. Preserve `debian` as the current self-hosting/distribution layer. Preserve `server-essentials` as an independently reusable, non-Drumee-specific server package; never introduce Hub, Drumate, MFS, Drumee ACL or module-runtime dependencies into its generic boundary merely to simplify the transition. Use Phase 1.5 to stabilize the minimal-kernel boundaries, then use `target/foundation/server-runtime` and `target/foundation/ui-runtime` as Phase 2 extraction workspaces for iterating from current `server-core` and `ui-core` behavior toward a minimal backend/frontend Drumee kernel while depending on current independent `server-essentials` and `ui-essentials`; the historical Team lockfile resolution does not constrain that new runtime. Preserve the current plugin mechanics first: backend ACL/descriptor registration with lazy `module.method` service loading, and frontend `Kind.loadPlugin()` → `bootstrap.plugin` → `{path}` → `loadJS()` → `Kind.registerAddons()` handshake. Keep `Host`, `Visitor`, and `Organization` in the minimal frontend context where required for ACL semantics, but keep MFS presentation, Finder, Desktop, and Window Manager out of the first `hello` slice. Validate the new kernel first with exactly one minimal reference module, `hello`; add minimal MFS semantics next as required, then use `marketing` as the first real application to drive additional kernel requirements. Only after the kernel is stable should `server-team` be decomposed and migrated module by module. `server-runtime` and `ui-runtime` are not automatically final package boundaries. After mapping, stop and request architectural review. During later implementation, build all new architecture under `target/**`, never modify `sources/**`, and postpone final repository extraction until the OS, modules, control plane, Team reconstruction, independent Essentials boundary and self-hosting boundaries have been validated through compatibility tests.

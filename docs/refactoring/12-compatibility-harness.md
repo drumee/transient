@@ -64,6 +64,8 @@ Current environment status is `NOT READY`: images build and the Debian E2E has r
 
 `scripts/test-baseline-all.sh` remains the broad safe characterization command, but it may validly skip live tests. It is therefore not a Phase 2 readiness decision. Use `scripts/test-env/gate.sh`; it reports `PASS`, `FAIL`, or `SKIP / NOT CONFIGURED` separately for safe tests, Debian E2E, provisioning, MFS, CLI DB, REST golden, empty-factory, and browser evidence. It exits nonzero for any mandatory `SKIP`.
 
+That gate applies to the historical Team/self-hosting baseline, including its locked `server-essentials` dependency resolution. The isolated no-Team Phase 2 runtime and Phase 3 `hello` slice instead require focused target-side contracts against the current imported Essentials API. A failing baseline gate still blocks Team parity, self-hosting parity and work that depends on the unresolved provisioning/MFS path; it does not globally block an isolated runtime extraction that avoids those paths.
+
 ### Safe/default suite
 
 - Bash with standard POSIX utilities.

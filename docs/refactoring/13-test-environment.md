@@ -66,6 +66,8 @@ build-images-local.sh with SERVER_SRC/UI_SRC set to staging paths
 
 The staging script verifies a recursive source-content diff after installation, ignoring only `node_modules`, `.git`, the harness-provided UI lockfile, and npm's generated `.dev-tools.rc`. `sources/server-team/package-lock.json` is the imported lock. The reviewed UI lock and its provenance are committed as `tests/fixtures/build-locks/ui-team-package-lock.json` and `ui-team-lock-metadata.json`; the metadata pins the SHA-256 of the imported UI `package.json`, Node/npm versions and the resolution command. npm 11 requires `--dangerously-allow-all-scripts=true` for the lockfile's pinned native installation hooks; this is confined to the disposable contexts. `.tmp/test-env/build-src/dependency-resolution.env` records the source-tree ID, lock hashes, tool versions and exact install command for each run.
 
+That staging lock reproduces the baseline Team image only: it resolves `@drumee/server-essentials` 1.3.1. It must not be reused to constrain a future isolated `server-runtime`; Phase 2 targets the current imported Essentials source independently and records any deliberate runtime adaptation in its own focused tests.
+
 ## Prerequisites
 
 - Linux.

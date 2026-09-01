@@ -21,6 +21,8 @@ The generic backend side is `sources/server-team/router/rest/index.js::{loadPlug
 
 The first standard shared vocabulary is only logical identity, artifact location and independently declared compatibility. It must not replace either on-disk descriptor in the first `server-runtime`/`ui-runtime` iteration. Runtime, provisioner, deployment and later control plane may use separate adapters.
 
+The generic backend implementation for that iteration depends on the current imported `server-essentials` contract, not the baseline Team lockfile resolution. This affects implementation adapters, not the two plugin descriptors: a historical Team behavior is preserved only when it is selected as a real kernel contract and tested.
+
 Module ACL entries declare policy to the host but do not become OS policy. Secure-share policy remains unclassified; billing/over-limit policy belongs to Team or a separately approved policy module.
 
 ## ADD — after `hello` proves the vertical slice
