@@ -5,8 +5,17 @@ source "$(dirname "$0")/lib.sh"
 "$TEST_ENV_SCRIPT_DIR/check.sh"
 assert_sources_clean
 
-export SERVER_SRC="$(source_path server-team)"
-export UI_SRC="$(source_path ui-team)"
+if [ -d "$(source_path server-team)/node_modules" ] && [ -d "$(source_path ui-team)/node_modules" ]; then
+  server_context="$(source_path server-team)"
+  ui_context="$(source_path ui-team)"
+else
+  "$TEST_ENV_SCRIPT_DIR/stage-build-src.sh"
+  server_context="$BUILD_SRC_ROOT/server-team"
+  ui_context="$BUILD_SRC_ROOT/ui-team"
+fi
+
+export SERVER_SRC="$server_context"
+export UI_SRC="$ui_context"
 export SCHEMAS_SRC="$(source_path schemas)"
 export SETUP_SCHEMAS_SRC="$(source_path setup-schemas)"
 export STATIC_SRC="$(source_path static)"

@@ -7,6 +7,8 @@ TRANSIENT_ROOT="$(cd "$TEST_ENV_SCRIPT_DIR/../.." && pwd)"
 DEBIAN_ROOT="$TRANSIENT_ROOT/sources/debian"
 TEST_ENV_ROOT="$TRANSIENT_ROOT/.tmp/test-env"
 BASELINE_RUNTIME="$TEST_ENV_ROOT/baseline"
+BUILD_SRC_ROOT="$TEST_ENV_ROOT/build-src"
+RESULTS_ROOT="$TEST_ENV_ROOT/results"
 COMPOSE_PROJECT="${COMPOSE_PROJECT:-transient-baseline}"
 UI_HOST_PORT="${UI_HOST_PORT:-23800}"
 API_HOST_PORT="${API_HOST_PORT:-24800}"
@@ -87,4 +89,30 @@ write_runtime_description() {
     printf 'TEST_STORAGE_ROOT=%s\n' "$BASELINE_RUNTIME/data"
   } > "$BASELINE_RUNTIME/runtime.env"
   chmod 600 "$BASELINE_RUNTIME/runtime.env"
+}
+
+source_tree_id() {
+  git -C "$TRANSIENT_ROOT" rev-parse HEAD:sources
+}
+
+write_result() {
+  local name="$1" status="$2" detail="${3:-}"
+  mkdir -p "$RESULTS_ROOT"
+  umask 077
+  {
+    printf 'STATUS=%s\n' "$status"
+    printf 'SOURCE_TREE=%s\n' "$(source_tree_id)"
+    printf 'DETAIL=%s\n' "$detail"
+  } > "$RESULTS_ROOT/$name.env"
+}
+
+read_result_status() {
+  local name="$1"
+  local file="$RESULTS_ROOT/$name.env"
+  [ -f "$file" ] || { printf 'SKIP\n'; return; }
+  local status tree
+  status="$(sed -n 's/^STATUS=//p' "$file")"
+  tree="$(sed -n 's/^SOURCE_TREE=//p' "$file")"
+  [ "$tree" = "$(source_tree_id)" ] || { printf 'SKIP\n'; return; }
+  case "$status" in PASS|FAIL|SKIP) printf '%s\n' "$status" ;; *) printf 'FAIL\n' ;; esac
 }

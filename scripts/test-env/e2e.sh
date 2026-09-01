@@ -2,6 +2,9 @@
 set -euo pipefail
 source "$(dirname "$0")/lib.sh"
 
+result=FAIL
+trap 'write_result debian-e2e "$result" "sources/debian/tests/e2e-local.sh"' EXIT
+
 "$TEST_ENV_SCRIPT_DIR/check.sh"
 assert_sources_clean
 for image in schemas server-pod ui-build schemas-populate; do
@@ -11,3 +14,4 @@ done
 say "running authoritative Debian local-image E2E"
 "$DEBIAN_ROOT/tests/e2e-local.sh"
 assert_sources_clean
+result=PASS

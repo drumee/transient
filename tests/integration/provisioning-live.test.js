@@ -63,10 +63,3 @@ test("disposable drumate, hub, MFS round-trip, and purge lifecycle", { skip: !ar
     throw new Error(`${error.message}\nManual cleanup may be required for fixture ${email} / ${hubName}.`);
   }
 });
-
-test("empty factory behavior can be characterized only in a dedicated empty-pool fixture", { skip: process.env.DRUMEE_TEST_FACTORY_EMPTY !== "YES" }, () => {
-  guard();
-  const result = spawnSync(process.execPath, [cli, "--json", "user", "add", "--email", email], { encoding: "utf8", env: process.env });
-  assert.notEqual(result.status, 0);
-  assert.match(`${result.stdout}${result.stderr}`, /EMPTY_FACTORY/);
-});

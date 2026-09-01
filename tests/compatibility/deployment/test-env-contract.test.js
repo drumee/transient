@@ -3,7 +3,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const { read, resolveRepo } = require("../../helpers/repository");
 
-const names = ["check", "build", "up", "status", "e2e", "logs", "down", "reset", "debian-tests"];
+const names = ["check", "build", "up", "status", "e2e", "logs", "down", "reset", "debian-tests", "stage-build-src", "capture-rest-golden", "browser-baseline", "gate"];
 
 test("baseline environment exposes the complete wrapper command set", () => {
   for (const name of names) {
@@ -18,6 +18,14 @@ test("builder maps every imported source explicitly and disables media dependenc
     assert.match(build, new RegExp(`export ${mapping}=`));
   assert.match(build, /MEDIA_DEPS="\$\{MEDIA_DEPS:-0\}"/);
   assert.match(build, /build-images-local\.sh/);
+  assert.match(build, /stage-build-src\.sh/);
+});
+
+test("dependency staging uses lockfiles and verifies immutable source content", () => {
+  const stage = read("scripts/test-env/stage-build-src.sh");
+  assert.match(stage, /npm ci --no-audit --no-fund/);
+  assert.match(stage, /diff -qr --exclude=node_modules/);
+  assert.match(stage, /dependency-resolution\.env/);
 });
 
 test("runtime is isolated, loopback-only, pool-enabled, and machine-readable", () => {
@@ -39,4 +47,11 @@ test("cleanup requires the exact baseline runtime root", () => {
   assert.match(lib, /refusing runtime operation outside/);
   assert.match(reset, /assert_runtime_dir/);
   assert.match(reset, /REMOVE_TEST_IMAGES/);
+});
+
+test("strict gate treats mandatory live scenarios and browser evidence independently", () => {
+  const gate = read("scripts/test-env/gate.sh");
+  for (const scenario of ["debian-e2e", "provisioning", "mfs-live", "cli-db", "rest-golden", "factory-empty", "browser-baseline"])
+    assert.match(gate, new RegExp(scenario));
+  assert.match(gate, /SKIP is failure/);
 });

@@ -44,6 +44,10 @@ transient/
 │   └── other imported Drumee repositories
 │
 ├── target/
+│   ├── foundation/
+│   │   ├── server-runtime/       # transitional backend extraction workspace
+│   │   └── ui-runtime/           # transitional frontend extraction workspace
+│   │
 │   ├── os/
 │   │   ├── server/
 │   │   ├── ui/
@@ -53,6 +57,7 @@ transient/
 │   │   └── cli/
 │   │
 │   ├── modules/
+│   │   ├── hello/                # minimal kernel validation module
 │   │   ├── finder/
 │   │   ├── signin/
 │   │   ├── loby/
@@ -443,8 +448,8 @@ service dispatch
 module discovery/loading
 MFS primitives
 event transport
-Window Manager primitives
 LETC runtime integration
+Window Manager primitives only as a later post-MFS kernel candidate
 ```
 
 A capability belongs here only if Drumee requires it to load, isolate, authorize, execute, or host applications.
@@ -496,9 +501,17 @@ These modules must still be available in the reconstructed Team distribution.
 
 Reusable primitives that belong in an existing or future SDK/core/essentials/toolkit layer.
 
+A key architectural invariant is that **`server-essentials` must remain usable outside Drumee**.
+
+Generic capabilities such as MariaDB connectivity, stored-procedure/query helpers, transactions, pooling, generic error/result handling, logging/configuration helpers, and other server utilities may belong here when they do not require Drumee concepts.
+
 Before using this category, inspect existing Drumee packages.
 
 Do not create new low-level packages merely to produce cleaner diagrams.
+
+Do not introduce Drumee-specific dependencies into `server-essentials` merely to simplify the transition.
+
+Apply the same principle to `ui-essentials`: keep it generic and reusable. Drumee-specific runtime context such as `Host`, `Visitor`, `Organization`, plugin orchestration, MFS semantics, Finder, or Window Manager belongs above `ui-essentials`.
 
 ---
 
@@ -590,7 +603,7 @@ Examples:
 MFS primitive            → KEEP_OS
 Finder application       → SYSTEM_MODULE
 
-Window Manager runtime   → KEEP_OS
+Window Manager runtime   → INVESTIGATE initially; possible KEEP_OS only after MFS/resource semantics are established
 Document editor          → SYSTEM_MODULE
 
 ACL engine               → KEEP_OS
@@ -686,6 +699,487 @@ When recommending that code move to a lower-level package, document:
 4. proposed destination;
 5. compatibility impact;
 6. smallest viable change.
+
+## Transitional backend extraction: `server-runtime`
+
+The project may introduce:
+
+```text
+target/foundation/server-runtime/
+```
+
+as the **transitional extraction workspace for the future minimal Drumee server kernel**.
+
+Its purpose is not to preserve `server-team` as the primary target. Its purpose is to extract, reduce, and stabilize the minimum application-neutral backend required to host independent Drumee modules.
+
+The long-term architectural intent is:
+
+```text
+@drumee/server-essentials
+          ↑
+          │
+server-runtime
+          │
+          ▼
+future minimal Drumee server kernel
+```
+
+`server-essentials` remains an independent reusable package and must continue to work outside Drumee.
+
+`server-core` is treated as a source of candidate Drumee runtime primitives. It is not assumed to survive unchanged as a final package.
+
+`server-team` is a later migration source.
+
+### Kernel inclusion rule
+
+A capability belongs in the minimal kernel only when it is required to:
+
+- boot Drumee;
+- establish application/runtime context;
+- authorize requests;
+- dispatch module services;
+- discover/load modules;
+- expose stable module lifecycle primitives;
+- provide generic persistence/shard access where required;
+- provide MFS primitives when required by independent applications;
+- host the frontend/runtime shell and managed application windows where applicable.
+
+Do not move a capability into the kernel merely because Team currently depends on it.
+
+Historical Team policy must not determine the future kernel boundary unless independently justified.
+
+### `server-core` extraction rule
+
+For every candidate area in `sources/server-core`:
+
+```text
+inspect current implementation
+→ identify the minimal application-neutral responsibility
+→ extract into server-runtime
+→ test independently
+→ keep Team-specific policy outside
+```
+
+Do not copy `server-core` wholesale merely to preserve compatibility.
+
+Track provenance for every extracted capability.
+
+### `server-essentials` independence invariant
+
+No new Drumee-specific dependency may be introduced into `server-essentials`.
+
+Code that remains in Essentials must not require concepts such as:
+
+```text
+hub
+drumate
+Drumee ACL
+MFS semantics
+module.method dispatch
+plugin discovery
+Team application behavior
+```
+
+unless ownership is explicitly reconsidered.
+
+The deciding question is:
+
+> Can this capability remain useful and coherent in a generic Node.js/MariaDB server application that does not run Drumee?
+
+The MariaDB API and related generic database primitives are specifically considered valuable standalone capabilities and must remain independently usable.
+
+### Reference application sequence
+
+Before the first real business application, create exactly one minimal kernel-validation module:
+
+```text
+hello
+```
+
+No additional synthetic application is required before marketing.
+
+The intended sequence is:
+
+```text
+Phase A   extract/iterate server-runtime and ui-runtime toward the minimal kernel
+Phase B   validate backend/frontend plugin contracts with hello
+Phase C   extract the minimal backend MFS/context capabilities required by real applications
+Phase D   build marketing as the first real application
+Phase E   stabilize the kernel from real application needs
+Phase F   extract Finder / Window Manager only after MFS semantics exist
+Phase G   migrate/extract Team capabilities one module at a time
+```
+
+### `hello` module
+
+`hello` is a validation module, not a business application.
+
+It must remain intentionally small.
+
+At minimum it should prove:
+
+```text
+backend module discovery
+→ backend ACL/descriptor registration
+→ lazy backend service loading
+→ module.method dispatch
+→ Kind.loadPlugin({name, kind})
+→ bootstrap.plugin(name)
+→ frontend index/entry resolution
+→ loadJS(path)
+→ Kind.registerAddons(...)
+→ requested kind rendered in a minimal host
+```
+
+Representative backend services may include:
+
+```text
+hello.ping
+hello.echo
+```
+
+with behavior conceptually similar to:
+
+```text
+hello.ping
+→ { status: "ok" }
+
+hello.echo
+→ returns supplied payload
+```
+
+The frontend should be a minimal LETC widget/application rendered in a simple host container. `hello` must not require Finder, MFS presentation, Desktop, or Window Manager.
+
+Do not add MFS, AI, campaign logic, complex schemas, workflows, chat, tasks, meetings, or Team-specific capabilities to `hello`.
+
+The governing rule is:
+
+> `hello` validates the kernel; `marketing` drives the next useful kernel capabilities.
+
+### Marketing as first real application
+
+After `hello` passes, `marketing` becomes the first real application built against the new kernel.
+
+Marketing may introduce real requirements such as:
+
+```text
+private hub usage
+MFS
+hub-local MariaDB schemas
+ACL
+dynamic services
+LETC frontend
+AI integration
+Window Manager only if/after the MFS-based shell contract has been intentionally added
+```
+
+For every new requirement, decide deliberately whether it belongs in:
+
+```text
+server-essentials
+minimal kernel
+system module
+marketing module
+```
+
+Do not automatically promote application needs into the kernel.
+
+### Compatibility policy
+
+The Phase 1 baseline harness remains useful as evidence and regression reference.
+
+It is not an absolute requirement to reproduce every Team-era behavior.
+
+Preserve the behaviors intentionally selected as kernel contracts.
+
+Any deliberate incompatibility with Team-era behavior must be documented.
+
+### Final extraction expectation
+
+The current `server-runtime` name/package is transitional.
+
+It may later disappear, be renamed, or become the final server-kernel package only by explicit architectural decision.
+
+What must survive is:
+
+```text
+independent server-essentials boundary
++
+validated minimal Drumee kernel boundary
+```
+
+Team migration must target that validated kernel rather than forcing the kernel back toward the old Team architecture.
+
+---
+
+## Transitional frontend extraction: `ui-runtime`
+
+The project may introduce:
+
+```text
+target/foundation/ui-runtime/
+```
+
+as the **transitional extraction workspace for the future minimal Drumee frontend kernel**.
+
+It plays the frontend role symmetric to `server-runtime`:
+
+```text
+@drumee/server-essentials          @drumee/ui-essentials
+          ↑                                  ↑
+          │                                  │
+   server-runtime                       ui-runtime
+          │                                  │
+          └──────── minimal Drumee ──────────┘
+                        kernel
+```
+
+`ui-essentials` remains the generic lower-level frontend package.
+
+`ui-core` is treated as a source of candidate frontend runtime primitives. It is **not** assumed to survive unchanged as the final frontend kernel because it currently contains responsibilities beyond a minimal LETC runtime, including MFS-related built-in kinds and other higher-level Drumee concepts.
+
+### Initial `ui-runtime` inclusion rule
+
+The initial frontend kernel should contain only capabilities required to:
+
+- initialize the minimal Drumee frontend context;
+- execute LETC widgets;
+- maintain the Kind/addon registry;
+- dynamically resolve and load frontend plugins;
+- perform service calls to the backend;
+- establish the Drumee identity/ACL context needed by applications.
+
+The following current concepts are considered kernel candidates because they participate in the frontend/backend ACL and runtime context:
+
+```text
+Host
+Visitor
+Organization
+```
+
+Do not remove these merely because they look application-specific. They are required to maintain the client-side Drumee context corresponding to backend authorization semantics.
+
+The backend remains the security authority. Frontend ACL/context objects must never be treated as sufficient authorization by themselves.
+
+### Initial exclusions from `ui-runtime`
+
+Do not initially include higher-level MFS presentation or desktop behavior such as:
+
+```text
+DrumeeMFS presentation/workflow logic
+media_folder
+media_document
+media_thread
+Finder
+Window Manager
+Desktop
+file/application associations
+Team seeds
+Team routes
+```
+
+Generic MFS client primitives may later enter the kernel only after the backend MFS boundary has been intentionally extracted and validated.
+
+Window Manager extraction must not precede the backend MFS/context capabilities that give managed resources and applications their semantics.
+
+### `ui-core` extraction rule
+
+For every candidate area in `sources/ui-core`:
+
+```text
+inspect current implementation
+→ identify minimal application-neutral responsibility
+→ extract into ui-runtime
+→ test independently
+→ leave MFS presentation / desktop / Team behavior outside
+```
+
+Do not copy `ui-core` wholesale.
+
+Track provenance for every extracted capability.
+
+---
+
+## Existing plugin contracts to preserve during initial extraction
+
+The current Drumee implementation already contains useful dynamic-plugin mechanisms on both backend and frontend.
+
+The first kernel extraction must **preserve and simplify these existing contracts before attempting to unify or redesign them**.
+
+Do not invent a new plugin system while extracting the minimal kernel.
+
+### Backend plugin contract
+
+The current backend mechanism is conceptually:
+
+```text
+startup
+  ↓
+plugin roots / ACL directories
+  ↓
+acl/*.json
+  ↓
+module/service descriptor registration
+  ↓
+module registry
+
+request: module.method
+  ↓
+resolve service descriptor
+  ↓
+choose public/private implementation from session context
+  ↓
+lazy require(service implementation)
+  ↓
+Worker cache
+  ↓
+ACL / permission evaluation
+  ↓
+GRANTED
+  ↓
+worker.method()
+```
+
+The generic responsibilities to extract from the current Team router into `server-runtime` include, where confirmed by source:
+
+```text
+module registry
+plugin ACL/descriptor discovery
+module.method parsing
+service descriptor resolution
+public/private implementation resolution
+permission descriptor resolution
+lazy Worker loading
+Worker cache
+post-authorization dispatch
+```
+
+Do **not** extract Team-specific router policy with this mechanism.
+
+Examples of policy that must remain outside the generic dispatcher include product-specific secure-share restrictions, billing/over-limit rules, and service-specific Team allow/deny lists.
+
+The current backend ACL JSON is both authorization metadata and an execution descriptor. Preserve that behavior for the first extraction unless a later approved module-contract phase replaces it.
+
+### Frontend plugin contract — two-stage resolution
+
+Frontend plugin loading is a two-stage contract shared between `ui-core` and the backend bootstrap service.
+
+#### Stage 1 — frontend request and dynamic load
+
+The canonical frontend primitive is the existing:
+
+```text
+Kind.loadPlugin({ name, kind })
+```
+
+Its minimal behavior to preserve is:
+
+```text
+kind already registered?
+  ├── yes → return it
+  └── no
+       ↓
+call bootstrap.plugin(name)
+       ↓
+receive { path }
+       ↓
+loadJS(path)
+       ↓
+wait for addon registration
+       ↓
+Kind.get(kind)
+```
+
+The frontend must resolve plugins by **logical name**, not by knowing installation paths directly.
+
+`Kind.loadPlugin()`, the Kind/addon registry, dynamic JS loading, and addon registration are therefore first-class `ui-runtime` candidates.
+
+#### Stage 2 — backend bundle resolution
+
+The backend service equivalent to the current:
+
+```text
+bootstrap.plugin
+```
+
+is a first-class `server-runtime` candidate.
+
+Its generic responsibility is:
+
+```text
+logical plugin name
+  ↓
+locate installed frontend plugin descriptor/index.json
+  ↓
+read entry
+  ↓
+resolve public bundle URL/path
+  ↓
+return { path }
+```
+
+Preserve the current distinction between logical plugin identity and physical/public bundle location.
+
+Do not make frontend code depend on filesystem layout.
+
+#### Registration handshake
+
+Loading the JavaScript bundle is not the end of the frontend plugin lifecycle.
+
+The loaded bundle must register its kinds/addons through the existing registration mechanism, conceptually:
+
+```text
+loadJS(path)
+  ↓
+execute plugin bundle
+  ↓
+Kind.registerAddons(...)
+  ↓
+addons:registered
+  ↓
+Kind.loadPlugin() resolves requested kind
+```
+
+This registration handshake is part of the minimal frontend plugin contract and must be covered by tests.
+
+### Do not unify backend and frontend descriptors prematurely
+
+Today backend and frontend plugins use different existing descriptors:
+
+```text
+backend:  acl/*.json
+frontend: index.json + bundle entry
+```
+
+For the first minimal kernel, preserve those two proven mechanisms.
+
+Do not introduce a universal manifest merely for architectural symmetry.
+
+A normalized/common descriptor may be considered later only after the `hello` vertical slice works end-to-end and the concrete requirements are understood.
+
+### Kernel plugin symmetry
+
+The minimal vertical path to validate is:
+
+```text
+                         hello
+                       /       \
+                      /         \
+              frontend           backend
+                  │                 │
+             ui-runtime       server-runtime
+                  │                 │
+          ui-essentials     server-essentials
+                  │                 │
+                  └───── HTTP ──────┘
+```
+
+with two key runtime contracts:
+
+```text
+backend service call: module.method
+frontend plugin load: bootstrap.plugin → { path }
+```
 
 ---
 
@@ -999,6 +1493,71 @@ study source
 → test compatibility
 ```
 
+## Kernel extraction subphase — Phase 1.5
+
+Before normalized module-contract work proceeds, perform:
+
+```text
+Phase 1.5 — Minimal backend/frontend kernel extraction
+```
+
+The purpose is to establish **both** transitional extraction workspaces:
+
+```text
+target/foundation/server-runtime/
+target/foundation/ui-runtime/
+```
+
+and use them to extract the smallest Drumee kernel capable of running an independent `hello` module without `server-team` or `ui-team`.
+
+Initial sources are:
+
+```text
+sources/server-core                 sources/ui-core
+        +                                +
+independent server-essentials      independent ui-essentials
+        ↓                                ↓
+server-runtime                      ui-runtime
+        └──────────────┬─────────────────┘
+                       ↓
+                  minimal kernel
+                       ↓
+                     hello
+```
+
+Phase 1.5 must not:
+
+- alter `sources/**`;
+- absorb `server-team` or `ui-team`;
+- use Team compatibility as the primary design constraint;
+- make `server-essentials` Drumee-dependent;
+- copy all of `server-core` without classification;
+- copy all of `ui-core` without classification;
+- introduce MFS presentation, Finder, Desktop, or Window Manager merely to make `hello` work;
+- redesign the backend/frontend plugin contracts before the existing mechanisms have been extracted and tested;
+- begin unrelated Team module extraction;
+- turn `server-runtime` or `ui-runtime` into permanent public APIs by accident.
+
+Phase 1.5 is complete only when:
+
+- [ ] `server-runtime` builds reproducibly;
+- [ ] `ui-runtime` builds reproducibly;
+- [ ] the first minimal backend and frontend kernel boundaries are documented;
+- [ ] `hello` runs without `server-team` and without `ui-team`;
+- [ ] backend `hello.ping` works through the extracted `module.method` dispatch path;
+- [ ] the backend plugin descriptor/ACL registration and lazy service loading path are covered;
+- [ ] frontend `Kind.loadPlugin()` calls the extracted `bootstrap.plugin` resolver;
+- [ ] `bootstrap.plugin` resolves a logical plugin name to the frontend bundle entry/path;
+- [ ] `loadJS()` loads the bundle and the addon registration handshake completes;
+- [ ] the requested `hello` kind is rendered in a minimal host without Window Manager;
+- [ ] `Host`, `Visitor`, and `Organization` are available where required for the frontend Drumee/ACL context;
+- [ ] Essentials-only standalone tests pass without Drumee Core;
+- [ ] ownership/provenance of every extracted `server-core` and `ui-core` area remains traceable;
+- [ ] no Drumee-specific dependency has leaked into `server-essentials`;
+- [ ] MFS-specific built-in kinds and Team/desktop policy remain outside the first `ui-runtime` boundary;
+- [ ] Team-specific backend policies remain outside `server-runtime`;
+- [ ] the transitional nature of both runtime workspaces is documented.
+
 ---
 
 # 22. Target repository areas
@@ -1007,6 +1566,10 @@ The current hypothesis is:
 
 ```text
 target/
+├── foundation/
+│   ├── server-runtime/       # transitional backend extraction workspace
+│   └── ui-runtime/           # transitional frontend extraction workspace
+│
 ├── os/
 │   ├── server/
 │   ├── ui/
@@ -1814,6 +2377,10 @@ target/modules/chat
 → new repository
 ```
 
+`target/foundation/server-runtime` is not presumed to become a final repository.
+
+Its purpose is transitional consolidation. Final extraction must preserve or recreate the approved independent `server-essentials` boundary and the Drumee-specific server/OS boundary.
+
 Use history-preserving extraction where practical.
 
 For example, a future extraction may use tooling such as `git filter-repo`.
@@ -1841,6 +2408,9 @@ CLI smoke tests
 CLI DB backend tests
 CLI API backend tests
 MFS import/export tests
+server-essentials standalone tests outside Drumee
+server-runtime kernel-contract tests during Phase 1.5
+ui-runtime plugin-loading and addon-registration tests during Phase 1.5
 self-hosting build
 Docker deployment
 native Debian deployment
@@ -2001,8 +2571,16 @@ For example:
 
 The minimal OS must remain business-domain neutral.
 
+The new minimal kernel is the primary architectural target. `server-team` is migrated later, capability by capability, after the kernel has been validated by `hello` and exercised by the first real application, `marketing`.
+
+`server-essentials` must remain a reusable server package whose generic capabilities can operate independently of Drumee. In particular, the generic MariaDB API must not become coupled to Hub, Drumate, MFS, Drumee ACL, module loading, or Team semantics.
+
+`server-runtime` and `ui-runtime` are the transitional extraction workspaces used to iterate toward the backend and frontend halves of that minimal kernel. Their current names and packaging are not automatically the final Drumee OS boundaries.
+
+`ui-essentials` should remain the generic lower-level frontend foundation, while `ui-core` is treated as an extraction source rather than an indivisible final kernel. The minimal frontend kernel must preserve the proven `Kind.loadPlugin()` / `bootstrap.plugin` / `registerAddons()` plugin path and the `Host` / `Visitor` / `Organization` context required for Drumee ACL semantics.
+
 ---
 
 # 41. Summary instruction for coding agents
 
-> Work only inside the `transient` monorepo. Treat `sources/**` as an immutable baseline containing the current Drumee ecosystem, including Team, schemas, provisioning, CLI, dynamic module examples, and self-hosting distribution code. During the mapping phase, modify only `docs/refactoring/**` and `SOURCE_MANIFEST.md` when needed. Analyze the current system from source code before proposing changes. Classify every major capability as OS primitive, system module, Team module, SDK/essentials, business module, control plane, deployment, legacy, or investigate. Treat `cli` as a first-class control-plane candidate and map its DB/API backends, provisioning dependencies, MFS/storage behavior and runtime/service interactions without assuming plugin lifecycle support that is not present in source. Preserve Drumee Team as the compatibility target and `debian` as the current self-hosting/distribution layer. After mapping, stop and request architectural review. During later implementation, build all new architecture under `target/**`, never modify `sources/**`, and postpone final repository extraction until the OS, modules, control plane, Team reconstruction and self-hosting boundaries have been validated through compatibility tests.
+> Work only inside the `transient` monorepo. Treat `sources/**` as an immutable baseline containing the current Drumee ecosystem, including Team, schemas, provisioning, CLI, dynamic module examples, and self-hosting distribution code. During the mapping phase, modify only `docs/refactoring/**` and `SOURCE_MANIFEST.md` when needed. Analyze the current system from source code before proposing changes. Classify every major capability as OS primitive, system module, Team module, SDK/essentials, business module, control plane, deployment, legacy, or investigate. Treat `cli` as a first-class control-plane candidate and map its DB/API backends, provisioning dependencies, MFS/storage behavior and runtime/service interactions without assuming plugin lifecycle support that is not present in source. Treat Drumee Team as a migration source and later compatibility target, not as the primary architectural target. The primary target is a minimal, application-neutral Drumee kernel capable of hosting new independent modules. Preserve `debian` as the current self-hosting/distribution layer. Preserve `server-essentials` as an independently reusable, non-Drumee-specific server package; never introduce Hub, Drumate, MFS, Drumee ACL or module-runtime dependencies into its generic boundary merely to simplify the transition. Use `target/foundation/server-runtime` and `target/foundation/ui-runtime` as the Phase 1.5 extraction workspaces for iterating from current `server-core` and `ui-core` behavior toward a minimal backend/frontend Drumee kernel while depending on independent `server-essentials` and `ui-essentials`. Preserve the current plugin mechanics first: backend ACL/descriptor registration with lazy `module.method` service loading, and frontend `Kind.loadPlugin()` → `bootstrap.plugin` → `{path}` → `loadJS()` → `Kind.registerAddons()` handshake. Keep `Host`, `Visitor`, and `Organization` in the minimal frontend context where required for ACL semantics, but keep MFS presentation, Finder, Desktop, and Window Manager out of the first `hello` slice. Validate the new kernel first with exactly one minimal reference module, `hello`; add minimal MFS semantics next as required, then use `marketing` as the first real application to drive additional kernel requirements. Only after the kernel is stable should `server-team` be decomposed and migrated module by module. `server-runtime` and `ui-runtime` are not automatically final package boundaries. After mapping, stop and request architectural review. During later implementation, build all new architecture under `target/**`, never modify `sources/**`, and postpone final repository extraction until the OS, modules, control plane, Team reconstruction, independent Essentials boundary and self-hosting boundaries have been validated through compatibility tests.

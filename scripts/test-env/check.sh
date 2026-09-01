@@ -18,6 +18,7 @@ else
   bad "Docker daemon is not reachable; start it and grant this user access to its socket"
 fi
 have node && ok "Node.js: $(node --version)" || bad "install Node.js 20 or newer"
+have npm && ok "npm: $(npm --version)" || bad "npm is required to stage locked dependencies outside sources/**"
 if have node; then
   node_major="$(node -p 'Number(process.versions.node.split(".")[0])')"
   [ "$node_major" -ge 20 ] && ok "Node.js major version is supported" || bad "Node.js 20 or newer is required by Debian tests"
@@ -30,13 +31,20 @@ for tool in scripts/build-images-local.sh tests/e2e-local.sh tests/run-all.sh co
   [ -f "$DEBIAN_ROOT/$tool" ] && ok "sources/debian/$tool present" || bad "missing sources/debian/$tool"
 done
 
-# The immutable builder uses INSTALL_DEPS=0. It therefore requires dependencies
-# already present in the build contexts and must never populate sources itself.
+# The immutable builder uses INSTALL_DEPS=0. Missing dependency trees are
+# prepared later in disposable staging; sources themselves stay untouched.
 for repo in server-team ui-team; do
   if [ -d "$(source_path "$repo")/node_modules" ]; then
     ok "sources/$repo/node_modules available to immutable local builder"
+  elif [ -f "$(source_path "$repo")/package-lock.json" ]; then
+    ok "sources/$repo has package-lock.json; build.sh will npm ci in disposable staging"
+  elif [ "$repo" = ui-team ] && [ -f "$TRANSIENT_ROOT/tests/fixtures/build-locks/ui-team-package-lock.json" ]; then
+    expected="$(node -p 'require(process.argv[1]).source_package_sha256' "$TRANSIENT_ROOT/tests/fixtures/build-locks/ui-team-lock-metadata.json")"
+    actual="$(sha256sum "$(source_path ui-team)/package.json" | awk '{print $1}')"
+    [ "$actual" = "$expected" ] && ok "ui-team harness lock matches imported package.json" \
+      || bad "ui-team package.json changed; reviewed harness lock must be regenerated"
   else
-    bad "sources/$repo/node_modules missing; restore the imported build context with its exact dependencies (do not npm install through this wrapper)"
+    bad "sources/$repo has neither node_modules nor package-lock.json; cannot prepare a reproducible build context"
   fi
 done
 
