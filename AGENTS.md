@@ -205,9 +205,31 @@ The current user-facing behavior of Drumee Team must remain available.
 
 ---
 
-# 5. Drumee Team is the compatibility target
+# 5. Drumee Team is a migration source and later compatibility target
 
-The existing Team implementation must remain fully functional as the reference system.
+The existing Team implementation must remain fully functional as an immutable reference system.
+
+However, Drumee Team is **not** the primary architectural target of the first minimal-kernel extraction.
+
+The primary target is:
+
+```text
+server-essentials          ui-essentials
+        ↑                        ↑
+ server-runtime              ui-runtime
+        └──────────┬─────────────┘
+                   ↓
+                 hello
+                   ↓
+               marketing
+```
+
+The first kernel must be application-neutral and capable of hosting new independent modules without depending on:
+
+```text
+server-team
+ui-team
+```
 
 Conceptually:
 
@@ -218,24 +240,47 @@ sources/schemas
         │
         ▼
 CURRENT DRUMEE TEAM
-```
-
-must eventually be matched by:
-
-```text
-target/os
-+
-target/modules
-+
-target/distributions/team
+        │
+        │ migration source / reference evidence
+        ▼
+minimal kernel
+        +
+later extracted Team modules
         │
         ▼
-REBUILT DRUMEE TEAM
+FUTURE DRUMEE TEAM DISTRIBUTION
 ```
 
-The refactoring is successful only when the rebuilt distribution is functionally compatible with the current Team distribution.
+The baseline compatibility harness remains valuable as:
 
-Do not optimize architecture at the expense of compatibility.
+```text
+evidence
++
+regression reference
++
+source of intentionally selected kernel contracts
+```
+
+It is **not** a requirement to reproduce every Team-era behavior before the no-Team kernel can be built.
+
+Do not allow historical Team coupling, policy, MFS presentation behavior, Finder behavior, Window Manager behavior, collaboration features, or distribution-specific assumptions to determine the initial kernel boundary unless they are independently justified as application-neutral primitives.
+
+Selected Team behavior must eventually be migrated and preserved where required, but that migration happens **after** the kernel has been validated by `hello` and exercised by `marketing`.
+
+The intended sequence is:
+
+```text
+minimal backend/frontend runtime
+→ hello
+→ intentional MFS
+→ marketing
+→ kernel stabilization
+→ Team migration module by module
+```
+
+Any deliberate incompatibility with Team-era behavior must be documented.
+
+Do not silently remove valuable Team behavior, but do not optimize the first kernel for Team compatibility at the expense of a small, reusable module host.
 
 ---
 
