@@ -42,13 +42,13 @@ The scope is deliberately the immutable Team baseline. Future `server-runtime` /
 | `SCHEMAS_SRC` | `sources/schemas` | Required; schema image and population context |
 | `SETUP_SCHEMAS_SRC` | `sources/setup-schemas` | Population context; builder does not preflight it itself |
 | `STATIC_SRC` | `sources/static` | Optional; present in this import and built |
-| `SETUP_INFRA_SRC` | `sources/setup-infra` | Optional; absent here, so `infra-init` is skipped |
+| `SETUP_INFRA_SRC` | `sources/setup-infra` | Present and pinned; builds optional historical `infra-init` from the immutable source |
 | `TAG` | `local` by default | Matches dev/E2E image references |
 | `MEDIA_DEPS` | `0` by default | Omits large media packages from the smoke image |
 
 `sources/debian/tests/e2e-local.sh` has no source-path overrides. It consumes already-built `drumee/{schemas,server-pod,ui-build,schemas-populate}:local`, renders a temporary Compose project named `drumee-e2e`, excludes the proxy, verifies initialization/server/admin/factory behavior, and removes its containers, volumes and temporary directory on exit.
 
-No external sibling checkout or automatic GitHub clone is used. Missing `setup-infra` is passed as the nonexistent imported path so the existing optional skip executes.
+No external sibling checkout or automatic GitHub clone is used. `setup-infra` is supplied directly from its pinned import; the builder consequently builds `drumee/infra-init:local`. The authoritative proxy-free baseline E2E still does not use that optional service as its HTTP host.
 
 ## Dependency staging
 
@@ -105,7 +105,7 @@ scripts/test-env/reset.sh           # down + rendered runtime state
 REMOVE_TEST_IMAGES=1 scripts/test-env/reset.sh  # additionally remove :local images
 ```
 
-`build.sh` calls `check.sh` first, stages only the dependency-bearing server/UI contexts when needed, and exports every `*_SRC` path. Schema, setup-schema, static, and optional setup-infra paths always point directly to `transient/sources/**`; the staged server/UI files are byte-for-byte checked against their imports. `MEDIA_DEPS=1 scripts/test-env/build.sh` opts into the heavy runtime tools. A non-local `TAG` can build images, but the existing E2E requires `TAG=local` and the wrapper warns accordingly.
+`build.sh` calls `check.sh` first, stages only the dependency-bearing server/UI contexts when needed, and exports every `*_SRC` path. Schema, setup-schema, static, and pinned setup-infra paths always point directly to `transient/sources/**`; the staged server/UI files are byte-for-byte checked against their imports. `MEDIA_DEPS=1 scripts/test-env/build.sh` opts into the heavy runtime tools. A non-local `TAG` can build images, but the existing E2E requires `TAG=local` and the wrapper warns accordingly.
 
 `up.sh` defaults to:
 
@@ -197,7 +197,7 @@ It consumes results only when they identify the current immutable source tree, s
 
 - Staging needs access to the package registry to resolve the imported server lock and reviewed UI lock. This is a reproducible preparation step, but the imports do not themselves carry an offline dependency cache.
 - On the tested baseline, `schemas-populate` is blocked by the active-transaction search-projection failure described above. Until that baseline compatibility issue is understood and resolved upstream or a compatible runtime combination is identified, no REST golden, live provisioning/MFS/CLI DB, or browser evidence can be captured from this stack.
-- `sources/setup-infra` is absent. The existing builder skips `infra-init`; local mode does not exercise optional mail/DNS/Jitsi infrastructure.
+- The pinned `sources/setup-infra` import lets the historical builder produce optional `infra-init`, but the proxy-free baseline E2E does not exercise its generated Nginx configuration or optional mail/DNS/Jitsi services. The new-kernel Nginx contract is deliberately deferred to the separate Phase 2 kernel integration environment defined in `14-minimal-kernel-plan.md`.
 - `MEDIA_DEPS=0` omits LibreOffice, FFmpeg and related heavy tools, so media conversion/editor behavior needs a separate explicit build.
 - The environment exercises the container channel only. Native Debian installation remains covered by metadata/render checks and requires a disposable VM.
 - The Debian E2E checks HTTP/server/factory behavior but is not browser automation. Window Manager, Finder drag/drop and preview compatibility remain separate Phase 1 gaps.

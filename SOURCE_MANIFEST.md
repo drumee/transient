@@ -3,7 +3,7 @@
 This file records the exact source baseline imported into the
 `transient` refactoring monorepo.
 
-Generated: 2026-08-28T09:02:38Z
+Generated: 2026-09-02T07:40:25Z
 
 | Repository | Source | Branch | Commit SHA | Imported | Method |
 |---|---|---|---|---|---|
@@ -11,6 +11,7 @@ Generated: 2026-08-28T09:02:38Z
 | `server-team` | `git@github.com:drumee/server-team.git` | `main` | `9923d32a117324af1d802ea0909d61aa6d31c7e0` | 2026-08-28T08:57:54Z | git subtree (history preserved, no squash) |
 | `schemas` | `git@github.com:drumee/schemas.git` | `main` | `cb838e255600a4ec3797dc7ac13659ad9d187421` | 2026-08-28T08:58:07Z | git subtree (history preserved, no squash) |
 | `setup-schemas` | `git@github.com:drumee/setup-schemas.git` | `main` | `1582eb557ce092dd2cc5fa6f9d533d64911f4dce` | 2026-08-28T08:58:24Z | git subtree (history preserved, no squash) |
+| `setup-infra` | `git@github.com:drumee/setup-infra.git` | `main` | `643d74fa8bc89d418ff1169daa09554ae84e48ef` | 2026-09-02T07:40:25Z | git subtree (history preserved, no squash) |
 | `debian` | `git@github.com:drumee/debian.git` | `main` | `b8b0ebe7082e1ad2366f3a7997712f5da5bba127` | 2026-08-28T08:58:36Z | git subtree (history preserved, no squash) |
 | `cli` | `git@github.com:drumee/cli.git` | `main` | `8588c2d5cc2b253ce859aec7f3642025315f1897` | 2026-08-28T08:58:47Z | git subtree (history preserved, no squash) |
 | `server-core` | `git@github.com:drumee/server-core.git` | `main` | `bf7c396b14614f247507f771f72e98184ed931b4` | 2026-08-28T08:58:59Z | git subtree (history preserved, no squash) |
@@ -31,6 +32,6 @@ Generated: 2026-08-28T09:02:38Z
 
 ## Baseline policy
 
-`sources/**` is immutable after this baseline is created.
+`sources/**` is immutable after each controlled provenance import.
 All mapping work goes under `docs/refactoring/**`.
 All future implementation work goes under `target/**`.

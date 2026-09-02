@@ -12,7 +12,9 @@
 | CLI | yp + shards | Direct entity/drumate/hub/vhost/sys_conf reads and qualified calls in `backend/db/**` |
 | CLI | MFS procedures/storage | `mfs.js` uses MFS procedures, `media`, and `__storage__` |
 | CLI | Drumee API | No current edge: `ApiBackend.connect()` throws |
+| setup-infra | Nginx/UI/runtime paths | `infra.js::{makeConfData,writeInfraConf}` generates route data; `templates/etc/drumee/infrastructure/routes/app.conf.tpl` aliases UI paths and proxies service paths |
 | Debian | Team/server/schema/setup sources | Build matrix in `sources/debian/README.md` and Dockerfiles |
+| Debian infra-init | setup-infra | `sources/debian/scripts/build-images-local.sh` builds `drumee/infra-init` when `SETUP_INFRA_SRC` exists; the source is pinned in the monorepo |
 | Loby | runtime plugin loader | ACL points to services; REST `loadPlugins` registers it |
 | Signin | UI plugin loader | dynamic seed imports, addon registration, bootstrap entry resolution |
 | Sandbox Server | yp + provisioning + shards + disk + Redis | `service/lib/organization.js` creates/removes domains; `drumate.js` creates users/hubs; `mfs.js` imports physical content; `service/index.js` emits progress |
@@ -43,3 +45,16 @@ ui-essentials      ←  ui-runtime      ←  hello frontend
 The existing module contracts to preserve first are separate. Backend startup reads plugin ACL directories and registers module descriptors (`sources/server-team/router/rest/index.js::loadPlugins`); `Acl.getModule` and `Acl.run` resolve `module.method`, choose a public/private worker, lazy-require/cache it, apply permission, then execute it. Frontend `sources/ui-core/letc/kind/index.js::Kind.loadPlugin` calls `bootstrap.plugin`, loads the returned bundle path with `loadJS`, then waits for `Kind.registerAddons` to emit `addons:registered`. `sources/server-team/service/bootstrap.js::plugin` currently supplies that path from a frontend `index.json` entry.
 
 Thus the initial dependency contracts are deliberately distinct: backend `acl/*.json` versus frontend `index.json` plus bundle. A universal manifest is deferred until the `hello` slice proves both independently. MFS, Finder and Window Manager are not dependencies of that slice: MFS is intentionally introduced after `hello`; Finder and Window Manager remain post-MFS questions.
+
+## Kernel integration dependency direction
+
+The initial no-Team runtime is validated behind the pinned current infrastructure contract rather than in a historical Team image:
+
+```text
+sources/setup-infra
+  → generated Nginx configuration under .tmp/test-env/kernel/
+  → clean Debian integration runtime
+  → server-runtime / ui-runtime
+```
+
+`sources/setup-infra/templates/etc/drumee/infrastructure/routes/app.conf.tpl` is the source evidence for the required service and plugin/static routes. The generated contract does not make its DNS, mail, Jitsi, PM2, MFS rewrites or host credentials kernel dependencies. `sources/debian` remains a distinct historical Team/self-hosting graph.

@@ -32,6 +32,7 @@ The first extraction sequence is intentionally narrower than the classifications
 | Provisioning | `sources/setup-schemas/**` | First install, warm entities, users/hubs/storage | `DEPLOYMENT` over `KEEP_OS` contracts | Critical |
 | CLI shell + DB resources | `sources/cli/{bin,src}/**` | Administration via yp/shards/disk | `CONTROL_PLANE` | Critical |
 | CLI API backend | `sources/cli/src/backend/api/index.js` | Throwing placeholder | `INVESTIGATE` | High |
+| Infrastructure/Nginx configuration contract | `sources/setup-infra/infra.js`, `templates/etc/drumee/infrastructure/routes/app.conf.tpl` | Renders host configuration; current route template serves `/-/{app,api,plugins}/` and proxies service paths | `DEPLOYMENT`; selected Nginx/HTTP contract is Phase 2 integration evidence | Critical |
 | Packaging/self-hosting | `sources/debian/**` | Docker/native config, packages and lifecycle | `DEPLOYMENT` | Critical |
 | Debian plugin operator | `sources/debian/bin/drumee-plugin` | File-based server plugin lifecycle | `DEPLOYMENT`; future owner `INVESTIGATE` | High |
 | Licence/custom/offline schemas | `sources/schemas/{licence,costums,offline}/**` | Specialized/unclear | `INVESTIGATE` | High |

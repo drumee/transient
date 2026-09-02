@@ -2,7 +2,7 @@
 
 ## Baseline and topology
 
-`SOURCE_MANIFEST.md` was checked on 2026-08-28. Its 21 repository names equal the 21 immediate directories under `sources/`; every recorded SHA is present as a Git commit and its tree exactly matches `HEAD:sources/<name>`. Remote branch-tip identity cannot be re-proved from a subtree snapshot, so the recorded `main` branch is accepted as import provenance rather than independently verified state.
+`SOURCE_MANIFEST.md` was checked on 2026-09-02. Its 22 repository names equal the 22 immediate directories under `sources/`; every recorded SHA is present as a Git commit and its tree exactly matches `HEAD:sources/<name>`. Remote branch-tip identity cannot be re-proved from a subtree snapshot, so the recorded `main` branch is accepted as import provenance rather than independently verified state. `setup-infra` is now pinned at `643d74fa8bc89d418ff1169daa09554ae84e48ef`.
 
 Classification applies to responsibilities, not current files or repositories. A `KEEP_OS` label below means that the evidenced capability must exist in the future minimal OS. It does not mean the cited file should remain intact, move wholesale, or define the final repository boundary.
 
@@ -14,7 +14,7 @@ browser (ui-team) -> server-team -> server-core -> server-essentials
                                physical MFS storage
 ```
 
-`setup-schemas` provisions instances/entities, `debian` packages and deploys the system, and `cli` administers it directly through MariaDB today.
+`setup-schemas` provisions instances/entities, `setup-infra` renders the current host/Nginx configuration contract, `debian` packages and deploys the historical Team system, and `cli` administers it directly through MariaDB today.
 
 ## Server runtime
 
@@ -56,6 +56,8 @@ Loby's package metadata points to `analytics-server`, and marketplace declares t
 
 `sources/cli` maps Commander commands to abstract user/hub/settings/MFS resources. DB mode works; `sources/cli/src/backend/api/index.js::connect` only throws. It is `CONTROL_PLANE`, not boot-critical.
 
-`sources/debian` is `DEPLOYMENT`: it defines Docker and native channels, package builds and lifecycle operations. Compose orders MariaDB/Redis, schema init, UI build/population, server/factory and Caddy (`sources/debian/README.md`). It consumes repository-specific Team products today.
+`sources/setup-infra` is a separate `DEPLOYMENT` source for the current infrastructure contract. `infra.js::{makeConfData,writeInfraConf}` renders the shared Nginx routes; `templates/etc/drumee/infrastructure/routes/app.conf.tpl` aliases `/-/{app,api,plugins}/` to UI roots and proxies `/(svc|vdo|service)/` to the REST port. It also renders host DNS, mail, PM2, credential and optional Jitsi-related configuration, none of which is an initial kernel responsibility.
+
+`sources/debian` is the historical `DEPLOYMENT` baseline: it defines Docker and native channels, package builds and lifecycle operations. Compose orders MariaDB/Redis, schema init, UI build/population, server/factory and Caddy (`sources/debian/README.md`). It consumes repository-specific Team products today. Its Team images remain evidence for baseline/self-hosting and later compatibility, not the integration host for `server-runtime`/`ui-runtime`.
 
 Coverage is incomplete: server-core has live smoke scripts; server-team, CLI and signin have no package test script; UI Team has tests but no test script; loby has Node tests; Debian has E2E/native suites (`sources/debian/tests/**`). No baseline-vs-target compatibility harness exists.

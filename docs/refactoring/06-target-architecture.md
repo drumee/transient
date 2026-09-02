@@ -27,6 +27,17 @@ server-runtime                              ui-runtime
 
 `server-runtime` and `ui-runtime` are transitional extraction workspaces, not approved final package names. They are populated symbol by symbol from `sources/server-core`, `sources/ui-core`, and generic seams currently mixed into Team. Neither is a wholesale copy of `server-core` or `ui-core`.
 
+Their canonical integration host is also separate from the historical Team deployment:
+
+```text
+clean Debian runtime
+  + Nginx/configuration generated from pinned sources/setup-infra
+  + server-runtime
+  + ui-runtime
+```
+
+`sources/setup-infra/templates/etc/drumee/infrastructure/routes/app.conf.tpl` supplies the current Nginx evidence for service proxying and UI plugin/static aliases. `sources/debian` remains the historical packaging/self-hosting baseline; its Team images must not host the new runtime. Configuration generation is disposable under `.tmp/test-env/kernel/`, never host `/etc` or `sources/**`.
+
 `server-essentials` remains independently reusable outside Drumee. Its generic MariaDB, connection, transaction, pooling, result and generic-error APIs (`sources/server-essentials/lib/mariadb.js`) must not acquire Hub, Drumate, Drumee ACL, MFS, module dispatch, plugin discovery or Team dependencies. `ui-essentials` remains the generic frontend foundation on the same principle.
 
 Phase 2 consumes the current imported `server-essentials` implementation beneath `server-runtime`. The `1.3.1` resolution in the historical Team/Core locks is baseline evidence, not a constraint on this new kernel. Any source assumption that differs from the current generic API is adapted and tested at a temporary `server-runtime` seam; generic database, cache and logging primitives are reused rather than copied.
@@ -67,7 +78,7 @@ frontend: Kind.loadPlugin → bootstrap.plugin → plugin index.json → { path 
 
 `sources/server-team/router/rest/index.js::loadPlugins` registers ACL descriptor directories. `Acl.getModule` and `Acl.run` implement the current resolution/authorization/lazy-worker path. `sources/server-team/service/bootstrap.js::plugin` resolves a logical frontend plugin to its `index.json` entry; `sources/ui-core/letc/kind/index.js` loads the path and resolves only after addon registration. The generic portions of that interaction are kernel candidates; Team policy is not.
 
-`hello` is the only synthetic validation module. It must prove a backend `hello.ping` (optionally `hello.echo`) through the ACL-driven dispatcher and a minimal LETC widget through `Kind.loadPlugin`, `bootstrap.plugin`, bundle loading and `Kind.registerAddons`, without `server-team`, `ui-team`, MFS, Finder, Window Manager, Team schemas or Team policy.
+`hello` is the only synthetic validation module. It must prove a backend `hello.ping` (optionally `hello.echo`) through the ACL-driven dispatcher and a minimal LETC widget through `Kind.loadPlugin`, `bootstrap.plugin`, bundle loading and `Kind.registerAddons`, without `server-team`, `ui-team`, MFS, Finder, Window Manager, Team schemas or Team policy. Its approved descriptor uses `permission: { src: anonymous, fast_check: public-api }`; the first path therefore does not require SQL ACL procedures, `user_permission`, `user_expiry`, MFS schemas or factory provisioning.
 
 ## Modules, distribution, control plane and deployment
 

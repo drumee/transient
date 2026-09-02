@@ -43,7 +43,41 @@ There is an observed ACL-semantic difference to characterize before reusing gene
 
 `sources/server-core` and `sources/ui-core` are evidence and extraction sources. Neither is presumed to survive wholesale or under its current package name.
 
-## 3. Backend extraction boundary
+## 3. Kernel integration environment
+
+The canonical integration host for the new kernel is separate from the historical Team deployment:
+
+```text
+HISTORICAL BASELINE                         NEW KERNEL INTEGRATION
+
+sources/debian                              clean Debian runtime
+  → Team server/ui/schema images              + generated pinned setup-infra config
+  → Team/self-hosting evidence                + server-runtime
+                                              + ui-runtime
+```
+
+`sources/debian` remains authoritative evidence for current packaging and self-hosting, but its `server-pod` and `ui-pod` images are built from `server-team` and `ui-team` (`sources/debian/scripts/build-images-local.sh`). They must not host or be patched to host the new kernel. The new integration image/container is a disposable test artifact—not a `.deb`, a published image, or a final deployment design. MariaDB and Redis may be reused as Team-free infrastructure services only where the extracted runtime genuinely requires them.
+
+### Pinned infrastructure contract
+
+`sources/setup-infra` is the immutable infrastructure-contract source, pinned at `643d74fa8bc89d418ff1169daa09554ae84e48ef` on `main` in `SOURCE_MANIFEST.md`. `sources/setup-infra/infra.js::{makeConfData,writeInfraConf}` renders the current shared route configuration, and `templates/index.js::chroot` supports a controlled `--chroot`/`--outdir` output root. Phase 2 must use that generator or a source-faithful invocation to render inspectable configuration under `.tmp/test-env/kernel/` (or an equivalent disposable container root). It must never write the host production `/etc`.
+
+The generator also creates other host configuration and can create cache/runtime paths (`sources/setup-infra/infra.js::writeInfraConf`), so the first invocation must run inside a disposable container or with every resolved output/root path constrained under the disposable test root. Phase 2 must prove that containment; it may not patch `sources/setup-infra` to make it easier.
+
+### Minimum Nginx/HTTP contract to validate
+
+The initial integration requirement is the selected current contract in `sources/setup-infra/templates/etc/drumee/infrastructure/routes/app.conf.tpl`:
+
+```text
+client → Nginx → /-/svc/ (or current /vdo/ or /service/ form) → restPort → server-runtime
+client → Nginx → /-/plugins/ (and required /-/app/ or /-/api/ static path) → ui-runtime artifact root
+```
+
+The template aliases `/-/app/`, `/-/api/`, and `/-/plugins/` to `ui_location`/`ui_plugins_home`, and proxies `/(svc|vdo|service)/` to `backend_host:restPort`. It also contains WebSocket and MFS-oriented rewrites. The first no-Team slice must validate only the service and plugin/static plumbing; it neither exercises nor acquires the MFS routes, WebSocket, DNS, BIND, mail, Postfix, DKIM, Jitsi, Prosody, Coturn, or other host-service responsibilities.
+
+Phase 2 uses a test-only route fixture if one is needed before module work. It must prove generation succeeds, `nginx -t` succeeds, both runtime boundaries start without Team, and the two selected routes reach them. It does not implement `hello` yet.
+
+## 4. Backend extraction boundary
 
 The following are proposed ownership decisions for the *first iteration* of `server-runtime`; all extraction waits for explicit implementation approval.
 
@@ -60,7 +94,7 @@ The following are proposed ownership decisions for the *first iteration* of `ser
 
 The extraction rule is symbol-by-symbol: inspect `server-core` or generic portions of the Team router, extract one application-neutral primitive, test it independently, and retain provenance. `server-runtime` must not become a copy of either source repository.
 
-## 4. Frontend extraction boundary
+## 5. Frontend extraction boundary
 
 `ui-runtime` is the frontend counterpart of `server-runtime`, extracted from `sources/ui-core`, above `ui-essentials`.
 
@@ -77,7 +111,7 @@ The extraction rule is symbol-by-symbol: inspect `server-core` or generic portio
 
 `DrumeeMFS` is currently initialized alongside the core globals (`sources/ui-core/letc/index.js`), but that co-location is not evidence that it belongs in the first runtime. Likewise, `builtin_kinds.media.*` identifies a later MFS/application surface, not an automatic builtin commitment.
 
-## 5. Backend plugin flow to preserve initially
+## 6. Backend plugin flow to preserve initially
 
 The initial backend compatibility contract is the current two-phase mechanism, without Team policy:
 
@@ -103,7 +137,7 @@ request: module.method
 
 The current router also contains secure-share ceilings, over-limit clamps and service lists. Those branches are *not* part of the initial `server-runtime` compatibility contract. The extraction must demonstrate that generic dispatch works when such policy is supplied by the owning module/service instead.
 
-## 6. Frontend plugin flow to preserve initially
+## 7. Frontend plugin flow to preserve initially
 
 The frontend/backend handshake is a separate existing contract. It must not be merged with backend ACL descriptors during the first kernel iteration.
 
@@ -131,13 +165,14 @@ frontend: index.json + bundle entry
 
 A universal manifest is explicitly deferred until after `hello` proves the vertical slice. The future need for common metadata is `INVESTIGATE`; it is not a reason to replace either current mechanism now.
 
-## 7. `hello` vertical slice
+## 8. `hello` vertical slice
 
 `hello` is the sole synthetic module. Its acceptance contract is:
 
 ```text
 backend
-  hello ACL/service descriptor registers
+  hello ACL/service descriptor registers with:
+    permission: { src: anonymous, fast_check: public-api }
   → hello.ping and optional hello.echo dispatch through the extracted loader
   → public/private selection and generic authorization work
 
@@ -150,9 +185,9 @@ frontend
   → widget calls hello.ping
 ```
 
-It must run without `server-team`, `ui-team`, MFS, Finder, Window Manager, Desktop, complex schemas, AI, campaigns, chat, tasks, meetings, or Team policy. `Host`, `Visitor`, and `Organization` must be available only to the extent the extracted ACL/runtime context requires them.
+It must run without `server-team`, `ui-team`, MFS, Finder, Window Manager, Desktop, complex schemas, AI, campaigns, chat, tasks, meetings, or Team policy. The approved anonymous `public-api` fast check means that its first ACL/dispatch path must not require `acl_check.sql`, `user_permission`, `user_expiry`, MFS ACL/schema data, or factory provisioning. Database-backed ACL is deliberately deferred until an authenticated or resource-aware kernel capability proves it necessary. `Host`, `Visitor`, and `Organization` must be available only to the extent the extracted ACL/runtime context requires them.
 
-## 8. MFS sequencing
+## 9. MFS sequencing
 
 MFS is a later kernel capability, not an omission from the architecture:
 
@@ -167,7 +202,7 @@ minimal backend runtime + minimal frontend runtime
 
 This order prevents the current `server-core` MFS, UI media kinds, Finder and window model from being pulled into the first kernel merely because they are co-located today. It also makes MFS ownership, storage failure handling, identity/ACL, and shard/provisioning contracts explicit before user-facing file workflows are extracted.
 
-## 9. Marketing role
+## 10. Marketing role
 
 After `hello`, `marketing` is the first real application and the only source of new capability pressure before Team migration. Possible needs—private hub, MFS, hub-local schemas, ACL, dynamic services, LETC UI and AI integration—must be classified individually as:
 
@@ -178,13 +213,13 @@ system module | marketing module
 
 Application-specific workflows, campaign data, AI prompts/providers, billing behavior, and marketing policy remain module-owned unless their application-neutral kernel necessity is proven.
 
-## 10. Team migration policy
+## 11. Team migration policy
 
 Team remains available as immutable source evidence and a later compatibility target. It does not determine the first kernel's scope.
 
 Only after the kernel has passed `hello` and been exercised by `marketing` may Team capabilities be classified and migrated one by one—for example Finder, chat, tasks, meetings, and other collaboration modules. No Team reconstruction, Finder extraction, or Window Manager extraction begins in this plan.
 
-## 11. Compatibility policy
+## 12. Compatibility policy
 
 The Phase 1 harness remains:
 
@@ -198,7 +233,7 @@ It is not a perpetual requirement to reproduce every Team-era behavior. Baseline
 
 The current Debian E2E/provisioning result remains important evidence about current Team deployment, but it is not a prerequisite for defining the first no-Team `hello` kernel slice. It remains a blocking risk for later Team/self-hosting compatibility work.
 
-## 12. Open architectural questions
+## 13. Open architectural questions
 
 All items remain `INVESTIGATE` until code or runtime evidence resolves them.
 
@@ -211,3 +246,5 @@ All items remain `INVESTIGATE` until code or runtime evidence resolves them.
 7. What is the minimal MFS semantic/storage/ACL surface marketing actually requires after `hello`?
 8. When MFS is introduced, do Finder and Window Manager remain modules or does a proven resource-host primitive belong in the frontend kernel?
 9. Which selected Team contracts deserve later compatibility tests, and which Team behaviors are deliberately outside the new kernel?
+10. What minimum deterministic inputs and container-root mapping let the pinned `setup-infra` generator render the selected Nginx contract without touching host paths or requiring unrelated DNS/mail/Jitsi setup?
+11. Which exact generated Nginx files/includes are sufficient for the Phase 2 service and plugin/static checks, and which versioned route details must remain selected compatibility contracts rather than become kernel API?

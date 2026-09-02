@@ -1,10 +1,12 @@
 # Self-Hosting Map
 
-`sources/debian` is `DEPLOYMENT`. Its README defines container and native Debian channels rendered from one YAML configuration.
+`sources/debian` is `DEPLOYMENT` and the historical packaging/self-hosting baseline. Its README defines container and native Debian channels rendered from one YAML configuration. It is not the canonical host for the new no-Team kernel.
 
 The build maps `server-team` to `drumee-server-pod`, `ui-team` to `drumee-ui-pod`, `setup-schemas + schemas` to `drumee-schemas`, and also produces static, infra, schema-patch, bootstrap and meta packages (`sources/debian/README.md`, component `build.sh` and `debian/control`). `release-manifest.yaml` and changelogs carry release versions.
 
-Dockerfiles under `deploy/docker/**` build schemas, population, UI, server, static and infra. Rendered Compose orders MariaDB/Redis before schema init, UI build, population, server/factory, with Caddy routing (`config/render.mjs`). `scripts/build-images-local.sh` consumes sibling source contexts; `dev-up.sh` renders `.env`, Compose, install config and Caddyfile.
+Dockerfiles under `deploy/docker/**` build schemas, population, UI, server, static and infra. The historical server/UI images are respectively built from Team source contexts. Rendered Compose orders MariaDB/Redis before schema init, UI build, population, server/factory, with Caddy routing (`config/render.mjs`). `scripts/build-images-local.sh` consumes source contexts and builds `infra-init` when `SETUP_INFRA_SRC` is present; `dev-up.sh` renders `.env`, Compose, install config and Caddyfile.
+
+The separately pinned `sources/setup-infra` is the current host-configuration/Nginx contract source. `sources/setup-infra/infra.js::{makeConfData,writeInfraConf}` renders the Nginx route set; `templates/etc/drumee/infrastructure/routes/app.conf.tpl` maps `/-/{app,api,plugins}/` to UI roots and proxies service requests to the REST port. Its broader BIND, mail, Jitsi, PM2 and credential duties remain deployment concerns. Phase 2 must use its generated Nginx contract in a clean disposable Debian integration host, while retaining the Debian containers only as historical Team/self-hosting evidence.
 
 The native channel builds `.deb` files; the meta package selects dependencies. Maintainer scripts/systemd/PM2 assets install and configure runtime. Schema patches have a separate package/manifest path (`schemas-patch/**`). Runtime assumes `/etc/drumee`, MariaDB privileges sufficient to create tenant databases, Redis, fixed runtime/data paths and shared MFS storage (`sources/server-essentials/lib/sysEnv.js`).
 

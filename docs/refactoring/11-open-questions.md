@@ -39,3 +39,5 @@ All remain `INVESTIGATE` until code/history/runtime evidence or approval resolve
 35. What minimal MFS semantics, storage behavior and ACL surface does `marketing` actually require after `hello`?
 36. After MFS exists, are Finder and Window Manager modules, or does a proven resource-host primitive belong in the frontend kernel?
 37. Which selected Team contracts remain valuable regression evidence after the new kernel is validated by `hello` and `marketing`?
+38. What deterministic inputs and container-root mapping let the pinned `setup-infra` generator render the selected Nginx configuration without writing host paths or requiring DNS, mail or Jitsi prerequisites?
+39. Which generated Nginx includes are the minimum supported Phase 2 service and plugin/static contract, and which of the broader current route template must remain outside the no-Team runtime?

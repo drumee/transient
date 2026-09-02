@@ -37,6 +37,7 @@ transient/
 │   ├── server-team/
 │   ├── schemas/
 │   ├── setup-schemas/
+│   ├── setup-infra/
 │   ├── debian/
 │   ├── cli/
 │   ├── loby/
@@ -351,6 +352,7 @@ sources/ui-team
 sources/server-team
 sources/schemas
 sources/setup-schemas
+sources/setup-infra
 sources/debian
 sources/cli
 sources/loby
@@ -378,7 +380,22 @@ The code is the source of truth.
 
 ---
 
-# 8. Special role of `debian`
+# 8. Special role of `setup-infra` and `debian`
+
+`sources/setup-infra` is the pinned source of truth for the current Drumee host/infrastructure configuration contract. Its `infra.js` generator produces Nginx and other deployed-host configuration; it is `DEPLOYMENT`, not part of the application kernel. The imported snapshot is immutable like every other `sources/**` repository.
+
+For minimal-kernel work, the roles are deliberately distinct:
+
+```text
+setup-infra    = current Drumee infrastructure/Nginx contract source
+debian         = historical packaging/self-hosting baseline
+server-runtime = backend minimal-kernel extraction workspace
+ui-runtime     = frontend minimal-kernel extraction workspace
+```
+
+The Phase 2 kernel integration environment must derive its minimum HTTP/Nginx contract from the pinned `setup-infra` snapshot, not invent a parallel simplified routing model. It must use only routes needed for the new kernel and leave DNS, BIND, mail, Postfix, DKIM, Jitsi, Prosody, Coturn and other host services outside the kernel scope. Generated configuration belongs in disposable state such as `.tmp/test-env/kernel/`, never in `sources/**` or the host production `/etc`.
+
+`sources/debian` remains the historical packaging and self-hosting baseline.
 
 The existing `debian` repository is part of the analysis because it represents the current **self-hosting and distribution layer**.
 
@@ -901,6 +918,19 @@ hello.echo
 ```
 
 The frontend should be a minimal LETC widget/application rendered in a simple host container. `hello` must not require Finder, MFS presentation, Desktop, or Window Manager.
+
+Its Phase 3 service descriptor deliberately uses the current database-free ACL fast path:
+
+```json
+{
+  "permission": {
+    "src": "anonymous",
+    "fast_check": "public-api"
+  }
+}
+```
+
+Therefore the first no-Team kernel slice must not introduce `acl_check.sql`, `user_permission`, `user_expiry`, MFS schemas, or factory provisioning merely to execute ACL/dispatch. Database-backed ACL is deferred until an authenticated or resource-aware capability requires it.
 
 Do not add MFS, AI, campaign logic, complex schemas, workflows, chat, tasks, meetings, or Team-specific capabilities to `hello`.
 
@@ -1597,6 +1627,26 @@ target/foundation/ui-runtime/
 
 Use the current `server-essentials` implementation beneath `server-runtime`, not the historical Team lockfile resolution. The Phase 2 extraction must retain the initial backend ACL/descriptor/lazy-worker and frontend `index.json`/addon contracts, without Team policy, MFS presentation, Finder, Desktop or Window Manager.
 
+The canonical Phase 2/3 integration host is separate from historical Team containers:
+
+```text
+clean Debian runtime
+  + configuration generated from pinned sources/setup-infra
+  + server-runtime
+  + ui-runtime
+```
+
+It is disposable and generates all configuration under `.tmp/test-env/kernel/` (or inside an equivalent disposable container root), never the host `/etc`. `sources/debian` images/packages remain baseline, self-hosting and later Team-compatibility evidence; do not patch `server-pod` or `ui-pod` to host the new kernel. MariaDB or Redis may be reused only as infrastructure services when actually required, without importing Team code. The first ACL/dispatch path uses the documented anonymous `public-api` fast check, so Phase 2 does not introduce schemas, MFS or provisioning merely to make it run.
+
+Phase 2 must identify and validate the minimum pinned-`setup-infra` contract for:
+
+```text
+client → Nginx → service route → server-runtime
+client → Nginx → frontend plugin/static route → ui-runtime
+```
+
+`hello` remains Phase 3; a temporary route fixture in Phase 2 must be test-only rather than an early `hello` implementation.
+
 Phase 2 is complete only when:
 
 - [ ] `server-runtime` and `ui-runtime` build reproducibly;
@@ -1604,6 +1654,12 @@ Phase 2 is complete only when:
 - [ ] ownership/provenance of every extracted `server-core` and `ui-core` area remains traceable;
 - [ ] no Drumee-specific dependency has leaked into `server-essentials`;
 - [ ] Team-specific backend policies remain outside `server-runtime` and MFS/application kinds remain outside the first `ui-runtime` boundary.
+- [ ] `sources/setup-infra` is pinned in `SOURCE_MANIFEST.md` and remains immutable;
+- [ ] a reproducible, disposable clean-Debian kernel integration environment uses configuration generated from that pinned source outside `sources/**` and host `/etc`;
+- [ ] `nginx -t` validates the generated configuration;
+- [ ] `server-runtime` starts without `server-team` and `ui-runtime` artifacts are served without `ui-team`;
+- [ ] a required service route and a frontend plugin/static route reach the new runtime boundaries;
+- [ ] no historical Debian Team image is the new-kernel host, and schemas/MFS were not introduced solely for the initial ACL path.
 
 `hello` is Phase 3 proof, not a Phase 2 completion criterion.
 
@@ -2632,4 +2688,4 @@ The new minimal kernel is the primary architectural target. `server-team` is mig
 
 # 41. Summary instruction for coding agents
 
-> Work only inside the `transient` monorepo. Treat `sources/**` as an immutable baseline containing the current Drumee ecosystem, including Team, schemas, provisioning, CLI, dynamic module examples, and self-hosting distribution code. During the mapping phase, modify only `docs/refactoring/**` and `SOURCE_MANIFEST.md` when needed. Analyze the current system from source code before proposing changes. Classify every major capability as OS primitive, system module, Team module, SDK/essentials, business module, control plane, deployment, legacy, or investigate. Treat `cli` as a first-class control-plane candidate and map its DB/API backends, provisioning dependencies, MFS/storage behavior and runtime/service interactions without assuming plugin lifecycle support that is not present in source. Treat Drumee Team as a migration source and later compatibility target, not as the primary architectural target. The primary target is a minimal, application-neutral Drumee kernel capable of hosting new independent modules. Preserve `debian` as the current self-hosting/distribution layer. Preserve `server-essentials` as an independently reusable, non-Drumee-specific server package; never introduce Hub, Drumate, MFS, Drumee ACL or module-runtime dependencies into its generic boundary merely to simplify the transition. Use Phase 1.5 to stabilize the minimal-kernel boundaries, then use `target/foundation/server-runtime` and `target/foundation/ui-runtime` as Phase 2 extraction workspaces for iterating from current `server-core` and `ui-core` behavior toward a minimal backend/frontend Drumee kernel while depending on current independent `server-essentials` and `ui-essentials`; the historical Team lockfile resolution does not constrain that new runtime. Preserve the current plugin mechanics first: backend ACL/descriptor registration with lazy `module.method` service loading, and frontend `Kind.loadPlugin()` → `bootstrap.plugin` → `{path}` → `loadJS()` → `Kind.registerAddons()` handshake. Keep `Host`, `Visitor`, and `Organization` in the minimal frontend context where required for ACL semantics, but keep MFS presentation, Finder, Desktop, and Window Manager out of the first `hello` slice. Validate the new kernel first with exactly one minimal reference module, `hello`; add minimal MFS semantics next as required, then use `marketing` as the first real application to drive additional kernel requirements. Only after the kernel is stable should `server-team` be decomposed and migrated module by module. `server-runtime` and `ui-runtime` are not automatically final package boundaries. After mapping, stop and request architectural review. During later implementation, build all new architecture under `target/**`, never modify `sources/**`, and postpone final repository extraction until the OS, modules, control plane, Team reconstruction, independent Essentials boundary and self-hosting boundaries have been validated through compatibility tests.
+> Work only inside the `transient` monorepo. Treat `sources/**` as an immutable baseline containing the current Drumee ecosystem, including Team, schemas, provisioning, CLI, dynamic module examples, `setup-infra`, and self-hosting distribution code. During the mapping phase, modify only `docs/refactoring/**` and `SOURCE_MANIFEST.md` when needed. Analyze the current system from source code before proposing changes. Classify every major capability as OS primitive, system module, Team module, SDK/essentials, business module, control plane, deployment, legacy, or investigate. Treat `cli` as a first-class control-plane candidate and map its DB/API backends, provisioning dependencies, MFS/storage behavior and runtime/service interactions without assuming plugin lifecycle support that is not present in source. Treat Drumee Team as a migration source and later compatibility target, not as the primary architectural target. The primary target is a minimal, application-neutral Drumee kernel capable of hosting new independent modules. `setup-infra` is the pinned infrastructure/Nginx-contract source; `debian` is the historical packaging/self-hosting baseline. Phase 2 validates the new kernel in a disposable clean-Debian host with configuration generated from pinned `setup-infra`, not by patching historical Team images. Preserve `server-essentials` as an independently reusable, non-Drumee-specific server package; never introduce Hub, Drumate, MFS, Drumee ACL or module-runtime dependencies into its generic boundary merely to simplify the transition. Use Phase 1.5 to stabilize the minimal-kernel boundaries, then use `target/foundation/server-runtime` and `target/foundation/ui-runtime` as Phase 2 extraction workspaces for iterating from current `server-core` and `ui-core` behavior toward a minimal backend/frontend Drumee kernel while depending on current independent `server-essentials` and `ui-essentials`; the historical Team lockfile resolution does not constrain that new runtime. Preserve the current plugin mechanics first: backend ACL/descriptor registration with lazy `module.method` service loading, and frontend `Kind.loadPlugin()` → `bootstrap.plugin` → `{path}` → `loadJS()` → `Kind.registerAddons()` handshake. Keep `Host`, `Visitor`, and `Organization` in the minimal frontend context where required for ACL semantics, but keep MFS presentation, Finder, Desktop, and Window Manager out of the first `hello` slice. The Phase 3 `hello` descriptor uses `anonymous` + `public-api`, so its first ACL path does not pull SQL ACL, MFS schemas or provisioning forward. Validate the new kernel first with exactly one minimal reference module, `hello`; add minimal MFS semantics next as required, then use `marketing` as the first real application to drive additional kernel requirements. Only after the kernel is stable should `server-team` be decomposed and migrated module by module. `server-runtime` and `ui-runtime` are not automatically final package boundaries. After mapping, stop and request architectural review. During later implementation, build all new architecture under `target/**`, never modify `sources/**`, and postpone final repository extraction until the OS, modules, control plane, Team reconstruction, independent Essentials boundary and self-hosting boundaries have been validated through compatibility tests.
