@@ -1,0 +1,163 @@
+#!/bin/bash
+
+set -e
+echo "Configuring Drumee Infrastructure"
+script_dir=$(dirname $(readlink -f $0))
+
+
+export base=$(dirname $script_dir)
+
+export PUBLIC_DOMAIN=$DRUMEE_DOMAIN_NAME
+
+if [ "$PUBLIC_DOMAIN" != "" ]; then
+  $base/bin/init-mail $PUBLIC_DOMAIN
+fi
+
+# Generate all the required settings
+#
+# RECONF forwards the reconfigure intent to the renderers. Without it this script was
+# the reason `dpkg-reconfigure drumee-infra` could not change anything on an installed
+# host: dpkg-reconfigure calls `postinst configure`, that arm calls this script, and
+# this script called infra.js with no arguments — so hasExistingSettings() found
+# /etc/drumee/drumee.json, printed "Use --reconfigure=1" and returned true, and
+# nothing was re-rendered. Every "then: dpkg-reconfigure drumee-infra" in postinst
+# pointed at a command that reported success and did nothing.
+#
+# Set by drumee-infra's postinst from DEBCONF_RECONFIGURE (which dpkg-reconfigure
+# exports) or from the reconfigure_existing debconf answer. Unset on a fresh install
+# and on a plain upgrade, where re-rendering over an operator's tree is exactly what
+# must NOT happen silently.
+RECONF=""
+[ "${DRUMEE_RECONFIGURE:-0}" = "1" ] && RECONF="--reconfigure=1"
+
+# DRUMEE_CHROOT redirects every write under a target directory instead of onto this
+# host. It is what lets the container channel reuse THIS path — preseed, postinst,
+# bridge, renderers — instead of hand-mapping environment variables to infra.js flags,
+# which is where every container-side configuration bug came from
+# (docs/channel-parity.md §2).
+#
+# Unset natively, so nothing changes there.
+CHROOT=""
+[ -n "${DRUMEE_CHROOT:-}" ] && CHROOT="--chroot=$DRUMEE_CHROOT"
+
+if [ -f ${base}/${DRUMEE_COMPONENTS}.js ]; then 
+  node ${base}/${DRUMEE_COMPONENTS}.js $RECONF $CHROOT
+else
+  node ${base}/infra.js $RECONF $CHROOT
+  # jitsi.js only when conferencing is actually wanted. It was unconditional, and it
+  # renders an nginx vhost (20-jitsi.public.conf) that `include`s /etc/jitsi/*.conf — so a
+  # deployment without conferencing still got a vhost pointing at a Jitsi tree.
+  #
+  # Natively that was invisible: the same run rendered /etc/jitsi too, so nginx was
+  # satisfied. It stopped being invisible in the container channel, where the web role
+  # mounts the nginx configuration and not the Jitsi tree, and nginx refused everything
+  # with `open() "/etc/jitsi/meet.public.conf" failed` — a whole instance serving nothing
+  # because of a vhost nobody asked for.
+  if [ -n "${USE_JITSI:-}" ] && [ "${USE_JITSI}" != "0" ] && [ "${USE_JITSI}" != "false" ]; then
+    node ${base}/jitsi.js $RECONF $CHROOT
+  else
+    echo "Conferencing not requested (USE_JITSI unset) — skipping jitsi.js."
+  fi
+fi
+
+# Under DRUMEE_CHROOT the renderers wrote into that target, so the postcondition and
+# everything after it live there too. Checking the absolute path made a chroot render
+# report "Setup has failed" after successfully producing the entire tree — measured on the
+# container channel's first preseed run, which is precisely the kind of thing an absolute
+# path hides until someone renders somewhere else.
+DEST="${DRUMEE_CHROOT:-}"
+
+if [ ! -e "$DEST/etc/drumee/drumee.sh" ]; then
+  echo "Setup has failed"
+  exit 1
+fi
+
+source "$DEST/etc/drumee/drumee.sh"
+
+# The crontab and everything below it are HOST operations. A chroot render produces the
+# files; installing them into this machine's crontab is not its business, and in a
+# container there is no cron to install them into.
+if [ -n "$DEST" ]; then
+  echo "Rendered into $DEST — skipping the host steps (crontab, services)."
+  exit 0
+fi
+
+if [ -d /etc/cron.d/drumee ]; then 
+  crontab /etc/cron.d/drumee
+fi 
+
+source $base/bin/env
+source $base/bin/prosody
+
+clean_vendor_files
+
+protect_dir $DRUMEE_RUNTIME_DIR "no" "mkdir"
+protect_dir $DRUMEE_DATA_DIR "yes" "mkdir"
+cd $DRUMEE_DATA_DIR
+
+for d in mfs tmp; do
+  protect_dir "$DRUMEE_DATA_DIR/$d" "yes"
+done
+
+
+set +e
+
+LOG_DIR=$DRUMEE_SERVER_HOME/.pm2/logs
+
+touch $DRUMEE_DATA_DIR/mfs/dont-remove-this-dir
+chmod a-w $DRUMEE_DATA_DIR/mfs/dont-remove-this-dir
+
+protect_dir $DRUMEE_STATIC_DIR 
+protect_dir /etc/drumee
+protect_dir $LOG_DIR "yes"
+protect_dir $DRUMEE_CACHE_DIR
+protect_dir $DRUMEE_TMP_DIR "yes"
+protect_dir $DRUMEE_SERVER_HOME
+protect_dir $DRUMEE_EXPORT_DIR
+protect_dir $DRUMEE_IMPORT_DIR
+
+# Whether this instance runs its own authoritative DNS.
+#
+# DRUMEE_DNS_SERVER is the explicit answer, set by drumee-infra's postinst from
+# the tls_method the operator chose:
+#   1 — acme-dns-server (the DNS-01 challenge is answered by local nsupdate)
+#       and self-signed / local mode (a LAN instance is the ONLY thing that
+#       knows its own domain; without a resolver here the name resolves nowhere)
+#   0 — acme-dns-api, caddy, own: the zone stays with the operator's provider,
+#       and squatting udp/53 with a zone nobody queries is not harmless.
+#
+# Unset keeps the historical behaviour for out-of-tree callers, which inferred
+# the same thing from ACME_ENV_FILE alone — an inference that also switched DNS
+# on for tls_method=own, where it was never wanted.
+if [ "${DRUMEE_DNS_SERVER:-}" = "0" ]; then
+  echo "Local DNS server not requested for this TLS method — skipping named."
+elif [ "${DRUMEE_DNS_SERVER:-}" = "1" ] || [ "$ACME_ENV_FILE" = "" -o ! -f "$ACME_ENV_FILE" ]; then
+  $base/bin/init-named
+fi
+
+# Also on the self-signed path even with no private domain: there, this script is
+# the only thing that certifies the PUBLIC names, so gating it on the private one
+# would leave nginx with no certificate at all.
+if [ "$PRIVATE_DOMAIN" != "" -o "${DRUMEE_TLS_METHOD:-}" = "self-signed" ]; then
+  $base/bin/create-local-certs
+fi
+
+# Certificates. The self-signed path must NOT reach init-acme: it issues a
+# wildcard over DNS-01 for a name that, on a LAN instance, is delegated nowhere,
+# so every attempt fails — and make_certs retries eleven times with sleeps
+# between, which is minutes of guaranteed failure at install time. Worse, it is
+# not even a no-op: it registers an ACME account for an address that will never
+# validate. create-local-certs above has already produced a certificate for
+# every public name on this path.
+if [ "${DRUMEE_TLS_METHOD:-}" = "self-signed" ]; then
+  echo "Self-signed TLS: skipping ACME (a private domain cannot answer a DNS-01 challenge)."
+elif [ "$PUBLIC_DOMAIN" != "" -a "$OWN_CERTS_DIR" = "" ]; then
+  $base/bin/init-acme
+fi
+
+setup_dirs
+
+setup_prosody
+
+crontab  < /etc/cron.d/drumee
+echo "Drumee infrastructure done !"

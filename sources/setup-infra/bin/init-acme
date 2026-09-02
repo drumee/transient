@@ -1,0 +1,109 @@
+#!/bin/bash
+if [ "$DRUMEE_DOMAIN_NAME" = "" ]; then
+  echo "Public domain name not found. Will run only on private mode."
+  exit 0
+fi
+if [ "$OWN_CERTS_DIR" != "" ]; then
+  echo "OWN_CERTS_DIR was set to $OWN_CERTS_DIR. This means you will have to complete settings later."
+  exit 0
+fi
+
+echo "Configuring certificates..."
+#-------------------
+function make_certs(){
+  sum=0
+  dom=$1
+  if [ "$dom" = "" ]; then
+    # Without this an unset name reaches acme.sh as `--issue -d  -d *.` and the
+    # retry loop below spends ~50s failing before reporting anything useful.
+    echo "Skipping certificate request: no domain name given (unset variable?)" >&2
+    return 0
+  fi
+  method=dns_nsupdate
+  if [ "$2" != "" -a -f "$2" ]; then
+    source $2 # source env filen
+    method=dns_$ACME_PROVIDER # https://github.com/acmesh-official/acme.sh/wiki/dnsapi
+  fi
+  echo Generating "${dom}" cetificates...
+  OPTIONS="--issue -d $dom -d "*.${dom}" --home $ACME_DIR --config-home $ACME_DIR/configs --cert-home $CERTS_DIR --dns ${method}"
+  ./acme.sh $OPTIONS
+  while [ ! -f ${CERTS_DIR}/${dom}_ecc/fullchain.cer ]; do
+    ./acme.sh $OPTIONS
+    if [ $? = "0" ]; then
+      echo Certificate have been sucessfully created.
+    else
+      echo Certificate have not been created. Retrying in 5 seconds. Please wait.
+      sleep 5
+    fi
+    if [ "$sum" -gt "10" ]; then
+      echo Failed to create certifiicates. Please run manually
+      echo $ACME_DIR/acme.sh  $OPTIONS
+      return
+    fi
+    sum=$(expr 1 + $sum)
+  done
+
+  ca_dir=/usr/local/share/ca-certificates
+  mkdir -p $ca_dir
+  
+  cert_file="${CERTS_DIR}/${dom}_ecc/${dom}"
+  if [ -f "${cert_file}.cer" ]; then
+    cp -f "${cert_file}.cer" "${target}.cer"
+  fi
+
+  if [ -f "${cert_file}.key" ]; then
+    cp -f "${cert_file}.key" "${target}.key"
+    chmod g+r "${cert_file}.key"
+  fi
+
+}
+
+set +e
+cron_entry=$(crontab -l | grep acme-cron)
+if [ "$cron_entry" != "" ]; then
+  echo "Acme cron already created"
+  exit 0
+fi
+
+set +e
+source /etc/drumee/drumee.sh
+
+if [ "$OWN_SSL" != "" ]; then
+  echo "You will have to setup your own SSL certificates"
+  exit 0
+fi
+
+if [ "$ACME_DIR" = "" ]; then
+  export ACME_DIR=/etc/drumee/certs/acme
+fi
+
+if [ ! -d $ACME_DIR ]; then
+  mkdir -p $ACME_DIR
+fi
+
+cd $ACME_DIR
+
+failed=0
+
+./acme.sh --register-account -m $ACME_EMAIL_ACCOUNT --home $ACME_DIR  --config-home $ACME_DIR/configs --cert-home $CERTS_DIR
+
+
+make_certs $DRUMEE_DOMAIN_NAME $ACME_ENV_FILE
+make_certs $JITSI_DOMAIN $ACME_ENV_FILE
+# vendors.<domain>: its own certificate, because make_certs requests
+# "-d $dom -d *.$dom" and a wildcard covers a single label — the apex cert's
+# *.<domain> does not cover *.vendors.<domain>.
+make_certs $VENDORS_DOMAIN $ACME_ENV_FILE
+
+usermod -a -G $DRUMEE_SYSTEM_GROUP prosody
+usermod -a -G $DRUMEE_SYSTEM_GROUP jvb
+usermod -a -G $DRUMEE_SYSTEM_GROUP jicofo
+usermod -a -G $DRUMEE_SYSTEM_GROUP turnserver
+usermod -a -G $DRUMEE_SYSTEM_GROUP postfix
+
+if [ -d "$CERTS_DIR" ]; then
+  chown -R $DRUMEE_SYSTEM_USER:$DRUMEE_SYSTEM_GROUP $CERTS_DIR 
+fi
+
+echo "ACME has been successfuly installed!"
+exit 0
