@@ -209,3 +209,13 @@ It consumes results only when they identify the current immutable source tree, s
 **NOT READY for full Phase 1 Team-baseline compatibility execution** on the tested baseline. Image building and authoritative E2E are now exercised, and the failure is captured. Readiness requires a passing authoritative `e2e-local.sh` baseline, successful configured provisioning/MFS/CLI DB tests, sanitized REST golden capture, approved browser evidence, and a strict gate with no mandatory skips. This task does not modify the immutable baseline to make those conditions true.
 
 This does not redefine the initial architectural target: the minimal kernel begins with selected no-Team contracts and `hello`. It does mean that later claims of Team or self-hosting compatibility cannot be marked ready until this baseline gate passes.
+
+## Separate Phase 2 kernel environment
+
+The baseline wrapper above remains Team/self-hosting evidence only. The separate
+no-Team kernel environment is documented in
+[`15-phase2-runtime-extraction.md`](15-phase2-runtime-extraction.md) and uses
+`scripts/test-env/kernel/{check,build,configure,up,status,test,logs,down,reset}.sh`.
+It builds a clean Debian Node/Nginx image from the pinned `setup-infra` contract
+and Phase 2 target code; it does not reuse baseline Team images or the failed
+schema/factory path.
