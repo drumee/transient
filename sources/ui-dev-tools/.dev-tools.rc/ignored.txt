@@ -1,0 +1,7 @@
+bin/
+dev-tools/
+.git/
+*.swp
+.git
+stats.json
+.dev-tools.rc/

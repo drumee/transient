@@ -1,0 +1,15 @@
+#!/bin/bash
+script_dir=$(dirname $(readlink -f $0))
+base_dir=$(dirname $script_dir)
+module_dir=$(dirname $(dirname $base_dir))
+src_dir=$(dirname $module_dir)
+cd $module_dir/.bin
+ln -sf ../@drumee/ui-dev-tools/bin/watcher ./drumee-ui-devel
+ln -sf ../@drumee/ui-dev-tools/bin/watcher ./drumee-ui-deploy
+ln -sf ../@drumee/ui-dev-tools/widget/index.js ./drumee-make-widget
+ln -sf ../@drumee/ui-dev-tools/seeds/index.js ./drumee-build-seeds
+ln -sf ../@drumee/ui-dev-tools/bin/build-jitsi ./drumee-build-jitsi
+ln -sf ../@drumee/ui-dev-tools/env/write-env.js ./drumee-build-env
+if [ ! -d $src_dir/.dev-tools.rc ]; then
+  cp -r $base_dir/.dev-tools.rc $src_dir/
+fi

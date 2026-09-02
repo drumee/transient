@@ -1,0 +1,31 @@
+{
+  "name": "@drumee/ui-dev-tools",
+  "version": "1.0.44",
+  "description": "Developer tools for Drumee User Interface",
+  "main": "index.js",
+  "scripts": {
+    "postinstall": "bin/postinstall",
+    "release": "git push && npm publish --access public && npm version patch"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git@github.com:drumee/ui-dev-tools.git"
+  },
+  "keywords": [
+    "Drumee",
+    "User",
+    "Interface",
+    "Developer",
+    "Tools"
+  ],
+  "author": "Somanos Sar <somanos@drumee.com>",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/drumee/ui-dev-tools/issues"
+  },
+  "homepage": "https://github.com/drumee/ui-dev-tools",
+  "dependencies": {
+    "argparse": "^2.0.1",
+    "lodash": "^4.17.21"
+  }
+}
