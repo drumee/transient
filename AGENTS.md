@@ -34,7 +34,8 @@ The approved sequence is:
 Phase 1     baseline evidence and mapping
 Phase 1.5   minimal-kernel boundary stabilization
 Phase 2     first runtime/build/infrastructure extraction       IMPLEMENTED
-Phase 3     hello vertical slice                               NEXT
+Phase 2.6   LETC bootstrap completeness                         NEXT
+Phase 3     hello vertical slice
 Phase 4     intentional authenticated ACL / MFS capabilities
 Phase 5     marketing as first real application
 Phase 6     kernel stabilization from real application needs
