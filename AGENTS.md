@@ -2,70 +2,99 @@
 
 ## Mission
 
-This repository, **`transient`**, is a controlled transitional refactoring monorepo used to transform the current Drumee implementation into a minimal, extensible operating-system-like platform.
+This repository, `transient`, is a controlled refactoring and integration monorepo used to transform the current Drumee implementation into a minimal, extensible, application-neutral operating environment.
 
-`transient` is **not** the future Drumee OS repository. It is a temporary integration and refactoring workspace from which the validated final repositories will later be extracted. One of those final outputs is expected to be the future **`drumee-os`** repository, subject to the repository boundaries approved after mapping.
+`transient` is **not** the future final Drumee OS repository. It is a temporary workspace from which validated repositories may later be extracted with preserved provenance and history.
 
-The current Drumee Team product **must not be broken, degraded, or functionally changed** by this work.
+The refactoring must remain:
 
-The repository contains:
+```text
+incremental
+auditable
+reversible
+evidence-driven
+testable
+```
 
-1. an immutable copy of the current Drumee ecosystem used as the compatibility baseline;
-2. documentation describing the refactoring;
-3. the future modular architecture being built alongside the baseline;
-4. compatibility and reconstruction tests.
+The primary objective is not to create a smaller `server-team` or `ui-team`.
 
-The refactoring must be incremental, auditable, reversible, and evidence-driven.
+The objective is:
+
+> **a minimal Drumee kernel capable of loading and executing independent applications dynamically.**
+
+Drumee Team is an immutable migration source and later compatibility target, not the design target of the first kernel.
 
 ---
 
-# 1. Repository layout
+# 1. Current project state
 
-The expected high-level structure is:
+The approved sequence is:
+
+```text
+Phase 1     baseline evidence and mapping
+Phase 1.5   minimal-kernel boundary stabilization
+Phase 2     first runtime/build/infrastructure extraction       IMPLEMENTED
+Phase 3     hello vertical slice                               NEXT
+Phase 4     intentional authenticated ACL / MFS capabilities
+Phase 5     marketing as first real application
+Phase 6     kernel stabilization from real application needs
+Phase 7+    Team migration module by module
+```
+
+Do not repeat Phase 2 unless correcting a demonstrated defect.
+
+Do not begin a later phase merely because the previous phase is complete. Perform only the phase explicitly requested by the user.
+
+Historical sections or documents that say "mapping only" or recommend a particular future branch are no longer authoritative phase gates.
+
+---
+
+# 2. Repository layout
+
+The working structure is conceptually:
 
 ```text
 transient/
-│
 ├── AGENTS.md
 ├── SOURCE_MANIFEST.md
 │
 ├── docs/
 │   └── refactoring/
 │
-├── sources/
-│   ├── ui-team/
+├── sources/                         # immutable imported evidence
+│   ├── server-core/
+│   ├── server-essentials/
 │   ├── server-team/
+│   ├── ui-core/
+│   ├── ui-essentials/
+│   ├── ui-team/
 │   ├── schemas/
 │   ├── setup-schemas/
 │   ├── setup-infra/
 │   ├── debian/
 │   ├── cli/
-│   ├── loby/
 │   ├── signin/
-│   └── other imported Drumee repositories
+│   ├── loby/
+│   └── other pinned Drumee repositories
 │
 ├── target/
 │   ├── foundation/
-│   │   ├── server-runtime/       # transitional backend extraction workspace
-│   │   └── ui-runtime/           # transitional frontend extraction workspace
+│   │   ├── server-runtime/          # transitional backend kernel extraction
+│   │   └── ui-runtime/              # transitional frontend kernel extraction
+│   │
+│   ├── tooling/
+│   │   └── ui-build/                # shared CommonJS/Webpack frontend build contract
 │   │
 │   ├── os/
 │   │   ├── server/
 │   │   ├── ui/
 │   │   └── schemas/
 │   │
+│   ├── modules/
+│   │   └── hello/                   # Phase 3 validation module, when authorized
+│   │
 │   ├── control-plane/
 │   │   └── cli/
-│   │
-│   ├── modules/
-│   │   ├── hello/                # minimal kernel validation module
-│   │   ├── finder/
-│   │   ├── signin/
-│   │   ├── loby/
-│   │   ├── chat/
-│   │   ├── tasks/
-│   │   ├── meetings/
-│   │   └── other extracted modules
 │   │
 │   ├── distributions/
 │   │   └── team/
@@ -73,76 +102,85 @@ transient/
 │   └── deployment/
 │       └── self-hosting/
 │
+├── scripts/
+│   └── test-env/
+│       └── kernel/
+│
 └── tests/
     ├── compatibility/
     ├── reconstruction/
     └── integration/
 ```
 
-This structure is a working hypothesis.
-
-It may evolve after the mapping phase.
-
-The distinction between `sources/` and `target/` is mandatory.
+This is still a transitional architecture. Do not turn these directories into final public repository/package boundaries without explicit approval.
 
 ---
 
-# 2. The `sources/` tree is immutable
+# 3. `sources/**` is immutable
 
-## This is a non-negotiable rule.
+This is non-negotiable.
 
 Everything under:
 
 ```text
-sources/
+sources/**
 ```
 
-represents the current Drumee compatibility baseline.
+is evidence imported from the current Drumee ecosystem.
 
 Agents may:
 
-- read it;
-- search it;
-- trace dependencies;
-- inspect Git history;
-- run existing tests;
-- build current components;
-- use it as implementation reference.
+```text
+read
+search
+trace dependencies
+inspect Git history
+run safe tests
+build existing components
+use code as extraction evidence
+```
 
-Agents must **never modify it**.
+Agents must never modify it.
 
 Do not:
 
-- refactor files under `sources/`;
-- rename files;
-- fix formatting;
-- update dependencies;
-- change imports;
-- modify schemas;
-- apply patches;
-- alter package locks;
-- make "small cleanup" commits.
+```text
+refactor
+rename
+format
+update dependencies
+change imports
+patch bugs
+change schemas
+alter package locks
+write generated artifacts
+write test output
+perform cleanup commits
+```
 
-If a change appears necessary, implement the new version under `target/` after the mapping phase has been approved.
+If an existing implementation must change, create the new implementation under `target/**`, `scripts/**`, or `tests/**` as appropriate.
 
-The baseline must remain available for comparison throughout the entire refactoring.
+Before completing implementation work, verify:
+
+```bash
+git diff -- sources/
+```
+
+is empty.
 
 ---
 
-# 3. Source provenance
+# 4. Source provenance
 
-Every imported repository must be traceable to its original source.
-
-Maintain:
+Every imported repository must be pinned in:
 
 ```text
 SOURCE_MANIFEST.md
 ```
 
-For every repository, record at minimum:
+with at least:
 
 ```text
-name
 repository URL
 branch
 commit SHA
@@ -150,687 +188,127 @@ import date
 import method
 ```
 
-Example:
+Never depend on a moving GitHub branch at build or test time when a pinned source is available.
+
+Every significant extracted primitive must retain provenance.
+
+For implementation under `target/**`, record where appropriate:
 
 ```text
-ui-team
-repository: https://github.com/drumee/ui-team
-branch: preview
-commit: <sha>
+new path
+source repository
+source file
+source symbol/class/function
+source SHA
+reason for extraction
+intentional semantic difference
 ```
 
-For `cli`, record the exact branch/SHA being mapped.
-
-The manifest is part of the reproducibility contract.
-
-If Git history has been imported into the monorepo, preserve it.
-
-Do not rewrite source history unnecessarily.
+Broad copy operations without provenance are prohibited.
 
 ---
 
-# 4. Primary architectural goal
+# 5. Git discipline
 
-The desired architecture is:
+`transient` is the only repository agents may modify for this refactoring.
 
-```text
-                  CONTROL PLANE / TOOLING
-                           │
-                           ▼
-APPLICATIONS / DISTRIBUTIONS
-            │
-            │ dynamically loadable modules
-            ▼
-DRUMEE MINIMAL OS / SHELL
-            │
-            ▼
-DRUMEE CORE / SDK / RUNTIME
-            │
-            ▼
-PACKAGING / DEPLOYMENT
-```
+Do not commit or push refactoring changes to original Drumee repositories.
 
-The Control Plane is administratively above the runtime but must not be required for the runtime to boot.
+Do not assume that an old branch recommendation in documentation is still mandatory.
 
-Drumee Team must become a distribution assembled from:
+Use the currently checked-out branch unless the user explicitly asks to create, switch, merge, or rebase a branch.
 
-```text
-Drumee Minimal OS
-+
-System Modules
-+
-Team Modules
-```
+Never rewrite imported source history merely for convenience.
 
-The current user-facing behavior of Drumee Team must remain available.
+Prefer focused architectural commits.
+
+Do not mix unrelated extraction, migration, deployment, and application work in one commit.
 
 ---
 
-# 5. Drumee Team is a migration source and later compatibility target
+# 6. Architectural hierarchy
 
-The existing Team implementation must remain fully functional as an immutable reference system.
-
-However, Drumee Team is **not** the primary architectural target of the first minimal-kernel extraction.
-
-The primary target is:
+The desired long-term layering is:
 
 ```text
-server-essentials          ui-essentials
-        ↑                        ↑
- server-runtime              ui-runtime
-        └──────────┬─────────────┘
-                   ↓
-                 hello
-                   ↓
-               marketing
-```
-
-The first kernel must be application-neutral and capable of hosting new independent modules without depending on:
-
-```text
-server-team
-ui-team
-```
-
-Conceptually:
-
-```text
-sources/ui-team
-sources/server-team
-sources/schemas
-        │
-        ▼
-CURRENT DRUMEE TEAM
-        │
-        │ migration source / reference evidence
-        ▼
-minimal kernel
-        +
-later extracted Team modules
-        │
-        ▼
-FUTURE DRUMEE TEAM DISTRIBUTION
-```
-
-The baseline compatibility harness remains valuable as:
-
-```text
-evidence
-+
-regression reference
-+
-source of intentionally selected kernel contracts
-```
-
-It is **not** a requirement to reproduce every Team-era behavior before the no-Team kernel can be built.
-
-Do not allow historical Team coupling, policy, MFS presentation behavior, Finder behavior, Window Manager behavior, collaboration features, or distribution-specific assumptions to determine the initial kernel boundary unless they are independently justified as application-neutral primitives.
-
-Selected Team behavior must eventually be migrated and preserved where required, but that migration happens **after** the kernel has been validated by `hello` and exercised by `marketing`.
-
-The intended sequence is:
-
-```text
-minimal backend/frontend runtime
-→ hello
-→ intentional MFS
-→ marketing
-→ kernel stabilization
-→ Team migration module by module
-```
-
-Any deliberate incompatibility with Team-era behavior must be documented.
-
-Do not silently remove valuable Team behavior, but do not optimize the first kernel for Team compatibility at the expense of a small, reusable module host.
-
----
-
-# 6. The first phase is mapping only
-
-Until explicitly instructed otherwise, the current phase is:
-
-```text
-ANALYSIS
-→ MAPPING
-→ ARCHITECTURE
-```
-
-not implementation.
-
-During the mapping phase:
-
-## Allowed writes
-
-Only write to:
-
-```text
-docs/refactoring/
-```
-
-and, when necessary:
-
-```text
-SOURCE_MANIFEST.md
-```
-
-## Forbidden writes
-
-Do not modify:
-
-```text
-sources/
-target/
-tests/
-```
-
-Do not begin extraction.
-
-Do not create compatibility shims.
-
-Do not move code.
-
-Do not implement new loaders.
-
-Do not change package dependencies.
-
-Do not modify Drumee Core.
-
-Do not change schemas.
-
-Do not implement business modules.
-
-The first deliverable is documentation.
-
----
-
-# 7. Repositories that must be analyzed
-
-At minimum inspect:
-
-```text
-sources/ui-team
-sources/server-team
-sources/schemas
-sources/setup-schemas
-sources/setup-infra
-sources/debian
-sources/cli
-sources/loby
-sources/signin
-```
-
-Also inspect the lower-level packages used by Team, including where relevant:
-
-```text
-@drumee/server-core
-@drumee/server-essentials
-@drumee/ui-core
-@drumee/ui-essentials
-@drumee/ui-toolkit
-@drumee/ui-styles
-```
-
-If these packages are imported into `sources/`, inspect them there.
-
-Otherwise inspect the exact versions used by the baseline.
-
-Do not assume that repository or package names define correct architectural ownership.
-
-The code is the source of truth.
-
----
-
-# 8. Special role of `setup-infra` and `debian`
-
-`sources/setup-infra` is the pinned source of truth for the current Drumee host/infrastructure configuration contract. Its `infra.js` generator produces Nginx and other deployed-host configuration; it is `DEPLOYMENT`, not part of the application kernel. The imported snapshot is immutable like every other `sources/**` repository.
-
-For minimal-kernel work, the roles are deliberately distinct:
-
-```text
-setup-infra    = current Drumee infrastructure/Nginx contract source
-debian         = historical packaging/self-hosting baseline
-server-runtime = backend minimal-kernel extraction workspace
-ui-runtime     = frontend minimal-kernel extraction workspace
-```
-
-The Phase 2 kernel integration environment must derive its minimum HTTP/Nginx contract from the pinned `setup-infra` snapshot, not invent a parallel simplified routing model. It must use only routes needed for the new kernel and leave DNS, BIND, mail, Postfix, DKIM, Jitsi, Prosody, Coturn and other host services outside the kernel scope. Generated configuration belongs in disposable state such as `.tmp/test-env/kernel/`, never in `sources/**` or the host production `/etc`.
-
-`sources/debian` remains the historical packaging and self-hosting baseline.
-
-The existing `debian` repository is part of the analysis because it represents the current **self-hosting and distribution layer**.
-
-It must not automatically be classified as part of the minimal OS.
-
-Analyze how it currently depends on:
-
-```text
-server-team
-ui-team
-schemas
-setup-schemas
-other build/deployment components
-```
-
-Determine how those dependencies should evolve after modularization.
-
-The intended future responsibility of the deployment layer is conceptually:
-
-> take a Drumee runtime, a distribution manifest, and a set of modules, and produce a self-hosted installable system.
-
-Do not redesign the deployment format during the mapping phase.
-
-Document the current behavior first.
-
----
-
-# 9. Special role of `cli`
-
-The `cli` repository is part of the architectural mapping because it represents the current administrative/control-plane interface to Drumee.
-
-It must be analyzed independently from both the runtime and the deployment layer.
-
-The current CLI branch being mapped exposes at least these functional domains:
-
-```text
-user / drumate
-hub
-settings
-MFS
-generic Drumee API access
-```
-
-It also exposes an important abstraction:
-
-```text
-commands
-   ↓
-backend abstraction
-   ├── database backend
-   └── API backend
-```
-
-The mapping must determine the exact implementation and responsibilities of both backends.
-
-Inspect how the CLI currently interacts with:
-
-- user/drumate lifecycle;
-- hub lifecycle;
-- settings/sys_conf;
-- factory warm-pool provisioning;
-- yellow-pages / `yp`;
-- entity shard databases;
-- MFS SQL procedures;
-- physical MFS storage;
-- MFS import/export;
-- hub/drumate deletion and purge;
-- API authentication;
-- generic `module.method` service calls;
-- local/native self-hosting;
-- Docker/self-hosting;
-- configuration files such as `/etc/drumee`;
-- `@drumee/server-essentials` or related packages.
-
-The CLI must **not** be assumed to manage plugin lifecycle today unless this is proven from the imported source.
-
-Future module-management responsibilities must be classified as `INVESTIGATE`, not as existing behavior.
-
-The desired long-term relationship is conceptually:
-
-```text
-CLI / CONTROL PLANE
-        ↓
-stable Drumee administrative contracts
-        ↓
-Minimal OS + installed modules
-```
-
-The OS must not depend on the CLI.
-
-The CLI may depend on stable APIs/contracts exposed by the OS and platform services.
-
----
-
-# 10. Required classification model
-
-Every major subsystem, directory, service family, schema family, UI application, CLI command family, and build component must be classified into one of these categories.
-
-## `KEEP_OS`
-
-Required for a minimal Drumee operating environment.
-
-Potential examples:
-
-```text
-bootstrap
-runtime initialization
-session/context
-hub/drumate context
-ACL engine integration
-service dispatch
-module discovery/loading
-MFS primitives
-event transport
-LETC runtime integration
-Window Manager primitives only as a later post-MFS kernel candidate
-```
-
-A capability belongs here only if Drumee requires it to load, isolate, authorize, execute, or host applications.
-
----
-
-## `SYSTEM_MODULE`
-
-A generally useful application or service that should be dynamically loadable but is not required for Drumee to boot.
-
-Potential examples:
-
-```text
-Finder
-Signin
-generic previewers
-generic user utilities
-```
-
-Do not confuse a system application with an OS primitive.
-
-Example:
-
-```text
-MFS engine     → KEEP_OS
-Finder         → SYSTEM_MODULE
-```
-
----
-
-## `TEAM_MODULE`
-
-A capability belonging specifically to the Drumee Team distribution.
-
-Potential examples:
-
-```text
-chat
-meetings
-tasks
-Team collaboration workflows
-```
-
-These modules must still be available in the reconstructed Team distribution.
-
----
-
-## `SDK_OR_ESSENTIALS`
-
-Reusable primitives that belong in an existing or future SDK/core/essentials/toolkit layer.
-
-A key architectural invariant is that **`server-essentials` must remain usable outside Drumee**.
-
-Generic capabilities such as MariaDB connectivity, stored-procedure/query helpers, transactions, pooling, generic error/result handling, logging/configuration helpers, and other server utilities may belong here when they do not require Drumee concepts.
-
-Before using this category, inspect existing Drumee packages.
-
-Do not create new low-level packages merely to produce cleaner diagrams.
-
-Do not introduce Drumee-specific dependencies into `server-essentials` merely to simplify the transition.
-
-Apply the same principle to `ui-essentials`: keep it generic and reusable. Drumee-specific runtime context such as `Host`, `Visitor`, `Organization`, plugin orchestration, MFS semantics, Finder, or Window Manager belongs above `ui-essentials`.
-
----
-
-## `BUSINESS_MODULE`
-
-Business-domain functionality that clearly does not belong to Drumee OS.
-
-Example:
-
-```text
-Copywriting
-```
-
-Future business applications should be installable modules.
-
----
-
-## `CONTROL_PLANE`
-
-Administrative or developer-facing tooling used to manage, inspect, configure or operate a Drumee installation without being required inside the runtime process itself.
-
-Potential examples:
-
-```text
-Drumee CLI
-node administration
-domain administration
-user/drumate administration
-hub administration
-administrative MFS commands
-runtime inspection
-future module lifecycle commands
-```
-
-A `CONTROL_PLANE` component may depend on stable OS/platform contracts.
-
-The OS must never depend on the control-plane implementation.
-
----
-
-## `DEPLOYMENT`
-
-Packaging, installation, self-hosting, distribution generation, system configuration, or release infrastructure.
-
-The current `debian` repository is primarily expected to fall into this category, subject to source analysis.
-
----
-
-## `LEGACY`
-
-Code that appears:
-
-```text
-unused
-duplicated
-obsolete
-superseded
-```
-
-Do not remove it during mapping.
-
-Provide evidence.
-
----
-
-## `INVESTIGATE`
-
-Use this whenever ownership is unclear.
-
-Never force a classification merely to complete a table.
-
----
-
-# 11. Core decision principle
-
-Use the following rule when classification is ambiguous:
-
-> If a capability is required for Drumee to load, isolate, authorize, execute, or host modules, it may belong to the OS.
->
-> If a capability performs useful work for the user but Drumee can boot and host modules without it, it is probably a module.
->
-> If a capability administers a running Drumee installation without being required by the runtime itself, it probably belongs to the Control Plane.
->
-> If a capability installs, packages or deploys Drumee onto machines, it probably belongs to Deployment.
-
-Examples:
-
-```text
-MFS primitive            → KEEP_OS
-Finder application       → SYSTEM_MODULE
-
-Window Manager runtime   → INVESTIGATE initially; possible KEEP_OS only after MFS/resource semantics are established
-Document editor          → SYSTEM_MODULE
-
-ACL engine               → KEEP_OS
-Meeting permissions UI   → TEAM_MODULE
-
-Module loader            → KEEP_OS
-Chat                     → TEAM_MODULE
-
-CLI user management      → CONTROL_PLANE
-CLI MFS administration   → CONTROL_PLANE
-
-Debian package build     → DEPLOYMENT
-Docker self-hosting      → DEPLOYMENT
-```
-
----
-
-# 12. Required dependency mapping
-
-For each major component, record:
-
-```text
-component
-repository
-path
-responsibility
-direct imports
-runtime dependencies
-database dependencies
-MFS dependencies
-ACL dependencies
-frontend dependencies
-CLI dependencies
-build dependencies
-deployment dependencies
-consumers
-classification
-extraction difficulty
-risk
-```
-
-Pay particular attention to hidden coupling:
-
-```text
-hard-coded paths
-dynamic require
-webpack aliases
-global variables
-singleton state
-runtime registration
-implicit schema dependencies
-procedure naming assumptions
-cross-repository imports
-MFS assumptions
-Window Manager assumptions
-shared SCSS dependencies
-filesystem layout assumptions
-build-time generated files
-deployment assumptions
-direct SQL access from administrative tooling
-physical storage assumptions
-factory/provisioning assumptions
-```
-
-Important indirect dependencies must also be documented.
-
----
-
-# 13. Do not reinvent Drumee Core
-
-Before proposing a new primitive, search the existing implementation.
-
-In particular inspect:
-
-```text
-server-core
-server-essentials
-ui-core
-ui-essentials
-ui-toolkit
-ui-styles
-schemas
-cli backend abstractions
-```
-
-Do not create a replacement abstraction where Drumee already has one.
-
-When recommending that code move to a lower-level package, document:
-
-1. current implementation;
-2. existing related primitives;
-3. why ownership is currently wrong;
-4. proposed destination;
-5. compatibility impact;
-6. smallest viable change.
-
-## Transitional backend extraction: `server-runtime`
-
-The project may introduce:
-
-```text
-target/foundation/server-runtime/
-```
-
-as the **transitional extraction workspace for the future minimal Drumee server kernel**.
-
-Its purpose is not to preserve `server-team` as the primary target. Its purpose is to extract, reduce, and stabilize the minimum application-neutral backend required to host independent Drumee modules.
-
-The long-term architectural intent is:
-
-```text
-@drumee/server-essentials
-          ↑
-          │
-server-runtime
+CONTROL PLANE / TOOLING
           │
           ▼
-future minimal Drumee server kernel
+APPLICATIONS / DISTRIBUTIONS
+          │
+          ▼
+MINIMAL DRUMEE OS / SHELL
+          │
+          ▼
+DRUMEE RUNTIME / GENERIC FOUNDATIONS
+          │
+          ▼
+DEPLOYMENT / PACKAGING
 ```
 
-`server-essentials` remains an independent reusable package and must continue to work outside Drumee.
+The control plane may administer Drumee but must not be required for the runtime to boot.
 
-`server-core` is treated as a source of candidate Drumee runtime primitives. It is not assumed to survive unchanged as a final package.
+Deployment installs/configures Drumee but must not leak into the application runtime.
 
-`server-team` is a later migration source.
+Applications consume kernel contracts but must not define them implicitly through Team-specific assumptions.
 
-### Kernel inclusion rule
+---
 
-A capability belongs in the minimal kernel only when it is required to:
+# 7. Team is a migration source, not the first target
 
-- boot Drumee;
-- establish application/runtime context;
-- authorize requests;
-- dispatch module services;
-- discover/load modules;
-- expose stable module lifecycle primitives;
-- provide generic persistence/shard access where required;
-- provide MFS primitives when required by independent applications;
-- host the frontend/runtime shell and managed application windows where applicable.
+The current Team implementation must remain available under `sources/**` as immutable evidence.
 
-Do not move a capability into the kernel merely because Team currently depends on it.
-
-Historical Team policy must not determine the future kernel boundary unless independently justified.
-
-### `server-core` extraction rule
-
-For every candidate area in `sources/server-core`:
+The no-Team kernel must not depend on:
 
 ```text
-inspect current implementation
-→ identify the minimal application-neutral responsibility
-→ extract into server-runtime
-→ test independently
-→ keep Team-specific policy outside
+server-team
+ui-team
+Team billing policy
+Team secure-share policy
+Team service allow/deny lists
+Team chat/conference/task behavior
+Team desktop/application registry
 ```
 
-Do not copy `server-core` wholesale merely to preserve compatibility.
+The intended progression is:
 
-Track provenance for every extracted capability.
+```text
+minimal runtime
+→ hello
+→ intentional authenticated/resource capabilities
+→ MFS where required
+→ marketing
+→ kernel stabilization
+→ Team migration
+```
 
-### `server-essentials` independence invariant
+Do not reproduce every Team-era behavior before new independent applications can run.
 
-No new Drumee-specific dependency may be introduced into `server-essentials`.
+Any later Team incompatibility must be explicit and tested, never silently introduced.
 
-Code that remains in Essentials must not require concepts such as:
+---
+
+# 8. `server-essentials` invariant
+
+`server-essentials` is a generic reusable server package and must remain usable outside Drumee.
+
+Its generic responsibilities may include:
+
+```text
+MariaDB connectivity
+query helpers
+stored procedure helpers
+transactions
+pooling
+Redis/cache
+generic configuration
+logging
+generic errors/results
+```
+
+Do not add Drumee-specific concepts to `server-essentials` merely to simplify kernel extraction.
+
+In particular, it must not become dependent on:
 
 ```text
 hub
@@ -839,87 +317,342 @@ Drumee ACL
 MFS semantics
 module.method dispatch
 plugin discovery
+Team policy
+```
+
+The current imported `server-essentials` implementation is authoritative for new kernel work.
+
+Do not downgrade it to historical Team/Core lockfile versions.
+
+When old runtime code expects older behavior:
+
+```text
+identify exact incompatibility
+→ inspect current Essentials behavior
+→ adapt inside server-runtime
+→ test the adaptation
+→ document it
+```
+
+Do not modify Essentials to emulate legacy Team behavior.
+
+---
+
+# 9. `ui-essentials` invariant
+
+`ui-essentials` must likewise remain a generic frontend foundation.
+
+Do not move Drumee-specific concepts into it merely for convenience.
+
+Drumee-specific concepts such as:
+
+```text
+Host
+Visitor
+Organization
+plugin orchestration
+MFS semantics
+Finder
+Window Manager
 Team application behavior
 ```
 
-unless ownership is explicitly reconsidered.
+belong above generic Essentials unless evidence proves otherwise.
 
-The deciding question is:
+Ownership must be explicit.
 
-> Can this capability remain useful and coherent in a generic Node.js/MariaDB server application that does not run Drumee?
+Do not declare `@drumee/ui-essentials` as a dependency or peer dependency of `ui-runtime` unless the runtime actually consumes it.
 
-The MariaDB API and related generic database primitives are specifically considered valuable standalone capabilities and must remain independently usable.
+Conversely, do not silently copy a generic primitive from `ui-essentials` into `ui-runtime` without documenting why the generic dependency is intentionally avoided.
 
-### Phase 2 `server-essentials` version policy
+Avoid ambiguous double ownership.
 
-The dependency version resolved by the historical Team build does **not** constrain the new minimal kernel. Phase 2 must use the current imported `server-essentials` implementation as the generic lower layer for `server-runtime`; it must not downgrade Essentials merely because `server-team` or `server-core` used an older lockfile resolution.
+---
 
-When an extracted `server-core` or generic-loader symbol assumes an older Essentials behavior, the implementation phase must identify the exact difference, inspect the current Essentials API, adapt at a clearly marked transitional seam in `server-runtime`, and add a focused test. Do not modify baseline sources or add a Team-only backward-compatibility hack to `server-essentials`. Reuse existing generic MariaDB, connection, query/procedure, transaction, pooling, configuration, logging, cache/Redis, error and result primitives instead of copying them into `server-runtime`.
+# 10. CommonJS is authoritative
 
-### Reference application sequence
+Do not migrate the current kernel refactoring to ESM.
 
-Before the first real business application, create exactly one minimal kernel-validation module:
-
-```text
-hello
-```
-
-No additional synthetic application is required before marketing.
-
-The intended sequence is:
+The approved model is:
 
 ```text
-Phase 1     baseline evidence
-Phase 1.5   minimal-kernel boundary stabilization
-Phase 2     extract/iterate server-runtime and ui-runtime against current Essentials
-Phase 3     validate backend/frontend plugin contracts with hello
-Phase 4     extract intentional minimal MFS/context capabilities
-Phase 5     build marketing as the first real application
-Phase 6     stabilize the kernel from real application needs
-Phase 7+    extract Finder / Window Manager only after MFS semantics exist, then migrate Team capabilities one at a time
+server-runtime            CommonJS
+ui-runtime                CommonJS
+frontend modules/plugins  CommonJS + Webpack
 ```
 
-### `hello` module
-
-`hello` is a validation module, not a business application.
-
-It must remain intentionally small.
-
-At minimum it should prove:
+Do not introduce during the current kernel phases:
 
 ```text
-backend module discovery
-→ backend ACL/descriptor registration
-→ lazy backend service loading
-→ module.method dispatch
-→ Kind.loadPlugin({name, kind})
-→ bootstrap.plugin(name)
-→ frontend index/entry resolution
-→ loadJS(path)
-→ Kind.registerAddons(...)
-→ requested kind rendered in a minimal host
+"type": "module"
+native browser import() as plugin loader
+ESM-only package boundaries
+dual ESM/CommonJS packaging
+an ESM migration of historical modules
 ```
 
-Representative backend services may include:
+ESM may be reconsidered only after the kernel and real applications have stabilized.
+
+---
+
+# 11. Webpack remains intentional frontend infrastructure
+
+Webpack is currently part of the Drumee frontend contract, not incidental boilerplate.
+
+It provides behavior used heavily by Drumee:
 
 ```text
-hello.ping
-hello.echo
+CommonJS module resolution
+SCSS/CSS processing
+chainable/factorized style imports
+assets
+aliases/shortcuts
+dynamic frontend bundles
+build hashing
+build metadata generation
 ```
 
-with behavior conceptually similar to:
+Do not replace Webpack during minimal-kernel work with:
 
 ```text
-hello.ping
-→ { status: "ok" }
-
-hello.echo
-→ returns supplied payload
+native ESM loading
+a new StyleRegistry
+runtime SCSS dependency resolution
+a new asset dependency protocol
 ```
 
-The frontend should be a minimal LETC widget/application rendered in a simple host container. `hello` must not require Finder, MFS presentation, Desktop, or Window Manager.
+Preserve the current Widget/skin model and existing SCSS composition behavior.
 
-Its Phase 3 service descriptor deliberately uses the current database-free ACL fast path:
+---
+
+# 12. `ui-build` owns reusable build-time behavior
+
+Reusable per-application Webpack boilerplate belongs in:
+
+```text
+target/tooling/ui-build/
+```
+
+not in `ui-runtime`.
+
+The ownership model is:
+
+```text
+ui-runtime
+    = browser/runtime behavior
+
+ui-build
+    = Webpack configuration
+      + frontend artifact production
+      + build metadata/hash production
+
+ui-dev-tools
+    = developer workflow commands where applicable
+```
+
+`ui-build` should factor only proven shared behavior.
+
+Typical candidates:
+
+```text
+Webpack rules/loaders
+SCSS/CSS/PostCSS
+asset handling
+resolve extensions
+generic build plugins
+minimal Drumee aliases
+build hash/metadata production
+```
+
+Do not make the entire historical alias/shortcut surface a kernel dependency.
+
+Classify aliases as:
+
+```text
+generic
+minimal Drumee
+legacy compatibility
+application-specific
+```
+
+Legacy aliases should be opt-in where possible.
+
+Do not migrate all historical applications to `ui-build` merely to prove it works.
+
+---
+
+# 13. Frontend build metadata is a runtime contract
+
+Historical `webpack/sync.js` contains two distinct responsibilities.
+
+## Required platform behavior
+
+The build-time portion that derives frontend metadata from the Webpack compilation is part of the Drumee runtime contract.
+
+Conceptually:
+
+```text
+Webpack compilation
+→ stats.hash
+→ frontend build metadata
+→ server RuntimeEnv
+→ app.hash
+→ server bootstrap/template model
+→ appHash
+→ frontend runtime
+```
+
+Fields may include, depending on actual consumers:
+
+```text
+hash
+entry
+version
+rev/head
+timestamp
+```
+
+Do not change their observable semantics without characterization tests.
+
+This required manifest/hash generation belongs to `ui-build`.
+
+## Optional workflow behavior
+
+Mechanisms such as:
+
+```text
+UI_RUNTIME_HOST
+rsync
+stage copying
+development synchronization
+deployment upload
+```
+
+are not kernel runtime responsibilities.
+
+Keep them separate and optional.
+
+---
+
+# 14. Build metadata and application manifest are different contracts
+
+Do not conflate:
+
+```text
+BUILD METADATA
+Webpack output/hash/entry/version/revision information
+```
+
+with:
+
+```text
+APPLICATION MANIFEST
+application/runtime metadata independently loaded by RuntimeEnv
+```
+
+Before changing either, document:
+
+```text
+producer
+path
+fields
+consumer
+semantic purpose
+cache behavior
+```
+
+Do not invent a merged manifest format prematurely.
+
+---
+
+# 15. Build producer and runtime consumer ownership
+
+`ui-build` produces frontend build metadata.
+
+Server runtime code consumes frontend build metadata.
+
+Do not put a second server-side RuntimeEnv implementation into the production `ui-build` library.
+
+A build/runtime contract emulator may exist only as a clearly marked test fixture or characterization helper.
+
+If RuntimeEnv behavior is extracted for production use, its owning implementation belongs on the server/runtime side, not inside frontend build tooling.
+
+Avoid two independently evolving implementations of:
+
+```text
+metadata → app.hash → bundle names/appHash
+```
+
+---
+
+# 16. `server-runtime`
+
+`target/foundation/server-runtime/` is the transitional backend extraction workspace for the minimal Drumee server kernel.
+
+It is not a final public package API.
+
+It should contain Drumee runtime behavior not already owned by generic Essentials.
+
+Initial kernel responsibilities include only what is justified by module hosting:
+
+```text
+request/runtime context
+session context
+ACL/service descriptors
+module registry
+module.method parsing
+public/private implementation selection
+permission descriptor resolution
+lazy WorkerClass loading
+WorkerClass cache
+generic authorization flow
+service method execution
+frontend plugin resolver (`bootstrap.plugin`)
+```
+
+Do not copy `server-core` wholesale.
+
+Do not copy `server-team` router policy wholesale.
+
+---
+
+# 17. Backend module/service contract
+
+Preserve the current logical backend mechanism unless a later phase explicitly redesigns it.
+
+Discovery:
+
+```text
+module/plugin roots
+→ acl/*.json
+→ service descriptors
+→ registry
+```
+
+Execution:
+
+```text
+module.method
+→ module lookup
+→ service descriptor
+→ public/private implementation
+→ permission descriptor
+→ lazy require()
+→ WorkerClass cache
+→ worker instance
+→ authorization
+→ worker method
+```
+
+Do not create a universal frontend/backend descriptor merely for architectural neatness.
+
+Backend ACL descriptors and frontend `index.json` remain distinct contracts for now.
+
+---
+
+# 18. ACL fast path and schema deferral
+
+The first no-Team vertical slice intentionally uses:
 
 ```json
 {
@@ -930,1762 +663,755 @@ Its Phase 3 service descriptor deliberately uses the current database-free ACL f
 }
 ```
 
-Therefore the first no-Team kernel slice must not introduce `acl_check.sql`, `user_permission`, `user_expiry`, MFS schemas, or factory provisioning merely to execute ACL/dispatch. Database-backed ACL is deferred until an authenticated or resource-aware capability requires it.
+`permission.fast_check = "public-api"` is an existing database-free ACL path and must not be documented as a newly invented compatibility behavior.
 
-Do not add MFS, AI, campaign logic, complex schemas, workflows, chat, tasks, meetings, or Team-specific capabilities to `hello`.
+For `hello`, this allows the real service/ACL/dispatch pipeline to run without introducing DB-backed ACL.
 
-The governing rule is:
-
-> `hello` validates the kernel; `marketing` drives the next useful kernel capabilities.
-
-### Marketing as first real application
-
-After `hello` passes, `marketing` becomes the first real application built against the new kernel.
-
-Marketing may introduce real requirements such as:
+Do not introduce solely for `hello`:
 
 ```text
-private hub usage
-MFS
-hub-local MariaDB schemas
-ACL
-dynamic services
-LETC frontend
-AI integration
-Window Manager only if/after the MFS-based shell contract has been intentionally added
+acl_check.sql
+user_permission
+user_expiry
+MFS ACL SQL
+MFS schemas
+factory provisioning
+hub provisioning
 ```
 
-For every new requirement, decide deliberately whether it belongs in:
+Database-backed ACL belongs to the first authenticated/resource-aware iteration that genuinely needs it.
 
-```text
-server-essentials
-minimal kernel
-system module
-marketing module
-```
-
-Do not automatically promote application needs into the kernel.
-
-### Compatibility policy
-
-The Phase 1 baseline harness remains useful as evidence and regression reference.
-
-It is not an absolute requirement to reproduce every Team-era behavior.
-
-Preserve the behaviors intentionally selected as kernel contracts.
-
-Any deliberate incompatibility with Team-era behavior must be documented.
-
-### Final extraction expectation
-
-The current `server-runtime` name/package is transitional.
-
-It may later disappear, be renamed, or become the final server-kernel package only by explicit architectural decision.
-
-What must survive is:
-
-```text
-independent server-essentials boundary
-+
-validated minimal Drumee kernel boundary
-```
-
-Team migration must target that validated kernel rather than forcing the kernel back toward the old Team architecture.
+Extract SQL dependency closures only when required by an approved capability.
 
 ---
 
-## Transitional frontend extraction: `ui-runtime`
+# 19. `ui-runtime`
 
-The project may introduce:
+`target/foundation/ui-runtime/` is the transitional frontend kernel extraction workspace.
 
-```text
-target/foundation/ui-runtime/
-```
+It is not a final public package API.
 
-as the **transitional extraction workspace for the future minimal Drumee frontend kernel**.
+The first runtime may contain only the minimum application-neutral LETC behavior required to host independent widgets/modules.
 
-It plays the frontend role symmetric to `server-runtime`:
+Candidate responsibilities include:
 
 ```text
-@drumee/server-essentials          @drumee/ui-essentials
-          ↑                                  ↑
-          │                                  │
-   server-runtime                       ui-runtime
-          │                                  │
-          └──────── minimal Drumee ──────────┘
-                        kernel
-```
-
-`ui-essentials` remains the generic lower-level frontend package.
-
-`ui-core` is treated as a source of candidate frontend runtime primitives. It is **not** assumed to survive unchanged as the final frontend kernel because it currently contains responsibilities beyond a minimal LETC runtime, including MFS-related built-in kinds and other higher-level Drumee concepts.
-
-### Initial `ui-runtime` inclusion rule
-
-The initial frontend kernel should contain only capabilities required to:
-
-- initialize the minimal Drumee frontend context;
-- execute LETC widgets;
-- maintain the Kind/addon registry;
-- dynamically resolve and load frontend plugins;
-- perform service calls to the backend;
-- establish the Drumee identity/ACL context needed by applications.
-
-The following current concepts are considered kernel candidates because they participate in the frontend/backend ACL and runtime context:
-
-```text
+LETC initialization
+minimal widget/render host
+Kind registry
+Kind.exists
+Kind.get
+Kind.register
+Kind.loadPlugin
+Addons registry
+Kind.registerAddons
+addons:registered handshake
+loadJS
+service transport
 Host
 Visitor
 Organization
-```
-
-Do not remove these merely because they look application-specific. They are required to maintain the client-side Drumee context corresponding to backend authorization semantics.
-
-The backend remains the security authority. Frontend ACL/context objects must never be treated as sufficient authorization by themselves.
-
-### Initial exclusions from `ui-runtime`
-
-Do not initially include higher-level MFS presentation or desktop behavior such as:
-
-```text
-DrumeeMFS presentation/workflow logic
-media_folder
-media_document
-media_thread
-Finder
-Window Manager
-Desktop
-file/application associations
-Team seeds
-Team routes
-```
-
-Generic MFS client primitives may later enter the kernel only after the backend MFS boundary has been intentionally extracted and validated.
-
-Window Manager extraction must not precede the backend MFS/context capabilities that give managed resources and applications their semantics.
-
-### `ui-core` extraction rule
-
-For every candidate area in `sources/ui-core`:
-
-```text
-inspect current implementation
-→ identify minimal application-neutral responsibility
-→ extract into ui-runtime
-→ test independently
-→ leave MFS presentation / desktop / Team behavior outside
+minimal frontend identity/ACL context
 ```
 
 Do not copy `ui-core` wholesale.
 
-Track provenance for every extracted capability.
-
 ---
 
-## Existing plugin contracts to preserve during initial extraction
+# 20. Preserve the frontend plugin handshake
 
-The current Drumee implementation already contains useful dynamic-plugin mechanisms on both backend and frontend.
-
-The first kernel extraction must **preserve and simplify these existing contracts before attempting to unify or redesign them**.
-
-Do not invent a new plugin system while extracting the minimal kernel.
-
-### Backend plugin contract
-
-The current backend mechanism is conceptually:
-
-```text
-startup
-  ↓
-plugin roots / ACL directories
-  ↓
-acl/*.json
-  ↓
-module/service descriptor registration
-  ↓
-module registry
-
-request: module.method
-  ↓
-resolve service descriptor
-  ↓
-choose public/private implementation from session context
-  ↓
-lazy require(service implementation)
-  ↓
-Worker cache
-  ↓
-ACL / permission evaluation
-  ↓
-GRANTED
-  ↓
-worker.method()
-```
-
-The generic responsibilities to extract from the current Team router into `server-runtime` include, where confirmed by source:
-
-```text
-module registry
-plugin ACL/descriptor discovery
-module.method parsing
-service descriptor resolution
-public/private implementation resolution
-permission descriptor resolution
-lazy Worker loading
-Worker cache
-post-authorization dispatch
-```
-
-Do **not** extract Team-specific router policy with this mechanism.
-
-Examples of policy that must remain outside the generic dispatcher include product-specific secure-share restrictions, billing/over-limit rules, and service-specific Team allow/deny lists.
-
-The current backend ACL JSON is both authorization metadata and an execution descriptor. Preserve that behavior for the first extraction unless a later approved module-contract phase replaces it.
-
-### Frontend plugin contract — two-stage resolution
-
-Frontend plugin loading is a two-stage contract shared between `ui-core` and the backend bootstrap service.
-
-#### Stage 1 — frontend request and dynamic load
-
-The canonical frontend primitive is the existing:
+The approved high-level contract remains:
 
 ```text
 Kind.loadPlugin({ name, kind })
+→ Kind.exists(kind)
+→ bootstrap.plugin(name)
+→ backend resolves frontend index.json
+→ backend returns { path }
+→ loadJS(path)
+→ CommonJS/Webpack bundle executes
+→ Kind.registerAddons(...)
+→ addons:registered
+→ Kind.get(kind)
 ```
 
-Its minimal behavior to preserve is:
+Do not replace `loadJS` with native ESM import during current phases.
+
+Do not invent a parallel plugin registry.
+
+---
+
+# 21. LETC and Widget semantics must remain real
+
+A Drumee frontend validation must exercise the actual Widget/LETC model, not merely a synthetic JavaScript function registry.
+
+Drumee widgets are composed through:
 
 ```text
-kind already registered?
-  ├── yes → return it
-  └── no
-       ↓
-call bootstrap.plugin(name)
-       ↓
-receive { path }
-       ↓
-loadJS(path)
-       ↓
-wait for addon registration
-       ↓
-Kind.get(kind)
+skin
+skeleton
+brain
+kind
 ```
 
-The frontend must resolve plugins by **logical name**, not by knowing installation paths directly.
+and styles are extensively composed through the existing SCSS/Webpack pipeline.
 
-`Kind.loadPlugin()`, the Kind/addon registry, dynamic JS loading, and addon registration are therefore first-class `ui-runtime` candidates.
+A simple helper equivalent to:
 
-#### Stage 2 — backend bundle resolution
-
-The backend service equivalent to the current:
-
-```text
-bootstrap.plugin
+```js
+Widget(props)
 ```
 
-is a first-class `server-runtime` candidate.
+may be acceptable as a Phase 2 test seam, but it is **not sufficient evidence** that the future frontend kernel can host a real Drumee widget.
 
-Its generic responsibility is:
+Phase 3 `hello` must render a genuine minimal LETC widget/skeleton through the extracted runtime.
+
+Do not introduce Finder, Desktop, MFS presentation or Window Manager merely to achieve this.
+
+---
+
+# 22. Host / Visitor / Organization
+
+`Host`, `Visitor`, and `Organization` are kernel-level frontend candidates because they participate in frontend/backend identity and ACL context.
+
+Do not discard them merely because they currently live next to application code.
+
+When extracting them:
 
 ```text
-logical plugin name
-  ↓
-locate installed frontend plugin descriptor/index.json
-  ↓
-read entry
-  ↓
-resolve public bundle URL/path
-  ↓
-return { path }
+retain identity/context behavior
+retain ACL-related context
+remove Team-specific behavior
+avoid MFS/UI application transitive dependencies
 ```
 
-Preserve the current distinction between logical plugin identity and physical/public bundle location.
+The backend remains the security authority.
 
-Do not make frontend code depend on filesystem layout.
+Frontend state must never be treated as sufficient authorization.
 
-#### Registration handshake
+---
 
-Loading the JavaScript bundle is not the end of the frontend plugin lifecycle.
+# 23. Builtin kinds
 
-The loaded bundle must register its kinds/addons through the existing registration mechanism, conceptually:
+Do not automatically carry every `ui-core` builtin kind into `ui-runtime`.
+
+A builtin belongs in the kernel only if generic LETC/module hosting requires it.
+
+Keep out of the first runtime unless individually justified:
 
 ```text
-loadJS(path)
-  ↓
-execute plugin bundle
-  ↓
-Kind.registerAddons(...)
-  ↓
-addons:registered
-  ↓
-Kind.loadPlugin() resolves requested kind
+media_folder
+media_document
+media_thread
+media_preview
+DrumeeMFS
+Finder
+Desktop
+Window Manager
+file/application associations
+Team seeds
+Team routes
+Team application widgets
 ```
 
-This registration handshake is part of the minimal frontend plugin contract and must be covered by tests.
+Prove necessity rather than preserving co-location.
 
-### Do not unify backend and frontend descriptors prematurely
+---
 
-Today backend and frontend plugins use different existing descriptors:
+# 24. `setup-infra` is the infrastructure contract source
+
+`sources/setup-infra` is the pinned reference for the current Drumee host/infrastructure contract.
+
+It is immutable.
+
+Its role is:
 
 ```text
-backend:  acl/*.json
-frontend: index.json + bundle entry
+setup-infra = source of Nginx/host configuration semantics
 ```
 
-For the first minimal kernel, preserve those two proven mechanisms.
+It is not the application kernel.
 
-Do not introduce a universal manifest merely for architectural symmetry.
+For kernel integration, derive the minimum real Drumee HTTP/static/plugin contract from the pinned source.
 
-A normalized/common descriptor may be considered later only after the `hello` vertical slice works end-to-end and the concrete requirements are understood.
+Do not invent an unrelated simplified Nginx architecture.
 
-### Kernel plugin symmetry
-
-The minimal vertical path to validate is:
+Do not pull unrelated infrastructure into the kernel:
 
 ```text
-                         hello
-                       /       \
-                      /         \
-              frontend           backend
-                  │                 │
-             ui-runtime       server-runtime
-                  │                 │
-          ui-essentials     server-essentials
-                  │                 │
-                  └───── HTTP ──────┘
-```
-
-with two key runtime contracts:
-
-```text
-backend service call: module.method
-frontend plugin load: bootstrap.plugin → { path }
+DNS/BIND
+mail/Postfix/DKIM
+Jitsi
+Prosody
+Coturn
+other unrelated host services
 ```
 
 ---
 
-# 14. Analyze dynamic-module reference implementations
+# 25. `debian` is the historical deployment baseline
 
-Use at minimum:
+`sources/debian` represents current packaging/self-hosting behavior.
 
-```text
-loby
-signin
-```
-
-as architectural evidence.
-
-Also inspect other sandbox or plugin examples if present.
-
-Document how current modules handle:
+Its historical images/packages are evidence for:
 
 ```text
-identity
-package registration
-backend services
-ACL
-schema installation
-frontend widgets
-kinds
-Window Manager integration
-build output
-runtime discovery
-versioning
-installation
-upgrade
-enable/disable
+existing self-hosting behavior
+packaging behavior
+later Team compatibility
 ```
 
-Do not assume these implementations are perfect.
+They are not the canonical host for the new kernel.
 
-For each pattern distinguish:
+Do not patch historical Team containers to inject new `server-runtime` or `ui-runtime`.
 
-```text
-existing behavior
-good candidate for standardization
-historical inconsistency
-missing capability
-```
+Do not force new runtime layout to match historical Debian packages.
+
+New `.deb` packaging is a later deployment concern unless explicitly requested.
 
 ---
 
-# 15. `schemas` requires explicit ownership analysis
+# 26. Canonical kernel integration environment
 
-The future minimal schemas layer must contain only data structures and procedures required to operate Drumee itself.
-
-Business and Team-specific schemas should ultimately belong to their modules.
-
-Analyze at minimum:
-
-```text
-common
-yellow_page
-hub
-drumate
-templates
-patches
-provisioning
-application-specific schemas
-```
-
-For each schema/procedure family determine:
-
-```text
-what uses it
-which database class owns it
-whether provisioning depends on it
-whether new hub creation depends on it
-whether new drumate creation depends on it
-whether Team depends on it
-whether CLI depends on it
-whether self-hosting depends on it
-whether it is an OS primitive
-whether it can become module-owned
-```
-
-Do not modify `common` during mapping.
-
-Do not assume existing schema placement is correct simply because it is old.
-
----
-
-# 16. Provisioning requires explicit mapping
-
-Because both current administrative tooling and self-hosting may depend on provisioning behavior, map the complete lifecycle for:
-
-```text
-new drumate
-new hub
-factory warm pool
-database assignment
-MFS allocation
-yp registration
-entity initialization
-deletion/purge
-```
-
-For every step identify:
-
-```text
-CLI responsibility
-server/runtime responsibility
-schema/procedure responsibility
-setup-schemas responsibility
-deployment responsibility
-physical storage responsibility
-```
-
-Do not redesign provisioning during mapping.
-
-First document the existing behavior.
-
----
-
-# 17. MFS requires explicit cross-layer mapping
-
-MFS is a central OS primitive and is currently consumed by multiple layers.
-
-Map at minimum:
-
-```text
-MFS SQL procedures
-MFS service APIs
-physical storage layout
-MFS node identity
-permissions/ACL
-Finder/UI usage
-Window Manager drag-and-drop
-CLI import/export
-CLI destructive operations
-cross-hub operations
-```
-
-The mapping must distinguish:
-
-```text
-MFS engine / semantic primitives
-MFS storage implementation
-MFS user-facing applications
-MFS control-plane operations
-```
-
-Do not classify Finder, CLI MFS commands and the MFS engine as the same architectural component.
-
----
-
-# 18. Target module contract
-
-The mapping phase must propose a normalized Drumee module contract.
-
-Do not implement it yet.
-
-Investigate whether the standard contract should support:
-
-```text
-identity
-name
-version
-compatibility
-
-backend
-services
-ACL
-schemas
-
-frontend
-widgets
-kinds
-windows
-locales
-assets
-
-lifecycle
-install
-upgrade
-enable
-disable
-remove
-```
-
-Prefer extension and normalization of existing Drumee mechanisms over replacement.
-
-The module contract must eventually be consumable by:
-
-```text
-runtime module loader
-schema installer/provisioner
-distribution builder
-control plane / CLI
-deployment tooling
-```
-
-Do not assume all consumers need the same implementation API.
-
-Identify the smallest stable shared contract.
-
----
-
-# 19. CLI and future module lifecycle
-
-The current CLI source must be mapped as it exists today.
-
-Do not claim plugin/module lifecycle support unless proven.
-
-However, the mapping must answer this architectural question:
-
-> Should the Drumee CLI become the administrative interface for module install / enable / disable / upgrade / remove once the module contract is standardized?
-
-Classify the answer initially as:
-
-```text
-INVESTIGATE
-```
-
-The analysis should determine whether existing CLI architecture can support this cleanly.
-
-Specifically inspect whether its current:
-
-```text
-command architecture
-backend abstraction
-API transport
-DB transport
-configuration
-error handling
-output formatting
-```
-
-can support module lifecycle without introducing Team-specific knowledge.
-
----
-
-# 20. Distribution model
-
-The target architecture should distinguish:
-
-```text
-runtime
-control plane
-modules
-distribution
-deployment
-```
-
-Example conceptual model:
-
-```text
-                 Drumee CLI
-                     │
-                     ▼
-             Drumee Minimal OS
-                     │
-        ┌────────────┼─────────────┐
-        │            │             │
-      Signin       Finder        Team modules
-                                   │
-                                   ▼
-                           Drumee Team Distribution
-                                   │
-                                   ▼
-                           Self-hosting deployment
-```
-
-Do not hard-code this exact final module list before mapping the code.
-
-The architecture document must derive the real boundaries from source analysis.
-
----
-
-# 21. Implementation phase rules
-
-These rules apply only after the mapping phase has been explicitly approved.
-
-During implementation:
-
-## Read from
-
-```text
-sources/**
-```
-
-## Write to
-
-```text
-target/**
-tests/**
-docs/**
-```
-
-## Never modify
-
-```text
-sources/**
-```
-
-New architecture must be built beside the baseline.
-
-Do not "move" code out of `sources/`.
-
-Instead:
-
-```text
-study source
-→ reproduce/extract under target
-→ test compatibility
-```
-
-## Minimal-kernel boundary stabilization — Phase 1.5
-
-Before extraction, complete the documentation and focused contract-test design needed to distinguish the smallest application-neutral backend/frontend seams. Phase 1.5 does **not** create `target/foundation/server-runtime/`, `target/foundation/ui-runtime/`, or `hello`; those are Phase 2/3 implementation work after explicit approval.
-
-Phase 1.5 must establish the following direction from source:
-
-```text
-sources/server-core                 sources/ui-core
-        +                                +
-independent server-essentials      independent ui-essentials
-        ↓                                ↓
-server-runtime                      ui-runtime
-        └──────────────┬─────────────────┘
-                       ↓
-                  minimal kernel
-                       ↓
-                     hello
-```
-
-Phase 1.5 must not:
-
-- alter `sources/**`;
-- create files under `target/**` or start `hello`;
-- absorb `server-team` or `ui-team`;
-- use Team compatibility as the primary design constraint;
-- make `server-essentials` Drumee-dependent;
-- copy all of `server-core` without classification;
-- copy all of `ui-core` without classification;
-- introduce MFS presentation, Finder, Desktop, or Window Manager merely to make `hello` work;
-- redesign the backend/frontend plugin contracts before the existing mechanisms have been extracted and tested;
-- begin unrelated Team module extraction;
-- turn `server-runtime` or `ui-runtime` into permanent public APIs by accident.
-
-Phase 1.5 is complete only when:
-
-- [ ] the first minimal backend and frontend kernel boundaries are documented;
-- [ ] current `server-essentials` is identified as the Phase 2 generic dependency, with historical-version differences documented;
-- [ ] backend ACL descriptor/lazy-loading and frontend logical-plugin/addon handshakes have focused test plans;
-- [ ] MFS-specific built-in kinds, Team/desktop policy and provisioning are explicitly outside the first no-Team slice;
-- [ ] the transitional nature of both runtime workspaces is documented.
-
-## First runtime extraction — Phase 2
-
-After Phase 1.5 receives explicit approval, establish both transitional extraction workspaces:
-
-```text
-target/foundation/server-runtime/
-target/foundation/ui-runtime/
-```
-
-Use the current `server-essentials` implementation beneath `server-runtime`, not the historical Team lockfile resolution. The Phase 2 extraction must retain the initial backend ACL/descriptor/lazy-worker and frontend `index.json`/addon contracts, without Team policy, MFS presentation, Finder, Desktop or Window Manager.
-
-The canonical Phase 2/3 integration host is separate from historical Team containers:
+The new kernel is validated in a separate disposable environment:
 
 ```text
 clean Debian runtime
-  + configuration generated from pinned sources/setup-infra
-  + server-runtime
-  + ui-runtime
-```
-
-It is disposable and generates all configuration under `.tmp/test-env/kernel/` (or inside an equivalent disposable container root), never the host `/etc`. `sources/debian` images/packages remain baseline, self-hosting and later Team-compatibility evidence; do not patch `server-pod` or `ui-pod` to host the new kernel. MariaDB or Redis may be reused only as infrastructure services when actually required, without importing Team code. The first ACL/dispatch path uses the documented anonymous `public-api` fast check, so Phase 2 does not introduce schemas, MFS or provisioning merely to make it run.
-
-Phase 2 must identify and validate the minimum pinned-`setup-infra` contract for:
-
-```text
-client → Nginx → service route → server-runtime
-client → Nginx → frontend plugin/static route → ui-runtime
-```
-
-`hello` remains Phase 3; a temporary route fixture in Phase 2 must be test-only rather than an early `hello` implementation.
-
-Phase 2 is complete only when:
-
-- [ ] `server-runtime` and `ui-runtime` build reproducibly;
-- [ ] focused current-Essentials tests cover any adaptation from historical `server-core` assumptions;
-- [ ] ownership/provenance of every extracted `server-core` and `ui-core` area remains traceable;
-- [ ] no Drumee-specific dependency has leaked into `server-essentials`;
-- [ ] Team-specific backend policies remain outside `server-runtime` and MFS/application kinds remain outside the first `ui-runtime` boundary.
-- [ ] `sources/setup-infra` is pinned in `SOURCE_MANIFEST.md` and remains immutable;
-- [ ] a reproducible, disposable clean-Debian kernel integration environment uses configuration generated from that pinned source outside `sources/**` and host `/etc`;
-- [ ] `nginx -t` validates the generated configuration;
-- [ ] `server-runtime` starts without `server-team` and `ui-runtime` artifacts are served without `ui-team`;
-- [ ] a required service route and a frontend plugin/static route reach the new runtime boundaries;
-- [ ] no historical Debian Team image is the new-kernel host, and schemas/MFS were not introduced solely for the initial ACL path.
-
-`hello` is Phase 3 proof, not a Phase 2 completion criterion.
-
----
-
-# 22. Target repository areas
-
-The current hypothesis is:
-
-```text
-target/
-├── foundation/
-│   ├── server-runtime/       # transitional backend extraction workspace
-│   └── ui-runtime/           # transitional frontend extraction workspace
-│
-├── os/
-│   ├── server/
-│   ├── ui/
-│   └── schemas/
-│
-├── control-plane/
-│   └── cli/
-│
-├── modules/
-│   └── ...
-│
-├── distributions/
-│   └── team/
-│
-└── deployment/
-    └── self-hosting/
-```
-
-This structure may be refined after mapping.
-
-Agents must not create final repository boundaries prematurely.
-
-The monorepo exists precisely so cross-cutting refactors can remain atomic while boundaries are still evolving.
-
----
-
-# 23. Avoid big-bang refactoring
-
-The migration must be incremental.
-
-For a selected capability after the no-Team kernel has been established, the preferred sequence is:
-
-```text
-identify boundary
-→ add compatibility tests
-→ extract one capability
-→ integrate it dynamically
-→ reconstruct selected Team behavior where applicable
-→ verify compatibility
-→ proceed to next capability
-```
-
-Avoid:
-
-```text
-rewrite ui-team
-rewrite server-team
-rewrite schemas
-rewrite CLI
-rewrite deployment
-→ test at the end
-```
-
-The target tree must remain testable throughout implementation.
-
----
-
-# 24. Compatibility requirement for every extraction
-
-Every extraction proposal must answer:
-
-## Before
-
-Where does the capability live today?
-
-## Target
-
-Where should it live?
-
-## Dependencies
-
-What must move with it?
-
-## Compatibility
-
-For a Team capability or a selected later Team contract, how does Drumee Team continue to use it? The isolated Phase 2/3 kernel must instead explain why it has no Team dependency.
-
-## Control Plane
-
-Does the CLI currently depend on this capability?
-
-If yes, how will that dependency remain compatible?
-
-## Deployment
-
-Does self-hosting depend on this capability?
-
-If yes, how will packaging/install behavior remain compatible?
-
-## Incremental migration
-
-Can old and new implementations coexist temporarily?
-
-## Tests
-
-How will functional equivalence be proven?
-
-## Rollback
-
-How can the extraction be reverted?
-
-No extraction is considered planned without these answers.
-
----
-
-# 25. Reconstruction of Drumee Team
-
-A later validation goal of the monorepo is to enable this test:
-
-```text
-target/os
 +
-target/modules
+Node.js
 +
-target/distributions/team
-        ↓
-Drumee Team
+Nginx
++
+configuration derived/generated from pinned setup-infra
++
+server-runtime
++
+ui-runtime build artifacts
 ```
 
-The reconstructed distribution must eventually match the baseline behavior represented by:
+Infrastructure-only services such as Redis or MariaDB may be reused only when the tested capability genuinely needs them.
+
+Do not introduce MariaDB simply because historical Drumee uses it.
+
+Generated configuration belongs outside `sources/**`, preferably under:
 
 ```text
-sources/ui-team
-sources/server-team
-sources/schemas
+.tmp/test-env/kernel/
 ```
 
-Compatibility tests should progressively compare both environments.
+Never mutate the production host `/etc`.
 
-This reconstruction is a later proof that modularization has not damaged Drumee Team. It is not a prerequisite for validating the isolated no-Team kernel with `hello`.
+If a setup tool normally writes system paths, execute it inside a disposable container/root or safely redirect output.
 
 ---
 
-# 26. Control-plane compatibility
+# 27. Known historical provisioning defect
 
-The refactoring must also preserve administrative capabilities.
+The historical Debian/provisioning path has a known failure involving search-projection rebuilding inside an active transaction and subsequent factory/user provisioning failure.
 
-Conceptually:
+Treat this as historical baseline evidence.
 
-```text
-sources/cli
-   ↓
-CURRENT ADMINISTRATION MODEL
-```
+It must not force the no-Team kernel to import schemas/MFS prematurely.
 
-must eventually remain viable against:
-
-```text
-target/os
-+
-target/modules
-+
-target/control-plane/cli
-```
-
-The final control plane should not require Team-specific internal knowledge.
-
-Administrative contracts should become explicit and stable.
-
-Do not force this migration before the current CLI dependencies are mapped.
+Do not claim Team/self-hosting parity until that separate historical path is corrected and validated.
 
 ---
 
-# 27. Self-hosting compatibility
+# 28. Phase 3 — `hello`
 
-The refactoring must preserve both current self-hosting channels where applicable.
-
-Map and later test:
+When Phase 3 is explicitly authorized, create exactly one synthetic validation module:
 
 ```text
-Docker / container deployment
-native Debian deployment
+target/modules/hello/
 ```
 
-The deployment layer must eventually consume stable distribution/runtime/module artifacts rather than rely on accidental repository layout.
+Do not create additional synthetic applications before the first real application.
 
-Do not change current self-hosting behavior during mapping.
+`hello` must remain intentionally small.
+
+Its purpose is to prove a complete vertical Drumee slice.
+
+## Backend
+
+At minimum:
+
+```text
+hello ACL descriptor
+→ anonymous/public-api fast path
+→ hello.ping
+```
+
+`hello.echo` is optional if useful.
+
+The service must be discovered and executed through the extracted real module/ACL/Worker dispatch path.
+
+Do not bypass the dispatcher with a direct test HTTP handler.
+
+## Frontend
+
+The frontend must prove:
+
+```text
+Kind.loadPlugin("hello")
+→ bootstrap.plugin
+→ frontend index.json/entry resolution
+→ loadJS(bundle)
+→ Kind.registerAddons
+→ requested kind resolution
+→ genuine minimal LETC widget render
+```
+
+The rendered `hello` must be a real minimal Drumee Widget/LETC artifact, not merely a plain function called by a synthetic renderer.
+
+## Build
+
+`hello` should be the first synthetic application/module consumer of shared `ui-build`.
+
+It must use the approved CommonJS/Webpack pipeline.
+
+The build should produce the current required frontend build metadata/hash contract.
+
+## Infrastructure
+
+The end-to-end slice should run behind the kernel integration Nginx/setup-infra contract.
+
+## Explicitly excluded from `hello`
+
+```text
+database-backed ACL
+schemas introduced solely for ACL
+MFS
+Finder
+Desktop
+Window Manager
+marketing
+AI
+Team behavior
+complex provisioning
+```
+
+The governing rule is:
+
+> **`hello` validates the kernel; `marketing` drives the next useful kernel capabilities.**
 
 ---
 
-# 28. Required mapping deliverables
+# 29. Phase 4 — authenticated/resource capabilities and MFS
 
-Create:
+Do not extract MFS merely because historical code expects it.
+
+After `hello`, introduce only the resource/identity/storage capabilities demanded by an approved real use case.
+
+When DB-backed ACL becomes necessary:
+
+```text
+identify direct SQL primitive
+→ trace complete transitive SQL dependency closure
+→ classify each object
+→ extract only the required closure
+→ preserve install ordering/database ownership
+→ test independently
+```
+
+Do not copy schema directories wholesale.
+
+Distinguish:
+
+```text
+service/session authorization
+resource/node authorization
+MFS semantics
+provisioning semantics
+```
+
+Do not make one imply all the others automatically.
+
+Window Manager is not an initial kernel primitive; reconsider it only after intentional MFS/resource semantics exist.
+
+Finder remains a system application, not the MFS engine.
+
+---
+
+# 30. Marketing is the first real application
+
+After `hello` validates the kernel, `marketing` is the first real application intended to exercise actual business needs.
+
+Marketing may drive requirements such as:
+
+```text
+private hub usage
+authenticated ACL
+MFS
+hub-local schemas
+dynamic services
+LETC frontend
+AI integration
+```
+
+Do not pre-build these capabilities speculatively before the application requires them.
+
+Use:
+
+```text
+hello → validate kernel
+marketing → discover real kernel requirements
+```
+
+---
+
+# 31. Classification model
+
+Use these classifications when ownership is unclear:
+
+## `KEEP_OS`
+
+Required to load, isolate, authorize, execute, or host Drumee applications.
+
+## `SYSTEM_MODULE`
+
+Generally useful application functionality not required for kernel boot.
+
+Examples may include Finder or Signin.
+
+## `TEAM_MODULE`
+
+Team-specific application/distribution behavior.
+
+## `SDK_OR_ESSENTIALS`
+
+Generic reusable primitives not inherently Drumee-specific.
+
+## `BUSINESS_MODULE`
+
+Business-domain applications such as Marketing/Copywriting.
+
+## `CONTROL_PLANE`
+
+Administrative/developer tooling that manages Drumee but is not required in the runtime.
+
+## `DEPLOYMENT`
+
+Packaging, installation, host configuration and self-hosting infrastructure.
+
+## `LEGACY`
+
+Unused/duplicated/obsolete code, only after evidence.
+
+## `INVESTIGATE`
+
+Use whenever ownership remains uncertain.
+
+Do not force classification to complete a diagram.
+
+---
+
+# 32. Core decision principle
+
+When ownership is ambiguous:
+
+> If Drumee needs the capability to load, isolate, authorize, execute, or host applications, it may belong to the OS.
+
+> If it performs useful user work but Drumee can host applications without it, it is probably a module.
+
+> If it administers a running system but is not needed to boot it, it belongs to the control plane.
+
+> If it installs/configures the system on machines, it belongs to deployment.
+
+Examples:
+
+```text
+service dispatcher       → KEEP_OS
+ACL engine integration   → KEEP_OS
+MFS primitive            → KEEP_OS when actually required
+Finder                    → SYSTEM_MODULE
+Window Manager            → INVESTIGATE after MFS/resource semantics
+Chat                      → TEAM_MODULE
+CLI administration       → CONTROL_PLANE
+Webpack ui-build          → tooling/build infrastructure
+Debian packaging          → DEPLOYMENT
+setup-infra               → DEPLOYMENT/infrastructure contract source
+```
+
+---
+
+# 33. Do not reinvent existing Drumee primitives
+
+Before proposing a new primitive, inspect current source evidence.
+
+Especially inspect:
+
+```text
+server-core
+server-essentials
+ui-core
+ui-essentials
+ui-toolkit
+ui-styles
+schemas
+setup-infra
+ui-dev-tools where imported
+existing module/plugin loaders
+```
+
+Do not create replacement abstractions merely because current ownership is imperfect.
+
+When moving/reimplementing a primitive, document:
+
+```text
+current implementation
+existing related primitive
+why ownership is wrong
+new owner
+compatibility impact
+smallest viable change
+```
+
+---
+
+# 34. Test requirements
+
+Every extracted capability requires focused tests.
+
+## Backend runtime
+
+Cover where relevant:
+
+```text
+descriptor registration
+malformed descriptors
+module.method parsing
+unknown module/method
+public/private implementation selection
+lazy WorkerClass loading
+WorkerClass cache
+permission/privilege semantics
+public-api fast path
+Team policy absence
+bootstrap.plugin resolution
+```
+
+## Frontend runtime
+
+Cover where relevant:
+
+```text
+Kind register/exists/get
+addon registration
+addons:registered
+Kind.loadPlugin
+bootstrap.plugin invocation
+loadJS
+duplicate loading
+failure propagation
+Host
+Visitor
+Organization
+absence of MFS/Team dependencies
+```
+
+## ui-build
+
+Cover where relevant:
+
+```text
+Webpack build succeeds
+CommonJS works
+SCSS/CSS imports work
+assets work
+build metadata is generated
+hash exists
+entry maps to emitted bundle
+source change alters content-sensitive hash
+legacy aliases are not hidden kernel requirements
+```
+
+## Build/runtime contract
+
+Characterize:
+
+```text
+Webpack hash
+→ generated metadata
+→ RuntimeEnv consumer
+→ app.hash
+→ bootstrap appHash
+```
+
+Do not maintain a production duplicate of RuntimeEnv in `ui-build` merely to make the test easy.
+
+Use fixtures for characterization where appropriate.
+
+## Integration
+
+Validate:
+
+```text
+setup-infra-derived config generation
+nginx -t
+server-runtime startup without server-team
+ui-runtime artifacts served without ui-team
+service route reaches server-runtime
+static/plugin route works
+```
+
+Historical Team E2E failure does not block independent no-Team kernel work unless the selected capability actually depends on that failing path.
+
+---
+
+# 35. Documentation
+
+Implementation phases must update the relevant documentation under:
 
 ```text
 docs/refactoring/
 ```
 
-with the following documents.
+Do not rewrite correct historical findings merely because architecture evolved.
+
+Mark superseded decisions clearly.
+
+Current important documents include:
+
+```text
+03-dependency-map.md
+04-schema-map.md
+05-module-contract.md
+06-target-architecture.md
+07-migration-plan.md
+08-risk-register.md
+09-self-hosting-map.md
+12-compatibility-harness.md
+13-test-environment.md
+14-minimal-kernel-plan.md
+15-phase2-runtime-extraction.md
+```
+
+Phase 3 should produce a focused implementation/validation document for `hello` if one does not already exist.
+
+Risk register updates must be evidence-based.
 
 ---
 
-## `01-current-architecture.md`
+# 36. Package and publication policy
 
-Describe the current architecture of:
+Transitional packages under `target/**` are private extraction workspaces.
+
+Their metadata/readmes should state that they are:
 
 ```text
-ui-team
-server-team
-schemas
-setup-schemas
-debian
-cli
-core/essentials packages
-module loading system
+private
+transitional
+not final public APIs
+not final repository boundaries
+not for publication
 ```
 
-Use diagrams where useful.
+Do not publish npm packages, container images, Debian packages, releases, or production deployments unless explicitly requested.
 
 ---
 
-## `02-component-map.md`
+# 37. Safety and destructive operations
 
-Use a component-by-component table.
+No production deployment, production DB mutation, remote destructive action, or host configuration mutation is authorized by ordinary refactoring tasks.
 
-Recommended form:
+Use disposable test environments.
 
-| Component | Repo/path | Responsibility | Dependencies | Classification | Extraction risk |
-|---|---|---|---|---|---|
+Destructive tests must require explicit safeguards.
 
-Allowed classification values:
-
-```text
-KEEP_OS
-SYSTEM_MODULE
-TEAM_MODULE
-SDK_OR_ESSENTIALS
-BUSINESS_MODULE
-CONTROL_PLANE
-DEPLOYMENT
-LEGACY
-INVESTIGATE
-```
-
----
-
-## `03-dependency-map.md`
-
-Document major dependencies across repositories.
-
-Include at minimum:
+Never let test tooling mutate:
 
 ```text
-ui-team → ui-core / ui-essentials
-server-team → server-core / server-essentials
-Team apps → MFS
-Team apps → ACL
-Team apps → schemas
-schemas → provisioning/templates
-cli → server-essentials
-cli → yp
-cli → entity shards
-cli → MFS procedures/storage
-cli → Drumee service API
-debian → Team/server/schema sources
-dynamic modules → runtime loader
-```
-
-Highlight:
-
-```text
-cycles
-implicit dependencies
-runtime coupling
-build coupling
-control-plane coupling
-deployment coupling
+sources/**
+host production /etc
+production databases
+production storage
 ```
 
 ---
 
-## `04-schema-map.md`
+# 38. Definition of done for any implementation task
 
-Inventory and classify schema and procedure families.
-
-For each family identify whether it belongs to:
+Before reporting completion, verify as applicable:
 
 ```text
-minimal OS
-system module
-Team module
-control plane dependency
-deployment/provisioning
-legacy
-investigate
+requested scope implemented
+tests executed
+results documented
+provenance preserved
+sources/** unchanged
+no unrelated phase started
+no Team policy leaked into kernel
+no MFS/schema scope expanded without authorization
+no production/deployment side effects
 ```
+
+Run:
+
+```bash
+git diff -- sources/
+```
+
+and report any non-empty result as a blocker.
+
+Do not claim compatibility or production readiness that was not actually tested.
 
 ---
 
-## `05-module-contract.md`
+# 39. Stop discipline
 
-Document the current module-loading contract based on actual source implementations.
+Respect phase boundaries.
 
-Then propose a normalized target contract.
-
-Clearly separate:
+When a requested phase or correction is complete:
 
 ```text
-CURRENT
-STANDARDIZE
-ADD
-DEPRECATE
+STOP
 ```
 
-Also identify how the future contract could be consumed by the CLI without assuming that such support already exists.
-
----
-
-## `06-target-architecture.md`
-
-Describe the proposed final architecture:
+Do not automatically continue into:
 
 ```text
-Core / SDK
-Minimal OS
-Control Plane / CLI
-System Modules
-Team Modules
-Team Distribution
-Business Modules
-Self-hosting Deployment
+next phase
+MFS extraction
+schema extraction
+Team migration
+deployment packaging
+ESM migration
+historical app migration
 ```
 
-Cover:
+unless explicitly asked.
 
-```text
-frontend
-backend
-schemas
-module lifecycle
-control plane
-build
-deployment
-```
-
----
-
-## `07-migration-plan.md`
-
-Provide an incremental migration sequence.
-
-For every phase include:
-
-```text
-goal
-scope
-prerequisites
-affected areas
-compatibility strategy
-control-plane impact
-deployment impact
-tests
-rollback
-risk
-expected benefit
-```
-
----
-
-## `08-risk-register.md`
-
-At minimum investigate:
-
-```text
-schema provisioning
-hub/drumate template generation
-factory warm pool
-dynamic imports
-runtime globals
-circular dependencies
-webpack/module resolution
-MFS assumptions
-physical storage assumptions
-ACL assumptions
-Window Manager dependencies
-Team boot sequence
-CLI direct database access
-CLI destructive MFS/storage operations
-CLI DB/API behavioral differences
-upgrade process
-patch process
-self-hosting packaging
-existing installations
-package version compatibility
-```
-
-Rate risks:
-
-```text
-LOW
-MEDIUM
-HIGH
-CRITICAL
-```
-
----
-
-## `09-self-hosting-map.md`
-
-Dedicated analysis of `sources/debian`.
-
-Document:
-
-```text
-current build flow
-required source repositories
-generated packages/artifacts
-Docker Compose flow
-native Debian flow
-schema setup dependencies
-configuration generation
-runtime assumptions
-release assumptions
-CLI installation/integration
-```
-
-Then identify what the deployment layer will need from the future modular architecture.
-
-Do not redesign it yet.
-
----
-
-## `10-cli-map.md`
-
-Dedicated analysis of `sources/cli`.
-
-Document at minimum:
-
-### Command architecture
-
-```text
-commands
-context/lifecycle
-argument parsing
-output
-errors
-```
-
-### Current command families
-
-At least inspect:
-
-```text
-user/drumate
-hub
-settings
-MFS
-generic API access
-```
-
-### Backend abstraction
-
-Map precisely:
-
-```text
-command
-   ↓
-backend
-   ├── db
-   └── api
-```
-
-For each backend identify:
-
-```text
-responsibility
-source path
-configuration
-authentication
-direct DB usage
-service/API usage
-error behavior
-feature parity
-```
-
-### User/drumate lifecycle
-
-Map:
-
-```text
-list
-get
-add/create
-update
-delete/purge
-```
-
-### Hub lifecycle
-
-Map:
-
-```text
-list
-get
-members
-create
-delete/purge
-```
-
-### Provisioning
-
-Map dependencies on:
-
-```text
-factory warm pool
-yp
-shard assignment
-entity initialization
-storage allocation
-```
-
-### Settings
-
-Map:
-
-```text
-sys_conf
-configuration sources
-database access
-runtime assumptions
-```
-
-### MFS
-
-Map:
-
-```text
-procedures used
-physical storage access
-import
-export
-safety checks
-cross-tenant protections
-destructive operations
-```
-
-### API backend
-
-Map:
-
-```text
-authentication/pairing
-token handling
-module.method dispatch
-remote operation model
-```
-
-### Dependencies
-
-Map at minimum:
-
-```text
-@drumee/server-essentials
-MariaDB
-filesystem/storage
-/etc/drumee or equivalent configuration
-self-hosting assumptions
-```
-
-### Classification
-
-Default architectural hypothesis:
-
-```text
-CONTROL_PLANE
-```
-
-but classify subcomponents individually where needed.
-
-### Future module lifecycle
-
-Investigate, but do not assume, whether the CLI should eventually expose:
-
-```text
-module install
-module list
-module enable
-module disable
-module upgrade
-module remove
-```
-
-Determine what stable platform contract would be required.
-
----
-
-## `11-open-questions.md`
-
-Everything not proven from code belongs here.
-
-Never silently convert assumptions into decisions.
-
----
-
-# 29. Evidence requirement
-
-Every significant architectural conclusion must reference source code.
-
-Use repository-relative paths such as:
-
-```text
-sources/server-team/path/file.js
-sources/ui-team/path/widget.js
-sources/schemas/path/procedure.sql
-sources/loby/path/service.js
-sources/signin/path/widget.js
-sources/debian/path/script.sh
-sources/cli/path/file.js
-```
-
-Where useful, reference the relevant:
-
-```text
-function
-class
-procedure
-module
-command
-backend adapter
-build target
-```
-
-Avoid unsupported statements.
-
----
-
-# 30. Git discipline
-
-This repository is the only Git workspace agents should modify during the refactoring project.
-
-Agents must not commit changes directly to the original Drumee repositories.
-
-## Baseline
-
-After importing all sources, create a baseline tag such as:
-
-```text
-baseline/drumee-pre-minimal-os
-```
-
-## Mapping branch
-
-Recommended branch:
-
-```text
-refactor/mapping
-```
-
-During this phase:
-
-```text
-write docs/refactoring/**
-do not write target/**
-do not modify sources/**
-```
-
-## Implementation branch
-
-After mapping approval:
-
-```text
-refactor/minimal-os
-```
-
-During implementation:
-
-```text
-sources/** = read-only
-target/** = implementation
-tests/** = compatibility/integration
-```
-
----
-
-# 31. Commit discipline
-
-Prefer small architectural commits.
-
-Examples:
-
-```text
-docs(refactor): map current server architecture
-docs(refactor): classify ui-team applications
-docs(refactor): map schema ownership
-docs(refactor): analyze self-hosting distribution
-docs(refactor): map cli control-plane dependencies
-docs(refactor): propose target module contract
-```
-
-During implementation:
-
-```text
-refactor(os): extract service loader
-refactor(mfs): isolate MFS runtime primitives
-refactor(finder): create system module
-refactor(cli): align control plane with stable OS contract
-test(team): add reconstruction compatibility checks
-```
-
-Do not mix unrelated extractions in one commit.
-
----
-
-# 32. Original repositories remain untouched
-
-The original GitHub repositories remain production/reference repositories during the refactoring.
-
-Do not:
-
-```text
-push refactoring branches to them
-modify their histories
-publish experimental packages from them
-change their default branches
-```
-
-All experimental work belongs to `transient`.
-
----
-
-# 33. Role and lifecycle of `transient`
-
-`transient` is intentionally temporary.
-
-It exists to provide:
-
-```text
-immutable current sources
-        +
-cross-repository mapping
-        +
-atomic refactoring work
-        +
-compatibility tests
-        ↓
-validated architectural boundaries
-        ↓
-history-preserving repository extraction
-```
-
-Do not design APIs, package names, import paths, manifests, deployment logic, or user-facing documentation around the assumption that the repository itself will continue to be named `transient`.
-
-Conversely, do not prematurely use `drumee-os` as the package/repository identity of code under `target/**` until the final repository boundary has been approved.
-
-At least one final output is expected to be named:
-
-```text
-drumee-os
-```
-
-but the exact relationship between:
-
-```text
-target/os/**
-```
-
-and the future `drumee-os` repository must be determined by the approved mapping and target architecture.
-
-The intended lifecycle is:
-
-```text
-transient
-   ↓
-mapping
-   ↓
-implementation under target/**
-   ↓
-compatibility validation
-   ↓
-final repository-boundary approval
-   ↓
-history-preserving extraction
-   ↓
-drumee-os + other final repositories
-```
-
-`transient` must not become the production Drumee OS repository merely by renaming it.
-
----
-
-# 34. Final repository extraction
-
-Do not split `target/` into final Git repositories during early implementation.
-
-The monorepo exists to allow atomic cross-layer changes while architecture is unstable.
-
-Only after module boundaries are proven should new repositories be extracted.
-
-Conceptually:
-
-```text
-target/os/server
-→ new repository
-
-target/os/ui
-→ new repository
-
-target/control-plane/cli
-→ new repository
-
-target/modules/finder
-→ new repository
-
-target/modules/chat
-→ new repository
-```
-
-`target/foundation/server-runtime` is not presumed to become a final repository.
-
-Its purpose is transitional consolidation. Final extraction must preserve or recreate the approved independent `server-essentials` boundary and the Drumee-specific server/OS boundary.
-
-Use history-preserving extraction where practical.
-
-For example, a future extraction may use tooling such as `git filter-repo`.
-
-Do not perform final extraction until explicitly approved.
-
----
-
-# 35. Baseline tests
-
-During mapping, identify how the current Team implementation is verified.
-
-Document existing commands for:
-
-```text
-build
-unit tests
-integration tests
-server startup
-frontend startup
-schema provisioning
-hub creation
-drumate creation
-CLI smoke tests
-CLI DB backend tests
-CLI API backend tests
-MFS import/export tests
-server-essentials standalone tests outside Drumee
-server-runtime kernel-contract tests during Phase 2
-ui-runtime plugin-loading and addon-registration tests during Phase 2
-self-hosting build
-Docker deployment
-native Debian deployment
-```
-
-If tests are missing, state this explicitly.
-
-Do not hide missing compatibility coverage.
-
----
-
-# 36. Tests must precede extraction
-
-Before extracting a capability, add or identify tests covering its current behavior.
-
-The safe migration pattern is:
-
-```text
-baseline behavior
-→ test
-→ extraction
-→ reconstructed behavior
-→ same test
-```
-
-When feasible, the same test scenarios should run against both baseline and target implementations.
-
-For control-plane-sensitive capabilities, test both:
-
-```text
-CLI DB backend
-CLI API backend
-```
-
-when both modes currently support the operation.
-
----
-
-# 37. Agent behavior when uncertainty exists
-
-If an agent cannot prove:
-
-```text
-ownership
-runtime dependency
-schema dependency
-module loading behavior
-CLI dependency
-deployment dependency
-provisioning behavior
-storage ownership
-```
-
-it must:
-
-1. classify the item as `INVESTIGATE`;
-2. document the uncertainty;
-3. continue mapping other areas where possible.
-
-Do not invent architecture merely to make progress.
-
----
-
-# 38. Stop condition — mapping phase
-
-The mapping phase is complete only when:
-
-- [ ] major `ui-team` subsystems are classified;
-- [ ] major `server-team` subsystems are classified;
-- [ ] major schema/procedure families are classified;
-- [ ] `setup-schemas` responsibilities are understood;
-- [ ] `debian` build/distribution dependencies are mapped;
-- [ ] `cli` command architecture is mapped;
-- [ ] `cli` DB backend is mapped;
-- [ ] `cli` API backend is mapped;
-- [ ] `cli` provisioning dependencies are mapped;
-- [ ] `cli` MFS/storage dependencies are mapped;
-- [ ] `loby` dynamic backend loading is documented;
-- [ ] `signin` dynamic frontend loading is documented;
-- [ ] relevant core/essentials ownership is mapped;
-- [ ] major cross-repository dependencies are documented;
-- [ ] current module contract is documented;
-- [ ] target module contract is proposed;
-- [ ] minimal OS boundary is proposed;
-- [ ] control-plane boundary is proposed;
-- [ ] Team compatibility strategy is explicit;
-- [ ] CLI/control-plane compatibility strategy is explicit;
-- [ ] self-hosting compatibility strategy is explicit;
-- [ ] migration sequence is incremental;
-- [ ] risk register exists;
-- [ ] unresolved questions are explicit;
-- [ ] no implementation source code has been changed.
-
----
-
-# 39. Mandatory stop after mapping
-
-After producing the required mapping documents:
-
-# STOP.
-
-Do not begin implementation.
-
-Do not create files under:
-
-```text
-target/
-```
-
-Present the mapping for architectural review.
-
-Implementation may begin only after explicit approval of:
-
-```text
-component classification
-minimal OS boundary
-control-plane boundary
-module contract
-Team reconstruction strategy
-schema ownership
-provisioning ownership
-migration order
-self-hosting strategy
-CLI strategy
-```
+Partial, evidence-backed completion is preferable to broad speculative work.
 
 ---
 
 # 40. Final architectural objective
 
-The goal is not to create a smaller `ui-team` or `server-team`.
-
-The goal is to establish:
-
-> **Drumee as a minimal operating environment capable of loading independent applications dynamically.**
-
-Drumee Team must remain available as a complete distribution assembled from modules.
-
-Administrative tooling must become a clean control plane consuming stable Drumee contracts.
-
-Self-hosting must remain a deployment concern rather than leaking into runtime architecture.
-
-Other distributions must become possible without forking the runtime.
-
-For example:
+The target is:
 
 ```text
-                    Drumee CLI
-                        │
-                        ▼
-                Drumee Minimal OS
-                        │
-          ┌─────────────┼──────────────┐
-          │             │              │
-     Drumee Team    Copywriting     Future apps
-     Distribution   Distribution
+                     Drumee Control Plane
+                             │
+                             ▼
+                     Minimal Drumee OS
+                             │
+              ┌──────────────┼──────────────┐
+              │              │              │
+         Drumee Team      Marketing      Future apps
+         distribution     application
+```
+
+with:
+
+```text
+generic Essentials below the kernel
+shared build tooling outside browser runtime
+real module/plugin contracts
+minimal infrastructure contract
+applications dynamically loadable
+Team reconstructed later as a distribution
 ```
 
 The minimal OS must remain business-domain neutral.
 
-The new minimal kernel is the primary architectural target. `server-team` is migrated later, capability by capability, after the kernel has been validated by `hello` and exercised by the first real application, `marketing`.
-
-`server-essentials` must remain a reusable server package whose generic capabilities can operate independently of Drumee. In particular, the generic MariaDB API must not become coupled to Hub, Drumate, MFS, Drumee ACL, module loading, or Team semantics.
-
-`server-runtime` and `ui-runtime` are the transitional extraction workspaces used to iterate toward the backend and frontend halves of that minimal kernel. Their current names and packaging are not automatically the final Drumee OS boundaries.
-
-`ui-essentials` should remain the generic lower-level frontend foundation, while `ui-core` is treated as an extraction source rather than an indivisible final kernel. The minimal frontend kernel must preserve the proven `Kind.loadPlugin()` / `bootstrap.plugin` / `registerAddons()` plugin path and the `Host` / `Visitor` / `Organization` context required for Drumee ACL semantics.
-
----
-
-# 41. Summary instruction for coding agents
-
-> Work only inside the `transient` monorepo. Treat `sources/**` as an immutable baseline containing the current Drumee ecosystem, including Team, schemas, provisioning, CLI, dynamic module examples, `setup-infra`, and self-hosting distribution code. During the mapping phase, modify only `docs/refactoring/**` and `SOURCE_MANIFEST.md` when needed. Analyze the current system from source code before proposing changes. Classify every major capability as OS primitive, system module, Team module, SDK/essentials, business module, control plane, deployment, legacy, or investigate. Treat `cli` as a first-class control-plane candidate and map its DB/API backends, provisioning dependencies, MFS/storage behavior and runtime/service interactions without assuming plugin lifecycle support that is not present in source. Treat Drumee Team as a migration source and later compatibility target, not as the primary architectural target. The primary target is a minimal, application-neutral Drumee kernel capable of hosting new independent modules. `setup-infra` is the pinned infrastructure/Nginx-contract source; `debian` is the historical packaging/self-hosting baseline. Phase 2 validates the new kernel in a disposable clean-Debian host with configuration generated from pinned `setup-infra`, not by patching historical Team images. Preserve `server-essentials` as an independently reusable, non-Drumee-specific server package; never introduce Hub, Drumate, MFS, Drumee ACL or module-runtime dependencies into its generic boundary merely to simplify the transition. Use Phase 1.5 to stabilize the minimal-kernel boundaries, then use `target/foundation/server-runtime` and `target/foundation/ui-runtime` as Phase 2 extraction workspaces for iterating from current `server-core` and `ui-core` behavior toward a minimal backend/frontend Drumee kernel while depending on current independent `server-essentials` and `ui-essentials`; the historical Team lockfile resolution does not constrain that new runtime. Preserve the current plugin mechanics first: backend ACL/descriptor registration with lazy `module.method` service loading, and frontend `Kind.loadPlugin()` → `bootstrap.plugin` → `{path}` → `loadJS()` → `Kind.registerAddons()` handshake. Keep `Host`, `Visitor`, and `Organization` in the minimal frontend context where required for ACL semantics, but keep MFS presentation, Finder, Desktop, and Window Manager out of the first `hello` slice. The Phase 3 `hello` descriptor uses `anonymous` + `public-api`, so its first ACL path does not pull SQL ACL, MFS schemas or provisioning forward. Validate the new kernel first with exactly one minimal reference module, `hello`; add minimal MFS semantics next as required, then use `marketing` as the first real application to drive additional kernel requirements. Only after the kernel is stable should `server-team` be decomposed and migrated module by module. `server-runtime` and `ui-runtime` are not automatically final package boundaries. After mapping, stop and request architectural review. During later implementation, build all new architecture under `target/**`, never modify `sources/**`, and postpone final repository extraction until the OS, modules, control plane, Team reconstruction, independent Essentials boundary and self-hosting boundaries have been validated through compatibility tests.
+The kernel should grow from demonstrated application requirements, not historical product co-location.
