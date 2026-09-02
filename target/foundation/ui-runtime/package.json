@@ -1,15 +1,12 @@
 {
   "name": "@drumee/ui-runtime-extraction",
-  "version": "0.0.0-phase2",
+  "version": "0.0.0-phase2.6",
   "private": true,
-  "description": "Private Phase 2 CommonJS frontend runtime extraction workspace; not a public package or final repository boundary.",
+  "description": "Private Phase 2.6 CommonJS LETC runtime extraction workspace; not a public package or final repository boundary.",
   "main": "src/index.js",
   "type": "commonjs",
   "engines": {
     "node": ">=18"
-  },
-  "peerDependencies": {
-    "@drumee/ui-essentials": "*"
   },
   "scripts": {
     "test": "node --test test/**/*.test.js"

@@ -23,6 +23,7 @@ Generated: 2026-09-02T07:40:25Z
 | `signin` | `git@github.com:drumee/signin.git` | `main` | `1ea5f31c3f08a245073e7452bf8239cfca2988f9` | 2026-08-28T09:00:44Z | git subtree (history preserved, no squash) |
 | `ui-toolkit` | `git@github.com:drumee/ui-toolkit.git` | `main` | `e2d7b2e53cd68336d9c05f8de9d4412c4b36c4ae` | 2026-08-28T09:00:55Z | git subtree (history preserved, no squash) |
 | `ui-styles` | `git@github.com:drumee/ui-styles.git` | `main` | `2bf010fa071d0e8c943351fff7dd6c61479e3cee` | 2026-08-28T09:01:07Z | git subtree (history preserved, no squash) |
+| `ui-dev-tools` | `git@github.com:drumee/ui-dev-tools.git` | `main` | `a5df686148dea1be09639946d70276b2fa62cf9b` | 2026-09-02T12:18:28Z | git subtree (history preserved, no squash) |
 | `sandbox-server` | `git@github.com:drumee/sandbox-server.git` | `main` | `6cda2e58395d4fe557e770617182d3efd1bd6f59` | 2026-08-28T09:01:19Z | git subtree (history preserved, no squash) |
 | `sandbox-ui` | `git@github.com:drumee/sandbox-ui.git` | `main` | `8e7da8075e12cacb61b68209c26987d7797c5257` | 2026-08-28T09:01:31Z | git subtree (history preserved, no squash) |
 | `marketplace` | `git@github.com:drumee/marketplace.git` | `main` | `80c1b7dc3f52abfe7ba56271b12a1c5bba1d5cda` | 2026-08-28T09:01:43Z | git subtree (history preserved, no squash) |

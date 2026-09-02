@@ -12,9 +12,9 @@ RUN npm ci --omit=dev --ignore-scripts
 COPY setup-infra/ ./
 
 WORKDIR /opt/kernel/ui-build
-COPY ui-build/package.json ui-build/package-lock.json ./
-RUN npm ci --ignore-scripts
 COPY ui-build/ ./
+RUN npm ci --include=dev --ignore-scripts \
+  && node -e "require.resolve('style-loader'); require.resolve('sass-loader');"
 
 WORKDIR /opt/kernel
 COPY server-runtime/ ./server-runtime/

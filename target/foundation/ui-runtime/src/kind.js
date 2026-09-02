@@ -16,6 +16,18 @@ class KindRegistry extends EventBus {
     this.addons = {};
     this.plugins = new Map();
     this.pendingPlugins = new Map();
+    this.ready = null;
+  }
+
+  setReady(ready) {
+    this.ready = Promise.resolve(ready);
+    return this.ready;
+  }
+
+  registerStatic(kind, value) {
+    if (!kind || !value || this.staticKinds[kind]) return undefined;
+    this.staticKinds[kind] = unwrap(value);
+    return this.staticKinds[kind];
   }
 
   exists(kind) {
@@ -60,6 +72,7 @@ class KindRegistry extends EventBus {
 
   async loadPlugin({ name, kind } = {}) {
     if (!name || !kind) throw new Error("Kind.loadPlugin requires name and kind");
+    if (this.ready) await this.ready;
     if (this.exists(kind)) return this.get(kind);
     if (typeof this.bootstrapPlugin !== "function") {
       throw new Error("bootstrap.plugin transport is not configured");

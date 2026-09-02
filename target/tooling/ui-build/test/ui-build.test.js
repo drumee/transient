@@ -89,7 +89,7 @@ test("ui-runtime itself builds through the shared Webpack configuration", async 
   const config = createConfig({
     root,
     name: "runtime",
-    entry: "./src/index.js",
+    entry: "./src/browser.js",
     outputPath,
     version: "0.0.0-phase2",
     rev: "phase2",

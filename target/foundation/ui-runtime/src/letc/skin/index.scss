@@ -1,0 +1,12 @@
+.drumee-letc-box {
+  box-sizing: border-box;
+}
+
+[data-kind='note'] {
+  white-space: pre-wrap;
+}
+
+[data-kind='list_smart'],
+[data-kind='list_table'] {
+  display: block;
+}

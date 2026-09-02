@@ -6,36 +6,46 @@ const {
   Host,
   KindRegistry,
   Organization,
+  Skeletons,
+  UiRuntime,
   Visitor,
-  createRuntime
+  bootstrap,
+  retainedSkeletonCatalog
 } = require("../src");
+
+function createBootstrapTarget() {
+  const document = new EventTarget();
+  document.readyState = "complete";
+  return { document, Event };
+}
 
 test("Kind registry registers, finds and reports missing kinds", () => {
   const kind = new KindRegistry();
-  const Widget = () => "widget";
+  class Widget {}
   assert.equal(kind.register("probe_widget", Widget), Widget);
   assert.equal(kind.exists("probe_widget"), true);
   assert.equal(kind.get("probe_widget"), Widget);
   assert.equal(kind.get("missing"), null);
-  assert.equal(kind.register("probe_widget", () => "ignored"), undefined);
+  assert.equal(kind.register("probe_widget", class Ignored {}), undefined);
 });
 
 test("addon registration emits the historical addons:registered handshake", () => {
   const kind = new KindRegistry();
   let events = 0;
   kind.on("addons:registered", () => events++);
-  const Widget = () => "addon";
+  class Widget {}
   kind.registerAddons({ addon_widget: Widget });
   assert.equal(kind.exists("addon_widget"), true);
   assert.equal(kind.get("addon_widget"), Widget);
   assert.equal(events, 1);
 });
 
-test("plugin loading skips an existing kind", async () => {
+test("plugin loading skips an existing kind only after bootstrap is ready", async () => {
   let calls = 0;
-  const Existing = () => "existing";
+  class Existing {}
   const kind = new KindRegistry({ bootstrapPlugin: async () => { calls++; return { path: "/ignored" }; } });
   kind.register("existing", Existing);
+  kind.setReady(Promise.resolve());
   assert.equal(await kind.loadPlugin({ name: "ignored", kind: "existing" }), Existing);
   assert.equal(calls, 0);
 });
@@ -43,7 +53,7 @@ test("plugin loading skips an existing kind", async () => {
 test("plugin loading preserves bootstrap.plugin → loadJS → registerAddons", async () => {
   const paths = [];
   let kind;
-  const Widget = (props) => ({ kind: "probe_widget", props });
+  class Widget {}
   kind = new KindRegistry({
     bootstrapPlugin: async (name) => ({ path: `/-/plugins/${name}/main.js` }),
     loadJS: async (loadedPath) => {
@@ -51,6 +61,7 @@ test("plugin loading preserves bootstrap.plugin → loadJS → registerAddons", 
       kind.registerAddons({ probe_widget: Widget });
     }
   });
+  kind.setReady(Promise.resolve());
   assert.equal(await kind.loadPlugin({ name: "probe", kind: "probe_widget" }), Widget);
   assert.deepEqual(paths, ["/-/plugins/probe/main.js"]);
   assert.equal(await kind.loadPlugin({ name: "probe", kind: "probe_widget" }), Widget);
@@ -59,12 +70,60 @@ test("plugin loading preserves bootstrap.plugin → loadJS → registerAddons", 
 
 test("plugin transport and bundle failures reject cleanly", async () => {
   const rejectedTransport = new KindRegistry({ bootstrapPlugin: async () => { throw new Error("transport failed"); } });
+  rejectedTransport.setReady(Promise.resolve());
   await assert.rejects(rejectedTransport.loadPlugin({ name: "probe", kind: "probe_widget" }), /transport failed/);
   const rejectedBundle = new KindRegistry({
     bootstrapPlugin: async () => ({ path: "/broken.js" }),
     loadJS: async () => { throw new Error("bundle failed"); }
   });
+  rejectedBundle.setReady(Promise.resolve());
   await assert.rejects(rejectedBundle.loadPlugin({ name: "probe", kind: "probe_widget" }), /bundle failed/);
+});
+
+test("bootstrap creates one deterministic non-MFS singleton environment and preserves bootstrap event semantics", async () => {
+  const target = createBootstrapTarget();
+  const events = [];
+  target.document.addEventListener("drumee:bootstraping", (event) => events.push({ name: event.name, detail: event.detail }));
+  const first = await bootstrap({ global: target, document: target.document, host: { domain: "kernel.test" } });
+  const second = await bootstrap({ global: target, document: target.document });
+  assert.equal(first, second);
+  assert.equal(first.Kind.get("note"), first.LetcText);
+  assert.equal(first.Kind.get("box"), first.LetcBox);
+  assert.equal(first.Kind.get("list_smart"), first.LetcList);
+  assert.equal(first.Kind.get("wrapper"), first.LetcBlank);
+  assert.equal(first.Websocket, null);
+  assert.equal(first.Host.name(), "kernel.test");
+  assert.deepEqual(events, [{ name: "core", detail: { name: "core", runtime: "ui-runtime" } }]);
+  assert.equal(Object.hasOwn(target, "KIND"), false);
+});
+
+test("a plugin request cannot observe a partially initialized bootstrap", async () => {
+  const target = createBootstrapTarget();
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  const runtime = new UiRuntime({ global: target, document: target.document, onBeforeReady: () => gate });
+  const boot = runtime.bootstrap();
+  let resolved = false;
+  const plugin = runtime.Kind.loadPlugin({ name: "core", kind: "note" }).then(() => { resolved = true; });
+  await Promise.resolve();
+  assert.equal(resolved, false);
+  release();
+  await Promise.all([boot, plugin]);
+  assert.equal(resolved, true);
+});
+
+test("every exposed Skeleton builder emits only a pre-registered real Widget kind", async () => {
+  const target = createBootstrapTarget();
+  const runtime = await bootstrap({ global: target, document: target.document });
+  for (const [pathName, entry] of Object.entries(retainedSkeletonCatalog)) {
+    const descriptor = entry.build();
+    assert.ok(entry.kinds.includes(descriptor.kind), `${pathName} emitted ${descriptor.kind}`);
+    const Widget = runtime.Kind.get(descriptor.kind);
+    assert.equal(typeof Widget, "function", `${pathName} has no Widget for ${descriptor.kind}`);
+    assert.notEqual(Widget.name, "", `${pathName} must resolve a real Widget class`);
+  }
+  assert.equal(Skeletons.Note("LETC ready").kind, "note");
+  assert.equal(runtime.Kind.get("note"), runtime.LetcText);
 });
 
 test("Host, Visitor and Organization retain only minimal identity context", () => {
@@ -75,14 +134,14 @@ test("Host, Visitor and Organization retain only minimal identity context", () =
   assert.equal(visitor.isOnline(), true);
   assert.equal(organization.name(), "Kernel");
   assert.deepEqual(organization.metadata(), { locale: "en" });
-  const runtime = createRuntime({ host: host.toJSON(), visitor: visitor.toJSON(), organization: organization.toJSON() });
-  runtime.Kind.register("renderable", (props) => ({ rendered: props.message }));
-  assert.deepEqual(runtime.render("renderable", { message: "ok" }), { rendered: "ok" });
 });
 
-test("ui-runtime has no Team, MFS, Finder or Window Manager imports", () => {
-  const source = ["kind.js", "context.js", "runtime.js", "index.js"]
-    .map((file) => fs.readFileSync(path.join(__dirname, "..", "src", file), "utf8"))
+test("ui-runtime production code has no legacy kind namespace, Team or MFS imports", () => {
+  const root = path.join(__dirname, "..", "src");
+  const source = fs.readdirSync(root, { recursive: true })
+    .filter((file) => file.endsWith(".js"))
+    .map((file) => fs.readFileSync(path.join(root, file), "utf8"))
     .join("\n");
+  assert.doesNotMatch(source, /(?:window\.|global\.)KIND|KIND\s*\./);
   assert.doesNotMatch(source, /DrumeeMFS|ui-team|Finder|Window Manager|WindowManager/);
 });

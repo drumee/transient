@@ -7,11 +7,12 @@ const config = createConfig({
   root: "/opt/kernel/ui-runtime",
   name: "ui-runtime",
   type: "runtime",
-  entry: "./src/index.js",
+  entry: "./src/browser.js",
   outputPath,
   publicPath: "/-/plugins/ui-runtime/",
   version: require("/opt/kernel/ui-runtime/package.json").version,
-  rev: process.env.KERNEL_BUILD_REV || "phase2"
+  rev: process.env.KERNEL_BUILD_REV || "phase2",
+  loaderRoots: ["/opt/kernel/ui-build/node_modules"]
 });
 
 webpack(config, (error, stats) => {

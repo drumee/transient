@@ -8,10 +8,16 @@ function buildMetadata({ hash, entry, version, rev, head, timestamp = Date.now()
 }
 
 function emittedEntry(stats, target) {
-  const assets = stats.toJson({ all: false, assets: true }).assets || [];
-  const named = assets.find((asset) => asset.name === `${target}-${stats.hash}.js`)
-    || assets.find((asset) => asset.name.startsWith(`${target}-`) && asset.name.endsWith(".js"))
-    || assets.find((asset) => asset.name.endsWith(".js"));
+  const entrypoint = stats.compilation && stats.compilation.entrypoints && stats.compilation.entrypoints.get(target);
+  const entryFiles = entrypoint && typeof entrypoint.getFiles === "function"
+    ? entrypoint.getFiles().filter((file) => typeof file === "string" && file.endsWith(".js"))
+    : [];
+  if (entryFiles.length) return entryFiles[0];
+  const assets = stats.toJson({ all: true }).assets || [];
+  const javascriptAssets = assets.filter((asset) => asset && typeof asset.name === "string" && asset.name.endsWith(".js"));
+  const named = javascriptAssets.find((asset) => asset.name === `${target}-${stats.hash}.js`)
+    || javascriptAssets.find((asset) => asset.name.startsWith(`${target}-`))
+    || javascriptAssets[0];
   if (!named) throw new Error(`No JavaScript entry was emitted for ${target}`);
   return named.name;
 }
