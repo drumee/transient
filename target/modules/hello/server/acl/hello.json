@@ -1,0 +1,15 @@
+{
+  "services": {
+    "ping": {
+      "scope": "kernel",
+      "permission": {
+        "src": "anonymous",
+        "fast_check": "public-api"
+      }
+    }
+  },
+  "modules": {
+    "public": "service/hello",
+    "private": "service/hello"
+  }
+}

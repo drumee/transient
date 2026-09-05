@@ -2,6 +2,7 @@ const { Context, Host, Organization, Visitor } = require("./context");
 const { EventBus } = require("./events");
 const { KindRegistry } = require("./kind");
 const { loadBrowserScript } = require("./loader");
+const { ServiceClient } = require("./service");
 const { PointerDragState, UiRuntime, bootstrap, createRuntime, getRuntime } = require("./runtime");
 const { Skeletons, staticKinds, retainedSkeletonCatalog, excludedSkeletonCatalog } = require("./skeletons");
 const { LetcBlank, LetcBox, LetcEntry, LetcEntryReminder, LetcFileSelector, LetcImageSmart, LetcList, LetcMenuTopic, LetcProfile, LetcProgress, LetcRichText, LetcSvgImage, LetcTable, LetcText, sourceIdentity } = require("./widgets");
@@ -29,6 +30,7 @@ module.exports = {
   LetcText,
   Organization,
   Skeletons,
+  ServiceClient,
   Visitor,
   UiRuntime,
   Marionette,

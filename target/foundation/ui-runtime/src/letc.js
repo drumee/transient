@@ -108,6 +108,16 @@ class LetcView extends Marionette.View {
     return this._handledEvents;
   }
 
+  fetchService(service, payload) {
+    if (!this.runtime || !this.runtime.serviceClient) throw new Error("LETC service transport is not configured");
+    return this.runtime.serviceClient.fetchService(service, payload);
+  }
+
+  postService(service, payload) {
+    if (!this.runtime || !this.runtime.serviceClient) throw new Error("LETC service transport is not configured");
+    return this.runtime.serviceClient.postService(service, payload);
+  }
+
   onRender() {
     applyViewState(this);
     this.onDomRefresh();
@@ -165,6 +175,16 @@ class LetcBox extends Marionette.CollectionView {
   declareHandlers(options = {}) {
     this._handledEvents = { part: "single", ui: "single", ...options };
     return this._handledEvents;
+  }
+
+  fetchService(service, payload) {
+    if (!this.runtime || !this.runtime.serviceClient) throw new Error("LETC service transport is not configured");
+    return this.runtime.serviceClient.fetchService(service, payload);
+  }
+
+  postService(service, payload) {
+    if (!this.runtime || !this.runtime.serviceClient) throw new Error("LETC service transport is not configured");
+    return this.runtime.serviceClient.postService(service, payload);
   }
 
   childView(model) {

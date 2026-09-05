@@ -21,6 +21,8 @@ for required in \
   sources/server-essentials/lib/lex/permission.js \
   target/foundation/server-runtime/lib/index.js \
   target/foundation/ui-runtime/src/index.js \
+  target/modules/hello/server/acl/hello.json \
+  target/modules/hello/ui/index.js \
   target/tooling/ui-build/lib/index.js; do
   if [[ ! -e "$TRANSIENT_ROOT/$required" ]]; then
     echo "Required Phase 2 path is missing: $required" >&2

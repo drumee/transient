@@ -1,0 +1,10 @@
+{
+  "name": "@drumee/hello-kernel-validation",
+  "version": "0.0.0-phase3",
+  "private": true,
+  "description": "Private Phase 3 Drumee kernel vertical-slice validation module; not a product or public package.",
+  "type": "commonjs",
+  "scripts": {
+    "test": "node --test test/**/*.test.js"
+  }
+}

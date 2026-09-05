@@ -23,10 +23,12 @@ WORKDIR /opt/kernel/ui-runtime
 RUN npm ci --omit=dev --ignore-scripts
 WORKDIR /opt/kernel
 COPY ui-runtime/ ./ui-runtime/
+COPY hello/ ./hello/
 COPY server-essentials/ ./server-essentials/
 COPY container/ ./scripts/
 
-RUN node ./scripts/build-ui-runtime.js
+RUN node ./scripts/build-ui-runtime.js \
+  && node ./scripts/build-hello.js
 
 EXPOSE 28642
 ENTRYPOINT ["/opt/kernel/scripts/entrypoint.sh"]

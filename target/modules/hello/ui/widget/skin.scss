@@ -1,0 +1,18 @@
+.hello-widget__main {
+  display: grid;
+  gap: 0.4rem;
+  max-width: 22rem;
+  padding: 1rem;
+  border: 1px solid #35d6ab;
+  border-radius: 0.4rem;
+  color: #17231f;
+  background: #f5fffb;
+}
+
+.hello-widget__title {
+  font-weight: 700;
+}
+
+.hello-widget__status {
+  color: #215d4f;
+}

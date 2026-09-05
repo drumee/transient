@@ -2,8 +2,9 @@
 set -euo pipefail
 
 runtime_root=/srv/drumee/runtime
-mkdir -p "$runtime_root/plugins/ui/main/ui-runtime" "$runtime_root/ui/main/app"
+mkdir -p "$runtime_root/plugins/ui/main/ui-runtime" "$runtime_root/plugins/ui/main/hello" "$runtime_root/ui/main/app"
 cp -a /opt/kernel/ui-artifact/. "$runtime_root/plugins/ui/main/ui-runtime/"
+cp -a /opt/kernel/hello-artifact/. "$runtime_root/plugins/ui/main/hello/"
 
 config=/runtime/nginx.conf
 route=/runtime/generated/etc/drumee/infrastructure/routes/app.conf

@@ -101,6 +101,30 @@ test("ui-runtime itself builds through the shared Webpack configuration", async 
   assert.equal(fs.existsSync(path.join(outputPath, metadata.entry)), true);
 });
 
+test("the Phase 3 Hello plugin builds as a separate CommonJS Webpack artifact", async () => {
+  const root = path.resolve(__dirname, "../../../modules/hello/ui");
+  const outputPath = fs.mkdtempSync(path.join(os.tmpdir(), "drumee-hello-build-"));
+  const dependencyRoot = process.env.DRUMEE_UI_BUILD_NODE_MODULES || path.join(__dirname, "..", "node_modules");
+  const config = createConfig({
+    root,
+    name: "hello",
+    type: "plugin",
+    entry: "./index.js",
+    outputPath,
+    publicPath: "/-/plugins/hello/",
+    version: "0.0.0-phase3",
+    rev: "phase3",
+    loaderRoots: [dependencyRoot],
+    moduleRoots: [path.resolve(__dirname, "../../../foundation/ui-runtime/node_modules"), dependencyRoot]
+  });
+  await runWebpack(config);
+  const metadata = JSON.parse(fs.readFileSync(path.join(outputPath, "index.json"), "utf8"));
+  assert.ok(metadata.hash);
+  assert.ok(metadata.entry.startsWith("hello-"));
+  assert.equal(fs.existsSync(path.join(outputPath, metadata.entry)), true);
+  assert.match(fs.readFileSync(path.join(outputPath, metadata.entry), "utf8"), /registerAddons/);
+});
+
 test("the recorded RuntimeEnv and bootstrap appHash consumers remain separate from build metadata production", () => {
   const runtimeEnv = fs.readFileSync(path.join(repositoryRoot, "sources/server-core/lib/runtimeEnv.js"), "utf8");
   const sysEnv = fs.readFileSync(path.join(repositoryRoot, "sources/server-essentials/lib/sysEnv.js"), "utf8");

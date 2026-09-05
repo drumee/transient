@@ -14,6 +14,7 @@ const {
   LetcText,
   Marionette,
   Organization,
+  ServiceClient,
   Skeletons,
   UiRuntime,
   Visitor,
@@ -88,6 +89,23 @@ test("plugin transport and bundle failures reject cleanly", async () => {
   });
   rejectedBundle.setReady(Promise.resolve());
   await assert.rejects(rejectedBundle.loadPlugin({ name: "probe", kind: "probe_widget" }), /bundle failed/);
+});
+
+test("generic service transport preserves logical module.method requests and Drumee envelopes", async () => {
+  const calls = [];
+  const client = new ServiceClient({
+    baseUrl: "/-/svc/",
+    fetch: async (url, options) => {
+      calls.push({ url, options });
+      return { ok: true, status: 200, json: async () => ({ status: "ok", data: { message: "Hello from Drumee" } }) };
+    }
+  });
+  assert.deepEqual(await client.fetchService("bootstrap.plugin", { name: "hello" }), { message: "Hello from Drumee" });
+  assert.deepEqual(await client.postService("hello.ping", {}), { message: "Hello from Drumee" });
+  assert.equal(calls[0].url, "/-/svc/bootstrap.plugin?name=hello");
+  assert.equal(calls[0].options.method, "GET");
+  assert.equal(calls[1].url, "/-/svc/hello.ping");
+  assert.equal(calls[1].options.body, "{}");
 });
 
 test("bootstrap creates one deterministic non-MFS singleton environment and preserves bootstrap event semantics", async () => {

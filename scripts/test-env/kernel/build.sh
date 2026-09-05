@@ -16,6 +16,7 @@ cp -a "$TRANSIENT_ROOT/sources/server-essentials/lib" "$context/server-essential
 cp -a "$TRANSIENT_ROOT/target/foundation/server-runtime" "$context/server-runtime"
 cp -a "$TRANSIENT_ROOT/target/foundation/ui-runtime" "$context/ui-runtime"
 cp -a "$TRANSIENT_ROOT/target/tooling/ui-build" "$context/ui-build"
+cp -a "$TRANSIENT_ROOT/target/modules/hello" "$context/hello"
 rm -rf "$context/ui-build/node_modules"
 cp -a "$KERNEL_SCRIPT_DIR/container" "$context/container"
 

@@ -1,8 +1,10 @@
 const { Context, Host, Organization, Visitor } = require("./context");
 const { KindRegistry } = require("./kind");
+const { loadBrowserScript } = require("./loader");
 const { Skeletons, staticKinds } = require("./skeletons");
 const { Marionette } = require("./letc");
 const { Template, createPreset } = require("./preset");
+const { ServiceClient } = require("./service");
 const { Validator } = require("./validator");
 
 const runtimes = new WeakMap();
@@ -35,11 +37,20 @@ function dispatchBootstrapEvent(documentRef, globalRef) {
 }
 
 class UiRuntime {
-  constructor({ global = globalThis, document = global.document, host, visitor, organization, platform, env, validator, onBeforeReady, ...kindOptions } = {}) {
+  constructor({ global = globalThis, document = global.document, host, visitor, organization, platform, env, validator, onBeforeReady, serviceClient, serviceBase, fetch: fetchImpl, ...kindOptions } = {}) {
     this.global = global;
     this.document = document;
     this.options = { host, visitor, organization, platform, env, validator, onBeforeReady, kindOptions };
-    this.Kind = new KindRegistry(kindOptions);
+    this.serviceClient = serviceClient || new ServiceClient({
+      baseUrl: serviceBase || "/-/svc/",
+      fetch: fetchImpl || (global && typeof global.fetch === "function" ? global.fetch.bind(global) : undefined)
+    });
+    const bootstrapPlugin = kindOptions.bootstrapPlugin || ((name) => this.serviceClient.fetchService("bootstrap.plugin", { name }));
+    const loadJS = kindOptions.loadJS || ((path) => loadBrowserScript(path, {
+      document: this.document,
+      XMLHttpRequest: global && global.XMLHttpRequest
+    }));
+    this.Kind = new KindRegistry({ ...kindOptions, bootstrapPlugin, loadJS });
     this.ready = null;
     this.isReady = false;
   }
