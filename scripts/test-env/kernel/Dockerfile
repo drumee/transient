@@ -18,6 +18,10 @@ RUN npm ci --include=dev --ignore-scripts \
 
 WORKDIR /opt/kernel
 COPY server-runtime/ ./server-runtime/
+COPY ui-runtime/package.json ui-runtime/package-lock.json ./ui-runtime/
+WORKDIR /opt/kernel/ui-runtime
+RUN npm ci --omit=dev --ignore-scripts
+WORKDIR /opt/kernel
 COPY ui-runtime/ ./ui-runtime/
 COPY server-essentials/ ./server-essentials/
 COPY container/ ./scripts/

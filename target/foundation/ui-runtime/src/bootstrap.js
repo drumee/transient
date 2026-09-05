@@ -1,15 +1,25 @@
 const { Context, Host, Organization, Visitor } = require("./context");
 const { KindRegistry } = require("./kind");
 const { Skeletons, staticKinds } = require("./skeletons");
+const { Marionette } = require("./letc");
+const { Template, createPreset } = require("./preset");
+const { Validator } = require("./validator");
 
 const runtimes = new WeakMap();
 
-function createValidator() {
-  const ident = /^([a-zA-Z0-9_-])([a-zA-Z0-9.-])*$/;
-  return Object.freeze({
-    require(value) { return String(value || "").trim() !== ""; },
-    ident(value) { return String(value || "") === "" || ident.test(String(value)); }
-  });
+class PointerDragState {
+  constructor() {
+    this.value = false;
+  }
+
+  set(value) {
+    this.value = Boolean(value);
+    return this.value;
+  }
+
+  isDragging() {
+    return this.value;
+  }
 }
 
 function dispatchBootstrapEvent(documentRef, globalRef) {
@@ -47,12 +57,11 @@ class UiRuntime {
   }
 
   _initialize() {
-    this.Preset = Object.freeze({});
-    this.Template = Object.freeze({});
     this.Skeletons = Skeletons;
-    this.Websocket = null;
-    this.Validator = this.options.validator || createValidator();
-    this.pointerDragged = false;
+    this.Preset = createPreset(this.Skeletons);
+    this.Template = Template;
+    this.Validator = this.options.validator || Validator;
+    this.pointerDrag = new PointerDragState();
     this.Platform = new Context(this.options.platform);
     this.Env = new Context(this.options.env);
     this.Host = new Host(this.options.host);
@@ -69,14 +78,18 @@ class UiRuntime {
 
   _publishGlobals() {
     if (!this.global) return;
+    Object.defineProperty(this.global, "pointerDragged", {
+      configurable: true,
+      enumerable: true,
+      get: () => this.pointerDrag.isDragging(),
+      set: (value) => this.pointerDrag.set(value)
+    });
     Object.assign(this.global, {
       Preset: this.Preset,
       Template: this.Template,
       Skeletons: this.Skeletons,
-      Websocket: this.Websocket,
       Validator: this.Validator,
       Kind: this.Kind,
-      pointerDragged: this.pointerDragged,
       LetcBlank: this.LetcBlank,
       LetcBox: this.LetcBox,
       LetcList: this.LetcList,
@@ -97,7 +110,10 @@ class UiRuntime {
 
   mount(descriptor, parent) {
     const widget = this.createWidget(descriptor);
-    widget.render(parent);
+    if (!parent || typeof parent !== "object") throw new Error("A LETC Widget requires a DOM region");
+    const region = new Marionette.Region({ el: parent });
+    region.show(widget);
+    widget.region = region;
     return widget;
   }
 }
@@ -122,4 +138,4 @@ function createRuntime(options = {}) {
   return runtime;
 }
 
-module.exports = { UiRuntime, bootstrap, createRuntime, getRuntime };
+module.exports = { PointerDragState, UiRuntime, bootstrap, createRuntime, getRuntime };

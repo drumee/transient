@@ -47,17 +47,19 @@ test("browser loads the core, reaches READY and renders Skeletons.Note through a
     publicPath: "./",
     version: "0.0.0-phase2.6",
     rev: "phase2.6",
-    loaderRoots: [dependencyRoot()]
+    loaderRoots: [dependencyRoot()],
+    moduleRoots: [dependencyRoot()]
   });
   await compile(config);
   const metadata = JSON.parse(fs.readFileSync(path.join(outputPath, "index.json"), "utf8"));
   const page = path.join(outputPath, "probe.html");
-  fs.writeFileSync(page, `<!doctype html><html><body><main id="root"></main><script src="${metadata.entry}"></script><script>window.DrumeeUiRuntime.bootstrap().then(function (runtime) { var note = window.Skeletons.Note({ content: "LETC ready" }); var widget = runtime.mount(note, document.getElementById("root")); document.body.dataset.ready = String(runtime.isReady); document.body.dataset.kind = widget.model.get("kind"); document.body.dataset.kindNamespace = String(typeof window.KIND); });</script></body></html>`);
+  fs.writeFileSync(page, `<!doctype html><html><head><meta charset="utf-8"></head><body><main id="root"></main><script>window.onerror=function(message,source,line,column){document.body.dataset.browserError=[message,line,column].join(":");};</script><script src="${metadata.entry}"></script><script>if(window.DrumeeUiRuntime){window.DrumeeUiRuntime.bootstrap().then(function (runtime) { var note = window.Skeletons.Note({ content: "LETC ready" }); var widget = runtime.mount(note, document.getElementById("root")); document.body.dataset.ready = String(runtime.isReady); document.body.dataset.kind = widget.model.get("kind"); document.body.dataset.kindNamespace = String(typeof window.KIND); document.body.dataset.marionetteView = String(widget instanceof window.DrumeeUiRuntime.Marionette.View); }).catch(function(error){document.body.dataset.browserError=String(error);});}</script></body></html>`);
   const result = childProcess.spawnSync(chrome(), ["--headless=new", "--no-sandbox", "--disable-gpu", "--allow-file-access-from-files", "--virtual-time-budget=3000", "--dump-dom", `file://${page}`], { encoding: "utf8" });
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stdout, /data-ready="true"/);
   assert.match(result.stdout, /data-kind="note"/);
   assert.match(result.stdout, /data-kind-namespace="undefined"/);
+  assert.match(result.stdout, /data-marionette-view="true"/);
   assert.match(result.stdout, /LETC ready/);
 });
 
@@ -73,12 +75,13 @@ test("the canonical ui-dev-tools Widget pattern compiles and renders after core 
     publicPath: "./",
     version: "0.0.0-phase2.6",
     rev: "phase2.6",
-    loaderRoots: [dependencyRoot()]
+    loaderRoots: [dependencyRoot()],
+    moduleRoots: [dependencyRoot()]
   });
   await compile(config);
   const metadata = JSON.parse(fs.readFileSync(path.join(outputPath, "index.json"), "utf8"));
   const page = path.join(outputPath, "widget.html");
-  fs.writeFileSync(page, `<!doctype html><html><body><main id="widget-root"></main><script src="${metadata.entry}"></script><script>window.Phase26WidgetReady.then(function () { document.body.dataset.widgetReady = "true"; });</script></body></html>`);
+  fs.writeFileSync(page, `<!doctype html><html><head><meta charset="utf-8"></head><body><main id="widget-root"></main><script>window.onerror=function(message,source,line,column){document.body.dataset.browserError=[message,line,column].join(":");};</script><script src="${metadata.entry}"></script><script>if(window.Phase26WidgetReady){window.Phase26WidgetReady.then(function () { document.body.dataset.widgetReady = "true"; }).catch(function(error){document.body.dataset.browserError=String(error);});}</script></body></html>`);
   const result = childProcess.spawnSync(chrome(), ["--headless=new", "--no-sandbox", "--disable-gpu", "--allow-file-access-from-files", "--virtual-time-budget=3000", "--dump-dom", `file://${page}`], { encoding: "utf8" });
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stdout, /data-widget-ready="true"/);

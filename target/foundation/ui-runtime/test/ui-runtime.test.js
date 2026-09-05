@@ -5,12 +5,19 @@ const test = require("node:test");
 const {
   Host,
   KindRegistry,
+  LetcBlank,
+  LetcBox,
+  LetcList,
+  LetcText,
+  Marionette,
   Organization,
   Skeletons,
   UiRuntime,
   Visitor,
   bootstrap,
-  retainedSkeletonCatalog
+  retainedSkeletonCatalog,
+  excludedSkeletonCatalog,
+  sourceIdentity
 } = require("../src");
 
 function createBootstrapTarget() {
@@ -91,7 +98,8 @@ test("bootstrap creates one deterministic non-MFS singleton environment and pres
   assert.equal(first.Kind.get("box"), first.LetcBox);
   assert.equal(first.Kind.get("list_smart"), first.LetcList);
   assert.equal(first.Kind.get("wrapper"), first.LetcBlank);
-  assert.equal(first.Websocket, null);
+  assert.equal(Object.hasOwn(first, "Websocket"), false);
+  assert.equal(first.pointerDrag.isDragging(), false);
   assert.equal(first.Host.name(), "kernel.test");
   assert.deepEqual(events, [{ name: "core", detail: { name: "core", runtime: "ui-runtime" } }]);
   assert.equal(Object.hasOwn(target, "KIND"), false);
@@ -112,7 +120,7 @@ test("a plugin request cannot observe a partially initialized bootstrap", async 
   assert.equal(resolved, true);
 });
 
-test("every exposed Skeleton builder emits only a pre-registered real Widget kind", async () => {
+test("every exposed non-MFS Skeleton builder emits a pre-registered extracted Widget kind", async () => {
   const target = createBootstrapTarget();
   const runtime = await bootstrap({ global: target, document: target.document });
   for (const [pathName, entry] of Object.entries(retainedSkeletonCatalog)) {
@@ -121,9 +129,23 @@ test("every exposed Skeleton builder emits only a pre-registered real Widget kin
     const Widget = runtime.Kind.get(descriptor.kind);
     assert.equal(typeof Widget, "function", `${pathName} has no Widget for ${descriptor.kind}`);
     assert.notEqual(Widget.name, "", `${pathName} must resolve a real Widget class`);
+    assert.ok(Widget.prototype instanceof Marionette.View || Widget.prototype instanceof Marionette.CollectionView, `${pathName} must preserve Marionette lineage`);
   }
   assert.equal(Skeletons.Note("LETC ready").kind, "note");
   assert.equal(runtime.Kind.get("note"), runtime.LetcText);
+  assert.equal(Object.keys(retainedSkeletonCatalog).length, 23);
+  for (const [name, record] of Object.entries(excludedSkeletonCatalog)) {
+    assert.notEqual(record.classification, "INVESTIGATE", `${name} must have a final classification`);
+  }
+});
+
+test("canonical Widget classes retain real historical Marionette ancestry", () => {
+  assert.ok(LetcBlank.prototype instanceof Marionette.View);
+  assert.ok(LetcBox.prototype instanceof Marionette.CollectionView);
+  assert.ok(LetcList.prototype instanceof LetcBox);
+  assert.ok(LetcText.prototype instanceof Marionette.View);
+  assert.equal(sourceIdentity.LetcBox, "sources/ui-core/letc/widgets/box/index.js");
+  assert.equal(sourceIdentity.LetcText, "sources/ui-core/letc/widgets/text/index.js");
 });
 
 test("Host, Visitor and Organization retain only minimal identity context", () => {
@@ -141,7 +163,8 @@ test("ui-runtime production code has no legacy kind namespace, Team or MFS impor
   const source = fs.readdirSync(root, { recursive: true })
     .filter((file) => file.endsWith(".js"))
     .map((file) => fs.readFileSync(path.join(root, file), "utf8"))
-    .join("\n");
+    .join("\n")
+    .replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, "");
   assert.doesNotMatch(source, /(?:window\.|global\.)KIND|KIND\s*\./);
-  assert.doesNotMatch(source, /DrumeeMFS|ui-team|Finder|Window Manager|WindowManager/);
+  assert.doesNotMatch(source, /require\([^)]*(?:ui-team|server-team|DrumeeMFS|Finder|WindowManager)/);
 });

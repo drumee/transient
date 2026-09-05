@@ -23,7 +23,7 @@ function createRules() {
   ];
 }
 
-function createConfig({ root, name = "main", type = "runtime", entry, outputPath, publicPath = "/-/app/", mode = "production", version, rev, head, noHash = false, loaderRoots = [] } = {}) {
+function createConfig({ root, name = "main", type = "runtime", entry, outputPath, publicPath = "/-/app/", mode = "production", version, rev, head, noHash = false, loaderRoots = [], moduleRoots = [] } = {}) {
   if (!root || !entry || !outputPath) throw new Error("ui-build requires root, entry and outputPath");
   const target = name;
   return {
@@ -38,7 +38,10 @@ function createConfig({ root, name = "main", type = "runtime", entry, outputPath
       filename: noHash ? "[name].js" : "[name]-[fullhash].js",
       clean: true
     },
-    resolve: { extensions: [".js", ".json", ".scss", ".css"] },
+    resolve: {
+      extensions: [".js", ".json", ".scss", ".css"],
+      modules: moduleRoots.length ? [...moduleRoots, "node_modules"] : ["node_modules"]
+    },
     resolveLoader: loaderRoots.length ? { modules: [...loaderRoots, "node_modules"] } : undefined,
     experiments: { asyncWebAssembly: true },
     module: { rules: createRules() },

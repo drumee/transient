@@ -1,210 +1,196 @@
-# Phase 2.6 — LETC Bootstrap Completeness
+# Phase 2.6 — LETC Bootstrap Completeness (Corrective Consolidation)
 
-## Scope and result
+## Result and scope
 
-Phase 2.6 makes `target/foundation/ui-runtime/` a deterministic, no-Team,
-non-MFS LETC environment before any application bundle is requested. It does
-not implement `hello`, a module descriptor, MFS, schemas, MariaDB or a Team
-migration.
+The corrective implementation replaces the former local descriptor renderer
+with a selective extraction of the historical LETC runtime model:
 
-The resulting contract is:
-
-```text
-generic browser prerequisites
-  → LETC runtime singleton/context
-  → retained Skeletons API
-  → static Kind catalog
+~~~text
+Backbone.Model
+  → Marionette.View / Marionette.CollectionView
+  → extracted LETC lifecycle methods
+  → extracted static Widget catalog
   → READY
   → Kind.loadPlugin(...)
-```
+~~~
 
-The browser validates the core with `Skeletons.Note({ content: "LETC ready" })`;
-this is a kernel-only probe, not the Phase 3 `hello` module.
+The kernel remains CommonJS, Webpack-built, no-MFS and no-Team at runtime. It
+does not implement hello, a dynamic application module, schemas, MariaDB,
+DrumeeMFS, Finder, Desktop or Window Manager.
 
-## Historical bootstrap sequence
+## Historical bootstrap and corrective order
 
-`sources/ui-core/letc/index.js::{load,_load,export_globals}` is the canonical
-historical reference (source SHA
-`ea007c63fe1676f75e2cf9e3490a467987eae298`). Its sequence is:
+The historical reference is sources/ui-core/letc/index.js, especially
+load, _load and export_globals. Its observed order is locale event; lodash;
+jQuery; Marionette; jquery-ui; LETC addons; Preset, Template, Skeletons,
+Websocket, Validator, Kind, pointerDragged, LetcBlank/Box/List/Text, Platform,
+Env, Host, Visitor, Organization and DrumeeMFS; then drumee:bootstraping.
 
-```text
-locale drumee:bootstraping event
-  → lodash
-  → jQuery / $
-  → Backbone.Marionette
-  → jquery-ui droppable + resizable
-  → LETC addons
-  → document complete
-  → Preset, Template, Skeletons, Websocket, Validator, Kind
-  → pointerDragged, LetcBlank/Box/List/Text
-  → Platform, Env, Host, Visitor, Organization, DrumeeMFS
-  → drumee:bootstraping { name: core }
-```
+The corrected kernel order is:
 
-The old source also creates `window.KIND` from `builtin_kinds`. That namespace
-is deliberately not retained. It is a historical pseudo-constant encoder, not
-a kernel contract.
+~~~text
+Backbone + jQuery + Marionette + lodash + DOMPurify
+  → real Context, Host, Visitor and Organization Backbone Models
+  → real Preset, Template and Validator adaptations
+  → PointerDragState and legacy-compatible pointerDragged property
+  → actual Skeleton builder adaptation and Marionette static Widget catalog
+  → static Kind registration
+  → publish globals except KIND and deferred Websocket
+  → drumee:bootstraping (name: core)
+  → READY
+~~~
 
-## New kernel bootstrap sequence
+The runtime singleton remains one UiRuntime per browser global through the
+WeakMap in target/foundation/ui-runtime/src/bootstrap.js. Multiple bootstrap
+calls return the same ready promise. Kind.loadPlugin waits for that promise
+before even its existing-kind shortcut.
 
-`target/foundation/ui-runtime/src/bootstrap.js::{UiRuntime,bootstrap}` creates
-a single `UiRuntime` per browser global through a `WeakMap`. Its `ready` promise
-is idempotent:
+## Prerequisite decisions
 
-```text
-UiRuntime.bootstrap()
-  → construct Context / Host / Visitor / Organization
-  → construct Platform and Env Contexts
-  → construct Preset, Template, Websocket and Validator globals
-  → register static elementary kinds
-  → publish LETC globals except KIND
-  → dispatch drumee:bootstraping { name: core, detail: { runtime: ui-runtime } }
-  → resolve READY
-```
-
-`KindRegistry.loadPlugin()` now awaits this promise before checking even an
-already-static kind. Therefore a plugin request cannot observe a partially
-constructed environment. The deferred-bootstrap test proves that behaviour.
-
-The event is retained with the smallest observed semantic contract:
-
-| Field | Historical producer | Phase 2.6 value | Consumers / boundary |
-|---|---|---|---|
-| event name | `letc/index.js::export_globals` | `drumee:bootstraping` | Historical Team preload listens for it in `sources/ui-team/src/drumee/index.web.js`; Team does not run in this environment. |
-| `event.name` | same | `core` | Preserved for non-MFS consumers. |
-| structured payload | none | `{ name: "core", runtime: "ui-runtime" }` in `detail` | additive diagnostic context; not a Team API claim. |
-
-## Prerequisite classification
-
-| Historical prerequisite | Classification | Phase 2.6 decision and evidence |
+| Historical prerequisite | Decision | Evidence and resulting owner |
 |---|---|---|
-| `Preset` | `KEEP_KERNEL` namespace | An immutable empty namespace is published because core bootstrap owns the global; button presets are not needed by the retained static catalog. Source: `letc/index.js`. |
-| `Template` | `KEEP_KERNEL` namespace | Published as an immutable empty namespace. SVG/template helpers are not required by the extracted SVG Widget boundary. |
-| `Skeletons` | `KEEP_KERNEL` | `src/skeletons.js` exposes only 19 proven, complete entries. |
-| `Websocket` | `KEEP_KERNEL` placeholder | `null`, matching the historical pre-router initial value; websocket transport remains later capability work. |
-| `Validator` | `KEEP_KERNEL` reduced facade | Only `require` and `ident` are present for core global stability. Historical source is `sources/ui-essentials/utils/validator.js`; no retained core Widget invokes it. Full generic validation remains owned by `ui-essentials` when a consuming feature requires it. |
-| `Kind` | `KEEP_KERNEL` | `KindRegistry` owns static/application/addon lookup and the existing plugin handshake. |
-| `pointerDragged` | `KEEP_KERNEL` state | Initialized to `false`, without Desktop/DnD consumers. |
-| `LetcBlank`, `LetcBox`, `LetcList`, `LetcText` | `KEEP_KERNEL` | Actual class-based Widgets, not descriptor callbacks. |
-| `Platform`, `Env` | `KEEP_KERNEL` | Small `Context` instances with `get`, `set`, `reset` and `toJSON`; historical Backbone models are not necessary for the retained closure. |
-| `Host`, `Visitor`, `Organization` | `KEEP_KERNEL` reduced context | Retain identity/context accessors only; see below. |
-| lodash | `LEGACY_COMPAT` | Historical skeleton builders depend on global lodash. Extracted builders use local, immutable-object operations instead. |
-| jQuery / `$` | `LEGACY_COMPAT` | Needed by historical Marionette Widgets, not by the retained class renderer. No global is published. |
-| Marionette / Backbone | `LEGACY_COMPAT` | Historical Widget parents depend on it. The Phase 2.6 non-MFS closure has explicit `LetcWidget` classes and does not load a parallel historical framework. |
-| jquery-ui droppable/resizable | `DEFER_MFS` | Required for historical interaction/desktop flows, absent from elementary static rendering. |
-| `letc/addons/**` | `LEGACY_COMPAT` | Extends historical prototype globals. The retained explicit classes do not need those mutations. |
-| locale / `LOCALE` | `UNUSED` | Required by historical text/entry default labels, not by the retained no-locale descriptors. |
-| `DrumeeMFS` | `DEFER_MFS` | Explicitly excluded; boot reaches READY without it. |
+| Backbone, Marionette, lodash and jQuery | REUSE_REAL_DEPENDENCY | Direct dependencies of genuine ui-core Widget ancestry; pinned in the private ui-runtime lockfile. |
+| Preset | EXTRACT_REAL | Selective source adaptation from ui-core/letc/preset/{button,confirm-buttons,list-stream,utils}.js in src/preset.js. |
+| Template | EXTRACT_REAL | Template.Xmlns and Template.SvgText from ui-core/letc/preset/template.js in src/preset.js. |
+| Skeletons | EXTRACT_REAL | Actual core/builder responsibility and every non-MFS public builder in src/skeletons.js. |
+| Validator | EXTRACT_REAL adapter | Exact ui-essentials Validator contract is adapted in src/validator.js. The historical generic module uses ESM exports and String prototype extensions, neither suitable as an implicit CJS bootstrap global. The adapter preserves public methods without mutating String. |
+| Kind | EXTRACT_REAL | Existing registry protocol remains in src/kind.js with READY gating. |
+| pointerDragged | EXTRACT_REAL | PointerDragState backs a readable/writable legacy boolean global; no false placeholder is published as a service. |
+| LetcBlank/Box/List/Text | EXTRACT_REAL | Genuine Marionette hierarchy, extracted from ui-core source paths recorded in provenance. |
+| Platform and Env | REUSE_REAL_DEPENDENCY | Actual Backbone.Model contexts, rather than custom dictionaries. |
+| Host, Visitor, Organization | EXTRACT_REAL | Actual Backbone.Model singleton class boundary from ui-core, reduced only to non-MFS, non-Team methods. |
+| Websocket | DEFER_WITH_PROOF | Historical bootstrap sets it to null; no retained static Widget or ui-dev-tools Widget pattern consumes it. It is not published as a false ready service. |
+| jquery-ui interactions | DEFER_MFS | The historical droppable/resizable consumers are desktop/DnD/MFS workflows. |
+| LETC addons not required by retained closure | DEFER_WITH_PROOF | Explicit local extraction of mget, mset, model.atLeast, feed, childView resolution and part registration replaces only the needed source blocks. |
+| DrumeeMFS | DEFER_MFS | Explicit exclusion. |
 
-## Globals and singleton ownership
+The generic Validator remains conceptually owned by ui-essentials. The
+temporary local CJS adapter has precise provenance and is not presented as a
+replacement Essentials package. ui-runtime has no declarative
+@drumee/ui-essentials dependency because it does not execute an Essentials
+module at runtime.
 
-| Singleton | Construction | Lifetime / owner | Reduced behaviour |
+## Genuine Widget implementation
+
+The production Widget path is no longer a function registry or direct
+document.createElement renderer. src/letc.js imports Backbone and Marionette,
+preserves real View/CollectionView ancestry, child model/collection behaviour,
+mget/mset, model.atLeast, feed, part registration and lifecycle dispatch.
+UiRuntime.mount uses Marionette.Region.
+
+| Kernel class | Historical source | Parent chain | Retained lifecycle / intentional reduction |
 |---|---|---|---|
-| `Kind` | `new KindRegistry()` | one per `UiRuntime` | Static kinds are registered before READY; addon/plugin state stays on this registry. |
-| `Platform`, `Env` | `new Context()` | one per `UiRuntime` | Generic attribute maps only. |
-| `Host` | `new Host()` | one per `UiRuntime` | URL/domain/name only; no title or local-storage side effects from `sources/ui-core/letc/host.js`. |
-| `Visitor` | `new Visitor()` | one per `UiRuntime` | Signed-in/online flags only; no media radio, profile, browser or routing behaviour from `letc/user.js`. |
-| `Organization` | `new Organization()` | one per `UiRuntime` | Metadata/name/host only; no wallpaper, routing or bootstrap state from `letc/organization.js`. |
-| `Preset`, `Template` | frozen empty objects | one per `UiRuntime` | Namespaces are available before plugins, but Team preset/template behaviour is excluded. |
-| `Websocket` | `null` | one per `UiRuntime` | Matches pre-router bootstrap state. |
+| LetcBlank | ui-core/letc/widgets/blank/index.js | Marionette.View | initialize and onDomRefresh renderer/content contract. |
+| LetcBox | ui-core/letc/widgets/box/index.js | Marionette.CollectionView | initialize, child kind resolution, feed, append/prepend/clear, parts and nested Widget creation. Generic service/form/MFS methods not needed before plugins are deferred. |
+| LetcList | ui-core/letc/widgets/list/{index,smart}/index.js | LetcBox | Collection hierarchy and smart-list lifecycle. |
+| LetcTable | ui-core/letc/widgets/list/{index,table}/index.js | LetcList | Distinct table-kind lineage. |
+| LetcText | ui-core/letc/widgets/text/index.js | Marionette.View | initialize, DOM refresh, cleanText, draw, getText, set and mould with DOMPurify. |
+| LetcSvgImage | ui-core/letc/widgets/image/svg/index.js | Marionette.View | Generic inline SVG branch; MFS vector/node fetch is deferred. |
+| LetcEntry | ui-core/letc/widgets/entry/input/index.js | LetcBox | Generic input/textarea lifecycle and model value synchronization; application validation/services are deferred. |
+| LetcEntryReminder | ui-core/letc/widgets/entry/reminder/index.js | LetcBox | Actual composed entry lifecycle and focus/value boundary; Team service dispatch is deferred. |
+| LetcFileSelector | ui-core/letc/widgets/file-selector/index.js | Marionette.View | Generic browser file-select contract; no storage/MFS action. |
+| LetcImageSmart | ui-core/letc/widgets/image/smart/index.js | Marionette.View | Generic src/low/high image loading and events; nid/actualNode MFS branch removed. |
+| LetcMenuTopic | ui-core/letc/widgets/menu/index.js | LetcBox | Generic menu state/lifecycle; Team navigation, global radio channels and desktop geometry removed. |
+| LetcRichText | ui-core/letc/widgets/text/editable/index.js | LetcText | Generic contenteditable lifecycle; MFS paste-file and app service policy removed. |
 
-Plugins receive these published globals but do not create parallel contexts.
-Backend ACL remains the authorization authority.
+No generic primitive was extracted from ui-team in this correction. The
+required lower-layer implementations exist in ui-core or ui-essentials.
+ui-team was nevertheless inspected: its messenger implementation is a
+conclusive Team product exclusion, not a reason to leave a generic primitive
+missing.
 
-## Legacy `KIND` removal
+## Skeleton closure and KIND removal
 
-No production file under `target/foundation/ui-runtime/src/` initializes or
-dereferences the legacy global. Retained historical expressions were adapted
-to their exact source values:
+The complete inventory is maintained in
+docs/refactoring/letc-static-widget-catalog.md. Twenty-three public,
+non-MFS builders are KEEP_KERNEL. Their twelve emitted kind strings are
+registered before READY. Four historical public paths are final exclusions:
+Messenger is DEFER_TEAM; Profile, UserProfile and Progress are DEFER_MFS.
+No public entry remains INVESTIGATE.
 
-| Historical expression | Kernel string |
+All historical pseudo-constant expressions are replaced by exact literals:
+
+| Historical expression | Kernel literal |
 |---|---|
-| `KIND.image.svg` | `"image_svg"` |
-| `KIND.entry` | `"entry"` |
-| `KIND.wrapper` | `"wrapper"` |
+| KIND.image.svg | image_svg |
+| KIND.image.smart | image_smart |
+| KIND.entry | entry |
+| KIND.entry_reminder | entry_reminder |
+| KIND.rich_text | rich_text |
+| KIND.messenger | messenger (documentation-only deferred kind) |
 
-Other historical expressions are not exposed until their Widget closure is
-approved; the detailed treatment is in
-[`letc-static-widget-catalog.md`](letc-static-widget-catalog.md).
+The kernel never initializes window.KIND or global.KIND. Static scanning and
+Chrome validation run with window.KIND absent.
 
-The static scan and Chrome test both prove a bootstrap with `window.KIND`
-absent. A future Team compatibility layer may create it above `ui-runtime`;
-the kernel may not depend on that adapter.
+## Context and singleton boundary
 
-## Real Widget and Skeleton boundary
+Platform and Env are real Backbone.Model contexts. Host retains name,
+domain_name, makeUrl, settings and data from letc/host.js. Visitor retains
+profile, identity, full name, language and online state from letc/user.js.
+Organization retains metadata, host and name from letc/organization.js.
 
-`target/foundation/ui-runtime/src/widgets.js` defines real classes:
+Removed behaviour is documented reduction, not fabricated business behaviour:
+Host title/localStorage effects; Visitor media radio, quota, profile media and
+routing; Organization wallpapers/routing; and all MFS/desktop/Team state.
+Backend authorization remains authoritative.
 
-```text
-LetcWidget
-  ├── LetcBlank
-  ├── LetcBox
-  │     └── LetcList
-  ├── LetcText
-  ├── LetcSvgImage
-  ├── LetcEntry
-  │     └── LetcFileSelector
-```
+The historical bootstrap event is preserved as drumee:bootstraping, with
+event.name equal to core. The additive detail payload is
+{ name: core, runtime: ui-runtime }. The known ui-team consumer remains
+evidence only; no Team code runs.
 
-They instantiate descriptors via `runtime.createWidget()` and render through
-the runtime-owned DOM boundary. `LetcBox.feed()` resolves each child through
-the static `Kind` catalog; it is not a direct application HTML-string seam.
-`Skeletons.Note → "note" → LetcText` is asserted in the catalog and browser
-tests without special-casing `note` in the registry.
+## Build and browser evidence
 
-The canonical developer shape was taken from the newly pinned
-`sources/ui-dev-tools/widget/template/{index.js.tpl,skeleton/index.js.tpl,skin/index.scss.tpl}`
-(SHA `a5df686148dea1be09639946d70276b2fa62cf9b`). The test-only fixture at
-`tests/integration/kernel/fixtures/letc-widget/` is CommonJS, extends
-`LetcBox`, loads `./skin`, calls `super.initialize()`, declares handlers and
-feeds a Skeleton in `onDomRefresh()`. It compiles through `ui-build` and
-renders after core READY. It is not `hello` and is not installed as a module.
+ui-runtime now declares exact private runtime dependencies on Backbone 1.6.1,
+Marionette 4.1.3, DOMPurify 3.4.14, jQuery 3.7.1 and lodash 4.18.1. The
+clean kernel Docker image runs npm ci for this private workspace before
+Webpack builds the browser artifact. ui-build gained an explicit moduleRoots
+option so build consumers can resolve the runtime package's own dependencies
+without making ui-build their owner.
 
-## `ui-essentials` ownership
+The retained kernel skin and the canonical ui-dev-tools Widget fixture compile
+through CommonJS/Webpack SCSS handling with no historical Team/MFS alias.
+The browser probe declares UTF-8 before loading the bundle: this is required
+once the real Lodash bundle includes non-ASCII identifier data.
 
-Phase 2 incorrectly declared `@drumee/ui-essentials` as a peer dependency
-without consuming it. Phase 2.6 removes that declaration. The retained CJS
-bootstrap does not import an Essentials API: its service transport/loadJS is
-injected into `KindRegistry`, and the small Validator facade exists solely to
-make the historical bootstrap global deterministic before a real consumer
-exists. This avoids a misleading package relationship and avoids copying the
-whole Essentials ESM entry plus unrelated style/socket dependencies into the
-kernel.
+The Chrome tests prove:
 
-When a future module needs full generic validation, service transport or
-loading utilities, it must consume the pinned `ui-essentials` implementation
-directly and document the actual API use. This is a deliberate temporary
-ownership boundary, not a new replacement Essentials package.
+~~~text
+ui-runtime bundle
+  → bootstrap READY
+  → Skeletons.Note
+  → note static Kind
+  → LetcText instanceof Marionette.View
+  → Region mount
+  → LETC ready in DOM
+~~~
 
-## Webpack and styles
+The second probe builds the canonical developer shape from ui-dev-tools:
+CommonJS class extends LetcBox; load skin; super.initialize; declareHandlers;
+onDomRefresh; feed(Skeleton). Its deliberately minimal fixture does not import
+the generator's optional historical mixin alias, so it proves the Widget
+contract without making that legacy alias a kernel requirement. It renders
+through the real CollectionView path, not a fixture-only renderer.
 
-CommonJS and Webpack remain authoritative. `src/browser.js` imports the
-retained core skin. `scripts/test-env/kernel/container/build-ui-runtime.js`
-now builds that browser entry rather than the Node-only library entry. The
-test Widget uses a directory `skin/index.scss` exactly like the
-`ui-dev-tools/widget` generator. It compiles through
-`target/tooling/ui-build/lib/config.js` using existing SCSS/CSS loaders with
-no historical alias, Team alias or MFS alias.
+## Tests run during corrective work
 
-## Tests and evidence
-
-| Command / test | Result | Evidence |
+| Test | Result | Meaning |
 |---|---|---|
-| `node --test target/foundation/ui-runtime/test/ui-runtime.test.js` | PASS | bootstrap idempotence, event, READY gating, catalog completeness, contexts, no legacy kind namespace/MFS/Team imports. |
-| `node tests/integration/kernel/ui-runtime-browser.test.js` | PASS (Chrome, elevated local browser sandbox) | Webpack bundle loads; `Skeletons.Note` renders `LETC ready`; `window.KIND` is undefined. |
-| same browser test, Widget fixture | PASS | CommonJS `LetcBox` Widget/skeleton/skin pattern compiles and renders. |
-| `DRUMEE_UI_BUILD_NODE_MODULES=.tmp/test-env/build-src/ui-team/node_modules node target/tooling/ui-build/test/ui-build.test.js` | PASS | Shared Webpack config compiles the new browser entry with SCSS and preserves build metadata behaviour. |
+| target/foundation/ui-runtime npm test | PASS | Kind protocol, READY, singleton idempotence, all 23 retained builders, final exclusions, Marionette lineage, context and no-KIND/import scan. |
+| tests/integration/kernel/ui-runtime-browser.test.js | PASS | Real Marionette Note render, no KIND, and canonical ui-dev-tools Widget/skin path in Chrome. |
+| target/tooling/ui-build/test/ui-build.test.js | PASS | The shared CommonJS/Webpack configuration compiles the real ui-runtime with its own module roots, preserves SCSS/assets and emits the characterized metadata/hash contract. |
+| scripts/test-env/kernel/test.sh | PASS | Disposable clean-Debian Node/Nginx image builds ui-runtime, renders pinned setup-infra configuration, passes nginx -t and serves both the no-Team kernel service and ui-runtime static route. |
 
-The `ui-runtime` source scan and the clean kernel image checks establish that
-this path does not import `server-team`, `ui-team`, `DrumeeMFS`, schemas,
-MariaDB, Finder or Window Manager. The browser path itself has no service,
-database or plugin request.
+The image uses the same pinned setup-infra contract as Phase 2 and remains
+separate from historical Debian Team images. Generator diagnostics about absent
+Team UI metadata and a test DKIM key are expected in this intentionally
+no-Team, non-mail slice; no host /etc path is written. No historical Team
+Debian E2E is a gate for this isolated no-Team correction.
 
 ## Phase 3 assumptions
 
-Phase 3 may rely on a READY-gated non-MFS browser environment, a complete
-retained static catalog, exact string kind identifiers, real class-based
-Widget rendering and the existing `Kind.loadPlugin → bootstrap.plugin → loadJS
-→ registerAddons` mechanism. It must still implement exactly one `hello`
-module to prove dynamic backend/frontend discovery. No Phase 2.6 fixture is a
-module or a substitute for that proof.
+Phase 3 may rely on a READY-gated static LETC environment with the genuine
+Marionette Widget model, complete non-MFS elementary Skeleton closure and the
+existing Kind.loadPlugin → bootstrap.plugin → loadJS → registerAddons
+protocol. It still must implement exactly one hello module; none of the
+browser fixtures is a module or hello substitute.
