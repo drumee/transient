@@ -34,7 +34,7 @@ function compile(config) {
   }));
 }
 
-test("browser loads the core, reaches READY and renders Skeletons.Note through a real Widget", async () => {
+test("browser loads the core, reaches READY and renders retained real Widgets", async () => {
   const { createConfig } = require(path.join(root, "target/tooling/ui-build/lib"));
   const outputPath = fs.mkdtempSync(path.join(os.tmpdir(), "drumee-letc-browser-"));
   const runtimeRoot = path.join(root, "target/foundation/ui-runtime");
@@ -53,14 +53,21 @@ test("browser loads the core, reaches READY and renders Skeletons.Note through a
   await compile(config);
   const metadata = JSON.parse(fs.readFileSync(path.join(outputPath, "index.json"), "utf8"));
   const page = path.join(outputPath, "probe.html");
-  fs.writeFileSync(page, `<!doctype html><html><head><meta charset="utf-8"></head><body><main id="root"></main><script>window.onerror=function(message,source,line,column){document.body.dataset.browserError=[message,line,column].join(":");};</script><script src="${metadata.entry}"></script><script>if(window.DrumeeUiRuntime){window.DrumeeUiRuntime.bootstrap().then(function (runtime) { var note = window.Skeletons.Note({ content: "LETC ready" }); var widget = runtime.mount(note, document.getElementById("root")); document.body.dataset.ready = String(runtime.isReady); document.body.dataset.kind = widget.model.get("kind"); document.body.dataset.kindNamespace = String(typeof window.KIND); document.body.dataset.marionetteView = String(widget instanceof window.DrumeeUiRuntime.Marionette.View); }).catch(function(error){document.body.dataset.browserError=String(error);});}</script></body></html>`);
+  fs.writeFileSync(page, `<!doctype html><html><head><meta charset="utf-8"></head><body><main id="root"></main><main id="profile-root"></main><main id="progress-root"></main><script>window.onerror=function(message,source,line,column){document.body.dataset.browserError=[message,line,column].join(":");};</script><script src="${metadata.entry}"></script><script>if(window.DrumeeUiRuntime){window.DrumeeUiRuntime.bootstrap().then(function (runtime) { var note = window.Skeletons.Note({ content: "LETC ready" }); var widget = runtime.mount(note, document.getElementById("root")); var profile = runtime.mount(window.Skeletons.Profile({ firstname: "Ada", lastname: "Lovelace" }), document.getElementById("profile-root")); var progress = runtime.mount(window.Skeletons.Progress({ mode: "row", name: "Generic progress" }), document.getElementById("progress-root")); progress.update(42); document.body.dataset.ready = String(runtime.isReady); document.body.dataset.kind = widget.model.get("kind"); document.body.dataset.profileKind = profile.model.get("kind"); document.body.dataset.profileMarionette = String(profile instanceof window.DrumeeUiRuntime.Marionette.CollectionView); document.body.dataset.userProfileKind = window.Skeletons.UserProfile({ firstname: "Ada" }).kind; document.body.dataset.progressKind = progress.model.get("kind"); document.body.dataset.progressValue = String(progress.model.get("percent")); document.body.dataset.progressDom = progress.el.querySelector(".svg-progress__bar--fg").style.width; document.body.dataset.kindNamespace = String(typeof window.KIND); document.body.dataset.marionetteView = String(widget instanceof window.DrumeeUiRuntime.Marionette.View); }).catch(function(error){document.body.dataset.browserError=String(error);});}</script></body></html>`);
   const result = childProcess.spawnSync(chrome(), ["--headless=new", "--no-sandbox", "--disable-gpu", "--allow-file-access-from-files", "--virtual-time-budget=3000", "--dump-dom", `file://${page}`], { encoding: "utf8" });
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stdout, /data-ready="true"/);
   assert.match(result.stdout, /data-kind="note"/);
+  assert.match(result.stdout, /data-profile-kind="profile"/);
+  assert.match(result.stdout, /data-profile-marionette="true"/);
+  assert.match(result.stdout, /data-user-profile-kind="profile"/);
+  assert.match(result.stdout, /data-progress-kind="progress"/);
+  assert.match(result.stdout, /data-progress-value="42"/);
+  assert.match(result.stdout, /data-progress-dom="42%"/);
   assert.match(result.stdout, /data-kind-namespace="undefined"/);
   assert.match(result.stdout, /data-marionette-view="true"/);
   assert.match(result.stdout, /LETC ready/);
+  assert.match(result.stdout, /AL/);
 });
 
 test("the canonical ui-dev-tools Widget pattern compiles and renders after core READY", async () => {

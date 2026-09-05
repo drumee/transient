@@ -7,7 +7,7 @@
  * legacy `KIND` constants.
  */
 const createDOMPurify = require("dompurify");
-const { ATTR, LetcBox, LetcView, _ } = require("./letc");
+const { ATTR, colorFromName, LetcBox, LetcView, _ } = require("./letc");
 
 const NOTE_TAGS = ["a", "b", "br", "code", "div", "em", "i", "p", "span", "strong", "u"];
 
@@ -276,6 +276,247 @@ class LetcImageSmart extends LetcView {
   }
 }
 
+const profileImageCache = new Map();
+
+function profileSkeleton(ui) {
+  return ui.runtime.Skeletons.Box.Y({
+    className: `${ui.fig.family}__main`,
+    sys_pn: "image-box",
+    partHandler: ui,
+    active: ui.mget("active")
+  });
+}
+
+class LetcProfile extends LetcBox {
+  static figName = "user_profile";
+
+  // Selective extraction of widgets/profile/index.js. The generic initials,
+  // display name, colour and optional browser-avatar presentation remain;
+  // Visitor.avatar, RADIO_BROADCAST and Window Manager state do not.
+  initialize(options = {}) {
+    super.initialize(options);
+    this.model.atLeast({ flow: "y", auto_color: 1, online: 0 });
+    this.declareHandlers();
+    const id = options.id || options.uid || options.user_id || options.drumate_id || options.entity_id || this.mget("id");
+    if (id != null) this.mset("id", id);
+  }
+
+  onDomRefresh() {
+    this.feed(profileSkeleton(this));
+    this.loadImage();
+    this.el.dataset.online = String(this.mget("online") || 0);
+  }
+
+  restart(clearCache = false) {
+    if (clearCache) profileImageCache.delete(this._profileCacheKey());
+    this.onDomRefresh();
+  }
+
+  initiales() {
+    const first = String(this.mget("firstname") || "").trim().charAt(0);
+    const last = String(this.mget("lastname") || "").trim().charAt(0) || first;
+    if (first || last) return `${first}${last}`;
+    const [surnameFirst = "", surnameLast = ""] = String(this.mget("surname") || this.mget("username") || "").trim().split(/[ ,]+/);
+    return `${surnameFirst.charAt(0)}${surnameLast.charAt(0)}`;
+  }
+
+  displayName() {
+    const surname = String(this.mget("surname") || "").trim();
+    if (surname) return surname;
+    const username = String(this.mget("username") || "").trim();
+    if (username) return username;
+    const full = `${this.mget("firstname") || ""} ${this.mget("lastname") || ""}`.trim();
+    return full || String(this.mget("email") || "").split("@")[0];
+  }
+
+  _profileCacheKey() {
+    return this.mget("id") || this.mget("avatar") || this.mget("src") || this.displayName() || this.cid;
+  }
+
+  _avatarSource() {
+    const direct = this.mget("avatar") || this.mget("src");
+    if (direct) return direct;
+    const resolver = this.mget("avatarResolver");
+    return typeof resolver === "function" ? resolver({ id: this.mget("id"), type: this.mget("type"), profile: this }) : "";
+  }
+
+  _imageBox() {
+    return this.getPart("image-box");
+  }
+
+  _showAvatar(source) {
+    const box = this._imageBox();
+    if (!box) return;
+    box.el.innerHTML = `<img class="${this.fig.family}__icon ${this.fig.family}__picture picture" data-flow="x" alt="${this.displayName()}" src="${source}">`;
+    this.el.dataset.default = "0";
+  }
+
+  _showFallback() {
+    const box = this._imageBox();
+    if (!box) return;
+    const initials = this.initiales();
+    const subject = this.mget("oneLetter") ? this.mget("firstname") || "??" : initials || "??";
+    const styleOpt = this.mget("auto_color") === 0 ? {} : { backgroundColor: colorFromName(subject) };
+    const descriptor = initials
+      ? this.runtime.Skeletons.Note({ content: initials, className: `${this.fig.family}__icon ${this.fig.family}__initiales`, sys_pn: "initiales", active: this.mget("active"), styleOpt })
+      : this.runtime.Skeletons.Element({ content: "<svg viewBox=\"0 0 24 24\" aria-hidden=\"true\"><circle cx=\"12\" cy=\"8\" r=\"4\"></circle><path d=\"M4 22c0-4.4 3.6-8 8-8s8 3.6 8 8\"></path></svg>", className: `${this.fig.family}__icon ${this.fig.family}__initiales`, sys_pn: "initiales", active: this.mget("active"), styleOpt });
+    box.feed(descriptor);
+    this.el.dataset.default = "1";
+  }
+
+  loadImage() {
+    const source = this._avatarSource();
+    const key = this._profileCacheKey();
+    if (!source || profileImageCache.has(key)) return this._showFallback();
+    const ImageConstructor = this.el.ownerDocument && this.el.ownerDocument.defaultView && this.el.ownerDocument.defaultView.Image;
+    if (typeof ImageConstructor !== "function") return this._showFallback();
+    const image = new ImageConstructor();
+    image.onerror = () => {
+      profileImageCache.set(key, true);
+      this._showFallback();
+    };
+    image.onload = () => {
+      this.el.dataset.quality = "high";
+      this._showAvatar(source);
+    };
+    image.src = source;
+  }
+
+  // Generic callers may supply status updates themselves; subscribing to
+  // Team radio channels remains outside ui-runtime.
+  updateStatus(data = {}) {
+    const id = data.id || data.user_id || data.drumate_id;
+    if (id != null && this.mget("id") != null && id !== this.mget("id")) return;
+    if (data.status == null) return;
+    this.mset("online", data.status);
+    this.el.dataset.online = String(data.status);
+    this.trigger("status_changed", data);
+  }
+}
+
+function progressSkeleton(ui) {
+  const Skeletons = ui.runtime.Skeletons;
+  const mode = ui.mget("mode");
+  if (mode === "row") {
+    return Skeletons.Box.X({
+      className: `${ui.fig.family}__main`,
+      kids: [
+        Skeletons.Box.X({ className: `${ui.fig.family}__container-name`, kids: [
+          Skeletons.Note({ className: `${ui.fig.family}__value-filename`, sys_pn: "ref-filename", content: ui.mget("filename") || ui.mget("name") || "" })
+        ] }),
+        Skeletons.Box.X({ className: `${ui.fig.family}__container-progress`, kids: [
+          Skeletons.Box.X({ className: `${ui.fig.family}__bar`, sys_pn: "ref-chart" }),
+          Skeletons.Note({ className: `${ui.fig.family}__bar-percent`, sys_pn: "ref-percent", content: "0%" })
+        ] }),
+        Skeletons.Box.X({ className: `${ui.fig.family}__container-size`, kids: [
+          Skeletons.Note({ className: `${ui.fig.family}__value-filesize`, sys_pn: "ref-filesize", content: ui.mget("size") || "" })
+        ] })
+      ]
+    });
+  }
+  return Skeletons.Box.Y({
+    className: `${ui.fig.family}__main`,
+    kids: [
+      Skeletons.Box.X({ className: `${ui.fig.family}__container-header`, kids: [
+        Skeletons.Note({ className: `${ui.fig.family}__value-filesize`, sys_pn: "ref-filesize", content: ui.mget("size") || "" }),
+        Skeletons.Note({ className: `${ui.fig.family}__value-percent`, sys_pn: "ref-percent", content: "0%" })
+      ] }),
+      Skeletons.Box.X({ className: `${ui.fig.family}__container-body`, kids: [
+        Skeletons.Box.X({ className: `${ui.fig.family}__chart`, sys_pn: "ref-chart" })
+      ] }),
+      Skeletons.Box.X({ className: `${ui.fig.family}__container-footer`, kids: [
+        Skeletons.Note({ className: `${ui.fig.family}__value-filename`, sys_pn: "ref-filename", content: ui.mget("filename") || ui.mget("name") || "" })
+      ] })
+    ]
+  });
+}
+
+function arcLength(value) {
+  const percent = Math.max(0, Math.min(100, Number(value) || 0));
+  return String(((100 - percent) / 100) * (Math.PI * 160));
+}
+
+class LetcProgress extends LetcBox {
+  static figName = "svg_progress";
+
+  // Selective extraction of widgets/progress/media/index.js. The visual
+  // percent/lifecycle contract and optional listener seam remain; upload end,
+  // MFS parent mutation and application handler dispatch are excluded.
+  initialize(options = {}) {
+    super.initialize(options);
+    this.declareHandlers();
+    this.model.atLeast({ percent: 0, mode: "grid", interval: 300, filename: this.mget("name") || "" });
+    const loader = this.mget("loader");
+    if (loader && typeof loader.addListener === "function") {
+      loader.addListener(this);
+      this._mouseEvt = loader.mouseEvt;
+    }
+  }
+
+  onDomRefresh() {
+    this.feed(progressSkeleton(this));
+  }
+
+  onPartReady(child, name) {
+    if (name !== "ref-chart") return;
+    child.el.innerHTML = this.mget("mode") === "row"
+      ? `<div class="${this.fig.family}__bar"><div class="${this.fig.family}__bar--bg"></div><div id="${this._id}-fg" class="${this.fig.family}__bar--fg"></div></div>`
+      : `<svg viewBox="0 0 200 200" class="circular-chart"><circle class="${this.fig.family}__chart--bg" cx="100" cy="95" r="80" stroke-dashoffset="0" stroke-dasharray="502.4"></circle><circle id="${this._id}-fg" class="${this.fig.family}__chart--fg" cx="95" cy="90" r="80" stroke-dashoffset="${arcLength(this.mget("percent"))}" stroke-dasharray="502.4" transform="rotate(270, 100, 90)"></circle><circle class="${this.fig.family}__chart--inner" cx="100" cy="95" r="76"></circle></svg>`;
+    this._progressElement = child.el.querySelector(`#${this._id}-fg`);
+    this.update(this.mget("percent"));
+  }
+
+  _setPart(name, content) {
+    const part = this.getPart(name);
+    if (part && typeof part.set === "function") part.set("content", content);
+  }
+
+  update(value) {
+    const raw = value && typeof value === "object"
+      ? 100 * Number(value.loaded || 0) / Number(value.total || 0)
+      : Number(value);
+    const percent = Math.max(0, Math.min(100, Number.isFinite(raw) ? Math.ceil(raw) : 0));
+    this.mset("percent", percent);
+    if (this._progressElement) {
+      if (this.mget("mode") === "row") this._progressElement.style.width = `${percent}%`;
+      else this._progressElement.style.strokeDashoffset = arcLength(percent);
+    }
+    this._setPart("ref-percent", `${percent}%`);
+    if (value && typeof value === "object" && value.total != null) {
+      const formatter = this.mget("formatSize");
+      this._setPart("ref-filesize", typeof formatter === "function" ? formatter(value.total) : String(value.total));
+    }
+    this._cursor = percent;
+    return percent;
+  }
+
+  setLabel(label) {
+    this.mset("filename", label);
+    this._setPart("ref-filename", label);
+  }
+
+  onUploadProgress(event, total) {
+    if (!event) return;
+    const resolvedTotal = event.lengthComputable ? event.total : total;
+    if (Number.isFinite(resolvedTotal) && resolvedTotal > 0) this.update({ loaded: event.loaded, total: resolvedTotal });
+  }
+
+  tick() {
+    if (this.isDestroyed && this.isDestroyed()) return;
+    this.update((this._cursor || 0) + 1);
+    this._tickTimer = setTimeout(() => this.tick(), this.mget("interval"));
+  }
+
+  onBeforeDestroy() {
+    clearTimeout(this._tickTimer);
+  }
+
+  onUiEvent(command) {
+    const service = command && (typeof command.get === "function" ? command.get("service") || command.get("name") : command.service || command.name);
+    if (service === "cancel") this.trigger("cancel", this);
+  }
+}
+
 class LetcMenuTopic extends LetcBox {
   static figName = "menu_topic";
 
@@ -333,6 +574,8 @@ const sourceIdentity = Object.freeze({
   LetcImageSmart: "sources/ui-core/letc/widgets/image/smart/index.js",
   LetcList: "sources/ui-core/letc/widgets/list/{index.js,smart/index.js}",
   LetcMenuTopic: "sources/ui-core/letc/widgets/menu/index.js",
+  LetcProfile: "sources/ui-core/letc/widgets/profile/{index.js,skeleton/index.js,templates/avatar.js,skin/index.scss}",
+  LetcProgress: "sources/ui-core/letc/widgets/progress/media/{index.js,skeleton/{grid.js,row.js},template/{grid.js,row.js},skin/{grid.scss,row.scss}}",
   LetcRichText: "sources/ui-core/letc/widgets/text/editable/index.js",
   LetcSvgImage: "sources/ui-core/letc/widgets/image/svg/index.js",
   LetcText: "sources/ui-core/letc/widgets/text/index.js"
@@ -347,6 +590,8 @@ module.exports = {
   LetcImageSmart,
   LetcList,
   LetcMenuTopic,
+  LetcProfile,
+  LetcProgress,
   LetcRichText,
   LetcSvgImage,
   LetcTable,

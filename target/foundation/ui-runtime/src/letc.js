@@ -68,6 +68,16 @@ function applyViewState(view) {
   if (style && typeof style === "object") view.$el.css(style);
 }
 
+// Exact non-ESM adaptation of ui-essentials/utils/index.js::colorFromName.
+// LETC's static Avatar/Profile presentation needs this generic helper, while
+// ui-runtime deliberately does not import the Essentials ESM entry at boot.
+function colorFromName(name, saturation = 40, lightness = 60) {
+  let hash = 0;
+  const text = String(name || "");
+  for (let index = 0; index < text.length; index++) hash = text.charCodeAt(index) + (hash << 5) - hash;
+  return `hsl(${hash % 360}, ${saturation}%, ${lightness}%)`;
+}
+
 class LetcView extends Marionette.View {
   constructor(options = {}) {
     super(normalizeOptions(options));
@@ -117,6 +127,7 @@ class LetcView extends Marionette.View {
     this._branches[name] = child;
     child.el.dataset.partname = name;
     this[`__${_.camelCase(name)}`] = child;
+    if (typeof this.onPartReady === "function") this.onPartReady(child, name);
     this.triggerMethod("part:ready", child, name);
     return child;
   }
@@ -177,10 +188,16 @@ class LetcBox extends Marionette.CollectionView {
     this.onDomRefresh();
   }
 
-  onAddChild(child) {
-    child.parent = this;
+  // Marionette.CollectionView emits `add:child` with `(parent, child)`.
+  // Preserve that real lifecycle signature so LETC part registration happens
+  // before profile/progress source-derived `onPartReady` code runs.
+  onAddChild(parent, child) {
+    child.parent = parent;
     const part = child.mget(ATTR.sysPn);
-    if (part) this.registerPart(child, part);
+    if (!part) return;
+    let owner = child.mget("partHandler") || parent;
+    while (owner && typeof owner.onPartReady !== "function") owner = owner.parent;
+    (owner || parent).registerPart(child, part);
   }
 
   onDomRefresh() {}
@@ -219,6 +236,7 @@ class LetcBox extends Marionette.CollectionView {
     this._branches[name] = child;
     child.el.dataset.partname = name;
     this[`__${_.camelCase(name)}`] = child;
+    if (typeof this.onPartReady === "function") this.onPartReady(child, name);
     this.triggerMethod("part:ready", child, name);
     return child;
   }
@@ -233,6 +251,7 @@ function normalizeKids(value) {
 module.exports = {
   ATTR,
   Backbone,
+  colorFromName,
   LetcBox,
   LetcView,
   Marionette,

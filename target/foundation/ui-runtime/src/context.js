@@ -4,11 +4,7 @@
  */
 const { Backbone } = require("./letc");
 
-class Context extends Backbone.Model {
-  reset(attributes = {}, options = {}) {
-    return super.reset(attributes, options);
-  }
-}
+class Context extends Backbone.Model {}
 
 class Host extends Context {
   // Derived from letc/host.js::{name,domain_name,makeUrl}. Browser title and

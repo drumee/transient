@@ -33,17 +33,17 @@ resolves to the listed extracted Marionette Widget class.
 | Menu | skeleton/menu.js | menu_topic | widgets/menu/index.js → LetcMenuTopic → LetcBox | KEEP_KERNEL | Reinstated generic menu state; Team router/radio/desktop geometry removed. |
 | Messenger | skeleton/messenger.js | messenger | ui-team/src/drumee/builtins/messenger/index.js | DEFER_TEAM | Final exclusion: Team chat API, attachment/MFS workflow, emoji assets and Team state are intrinsic. KIND.messenger → messenger only as documentation. |
 | Note | skeleton/note.js | note | widgets/text/index.js → LetcText | KEEP_KERNEL | Retained and browser-proven. |
-| Profile | skeleton/profile.js | profile | widgets/profile/index.js | DEFER_MFS | Final exclusion: calls Visitor.avatar plus Team presence/Wm state. Repository location is not the reason. |
-| Progress | skeleton/progress.js | progress | widgets/progress/media/index.js | DEFER_MFS | Final exclusion: required loader/client/upload-transfer lifecycle is MFS/media work. |
+| Profile | skeleton/profile.js | profile | widgets/profile/{index.js,skeleton/index.js,templates/avatar.js,skin/index.scss} → LetcProfile | KEEP_KERNEL | Retained generic initials, display name, colour, fallback/avatar presentation and optional caller status update. Visitor.avatar, Team radio subscription and Wm contact state are removed. Historical kind is literal profile. |
+| Progress | skeleton/progress.js | progress | widgets/progress/media/{index.js,skeleton/{grid,row}.js,template/{grid,row}.js,skin/{grid,row}.scss} → LetcProgress | KEEP_KERNEL | Retained generic grid/row presentation, update(number or loaded/total), label and optional listener seam. MFS parent mutation, upload-end handler dispatch and media policy are removed. Historical kind is literal progress. |
 | RichText | skeleton/rich-text.js | rich_text | widgets/text/editable/index.js → LetcRichText | KEEP_KERNEL | Reinstated generic contenteditable lifecycle; MFS paste-file and app service policy removed. KIND.rich_text → rich_text. |
 | Textarea | skeleton/entry/textarea.js | entry | widgets/entry/input/index.js → LetcEntry | KEEP_KERNEL | KIND.entry → entry; type is textarea. |
-| UserProfile | skeleton/profile.js | profile | same as Profile | DEFER_MFS | Alias of Profile; same final reason. |
+| UserProfile | skeleton/profile.js | profile | same `profile` builder and LetcProfile | KEEP_KERNEL | Historical object reuses the same cached profile builder. The runtime preserves that alias: Skeletons.UserProfile === Skeletons.Profile and resolves static kind profile. |
 | Wrapper.X | skeleton/wrapper-x.js | box | toolkit/builder.js → widgets/box/index.js → LetcBox | KEEP_KERNEL | Retained with dialog__wrapper, name and sys_pn. |
 | Wrapper.Y | skeleton/wrapper-y.js | box | same | KEEP_KERNEL | Retained. |
 
 ## Static Kind closure
 
-The 23 retained public builders emit 12 strings, each registered before READY.
+The 26 retained public builders emit 14 strings, each registered before READY.
 
 | Kind | Real extracted class | Historical source |
 |---|---|---|
@@ -57,10 +57,15 @@ The 23 retained public builders emit 12 strings, each registered before READY.
 | list_table | LetcTable (LetcList) | widgets/list/index.js,table/index.js |
 | menu_topic | LetcMenuTopic (LetcBox) | widgets/menu/index.js |
 | note | LetcText (Marionette.View) | widgets/text/index.js |
+| profile | LetcProfile (LetcBox) | widgets/profile/index.js |
+| progress | LetcProgress (LetcBox) | widgets/progress/media/index.js |
 | rich_text | LetcRichText (LetcText) | widgets/text/editable/index.js |
 | wrapper | LetcBlank (Marionette.View) | widgets/blank/index.js |
 
 The exhaustive test invokes every retained builder and verifies its literal
-kind, static registration and Marionette lineage. The Chrome test proves the
-path Skeletons.Note → note → LetcText → DOM; the canonical ui-dev-tools Widget
-fixture separately proves LetcBox → onDomRefresh → feed with a skin.
+kind, static registration and Marionette lineage. The Chrome test proves
+Skeletons.Note → note → LetcText → DOM, Skeletons.Profile → profile →
+LetcProfile fallback initials, Skeletons.UserProfile's Profile alias, and
+Skeletons.Progress → LetcProgress → update(42) without a loader. The canonical
+ui-dev-tools Widget fixture separately proves LetcBox → onDomRefresh → feed
+with a skin.

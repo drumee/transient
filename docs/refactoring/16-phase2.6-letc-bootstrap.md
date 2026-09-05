@@ -91,6 +91,8 @@ UiRuntime.mount uses Marionette.Region.
 | LetcFileSelector | ui-core/letc/widgets/file-selector/index.js | Marionette.View | Generic browser file-select contract; no storage/MFS action. |
 | LetcImageSmart | ui-core/letc/widgets/image/smart/index.js | Marionette.View | Generic src/low/high image loading and events; nid/actualNode MFS branch removed. |
 | LetcMenuTopic | ui-core/letc/widgets/menu/index.js | LetcBox | Generic menu state/lifecycle; Team navigation, global radio channels and desktop geometry removed. |
+| LetcProfile | ui-core/letc/widgets/profile/index.js | LetcBox | Generic initials, display name, deterministic colour, fallback/avatar presentation and optional caller-supplied status update. Visitor avatar lookup, Team radio subscription and Window Manager contact state are removed. |
+| LetcProgress | ui-core/letc/widgets/progress/media/index.js | LetcBox | Generic grid/row progress presentation, update, label and optional listener seam. MFS parent mutation, upload-end handler dispatch and Team/media policy are removed. |
 | LetcRichText | ui-core/letc/widgets/text/editable/index.js | LetcText | Generic contenteditable lifecycle; MFS paste-file and app service policy removed. |
 
 No generic primitive was extracted from ui-team in this correction. The
@@ -102,11 +104,12 @@ missing.
 ## Skeleton closure and KIND removal
 
 The complete inventory is maintained in
-docs/refactoring/letc-static-widget-catalog.md. Twenty-three public,
-non-MFS builders are KEEP_KERNEL. Their twelve emitted kind strings are
-registered before READY. Four historical public paths are final exclusions:
-Messenger is DEFER_TEAM; Profile, UserProfile and Progress are DEFER_MFS.
-No public entry remains INVESTIGATE.
+docs/refactoring/letc-static-widget-catalog.md. Twenty-six public,
+non-MFS builders are KEEP_KERNEL. Their fourteen emitted kind strings are
+registered before READY. Messenger is the sole final exclusion and remains
+DEFER_TEAM. Profile/UserProfile and Progress are retained after separating
+their generic rendering from optional MFS/Team branches. No public entry
+remains INVESTIGATE.
 
 All historical pseudo-constant expressions are replaced by exact literals:
 
@@ -124,7 +127,11 @@ Chrome validation run with window.KIND absent.
 
 ## Context and singleton boundary
 
-Platform and Env are real Backbone.Model contexts. Host retains name,
+Platform and Env are real Backbone.Model contexts. `Context.reset()` has been
+removed: `Backbone.Model` has no such method and targeted source searches find
+no Platform/Env/Host/Visitor/Organization caller. Context replacement uses the
+valid explicit Backbone sequence `clear()` then `set()` when a caller actually
+needs it; the focused regression test covers that boundary. Host retains name,
 domain_name, makeUrl, settings and data from letc/host.js. Visitor retains
 profile, identity, full name, language and online state from letc/user.js.
 Organization retains metadata, host and name from letc/organization.js.
@@ -176,8 +183,8 @@ through the real CollectionView path, not a fixture-only renderer.
 
 | Test | Result | Meaning |
 |---|---|---|
-| target/foundation/ui-runtime npm test | PASS | Kind protocol, READY, singleton idempotence, all 23 retained builders, final exclusions, Marionette lineage, context and no-KIND/import scan. |
-| tests/integration/kernel/ui-runtime-browser.test.js | PASS | Real Marionette Note render, no KIND, and canonical ui-dev-tools Widget/skin path in Chrome. |
+| target/foundation/ui-runtime npm test | PASS | Kind protocol, READY, singleton idempotence, all 26 retained builders, Context.reset removal, Marionette lineage, context and no-KIND/import scan. |
+| tests/integration/kernel/ui-runtime-browser.test.js | PASS | Real Marionette Note, Profile fallback initials, UserProfile alias and Progress update render with no KIND; the canonical ui-dev-tools Widget/skin path also passes in Chrome. |
 | target/tooling/ui-build/test/ui-build.test.js | PASS | The shared CommonJS/Webpack configuration compiles the real ui-runtime with its own module roots, preserves SCSS/assets and emits the characterized metadata/hash contract. |
 | scripts/test-env/kernel/test.sh | PASS | Disposable clean-Debian Node/Nginx image builds ui-runtime, renders pinned setup-infra configuration, passes nginx -t and serves both the no-Team kernel service and ui-runtime static route. |
 

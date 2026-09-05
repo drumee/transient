@@ -4,7 +4,7 @@ const { KindRegistry } = require("./kind");
 const { loadBrowserScript } = require("./loader");
 const { PointerDragState, UiRuntime, bootstrap, createRuntime, getRuntime } = require("./runtime");
 const { Skeletons, staticKinds, retainedSkeletonCatalog, excludedSkeletonCatalog } = require("./skeletons");
-const { LetcBlank, LetcBox, LetcEntry, LetcEntryReminder, LetcFileSelector, LetcImageSmart, LetcList, LetcMenuTopic, LetcRichText, LetcSvgImage, LetcTable, LetcText, sourceIdentity } = require("./widgets");
+const { LetcBlank, LetcBox, LetcEntry, LetcEntryReminder, LetcFileSelector, LetcImageSmart, LetcList, LetcMenuTopic, LetcProfile, LetcProgress, LetcRichText, LetcSvgImage, LetcTable, LetcText, sourceIdentity } = require("./widgets");
 const { Backbone, Marionette } = require("./letc");
 
 module.exports = {
@@ -21,6 +21,8 @@ module.exports = {
   LetcImageSmart,
   LetcList,
   LetcMenuTopic,
+  LetcProfile,
+  LetcProgress,
   LetcRichText,
   LetcSvgImage,
   LetcTable,

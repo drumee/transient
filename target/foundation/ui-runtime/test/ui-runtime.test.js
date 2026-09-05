@@ -3,11 +3,14 @@ const fs = require("fs");
 const path = require("path");
 const test = require("node:test");
 const {
+  Context,
   Host,
   KindRegistry,
   LetcBlank,
   LetcBox,
   LetcList,
+  LetcProfile,
+  LetcProgress,
   LetcText,
   Marionette,
   Organization,
@@ -98,6 +101,8 @@ test("bootstrap creates one deterministic non-MFS singleton environment and pres
   assert.equal(first.Kind.get("box"), first.LetcBox);
   assert.equal(first.Kind.get("list_smart"), first.LetcList);
   assert.equal(first.Kind.get("wrapper"), first.LetcBlank);
+  assert.equal(first.Kind.get("profile"), LetcProfile);
+  assert.equal(first.Kind.get("progress"), LetcProgress);
   assert.equal(Object.hasOwn(first, "Websocket"), false);
   assert.equal(first.pointerDrag.isDragging(), false);
   assert.equal(first.Host.name(), "kernel.test");
@@ -133,7 +138,10 @@ test("every exposed non-MFS Skeleton builder emits a pre-registered extracted Wi
   }
   assert.equal(Skeletons.Note("LETC ready").kind, "note");
   assert.equal(runtime.Kind.get("note"), runtime.LetcText);
-  assert.equal(Object.keys(retainedSkeletonCatalog).length, 23);
+  assert.equal(Skeletons.Profile({ firstname: "Kernel" }).kind, "profile");
+  assert.equal(Skeletons.UserProfile, Skeletons.Profile);
+  assert.equal(Skeletons.Progress({ name: "Kernel" }).kind, "progress");
+  assert.equal(Object.keys(retainedSkeletonCatalog).length, 26);
   for (const [name, record] of Object.entries(excludedSkeletonCatalog)) {
     assert.notEqual(record.classification, "INVESTIGATE", `${name} must have a final classification`);
   }
@@ -143,9 +151,24 @@ test("canonical Widget classes retain real historical Marionette ancestry", () =
   assert.ok(LetcBlank.prototype instanceof Marionette.View);
   assert.ok(LetcBox.prototype instanceof Marionette.CollectionView);
   assert.ok(LetcList.prototype instanceof LetcBox);
+  assert.ok(LetcProfile.prototype instanceof LetcBox);
+  assert.ok(LetcProgress.prototype instanceof LetcBox);
   assert.ok(LetcText.prototype instanceof Marionette.View);
   assert.equal(sourceIdentity.LetcBox, "sources/ui-core/letc/widgets/box/index.js");
   assert.equal(sourceIdentity.LetcText, "sources/ui-core/letc/widgets/text/index.js");
+  assert.match(sourceIdentity.LetcProfile, /widgets\/profile/);
+  assert.match(sourceIdentity.LetcProgress, /widgets\/progress\/media/);
+});
+
+test("Context does not expose an unsupported reset API; valid Backbone clear/set preserve replacement semantics", () => {
+  const context = new Context({ stale: true, retained: "old" });
+  assert.equal(typeof context.reset, "undefined");
+  const events = [];
+  context.on("change", () => events.push(context.toJSON()));
+  context.clear();
+  context.set({ retained: "new", fresh: true });
+  assert.deepEqual(context.toJSON(), { retained: "new", fresh: true });
+  assert.equal(events.length, 2);
 });
 
 test("Host, Visitor and Organization retain only minimal identity context", () => {

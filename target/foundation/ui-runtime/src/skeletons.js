@@ -12,11 +12,14 @@ const {
   LetcImageSmart,
   LetcList,
   LetcMenuTopic,
+  LetcProfile,
+  LetcProgress,
   LetcRichText,
   LetcSvgImage,
   LetcTable,
   LetcText
 } = require("./widgets");
+const { colorFromName } = require("./letc");
 
 function isObject(value) {
   return value && typeof value === "object" && !Array.isArray(value);
@@ -68,9 +71,7 @@ class AvatarBuilder {
   }
 
   color(saturation = 40, lightness = 60) {
-    let hash = 0;
-    for (const character of String(this.name || "")) hash = character.charCodeAt(0) + (hash << 5) - hash;
-    return { kind: "note", className: this.className || "", styleOpt: { backgroundColor: `hsl(${hash % 360}, ${saturation}%, ${lightness}%)` } };
+    return { kind: "note", className: this.className || "", styleOpt: { backgroundColor: colorFromName(this.name || "", saturation, lightness) } };
   }
 
   render() {
@@ -178,6 +179,18 @@ function menu(props, style) {
   return new SkeletonBuilder({ ...(props || {}), flow: "x" }, style).render({ kind: "menu_topic" });
 }
 
+function profile(props, style) {
+  return new SkeletonBuilder({ flow: "y", ...(props || {}) }, style).render({ kind: "profile" });
+}
+
+function progress(props, style) {
+  const normalized = { ...(props || {}) };
+  const loader = normalized.loader || normalized.client || normalized.listener;
+  if (loader) normalized.loader = loader;
+  if (!normalized.name && !normalized.filename && loader && typeof loader.get === "function") normalized.name = loader.get("filename");
+  return new SkeletonBuilder(normalized, style).render({ kind: "progress", content: normalized.content == null ? "" : normalized.content });
+}
+
 function richText(props, style) {
   const [normalized, normalizedStyle] = withClassString(props, style);
   const result = new SkeletonBuilder(normalized, normalizedStyle).render({ kind: "rich_text" });
@@ -214,8 +227,11 @@ const Skeletons = Object.freeze({
   }),
   Menu: menu,
   Note: note,
+  Profile: profile,
+  Progress: progress,
   RichText: richText,
   Textarea: textarea,
+  UserProfile: profile,
   Wrapper: Object.freeze({ X: wrapper("x"), Y: wrapper("y") })
 });
 
@@ -230,13 +246,15 @@ const staticKinds = Object.freeze({
   list_table: LetcTable,
   menu_topic: LetcMenuTopic,
   note: LetcText,
+  profile: LetcProfile,
+  progress: LetcProgress,
   rich_text: LetcRichText,
   wrapper: LetcBlank
 });
 
-// Public, retained non-MFS catalog. The only historical public builders not
-// present here are Messenger (Team product), Profile/UserProfile (MFS avatar
-// and Team presence) and Progress (MFS upload-loader lifecycle).
+// Public, retained non-MFS catalog. Messenger is the only historical public
+// builder not present: its chat, attachment and Team-state behaviour is not a
+// generic Widget closure.
 const retainedSkeletonCatalog = Object.freeze({
   Avatar: { build: () => Skeletons.Avatar("default", "avatar", "Kernel"), kinds: ["note"], source: "toolkit/skeleton/avatar.js" },
   "Box.G": { build: () => Skeletons.Box.G(), kinds: ["box"], source: "toolkit/skeleton/box-g.js" },
@@ -257,17 +275,17 @@ const retainedSkeletonCatalog = Object.freeze({
   "List.Table": { build: () => Skeletons.List.Table(), kinds: ["list_table"], source: "toolkit/skeleton/list/table.js" },
   Menu: { build: () => Skeletons.Menu(), kinds: ["menu_topic"], source: "toolkit/skeleton/menu.js" },
   Note: { build: () => Skeletons.Note("kernel"), kinds: ["note"], source: "toolkit/skeleton/note.js" },
+  Profile: { build: () => Skeletons.Profile({ firstname: "Kernel", lastname: "User" }), kinds: ["profile"], source: "toolkit/skeleton/profile.js" },
+  Progress: { build: () => Skeletons.Progress({ name: "Kernel" }), kinds: ["progress"], source: "toolkit/skeleton/progress.js" },
   RichText: { build: () => Skeletons.RichText("kernel"), kinds: ["rich_text"], source: "toolkit/skeleton/rich-text.js" },
   Textarea: { build: () => Skeletons.Textarea(), kinds: ["entry"], source: "toolkit/skeleton/entry/textarea.js" },
+  UserProfile: { build: () => Skeletons.UserProfile({ firstname: "Kernel", lastname: "User" }), kinds: ["profile"], source: "toolkit/skeleton/profile.js (shared Profile builder)" },
   "Wrapper.X": { build: () => Skeletons.Wrapper.X(), kinds: ["box"], source: "toolkit/skeleton/wrapper-x.js" },
   "Wrapper.Y": { build: () => Skeletons.Wrapper.Y(), kinds: ["box"], source: "toolkit/skeleton/wrapper-y.js" }
 });
 
 const excludedSkeletonCatalog = Object.freeze({
-  Messenger: { classification: "DEFER_TEAM", kind: "messenger", evidence: "sources/ui-team/src/drumee/builtins/messenger/index.js uses Team chat API, attachment/MFS and emoji assets" },
-  Profile: { classification: "DEFER_MFS", kind: "profile", evidence: "sources/ui-core/letc/widgets/profile/index.js calls Visitor.avatar and Team presence/Window Manager state" },
-  Progress: { classification: "DEFER_MFS", kind: "progress", evidence: "sources/ui-core/letc/widgets/progress/media/index.js binds upload loaders and media transfer lifecycle" },
-  UserProfile: { classification: "DEFER_MFS", kind: "profile", evidence: "Alias of Profile in sources/ui-core/letc/toolkit/skeletons.js" }
+  Messenger: { classification: "DEFER_TEAM", kind: "messenger", evidence: "sources/ui-team/src/drumee/builtins/messenger/index.js uses Team chat API, attachment/MFS and emoji assets" }
 });
 
 module.exports = {
