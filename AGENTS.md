@@ -34,9 +34,9 @@ The approved sequence is:
 Phase 1     baseline evidence and mapping
 Phase 1.5   minimal-kernel boundary stabilization
 Phase 2     first runtime/build/infrastructure extraction       IMPLEMENTED
-Phase 2.6   LETC bootstrap completeness                         NEXT
-Phase 3     hello vertical slice
-Phase 4     intentional authenticated ACL / MFS capabilities
+Phase 2.6   LETC bootstrap completeness                         IMPLEMENTED
+Phase 3     hello vertical slice                                IMPLEMENTED
+Phase 4     intentional authenticated/resource capabilities     NEXT, only when explicitly authorized
 Phase 5     marketing as first real application
 Phase 6     kernel stabilization from real application needs
 Phase 7+    Team migration module by module
@@ -92,7 +92,7 @@ transient/
 │   │   └── schemas/
 │   │
 │   ├── modules/
-│   │   └── hello/                   # Phase 3 validation module, when authorized
+│   │   └── hello/                   # completed synthetic Phase 3 kernel-validation module
 │   │
 │   ├── control-plane/
 │   │   └── cli/
@@ -828,7 +828,7 @@ kind
 
 A Phase 2 `Widget(props)` helper may remain a test seam, but is not final LETC evidence.
 
-Phase 3 `hello` must use at least one real elementary Widget, preferably `Skeletons.Note`, through static `Kind` resolution.
+The completed Phase 3 `hello` uses a real elementary Widget, `Skeletons.Note`, through static `Kind` resolution.
 
 Do not substitute direct DOM rendering.
 
@@ -963,7 +963,7 @@ Do not claim Team/self-hosting parity until that separate historical path is cor
 
 # 28. Phase 3 — `hello`
 
-When Phase 3 is explicitly authorized, create exactly one synthetic validation module:
+Phase 3 completed exactly one synthetic validation module:
 
 ```text
 target/modules/hello/
@@ -971,9 +971,20 @@ target/modules/hello/
 
 Do not create additional synthetic applications before the first real application.
 
-`hello` must remain intentionally small.
+`hello` remains intentionally small, synthetic and non-product.
 
-Its purpose is to prove a complete vertical Drumee slice.
+It proved the complete vertical Drumee slice:
+
+```text
+LETC bootstrap
+→ dynamic plugin loading
+→ frontend service call
+→ backend module.method dispatch
+→ public-api ACL
+→ lazy Worker loading
+→ HTTP response
+→ Widget update
+```
 
 ## Backend
 
@@ -1009,7 +1020,7 @@ The rendered `hello` must be a real minimal Drumee Widget/LETC artifact, not mer
 
 ## Build
 
-`hello` should be the first synthetic application/module consumer of shared `ui-build`.
+`hello` is the first synthetic application/module consumer of shared `ui-build`.
 
 It must use the approved CommonJS/Webpack pipeline.
 
@@ -1017,7 +1028,7 @@ The build should produce the current required frontend build metadata/hash contr
 
 ## Infrastructure
 
-The end-to-end slice should run behind the kernel integration Nginx/setup-infra contract.
+The completed end-to-end slice runs behind the kernel integration Nginx/setup-infra contract.
 
 ## Explicitly excluded from `hello`
 
@@ -1040,9 +1051,11 @@ The governing rule is:
 
 ---
 
-# 29. Phase 4 — authenticated/resource capabilities and MFS
+# 29. Phase 4 — intentional authenticated/resource capabilities
 
-Do not extract MFS merely because historical code expects it.
+Phase 4 is next only when explicitly authorized. Do not introduce MFS,
+database-backed ACL, schemas, MariaDB or provisioning merely because historical
+Drumee had them.
 
 After `hello`, introduce only the resource/identity/storage capabilities demanded by an approved real use case.
 
@@ -1328,9 +1341,12 @@ Current important documents include:
 13-test-environment.md
 14-minimal-kernel-plan.md
 15-phase2-runtime-extraction.md
+16-phase2.6-letc-bootstrap.md
+17-phase3-hello.md
 ```
 
-Phase 3 should produce a focused implementation/validation document for `hello` if one does not already exist.
+Phase 2.6 and Phase 3 implementation evidence is recorded in
+`16-phase2.6-letc-bootstrap.md` and `17-phase3-hello.md`.
 
 Risk register updates must be evidence-based.
 
