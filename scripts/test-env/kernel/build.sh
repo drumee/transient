@@ -12,6 +12,8 @@ mkdir -p "$context"
 
 cp -a "$TRANSIENT_ROOT/sources/setup-infra" "$context/setup-infra"
 mkdir -p "$context/server-essentials"
+cp -a "$TRANSIENT_ROOT/sources/server-essentials/package.json" "$context/server-essentials/package.json"
+cp -a "$TRANSIENT_ROOT/sources/server-essentials/package-lock.json" "$context/server-essentials/package-lock.json"
 cp -a "$TRANSIENT_ROOT/sources/server-essentials/lib" "$context/server-essentials/lib"
 cp -a "$TRANSIENT_ROOT/target/foundation/server-runtime" "$context/server-runtime"
 cp -a "$TRANSIENT_ROOT/target/foundation/ui-runtime" "$context/ui-runtime"

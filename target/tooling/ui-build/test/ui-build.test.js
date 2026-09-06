@@ -12,9 +12,14 @@ const {
 } = require("../lib");
 const repositoryRoot = path.resolve(__dirname, "../../../..");
 
+function dependencyRoot() {
+  return process.env.DRUMEE_UI_BUILD_NODE_MODULES
+    ? path.resolve(repositoryRoot, process.env.DRUMEE_UI_BUILD_NODE_MODULES)
+    : path.join(__dirname, "..", "node_modules");
+}
+
 function runWebpack(config) {
-  const dependencyRoot = process.env.DRUMEE_UI_BUILD_NODE_MODULES || path.join(__dirname, "..", "node_modules");
-  const webpack = require(path.join(dependencyRoot, "webpack"));
+  const webpack = require(path.join(dependencyRoot(), "webpack"));
   return new Promise((resolve, reject) => {
     webpack(config, (error, stats) => {
       if (error) return reject(error);
@@ -69,7 +74,7 @@ test("Webpack emits a content-sensitive bundle and Drumee build metadata with st
     outputPath,
     version: "0.0.0-phase2",
     rev: "fixture",
-    loaderRoots: [process.env.DRUMEE_UI_BUILD_NODE_MODULES || path.join(__dirname, "..", "node_modules")]
+    loaderRoots: [dependencyRoot()]
   });
   await runWebpack(config);
   const first = JSON.parse(fs.readFileSync(path.join(outputPath, "index.json"), "utf8"));
@@ -93,7 +98,7 @@ test("ui-runtime itself builds through the shared Webpack configuration", async 
     outputPath,
     version: "0.0.0-phase2",
     rev: "phase2",
-    loaderRoots: [process.env.DRUMEE_UI_BUILD_NODE_MODULES || path.join(__dirname, "..", "node_modules")]
+    loaderRoots: [dependencyRoot()]
   });
   await runWebpack(config);
   const metadata = JSON.parse(fs.readFileSync(path.join(outputPath, "index.json"), "utf8"));
@@ -104,7 +109,7 @@ test("ui-runtime itself builds through the shared Webpack configuration", async 
 test("the Phase 3 Hello plugin builds as a separate CommonJS Webpack artifact", async () => {
   const root = path.resolve(__dirname, "../../../modules/hello/ui");
   const outputPath = fs.mkdtempSync(path.join(os.tmpdir(), "drumee-hello-build-"));
-  const dependencyRoot = process.env.DRUMEE_UI_BUILD_NODE_MODULES || path.join(__dirname, "..", "node_modules");
+  const dependencies = dependencyRoot();
   const config = createConfig({
     root,
     name: "hello",
@@ -114,8 +119,8 @@ test("the Phase 3 Hello plugin builds as a separate CommonJS Webpack artifact", 
     publicPath: "/-/plugins/hello/",
     version: "0.0.0-phase3",
     rev: "phase3",
-    loaderRoots: [dependencyRoot],
-    moduleRoots: [path.resolve(__dirname, "../../../foundation/ui-runtime/node_modules"), dependencyRoot]
+    loaderRoots: [dependencies],
+    moduleRoots: [path.resolve(__dirname, "../../../foundation/ui-runtime/node_modules"), dependencies]
   });
   await runWebpack(config);
   const metadata = JSON.parse(fs.readFileSync(path.join(outputPath, "index.json"), "utf8"));

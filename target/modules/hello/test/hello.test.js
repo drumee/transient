@@ -5,8 +5,10 @@ const test = require("node:test");
 
 const {
   DescriptorRegistry,
+  DomainAuthorizer,
   ServiceDispatcher,
   authorizeFastPath,
+  createAuthorizer,
   createServiceServer
 } = require("../../../foundation/server-runtime/lib");
 const { KindRegistry, LetcBox } = require("../../../foundation/ui-runtime/src");
@@ -53,6 +55,52 @@ test("hello does not bypass ACL when the public-api descriptor is absent", async
     dispatcher.dispatch({ service: "denied.ping", session: { isAnonymous: () => true }, input: {} }),
     (error) => error.code === "PERMISSION_DENIED"
   );
+});
+
+test("hello.private explicitly uses the Domain ACL path and remains lazy", async () => {
+  const registry = helloRegistry();
+  const calls = [];
+  const authorize = createAuthorizer({
+    domainAuthorizer: new DomainAuthorizer({
+      store: {
+        async domainPermission(uid, domainId, permission) {
+          calls.push({ uid, domainId, permission });
+          return 2;
+        }
+      }
+    })
+  });
+  const loads = [];
+  const dispatcher = new ServiceDispatcher({
+    registry,
+    authorize,
+    requireWorker(file) {
+      loads.push(file);
+      return require(file);
+    }
+  });
+  const anonymous = { isAnonymous: () => true };
+  await assert.rejects(
+    dispatcher.dispatch({ service: "hello.private", session: anonymous, input: {} }),
+    (error) => error.code === "PERMISSION_DENIED"
+  );
+  assert.deepEqual(loads, []);
+
+  const session = {
+    isAnonymous: () => false,
+    identity: () => ({ id: "phase4authuser01", domainId: 41 })
+  };
+  const result = await dispatcher.dispatch({ service: "hello.private", session, input: {} });
+  assert.deepEqual(result, {
+    ok: true,
+    authenticated: true,
+    module: "hello",
+    scope: "domain",
+    identity: { id: "phase4authuser01" }
+  });
+  assert.deepEqual(registry.resolve("hello.private", session).permission, { src: permissionValue("read"), scope: "domain" });
+  assert.deepEqual(calls, [{ uid: "phase4authuser01", domainId: 41, permission: permissionValue("read") }]);
+  assert.deepEqual(loads, [workerPath]);
 });
 
 test("hello.ping reaches the generic HTTP adapter with a POST body and returns the standard envelope", async () => {

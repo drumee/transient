@@ -6,6 +6,12 @@
         "src": "anonymous",
         "fast_check": "public-api"
       }
+    },
+    "private": {
+      "scope": "domain",
+      "permission": {
+        "src": "read"
+      }
     }
   },
   "modules": {

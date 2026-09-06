@@ -18,10 +18,14 @@ command -v curl >/dev/null || { echo "curl is required for route checks." >&2; e
 for required in \
   sources/setup-infra/infra.js \
   sources/setup-infra/templates/etc/drumee/infrastructure/routes/app.conf.tpl \
+  sources/schemas/yellow_page/procedures/domain/permission.sql \
+  sources/schemas/yellow_page/procedures/session/session_signin.sql \
   sources/server-essentials/lib/lex/permission.js \
   target/foundation/server-runtime/lib/index.js \
   target/foundation/ui-runtime/src/index.js \
   target/modules/hello/server/acl/hello.json \
+  target/os/schemas/yellow-page-auth/phase4-schema.sql \
+  target/os/schemas/yellow-page-auth/phase4-fixture.sh \
   target/modules/hello/ui/index.js \
   target/tooling/ui-build/lib/index.js; do
   if [[ ! -e "$TRANSIENT_ROOT/$required" ]]; then

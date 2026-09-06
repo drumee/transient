@@ -17,6 +17,11 @@ RUN npm ci --include=dev --ignore-scripts \
   && node -e "require.resolve('style-loader'); require.resolve('sass-loader');"
 
 WORKDIR /opt/kernel
+COPY server-essentials/package.json server-essentials/package-lock.json ./server-essentials/
+WORKDIR /opt/kernel/server-essentials
+RUN npm ci --omit=dev --ignore-scripts
+WORKDIR /opt/kernel
+COPY server-essentials/lib ./server-essentials/lib/
 COPY server-runtime/ ./server-runtime/
 COPY ui-runtime/package.json ui-runtime/package-lock.json ./ui-runtime/
 WORKDIR /opt/kernel/ui-runtime
@@ -24,7 +29,6 @@ RUN npm ci --omit=dev --ignore-scripts
 WORKDIR /opt/kernel
 COPY ui-runtime/ ./ui-runtime/
 COPY hello/ ./hello/
-COPY server-essentials/ ./server-essentials/
 COPY container/ ./scripts/
 
 RUN node ./scripts/build-ui-runtime.js \

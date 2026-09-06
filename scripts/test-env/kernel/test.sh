@@ -34,4 +34,7 @@ docker exec "$KERNEL_CONTAINER" sh -ec '
   test -f /srv/drumee/runtime/plugins/ui/main/hello/index.json
   test -f /srv/drumee/runtime/plugins/ui/main/hello/probe.html
 '
-echo "Phase 3 kernel/hello integration: PASS"
+docker exec -e "MYSQL_PWD=$KERNEL_DB_ROOT_PASSWORD" "$KERNEL_DB_CONTAINER" \
+  mariadb --protocol=tcp --host=127.0.0.1 --user=root "$KERNEL_DB_NAME" \
+  --execute 'SELECT domain_permission("phase4authuser01", 41, 2) AS granted' | grep -q '2'
+echo "Phase 4 kernel/hello integration: PASS"

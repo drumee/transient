@@ -36,7 +36,8 @@ Phase 1.5   minimal-kernel boundary stabilization
 Phase 2     first runtime/build/infrastructure extraction       IMPLEMENTED
 Phase 2.6   LETC bootstrap completeness                         IMPLEMENTED
 Phase 3     hello vertical slice                                IMPLEMENTED
-Phase 4     intentional authenticated/resource capabilities     NEXT, only when explicitly authorized
+Phase 4     authenticated private Domain capability              IMPLEMENTED
+Next        application-driven resource capability, only when explicitly authorized
 Phase 5     marketing as first real application
 Phase 6     kernel stabilization from real application needs
 Phase 7+    Team migration module by module
@@ -276,7 +277,8 @@ The intended progression is:
 ```text
 minimal runtime
 → hello
-→ intentional authenticated/resource capabilities
+→ authenticated private Domain capability
+→ intentional resource capabilities
 → MFS where required
 → marketing
 → kernel stabilization
@@ -1051,13 +1053,16 @@ The governing rule is:
 
 ---
 
-# 29. Phase 4 — intentional authenticated/resource capabilities
+# 29. Phase 4 — authenticated private Domain capability (implemented)
 
-Phase 4 is next only when explicitly authorized. Do not introduce MFS,
-database-backed ACL, schemas, MariaDB or provisioning merely because historical
-Drumee had them.
+Phase 4 establishes only real Yellow Page login/session handling and explicit
+`scope: domain → domain_permission` authorization. It does not establish Hub
+ACL, Hub shards or MFS. Do not introduce further MFS, database-backed resource
+ACL, schemas, MariaDB or provisioning merely because historical Drumee had
+them.
 
-After `hello`, introduce only the resource/identity/storage capabilities demanded by an approved real use case.
+After the completed Domain capability, introduce only the
+resource/identity/storage capabilities demanded by an approved real use case.
 
 When DB-backed ACL becomes necessary:
 
@@ -1345,8 +1350,9 @@ Current important documents include:
 17-phase3-hello.md
 ```
 
-Phase 2.6 and Phase 3 implementation evidence is recorded in
-`16-phase2.6-letc-bootstrap.md` and `17-phase3-hello.md`.
+Phase 2.6, Phase 3 and Phase 4 implementation evidence is recorded in
+`16-phase2.6-letc-bootstrap.md`, `17-phase3-hello.md` and
+`18-phase4-authenticated-private.md`.
 
 Risk register updates must be evidence-based.
 
