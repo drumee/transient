@@ -49,6 +49,12 @@ test("Phase 4 authenticates with session_signin then authorizes hello.private th
   const start = run("/bin/bash", ["-lc", "KERNEL_BUILD_QUIET=1 KERNEL_KEEP_RUNNING=1 scripts/test-env/kernel/test.sh"]);
   assert.equal(start.status, 0, `${start.stdout}\n${start.stderr}`);
   try {
+    // The target function must retain the historical bitwise result convention:
+    // 0 denies, while every requested bit present in privilege is non-zero.
+    assert.equal(db("SELECT domain_permission('phase4authuser01', 41, 1)"), "1");
+    assert.equal(db("SELECT domain_permission('phase4authuser01', 41, 2)"), "2");
+    assert.equal(db("SELECT domain_permission('phase4authuser01', 41, 4)"), "0");
+
     const ping = await service("hello.ping");
     assert.equal(ping.response.status, 200);
     assert.deepEqual(ping.payload, {

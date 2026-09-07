@@ -35,5 +35,8 @@ scope = hub    → Hub shard / resource-MFS boundary → deferred
 ```
 
 An explicit Domain descriptor never falls through to a Hub default. A valid
-session alone is never a grant; the current Domain privilege is evaluated on
-every private request.
+session alone is never a grant; `permission.src` is mandatory and its current
+Domain privilege is evaluated on every private request. `permission.dest` is
+optional, but when present it is evaluated through the same bitwise
+`domain_permission` function and both non-zero results are required. A
+destination privilege alone never grants access.

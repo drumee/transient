@@ -54,6 +54,9 @@ runtime → credentials → session_signin → real regsid cookie
 It does not call `drumate_create`, allocate a personal database, create a Hub,
 call `permission_grant`, or initialise MFS. The disposable test password is an
 environment value and is not included in responses, logs or this document.
+The fixture derives its SHA-512 fingerprint in shell and interpolates only the
+validated 128-character hex digest into fixture SQL; the runtime still submits
+the plaintext password to `session_signin` for historical verification.
 
 ## Domain ACL
 
@@ -80,6 +83,12 @@ The exact procedure is
 `server-essentials/lib/mariadb.js::await_func` returns a one-field result row;
 `YellowPageStore.scalarFunctionValue` is the documented runtime adaptation to
 that current generic API.
+
+The retained `check_domain()` result semantics are exact at the authorization
+boundary: `permission.src` is mandatory, so a missing source privilege denies;
+an absent `permission.dest` is satisfied; and a present destination privilege
+is a second `domain_permission` check. Both requested bitmasks must return
+non-zero. `dest` alone can never grant Domain authorization.
 
 Historical `Acl._start` performs Hub/MFS-oriented environment checks before
 `check_domain`. For explicit `scope: "domain"`, Phase 4 dispatches directly to
@@ -126,6 +135,7 @@ clean database and verifies through real HTTP:
 | `hello.private` | real session, read privilege | `200` |
 | `hello.private`, privilege revoked | same session | `403` |
 | `hello.private`, privilege restored | same session | `200` |
+| `domain_permission(uid, 41, 1/2/4)` with fixture privilege `3` | real SQL bitmask | `1` / `2` / `0` |
 
 The revoke/restore transition without re-login proves session authentication
 and Domain authorization are distinct and that `domain_permission` executes
