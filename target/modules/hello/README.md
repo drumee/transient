@@ -10,6 +10,10 @@ Hub shards or provisioning.
 - Private backend method: `hello.private`
 - Private ACL: `scope: "domain"`, `permission: { src: "read" }`; it requires
   a real Yellow Page `regsid` session and `domain_permission` grant.
+- Private push method: `hello.push`; it uses the same `scope: "domain"` read
+  privilege and publishes a targeted `hello.push` event through the runtime
+  Redis/WebSocket transport. The Widget consumes it only through
+  `runtime.Websocket.bindEvent`, never through a raw browser socket.
 - Frontend kind: `"hello"`
 - Plugin flow: `Kind.loadPlugin` → `bootstrap.plugin` → `index.json` → bundle
   → `Kind.registerAddons`

@@ -16,6 +16,12 @@ if docker container inspect "$KERNEL_DB_CONTAINER" >/dev/null 2>&1; then
 else
   echo "Kernel database is not present: $KERNEL_DB_CONTAINER"
 fi
+if docker container inspect "$KERNEL_REDIS_CONTAINER" >/dev/null 2>&1; then
+  docker rm -f "$KERNEL_REDIS_CONTAINER" >/dev/null
+  echo "Removed disposable Redis push bus: $KERNEL_REDIS_CONTAINER"
+else
+  echo "Kernel Redis push bus is not present: $KERNEL_REDIS_CONTAINER"
+fi
 if docker network inspect "$KERNEL_NETWORK" >/dev/null 2>&1; then
   docker network rm "$KERNEL_NETWORK" >/dev/null 2>&1 || true
 fi

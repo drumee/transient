@@ -9,6 +9,7 @@ KERNEL_CONTAINER="${KERNEL_CONTAINER:-transient-kernel-phase2}"
 KERNEL_HTTP_PORT="${KERNEL_HTTP_PORT:-28642}"
 KERNEL_NETWORK="${KERNEL_NETWORK:-transient-kernel-phase4-net}"
 KERNEL_DB_CONTAINER="${KERNEL_DB_CONTAINER:-transient-kernel-phase4-db}"
+KERNEL_REDIS_CONTAINER="${KERNEL_REDIS_CONTAINER:-transient-kernel-phase4-redis}"
 KERNEL_DB_NAME="${KERNEL_DB_NAME:-yp}"
 KERNEL_DB_USER="${KERNEL_DB_USER:-kernel_phase4}"
 KERNEL_DB_PASSWORD="${KERNEL_DB_PASSWORD:-phase4-disposable-db}"
@@ -26,6 +27,10 @@ require_kernel_db_name() {
   case "$KERNEL_DB_CONTAINER" in
     transient-*-db) ;;
     *) echo "Refusing non-test database container name: $KERNEL_DB_CONTAINER" >&2; exit 2 ;;
+  esac
+  case "$KERNEL_REDIS_CONTAINER" in
+    transient-*-redis) ;;
+    *) echo "Refusing non-test Redis container name: $KERNEL_REDIS_CONTAINER" >&2; exit 2 ;;
   esac
   case "$KERNEL_NETWORK" in
     transient-*-net) ;;

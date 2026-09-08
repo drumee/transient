@@ -1,8 +1,8 @@
 {
   "name": "@drumee/ui-runtime-extraction",
-  "version": "0.0.0-phase2.6-corrective",
+  "version": "0.0.0-phase4.4",
   "private": true,
-  "description": "Private Phase 2.6 CommonJS LETC runtime extraction workspace; not a public package or final repository boundary.",
+  "description": "Private Phase 4.4 CommonJS LETC runtime extraction workspace; not a public package or final repository boundary.",
   "main": "src/index.js",
   "type": "commonjs",
   "engines": {

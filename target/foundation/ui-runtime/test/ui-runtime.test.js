@@ -18,6 +18,7 @@ const {
   Skeletons,
   UiRuntime,
   Visitor,
+  Websocket,
   bootstrap,
   retainedSkeletonCatalog,
   excludedSkeletonCatalog,
@@ -121,7 +122,9 @@ test("bootstrap creates one deterministic non-MFS singleton environment and pres
   assert.equal(first.Kind.get("wrapper"), first.LetcBlank);
   assert.equal(first.Kind.get("profile"), LetcProfile);
   assert.equal(first.Kind.get("progress"), LetcProgress);
-  assert.equal(Object.hasOwn(first, "Websocket"), false);
+  assert.ok(first.Websocket instanceof Websocket);
+  assert.equal(first.Websocket.state, "disconnected");
+  assert.equal(target.Websocket, first.Websocket);
   assert.equal(first.pointerDrag.isDragging(), false);
   assert.equal(first.Host.name(), "kernel.test");
   assert.deepEqual(events, [{ name: "core", detail: { name: "core", runtime: "ui-runtime" } }]);
@@ -141,6 +144,74 @@ test("a plugin request cannot observe a partially initialized bootstrap", async 
   release();
   await Promise.all([boot, plugin]);
   assert.equal(resolved, true);
+});
+
+test("Websocket preserves the service envelope, generic bind/unbind and authenticated connection state", async () => {
+  const sockets = [];
+  const timers = [];
+  const intervals = [];
+  class FakeSocket {
+    constructor(url, protocol) {
+      this.url = url;
+      this.protocol = protocol;
+      this.sent = [];
+      sockets.push(this);
+    }
+
+    send(value) { this.sent.push(JSON.parse(value)); }
+    close() { if (this.onclose) this.onclose({ code: 1000 }); }
+    open() { this.onopen(); }
+    message(value) { this.onmessage({ data: JSON.stringify(value) }); }
+  }
+  let now = 0;
+  const websocket = new Websocket({
+    global: { location: { protocol: "http:", host: "kernel.test" } },
+    WebSocket: FakeSocket,
+    now: () => now,
+    setTimeout(handler) { timers.push(handler); return handler; },
+    clearTimeout() {},
+    setInterval(handler) { intervals.push(handler); return handler; },
+    clearInterval() {}
+  });
+  const received = [];
+  const listener = (data, options, model) => received.push({ data, options, model });
+  const off = websocket.bindEvent("hello.push", listener);
+  const connected = websocket.connect();
+  assert.equal(sockets[0].url, "ws://kernel.test/-/websocket/");
+  assert.equal(sockets[0].protocol, "service");
+  sockets[0].open();
+  sockets[0].message({ service: "sys.hello", data: { socket_id: "socket-a" } });
+  await connected;
+  assert.equal(websocket.state, "connected");
+  assert.equal(websocket.socketId, "socket-a");
+  websocket.upstream("sys.ping", { type: "checkConnection" });
+  assert.deepEqual(sockets[0].sent, [["sys.ping", { type: "checkConnection" }]]);
+  sockets[0].message({ service: "hello.push", data: { message: "Hello over WebSocket" }, options: { source: "test" }, model: { id: 1 } });
+  assert.deepEqual(received, [{
+    data: { message: "Hello over WebSocket" }, options: { source: "test" }, model: { id: 1 }
+  }]);
+  off();
+  sockets[0].message({ service: "hello.push", data: { message: "ignored" } });
+  assert.equal(received.length, 1);
+  websocket.bindEvent("hello.push", listener);
+  websocket.unbindEvent("hello.push", listener);
+  sockets[0].message({ service: "hello.push", data: { message: "also ignored" } });
+  assert.equal(received.length, 1);
+
+  now = 121000;
+  intervals[0]();
+  assert.deepEqual(sockets[0].sent.at(-1), ["sys.ping", { type: "checkConnection" }]);
+  sockets[0].onclose({ code: 1006 });
+  assert.equal(websocket.state, "reconnecting");
+  timers.at(-1)();
+  assert.equal(sockets.length, 2);
+  sockets[1].open();
+  sockets[1].message({ service: "sys.hello", data: { socket_id: "socket-b" } });
+  assert.equal(websocket.state, "connected");
+  assert.equal(websocket.socketId, "socket-b");
+  websocket.close();
+  assert.equal(websocket.state, "closed");
+  assert.equal(timers.length >= 1, true);
 });
 
 test("every exposed non-MFS Skeleton builder emits a pre-registered extracted Widget kind", async () => {

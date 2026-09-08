@@ -12,6 +12,12 @@
       "permission": {
         "src": "read"
       }
+    },
+    "push": {
+      "scope": "domain",
+      "permission": {
+        "src": "read"
+      }
     }
   },
   "modules": {

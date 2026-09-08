@@ -103,6 +103,46 @@ test("hello.private explicitly uses the Domain ACL path and remains lazy", async
   assert.deepEqual(loads, [workerPath]);
 });
 
+test("hello.push uses the existing private Domain ACL and the generic runtime push API", async () => {
+  const registry = helloRegistry();
+  const published = [];
+  const dispatcher = new ServiceDispatcher({
+    registry,
+    authorize: createAuthorizer({
+      domainAuthorizer: new DomainAuthorizer({
+        store: { async domainPermission() { return permissionValue("read"); } }
+      })
+    }),
+    workerOptions: {
+      push: {
+        async publish(args) {
+          published.push(args);
+          return { published: true, service: args.service, recipients: 1 };
+        }
+      }
+    }
+  });
+  await assert.rejects(
+    dispatcher.dispatch({ service: "hello.push", session: { isAnonymous: () => true }, input: {} }),
+    (error) => error.code === "PERMISSION_DENIED"
+  );
+  const result = await dispatcher.dispatch({
+    service: "hello.push",
+    session: {
+      sid: "real-session",
+      isAnonymous: () => false,
+      identity: () => ({ id: "phase4authuser01", domainId: 41 })
+    },
+    input: {}
+  });
+  assert.deepEqual(result, { ok: true, module: "hello", scope: "domain", published: true, service: "hello.push", recipients: 1 });
+  assert.deepEqual(published, [{
+    service: "hello.push",
+    sessionId: "real-session",
+    data: { message: "Hello over WebSocket" }
+  }]);
+});
+
 test("hello.ping reaches the generic HTTP adapter with a POST body and returns the standard envelope", async () => {
   const observed = [];
   const server = createServiceServer({

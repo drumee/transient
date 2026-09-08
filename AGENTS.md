@@ -37,7 +37,8 @@ Phase 2     first runtime/build/infrastructure extraction       IMPLEMENTED
 Phase 2.6   LETC bootstrap completeness                         IMPLEMENTED
 Phase 3     hello vertical slice                                IMPLEMENTED
 Phase 4     authenticated private Domain capability              IMPLEMENTED
-Next        application-driven resource capability, only when explicitly authorized
+Phase 4.4   WebSocket / push runtime capability                  IMPLEMENTED
+Phase 4.5   NPM + schema exportability lock                      NEXT
 Phase 5     marketing as first real application
 Phase 6     kernel stabilization from real application needs
 Phase 7+    Team migration module by module
@@ -278,6 +279,7 @@ The intended progression is:
 minimal runtime
 → hello
 → authenticated private Domain capability
+→ WebSocket / push runtime capability
 → intentional resource capabilities
 → MFS where required
 → marketing
@@ -1053,7 +1055,7 @@ The governing rule is:
 
 ---
 
-# 29. Phase 4 — authenticated private Domain capability (implemented)
+# 29. Phase 4 / 4.4 — authenticated Domain and WebSocket push capabilities (implemented)
 
 Phase 4 establishes only real Yellow Page login/session handling and explicit
 `scope: domain → domain_permission` authorization. It does not establish Hub
@@ -1091,6 +1093,12 @@ Do not make one imply all the others automatically.
 Window Manager is not an initial kernel primitive; reconsider it only after intentional MFS/resource semantics exist.
 
 Finder remains a system application, not the MFS engine.
+
+WebSocket transport and Redis push distribution are kernel capabilities;
+application-specific interpretation of pushed services belongs to modules or
+distributions. Phase 4.4 does not establish Hub, MFS, broadcast policy or Team
+application behaviour. Phase 4.5 may only lock the proven NPM/schema boundary
+when explicitly authorized.
 
 ---
 
@@ -1350,9 +1358,9 @@ Current important documents include:
 17-phase3-hello.md
 ```
 
-Phase 2.6, Phase 3 and Phase 4 implementation evidence is recorded in
+Phase 2.6, Phase 3, Phase 4 and Phase 4.4 implementation evidence is recorded in
 `16-phase2.6-letc-bootstrap.md`, `17-phase3-hello.md` and
-`18-phase4-authenticated-private.md`.
+`18-phase4-authenticated-private.md` and `19-phase4.4-websocket-push.md`.
 
 Risk register updates must be evidence-based.
 

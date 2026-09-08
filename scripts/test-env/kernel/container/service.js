@@ -1,15 +1,19 @@
+const http = require("http");
 const {
   DescriptorRegistry,
   DomainAuthorizer,
   FrontendPluginResolver,
+  PushBus,
   SessionManager,
   ServiceDispatcher,
+  WebSocketPushRouter,
   YellowPageStore,
   createAuthorizer,
   createServiceServer
 } = require("/opt/kernel/server-runtime/lib");
 const { permissionValue } = require("/opt/kernel/server-essentials/lib/lex/permission");
 const Mariadb = require("/opt/kernel/server-essentials/lib/mariadb");
+const { RedisStore } = require("/opt/kernel/server-essentials/lib");
 
 const registry = new DescriptorRegistry({ permissionValue });
 registry.registerDirectory("/opt/kernel/server-runtime/acl");
@@ -31,10 +35,46 @@ const yellowPage = new Mariadb({ name: process.env.KERNEL_DB_NAME || "yp", user:
 const yellowPageStore = new YellowPageStore({ database: yellowPage });
 const sessionManager = new SessionManager({ store: yellowPageStore });
 const authorize = createAuthorizer({ domainAuthorizer: new DomainAuthorizer({ store: yellowPageStore }) });
-const dispatcher = new ServiceDispatcher({ registry, authorize, workerOptions: { pluginResolver } });
+global.endpointAddress = process.env.KERNEL_PUSH_ENDPOINT || "kernel-runtime:23000";
+const push = new PushBus({ redisStore: RedisStore, socketStore: yellowPageStore });
+const dispatcher = new ServiceDispatcher({ registry, authorize, workerOptions: { pluginResolver, push } });
 const server = createServiceServer({
   dispatcher,
   sessionFactory: (request) => sessionManager.fromRequest(request),
   onDispatch: ({ service }) => console.log(`kernel dispatched ${service}`)
 });
-server.listen(24000, "127.0.0.1", () => console.log("server-runtime Phase 2 probe listening on 24000"));
+const pushHttpServer = http.createServer((request, response) => {
+  response.writeHead(404, { "content-type": "application/json" });
+  response.end(JSON.stringify({ status: "error", code: "WEBSOCKET_ONLY" }));
+});
+const websocket = new WebSocketPushRouter({
+  httpServer: pushHttpServer,
+  sessionManager,
+  socketStore: yellowPageStore,
+  redisStore: RedisStore
+});
+
+async function listen(server, port) {
+  await new Promise((resolve, reject) => server.listen(port, "127.0.0.1", (error) => error ? reject(error) : resolve()));
+}
+
+async function start() {
+  await websocket.start();
+  await listen(pushHttpServer, 23000);
+  await listen(server, 24000);
+  console.log("server-runtime Phase 4.4 REST listening on 24000");
+  console.log("server-runtime Phase 4.4 WebSocket listening on 23000");
+}
+
+start().catch((error) => {
+  console.error(`server-runtime startup failed: ${error.message}`);
+  process.exit(1);
+});
+
+async function shutdown() {
+  await websocket.stop();
+  await Promise.all([server, pushHttpServer].map((entry) => new Promise((resolve) => entry.close(() => resolve()))));
+}
+
+process.once("SIGTERM", () => { shutdown().finally(() => process.exit(0)); });
+process.once("SIGINT", () => { shutdown().finally(() => process.exit(0)); });

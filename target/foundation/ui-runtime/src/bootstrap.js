@@ -6,6 +6,7 @@ const { Marionette } = require("./letc");
 const { Template, createPreset } = require("./preset");
 const { ServiceClient } = require("./service");
 const { Validator } = require("./validator");
+const { Websocket } = require("./websocket");
 
 const runtimes = new WeakMap();
 
@@ -37,7 +38,7 @@ function dispatchBootstrapEvent(documentRef, globalRef) {
 }
 
 class UiRuntime {
-  constructor({ global = globalThis, document = global.document, host, visitor, organization, platform, env, validator, onBeforeReady, serviceClient, serviceBase, fetch: fetchImpl, ...kindOptions } = {}) {
+  constructor({ global = globalThis, document = global.document, host, visitor, organization, platform, env, validator, onBeforeReady, serviceClient, serviceBase, fetch: fetchImpl, websocket, websocketUrl, WebSocket, ...kindOptions } = {}) {
     this.global = global;
     this.document = document;
     this.options = { host, visitor, organization, platform, env, validator, onBeforeReady, kindOptions };
@@ -51,6 +52,7 @@ class UiRuntime {
       XMLHttpRequest: global && global.XMLHttpRequest
     }));
     this.Kind = new KindRegistry({ ...kindOptions, bootstrapPlugin, loadJS });
+    this.Websocket = websocket || new Websocket({ global, url: websocketUrl, WebSocket });
     this.ready = null;
     this.isReady = false;
   }
@@ -109,7 +111,8 @@ class UiRuntime {
       Env: this.Env,
       Host: this.Host,
       Visitor: this.Visitor,
-      Organization: this.Organization
+      Organization: this.Organization,
+      Websocket: this.Websocket
     });
   }
 

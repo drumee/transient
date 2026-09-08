@@ -29,6 +29,7 @@ docker exec "$KERNEL_CONTAINER" sh -ec '
   test ! -e /opt/kernel/server-team
   test ! -e /opt/kernel/ui-team
   test ! -e /opt/kernel/schemas
+  test -f /opt/kernel/server-runtime/schemas/SCHEMA_MANIFEST.json
   test -f /runtime/generated/etc/drumee/infrastructure/routes/app.conf
   test -f /srv/drumee/runtime/plugins/ui/main/ui-runtime/index.json
   test -f /srv/drumee/runtime/plugins/ui/main/hello/index.json
@@ -37,4 +38,5 @@ docker exec "$KERNEL_CONTAINER" sh -ec '
 docker exec -e "MYSQL_PWD=$KERNEL_DB_ROOT_PASSWORD" "$KERNEL_DB_CONTAINER" \
   mariadb --protocol=tcp --host=127.0.0.1 --user=root "$KERNEL_DB_NAME" \
   --execute 'SELECT domain_permission("phase4authuser01", 41, 2) AS granted' | grep -q '2'
-echo "Phase 4 kernel/hello integration: PASS"
+docker exec "$KERNEL_REDIS_CONTAINER" redis-cli ping | grep -q '^PONG$'
+echo "Phase 4.4 kernel/hello/WebSocket integration prerequisites: PASS"

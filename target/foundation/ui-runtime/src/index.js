@@ -7,6 +7,7 @@ const { PointerDragState, UiRuntime, bootstrap, createRuntime, getRuntime } = re
 const { Skeletons, staticKinds, retainedSkeletonCatalog, excludedSkeletonCatalog } = require("./skeletons");
 const { LetcBlank, LetcBox, LetcEntry, LetcEntryReminder, LetcFileSelector, LetcImageSmart, LetcList, LetcMenuTopic, LetcProfile, LetcProgress, LetcRichText, LetcSvgImage, LetcTable, LetcText, sourceIdentity } = require("./widgets");
 const { Backbone, Marionette } = require("./letc");
+const { Websocket } = require("./websocket");
 
 module.exports = {
   Context,
@@ -32,6 +33,7 @@ module.exports = {
   Skeletons,
   ServiceClient,
   Visitor,
+  Websocket,
   UiRuntime,
   Marionette,
   PointerDragState,

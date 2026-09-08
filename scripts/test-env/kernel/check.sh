@@ -22,6 +22,8 @@ for required in \
   sources/schemas/yellow_page/procedures/session/session_signin.sql \
   sources/server-essentials/lib/lex/permission.js \
   target/foundation/server-runtime/lib/index.js \
+  target/foundation/server-runtime/schemas/SCHEMA_MANIFEST.json \
+  target/foundation/server-runtime/schemas/yellow-page/phase4.4-websocket.sql \
   target/foundation/ui-runtime/src/index.js \
   target/modules/hello/server/acl/hello.json \
   target/os/schemas/yellow-page-auth/phase4-schema.sql \
