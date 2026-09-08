@@ -18,7 +18,8 @@ printf '%s\n' \
   'http {' \
   '  include /etc/nginx/mime.types;' \
   '  default_type application/octet-stream;' \
-  '  access_log /dev/stdout;' \
+  '  log_format kernel_safe "$remote_addr - $request_method $uri $server_protocol $status";' \
+  '  access_log /dev/stdout kernel_safe;' \
   '  client_body_temp_path /runtime/nginx/body;' \
   '  proxy_temp_path /runtime/nginx/proxy;' \
   '  fastcgi_temp_path /runtime/nginx/fastcgi;' \

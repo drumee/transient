@@ -46,7 +46,13 @@ const server = createServiceServer({
   dispatcher,
   sessionFactory: (request) => sessionManager.fromRequest(request),
   allowedOrigins: websocketAllowedOrigins,
-  onDispatch: ({ service }) => console.log(`kernel dispatched ${service}`)
+  onDispatch: ({ service, session }) => {
+    // Deliberately credential-free audit evidence for the cross-site bridge.
+    // Never add sid, OTAK, cookies or raw headers to this log.
+    const source = session && session.contextSource || "none";
+    const cookie = session && session.hasCookieContext ? "present" : "absent";
+    console.log(`kernel dispatched ${service} session-source=${source} cookie=${cookie}`);
+  }
 });
 const pushHttpServer = http.createServer((request, response) => {
   response.writeHead(404, { "content-type": "application/json" });

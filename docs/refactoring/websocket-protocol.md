@@ -6,7 +6,7 @@ their own meaning and are not part of the protocol.
 ## Session and transport authentication
 
 ```text
-HTTP runtime context
+HTTP runtime context (Cookie or historical header bridge)
 → ensure `regsid`
 → POST bootstrap.authn
 → { token: OTAK }
@@ -21,6 +21,35 @@ the backend calls the runtime-owned `session_ensure` procedure, creates a
 cookie row and returns `Set-Cookie: regsid=…` from `bootstrap.authn`. An
 existing anonymous or authenticated session is retained. The client neither
 allocates nor supplies a trusted session identifier.
+
+### HTTP context recovery for externally hosted clients
+
+The exact pinned `Input.authorization()` service bridge is not a standard
+`Authorization: Bearer` format. It is the two headers produced by
+`ui-essentials/socket/utils.js::makeHeaders`:
+
+```text
+X-Param-keysel: regsid
+X-Param-regsid: <percent-encoded regsid>
+```
+
+The runtime extracts only this `regsid` selector from
+`server-core/lib/input.js`; it omits historical Hub/DMZ selectors. It validates
+the supplied identifier against the persisted Yellow Page session context
+before reuse. A valid cookie and matching bridge are accepted; a conflict is
+rejected with HTTP `401`, as are malformed or unknown bridge values. Cookie
+only continues to work; no credential at all creates a new anonymous context
+when needed. The raw value is sensitive and is never logged or used in the
+WebSocket transport.
+
+For an approved external browser, the generic HTTP adapter responds to
+preflight and allows `content-type`, `x-param-keysel` and `x-param-regsid`.
+The configured CORS Origin and the configured WebSocket Origin are separate
+defence layers. A runtime configured with an absolute `serviceBase` and
+`sessionAuthorization` sends the bridge on the authn call and each reconnect;
+widgets do not manage it. The generic HTTP `Authorization` header is allowed
+by CORS for callers but is not treated as a session credential because the
+pinned source has no standard-header parser.
 
 `bootstrap.authn` is intentionally:
 
@@ -44,7 +73,10 @@ is one-use. Historical code provides no independent token expiry; the target
 documents rather than redesigns that limitation.
 
 The browser client acquires a new OTAK before every initial connection and
-reconnection. Applications use neither OTAK nor `regsid` directly.
+reconnection. Applications use neither OTAK nor `regsid` directly. External
+plugin paths returned by `bootstrap.plugin` are resolved against absolute
+`serviceBase`; same-origin loading preserves the historical XHR loader, while
+cross-origin loading uses a classic script tag.
 
 ## Origin and handshake rejection
 

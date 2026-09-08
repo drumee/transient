@@ -10,6 +10,12 @@ const { Websocket } = require("./websocket");
 
 const runtimes = new WeakMap();
 
+function runtimeAssetUrl(value, serviceBase) {
+  if (typeof value !== "string" || !value) return value;
+  if (!/^https?:\/\//i.test(String(serviceBase || "")) || !value.startsWith("/")) return value;
+  return new URL(value, serviceBase).toString();
+}
+
 class PointerDragState {
   constructor() {
     this.value = false;
@@ -38,17 +44,18 @@ function dispatchBootstrapEvent(documentRef, globalRef) {
 }
 
 class UiRuntime {
-  constructor({ global = globalThis, document = global.document, host, visitor, organization, platform, env, validator, onBeforeReady, serviceClient, serviceBase, serviceCredentials, fetch: fetchImpl, websocket, websocketUrl, WebSocket, ...kindOptions } = {}) {
+  constructor({ global = globalThis, document = global.document, host, visitor, organization, platform, env, validator, onBeforeReady, serviceClient, serviceBase, serviceCredentials, sessionAuthorization, fetch: fetchImpl, websocket, websocketUrl, WebSocket, ...kindOptions } = {}) {
     this.global = global;
     this.document = document;
     this.options = { host, visitor, organization, platform, env, validator, onBeforeReady, kindOptions };
     this.serviceClient = serviceClient || new ServiceClient({
       baseUrl: serviceBase || "/-/svc/",
       fetch: fetchImpl || (global && typeof global.fetch === "function" ? global.fetch.bind(global) : undefined),
-      credentials: serviceCredentials
+      credentials: serviceCredentials,
+      sessionAuthorization
     });
     const bootstrapPlugin = kindOptions.bootstrapPlugin || ((name) => this.serviceClient.fetchService("bootstrap.plugin", { name }));
-    const loadJS = kindOptions.loadJS || ((path) => loadBrowserScript(path, {
+    const loadJS = kindOptions.loadJS || ((path) => loadBrowserScript(runtimeAssetUrl(path, serviceBase), {
       document: this.document,
       XMLHttpRequest: global && global.XMLHttpRequest
     }));
@@ -153,4 +160,4 @@ function createRuntime(options = {}) {
   return runtime;
 }
 
-module.exports = { PointerDragState, UiRuntime, bootstrap, createRuntime, getRuntime };
+module.exports = { PointerDragState, UiRuntime, bootstrap, createRuntime, getRuntime, runtimeAssetUrl };

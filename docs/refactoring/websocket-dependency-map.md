@@ -3,6 +3,7 @@
 | Component | Historical source | Target owner | Redis | Yellow Page/session | Domain ACL | Hub | MFS | Team | Status |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | regsid allocation | `server-core/lib/input.js::{validCookie,_authorization}` + `session_check_cookie.sql` | `server-runtime::session_ensure` | no | `cookie`, `uniqueId` | no | no | no | Hub/DMZ closure removed | RUNTIME_SESSION |
+| HTTP session bridge | `server-core/lib/input.js::{_parseHeader,_authorization,authorization}`; `ui-essentials/socket/utils.js::makeHeaders` | `server-runtime/lib/input.js` + `SessionManager.fromRequest`; `ui-runtime::ServiceClient` | no | validated `cookie` context | no | no | no | only `keysel=regsid`; Hub/DMZ selectors removed | RUNTIME_SESSION |
 | `bootstrap.authn` | `server-team/{acl,service}/bootstrap` | `server-runtime::{acl,service,session}` | no | `session_ensure`, `authn_store` | public fast path only | historical scope removed | no | product Hub scope removed | WEBSOCKET_AUTH |
 | OTAK store/resolution | `authn.sql`, `authn_store.sql`, `socket_bind.sql` | `server-runtime` schema/store | no | `authn`, `cookie` | no business bit | no | no | guest/share policy removed | WEBSOCKET_AUTH |
 | WebSocket server/lifecycle | `server-team/router/push/index.js` | `server-runtime/lib/websocket-router.js` | subscribe | OTAK → `socket_bind/free/refresh/get` | none in transport | no | no | presence/conference removed | KEEP_SERVER_RUNTIME |

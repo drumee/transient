@@ -23,18 +23,39 @@ function normalizePayload(service, payload) {
   return { service: name, payload: { ...rest, ...(payload || {}) } };
 }
 
+function sessionAuthorizationHeaders(authorization) {
+  if (!authorization) return {};
+  const keysel = authorization.keysel || "regsid";
+  const sid = authorization.sid || authorization.id || authorization.sessionId;
+  if (keysel !== "regsid" || typeof sid !== "string" || !/^[A-Za-z0-9_-]{16,64}$/.test(sid)) {
+    throw new Error("Session authorization requires a valid regsid selector and value");
+  }
+  // Exact historical ui-essentials/socket/utils.js::makeHeaders wire shape.
+  return {
+    "x-param-keysel": keysel,
+    [`x-param-${keysel}`]: sid
+  };
+}
+
 class ServiceClient {
-  constructor({ baseUrl = "/-/svc/", fetch: fetchImpl = globalThis.fetch, credentials } = {}) {
+  constructor({ baseUrl = "/-/svc/", fetch: fetchImpl = globalThis.fetch, credentials, sessionAuthorization } = {}) {
     this.baseUrl = baseUrl;
     this.fetch = fetchImpl;
     this.credentials = credentials;
+    this.sessionAuthorization = sessionAuthorization;
   }
 
   async request(method, service, payload) {
     const call = normalizePayload(service, payload);
     if (typeof this.fetch !== "function") throw new Error("Browser fetch is not configured");
     let url = serviceUrl(this.baseUrl, call.service);
-    const options = { method, headers: { Accept: "application/json" } };
+    const options = {
+      method,
+      headers: {
+        Accept: "application/json",
+        ...sessionAuthorizationHeaders(this.sessionAuthorization)
+      }
+    };
     if (this.credentials) options.credentials = this.credentials;
     if (method === "GET") {
       const query = new URLSearchParams();
@@ -73,4 +94,4 @@ class ServiceClient {
   }
 }
 
-module.exports = { ServiceClient, normalizePayload, serviceUrl };
+module.exports = { ServiceClient, normalizePayload, serviceUrl, sessionAuthorizationHeaders };

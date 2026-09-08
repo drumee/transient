@@ -24,6 +24,8 @@ const {
   excludedSkeletonCatalog,
   sourceIdentity
 } = require("../src");
+const { sessionAuthorizationHeaders } = require("../src/service");
+const { runtimeAssetUrl } = require("../src/bootstrap");
 
 function createBootstrapTarget() {
   const document = new EventTarget();
@@ -107,6 +109,28 @@ test("generic service transport preserves logical module.method requests and Dru
   assert.equal(calls[0].options.method, "GET");
   assert.equal(calls[1].url, "/-/svc/hello.ping");
   assert.equal(calls[1].options.body, "{}");
+});
+
+test("service client preserves the historical x-param session authorization bridge", async () => {
+  const calls = [];
+  const client = new ServiceClient({
+    baseUrl: "https://api.kernel.test/-/svc/",
+    sessionAuthorization: { keysel: "regsid", sid: "authorized-session-0001" },
+    fetch: async (url, options) => {
+      calls.push({ url, options });
+      return { ok: true, status: 200, json: async () => ({ status: "ok", data: { token: "opaque" } }) };
+    }
+  });
+  assert.deepEqual(sessionAuthorizationHeaders({ sid: "authorized-session-0001" }), {
+    "x-param-keysel": "regsid",
+    "x-param-regsid": "authorized-session-0001"
+  });
+  await client.postService("bootstrap.authn", {});
+  assert.equal(calls[0].options.headers["x-param-keysel"], "regsid");
+  assert.equal(calls[0].options.headers["x-param-regsid"], "authorized-session-0001");
+  assert.equal(Object.hasOwn(calls[0].options.headers, "Authorization"), false);
+  assert.equal(runtimeAssetUrl("/-/plugins/hello/main.js", "https://api.kernel.test/-/svc/"), "https://api.kernel.test/-/plugins/hello/main.js");
+  assert.equal(runtimeAssetUrl("/-/plugins/hello/main.js", "/-/svc/"), "/-/plugins/hello/main.js");
 });
 
 test("bootstrap creates one deterministic non-MFS singleton environment and preserves bootstrap event semantics", async () => {

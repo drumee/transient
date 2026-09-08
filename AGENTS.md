@@ -1106,7 +1106,10 @@ Domain-scoped session/transport capability with `src: anyone` and
 `fast_check: public-api`; it requires neither Hub/MFS nor an application
 business privilege. WebSocket authentication uses the OTAK returned by that
 service—never `regsid` directly—and the Origin policy must remain configurable
-for approved externally hosted consumers.
+for approved externally hosted consumers. When cookies are unavailable, HTTP
+session context may be recovered through the historical `Input.authorization`
+header mechanism; `regsid` remains session continuity and OTAK remains the
+WebSocket credential.
 
 ---
 
