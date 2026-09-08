@@ -15,6 +15,7 @@ KERNEL_DB_USER="${KERNEL_DB_USER:-kernel_phase4}"
 KERNEL_DB_PASSWORD="${KERNEL_DB_PASSWORD:-phase4-disposable-db}"
 KERNEL_DB_ROOT_PASSWORD="${KERNEL_DB_ROOT_PASSWORD:-phase4-disposable-root}"
 KERNEL_PHASE4_TEST_PASSWORD="${KERNEL_PHASE4_TEST_PASSWORD:-phase4-disposable-user}"
+KERNEL_WEBSOCKET_ALLOWED_ORIGINS="${KERNEL_WEBSOCKET_ALLOWED_ORIGINS:-http://allowed.external.test}"
 
 require_kernel_name() {
   case "$KERNEL_CONTAINER" in

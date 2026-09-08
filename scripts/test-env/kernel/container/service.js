@@ -37,10 +37,15 @@ const sessionManager = new SessionManager({ store: yellowPageStore });
 const authorize = createAuthorizer({ domainAuthorizer: new DomainAuthorizer({ store: yellowPageStore }) });
 global.endpointAddress = process.env.KERNEL_PUSH_ENDPOINT || "kernel-runtime:23000";
 const push = new PushBus({ redisStore: RedisStore, socketStore: yellowPageStore });
+const websocketAllowedOrigins = (process.env.KERNEL_WEBSOCKET_ALLOWED_ORIGINS || "")
+  .split(",")
+  .map((origin) => origin.trim())
+  .filter(Boolean);
 const dispatcher = new ServiceDispatcher({ registry, authorize, workerOptions: { pluginResolver, push } });
 const server = createServiceServer({
   dispatcher,
   sessionFactory: (request) => sessionManager.fromRequest(request),
+  allowedOrigins: websocketAllowedOrigins,
   onDispatch: ({ service }) => console.log(`kernel dispatched ${service}`)
 });
 const pushHttpServer = http.createServer((request, response) => {
@@ -51,7 +56,9 @@ const websocket = new WebSocketPushRouter({
   httpServer: pushHttpServer,
   sessionManager,
   socketStore: yellowPageStore,
-  redisStore: RedisStore
+  redisStore: RedisStore,
+  allowedOrigins: websocketAllowedOrigins,
+  allowMissingOrigin: process.env.KERNEL_WEBSOCKET_ALLOW_MISSING_ORIGIN === "1"
 });
 
 async function listen(server, port) {

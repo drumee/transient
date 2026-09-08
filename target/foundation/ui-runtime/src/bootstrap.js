@@ -38,13 +38,14 @@ function dispatchBootstrapEvent(documentRef, globalRef) {
 }
 
 class UiRuntime {
-  constructor({ global = globalThis, document = global.document, host, visitor, organization, platform, env, validator, onBeforeReady, serviceClient, serviceBase, fetch: fetchImpl, websocket, websocketUrl, WebSocket, ...kindOptions } = {}) {
+  constructor({ global = globalThis, document = global.document, host, visitor, organization, platform, env, validator, onBeforeReady, serviceClient, serviceBase, serviceCredentials, fetch: fetchImpl, websocket, websocketUrl, WebSocket, ...kindOptions } = {}) {
     this.global = global;
     this.document = document;
     this.options = { host, visitor, organization, platform, env, validator, onBeforeReady, kindOptions };
     this.serviceClient = serviceClient || new ServiceClient({
       baseUrl: serviceBase || "/-/svc/",
-      fetch: fetchImpl || (global && typeof global.fetch === "function" ? global.fetch.bind(global) : undefined)
+      fetch: fetchImpl || (global && typeof global.fetch === "function" ? global.fetch.bind(global) : undefined),
+      credentials: serviceCredentials
     });
     const bootstrapPlugin = kindOptions.bootstrapPlugin || ((name) => this.serviceClient.fetchService("bootstrap.plugin", { name }));
     const loadJS = kindOptions.loadJS || ((path) => loadBrowserScript(path, {
@@ -52,7 +53,7 @@ class UiRuntime {
       XMLHttpRequest: global && global.XMLHttpRequest
     }));
     this.Kind = new KindRegistry({ ...kindOptions, bootstrapPlugin, loadJS });
-    this.Websocket = websocket || new Websocket({ global, url: websocketUrl, WebSocket });
+    this.Websocket = websocket || new Websocket({ global, url: websocketUrl, serviceClient: this.serviceClient, WebSocket });
     this.ready = null;
     this.isReady = false;
   }

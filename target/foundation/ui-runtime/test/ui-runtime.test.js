@@ -146,7 +146,7 @@ test("a plugin request cannot observe a partially initialized bootstrap", async 
   assert.equal(resolved, true);
 });
 
-test("Websocket preserves the service envelope, generic bind/unbind and authenticated connection state", async () => {
+test("Websocket obtains a fresh OTAK for every connection while preserving generic dispatch", async () => {
   const sockets = [];
   const timers = [];
   const intervals = [];
@@ -164,8 +164,15 @@ test("Websocket preserves the service envelope, generic bind/unbind and authenti
     message(value) { this.onmessage({ data: JSON.stringify(value) }); }
   }
   let now = 0;
+  const authnCalls = [];
   const websocket = new Websocket({
     global: { location: { protocol: "http:", host: "kernel.test" } },
+    serviceClient: {
+      async postService(service) {
+        authnCalls.push(service);
+        return { token: `token-${authnCalls.length}` };
+      }
+    },
     WebSocket: FakeSocket,
     now: () => now,
     setTimeout(handler) { timers.push(handler); return handler; },
@@ -177,7 +184,9 @@ test("Websocket preserves the service envelope, generic bind/unbind and authenti
   const listener = (data, options, model) => received.push({ data, options, model });
   const off = websocket.bindEvent("hello.push", listener);
   const connected = websocket.connect();
-  assert.equal(sockets[0].url, "ws://kernel.test/-/websocket/");
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(sockets[0].url, "ws://kernel.test/-/websocket/?otak=token-1");
+  assert.equal(sockets[0].url.includes("regsid"), false);
   assert.equal(sockets[0].protocol, "service");
   sockets[0].open();
   sockets[0].message({ service: "sys.hello", data: { socket_id: "socket-a" } });
@@ -204,13 +213,16 @@ test("Websocket preserves the service envelope, generic bind/unbind and authenti
   sockets[0].onclose({ code: 1006 });
   assert.equal(websocket.state, "reconnecting");
   timers.at(-1)();
+  await new Promise((resolve) => setImmediate(resolve));
   assert.equal(sockets.length, 2);
+  assert.equal(sockets[1].url, "ws://kernel.test/-/websocket/?otak=token-2");
   sockets[1].open();
   sockets[1].message({ service: "sys.hello", data: { socket_id: "socket-b" } });
   assert.equal(websocket.state, "connected");
   assert.equal(websocket.socketId, "socket-b");
   websocket.close();
   assert.equal(websocket.state, "closed");
+  assert.deepEqual(authnCalls, ["bootstrap.authn", "bootstrap.authn"]);
   assert.equal(timers.length >= 1, true);
 });
 

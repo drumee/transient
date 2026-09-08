@@ -6,13 +6,18 @@ const KEEPALIVE_INTERVAL = 60000;
 const KEEPALIVE_GRACE = 120000;
 const MAX_RECONNECTS = 50;
 
-function websocketUrl(globalRef, configured) {
-  if (typeof configured === "function") return configured();
-  if (typeof configured === "string" && configured) return configured;
-  const location = globalRef && globalRef.location;
-  if (!location || !location.host) throw new Error("WebSocket URL is not configured");
-  const protocol = location.protocol === "https:" ? "wss:" : "ws:";
-  return `${protocol}//${location.host}/-/websocket/`;
+function websocketUrl(globalRef, configured, token) {
+  let base;
+  if (typeof configured === "function") base = configured();
+  else if (typeof configured === "string" && configured) base = configured;
+  else {
+    const location = globalRef && globalRef.location;
+    if (!location || !location.host) throw new Error("WebSocket URL is not configured");
+    const protocol = location.protocol === "https:" ? "wss:" : "ws:";
+    base = `${protocol}//${location.host}/-/websocket/`;
+  }
+  if (typeof token !== "string" || !token) return base;
+  return `${base}${base.includes("?") ? "&" : "?"}otak=${encodeURIComponent(token)}`;
 }
 
 function eventService(message) {
@@ -21,10 +26,11 @@ function eventService(message) {
 }
 
 class Websocket extends EventBus {
-  constructor({ global = globalThis, url, WebSocket: WebSocketConstructor, setTimeout: setTimeoutImpl, clearTimeout: clearTimeoutImpl, setInterval: setIntervalImpl, clearInterval: clearIntervalImpl, now = () => Date.now(), reconnectInterval = RECONNECT_INTERVAL, connectTimeout = CONNECT_TIMEOUT, keepaliveInterval = KEEPALIVE_INTERVAL, keepaliveGrace = KEEPALIVE_GRACE, maxReconnects = MAX_RECONNECTS } = {}) {
+  constructor({ global = globalThis, url, serviceClient, WebSocket: WebSocketConstructor, setTimeout: setTimeoutImpl, clearTimeout: clearTimeoutImpl, setInterval: setIntervalImpl, clearInterval: clearIntervalImpl, now = () => Date.now(), reconnectInterval = RECONNECT_INTERVAL, connectTimeout = CONNECT_TIMEOUT, keepaliveInterval = KEEPALIVE_INTERVAL, keepaliveGrace = KEEPALIVE_GRACE, maxReconnects = MAX_RECONNECTS } = {}) {
     super();
     this.global = global;
     this.url = url;
+    this.serviceClient = serviceClient;
     this.WebSocket = WebSocketConstructor || (global && global.WebSocket);
     this.setTimeout = setTimeoutImpl || (global && global.setTimeout ? global.setTimeout.bind(global) : setTimeout);
     this.clearTimeout = clearTimeoutImpl || (global && global.clearTimeout ? global.clearTimeout.bind(global) : clearTimeout);
@@ -48,6 +54,17 @@ class Websocket extends EventBus {
     this.pendingConnect = null;
   }
 
+  async _otak() {
+    if (!this.serviceClient || typeof this.serviceClient.postService !== "function") {
+      throw new Error("WebSocket OTAK service is not configured");
+    }
+    const data = await this.serviceClient.postService("bootstrap.authn", {});
+    if (!data || typeof data.token !== "string" || !data.token) {
+      throw new Error("WebSocket OTAK response is invalid");
+    }
+    return data.token;
+  }
+
   connect() {
     if (this.state === "connected") return Promise.resolve(this);
     if (this.pendingConnect) return this.pendingConnect;
@@ -55,7 +72,7 @@ class Websocket extends EventBus {
     this.shouldReconnect = true;
     this._clearReconnect();
     this._setState(this.reconnects ? "reconnecting" : "connecting");
-    this.pendingConnect = new Promise((resolve, reject) => {
+    this.pendingConnect = this._otak().then((token) => new Promise((resolve, reject) => {
       let settled = false;
       const resolveConnected = () => {
         if (settled) return;
@@ -70,7 +87,7 @@ class Websocket extends EventBus {
         reject(error);
       };
       try {
-        const socket = new this.WebSocket(websocketUrl(this.global, this.url), "service");
+        const socket = new this.WebSocket(websocketUrl(this.global, this.url, token), "service");
         this.socket = socket;
         socket.onopen = () => {
           this.lastMessage = this.now();
@@ -110,6 +127,10 @@ class Websocket extends EventBus {
         rejectConnection(error);
         this._scheduleReconnect();
       }
+    })).catch((error) => {
+      this._setState("error");
+      this._scheduleReconnect();
+      throw error;
     }).finally(() => { this.pendingConnect = null; });
     return this.pendingConnect;
   }

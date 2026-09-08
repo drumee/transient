@@ -1100,6 +1100,14 @@ distributions. Phase 4.4 does not establish Hub, MFS, broadcast policy or Team
 application behaviour. Phase 4.5 may only lock the proven NPM/schema boundary
 when explicitly authorized.
 
+`regsid` is the runtime/session continuity identifier and must always exist;
+when absent, the backend allocates it automatically. `bootstrap.authn` is a
+Domain-scoped session/transport capability with `src: anyone` and
+`fast_check: public-api`; it requires neither Hub/MFS nor an application
+business privilege. WebSocket authentication uses the OTAK returned by that
+service—never `regsid` directly—and the Origin policy must remain configurable
+for approved externally hosted consumers.
+
 ---
 
 # 30. Marketing is the first real application

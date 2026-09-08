@@ -24,9 +24,10 @@ function normalizePayload(service, payload) {
 }
 
 class ServiceClient {
-  constructor({ baseUrl = "/-/svc/", fetch: fetchImpl = globalThis.fetch } = {}) {
+  constructor({ baseUrl = "/-/svc/", fetch: fetchImpl = globalThis.fetch, credentials } = {}) {
     this.baseUrl = baseUrl;
     this.fetch = fetchImpl;
+    this.credentials = credentials;
   }
 
   async request(method, service, payload) {
@@ -34,6 +35,7 @@ class ServiceClient {
     if (typeof this.fetch !== "function") throw new Error("Browser fetch is not configured");
     let url = serviceUrl(this.baseUrl, call.service);
     const options = { method, headers: { Accept: "application/json" } };
+    if (this.credentials) options.credentials = this.credentials;
     if (method === "GET") {
       const query = new URLSearchParams();
       for (const [key, value] of Object.entries(call.payload)) {

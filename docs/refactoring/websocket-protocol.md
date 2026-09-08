@@ -1,69 +1,105 @@
 # Phase 4.4 WebSocket protocol
 
-This document records the narrow generic transport extracted for Phase 4.4. It is not a Team application-service contract.
+This is the generic kernel transport contract. Application services retain
+their own meaning and are not part of the protocol.
 
-## Connection and authentication
-
-The setup-infra-derived Nginx route matches `/-/websocket/` and forwards the HTTP Upgrade to runtime port `23000`. The browser opens it using the historical `service` subprotocol and a real Phase 4 cookie:
+## Session and transport authentication
 
 ```text
-Sec-WebSocket-Protocol: service
-Cookie: regsid=<real session>
+HTTP runtime context
+→ ensure `regsid`
+→ POST bootstrap.authn
+→ { token: OTAK }
+→ GET /-/websocket/?otak=OTAK (subprotocol: service)
+→ OTAK resolution
+→ socket_bind
+→ socket/session association
 ```
 
-The runtime resolves that cookie through the same `SessionManager` used by HTTP. Missing, expired or unknown sessions and unsupported protocols are rejected/closed; no test identity header, fake UID or authentication bypass exists. After `socket_bind`, it emits:
+`regsid` is the persisted runtime/session-continuity identifier. When absent,
+the backend calls the runtime-owned `session_ensure` procedure, creates a
+cookie row and returns `Set-Cookie: regsid=…` from `bootstrap.authn`. An
+existing anonymous or authenticated session is retained. The client neither
+allocates nor supplies a trusted session identifier.
+
+`bootstrap.authn` is intentionally:
 
 ```json
-{"service":"sys.hello","data":{"socket_id":"32 hexadecimal characters","user":{"id":"authenticated identity"}}}
+{"scope":"domain","permission":{"src":"anyone","fast_check":"public-api"}}
 ```
 
-Historical ui-team first fetched an `authn` one-time token. That path requires historical `authn` SQL plus guest/share handling excluded from Phase 4. The extracted client therefore uses the already-real same-origin `regsid` cookie on the Upgrade request. This is a documented Phase 4 session adaptation, not another authentication scheme.
+The public fast path grants transport setup without a Domain business bit or a
+call to `domain_permission`. `scope: domain` is a deliberate kernel divergence
+from the historical Team descriptor (`scope: hub`, same `src: anyone` and
+`fast_check: public-api`): OTAK issuance is session transport, not Hub-resource
+authorization. Anonymous and authenticated runtime sessions may both obtain an
+OTAK; protected services still use their normal Domain ACL.
 
-LETC `READY` and socket `connected` are separate: plugin loading waits only for READY, while authenticated application use explicitly connects.
+The OTAK is a 22-character opaque token, stored through the historical-shape
+`authn_store(token, value)` procedure with the authoritative session ID in its
+JSON value. It is supplied only as the `otak` WebSocket query field. The route
+does not read `regsid` from a query, subprotocol, payload or cookie as a
+WebSocket credential. `socket_bind(args)` resolves then deletes the OTAK, so it
+is one-use. Historical code provides no independent token expiry; the target
+documents rather than redesigns that limitation.
 
-## Downstream envelope and routing
+The browser client acquires a new OTAK before every initial connection and
+reconnection. Applications use neither OTAK nor `regsid` directly.
 
-Redis retains the historical `RedisStore.sendData` fields:
+## Origin and handshake rejection
+
+Browser Upgrade acceptance requires both a valid OTAK and a permitted Origin.
+The default accepts an Origin matching the proxy's public host/forwarded port;
+`allowedOrigins` adds explicit external frontend origins. Missing Origin is
+denied unless the runtime host explicitly enables non-browser clients.
+The same allowlist is also emitted as credentialed CORS response headers by the
+generic HTTP service adapter, so an approved external browser can perform login
+and `bootstrap.authn` before its OTAK Upgrade. An external `UiRuntime` can use
+its absolute `serviceBase` plus `serviceCredentials: "include"`; application
+widgets still do not handle cookies, regsid or OTAK.
+
+| Condition before Upgrade | HTTP status |
+| --- | --- |
+| unsupported subprotocol | `400` |
+| missing or invalid OTAK | `401` |
+| missing/foreign unconfigured Origin | `403` |
+
+These are HTTP responses, not WebSocket close codes. After Upgrade, the
+runtime may use application close codes in the `4000–4999` range (for example
+binding failure). Origin is defense in depth, never an authentication grant.
+
+## Downstream envelope and delivery
+
+Redis preserves the historical envelope:
 
 ```json
 {
-  "source":"runtime endpoint identifier",
-  "dest":{"socket_id":"target socket"},
-  "payload":{"service":"hello.push","data":{"message":"Hello over WebSocket"},"options":{},"model":{}}
+  "source": "runtime endpoint identifier",
+  "dest": {"socket_id":"target socket"},
+  "payload": {"service":"hello.push","data":{"message":"Hello over WebSocket"}}
 }
 ```
 
-The local subscriber considers only explicit `dest.socket_id` (or historical `dest.id`) and sends `payload` unchanged to a matching local connection. A module may target its authenticated HTTP session; `PushBus` resolves it to current socket recipients before Redis publication. Phase 4.4 deliberately supports targeted sockets only—no global broadcast, Hub, MFS, Team-presence, workspace or user-wide policy.
+`PushBus` resolves a Worker's runtime session to current socket IDs before
+publishing. Every runtime subscriber delivers only a matching local socket;
+there is no producer-to-local-socket shortcut and no broadcast capability in
+this phase.
 
-```text
-module Worker → PushBus → RedisStore.sendData → Redis channel
-              → each server-runtime subscriber → matching local socket
-```
+## Lifecycle and consumer contract
 
-There is no producer-to-local-socket shortcut, preserving multi-instance routing.
+After a successful bind the server emits `sys.hello`; it also handles array
+upstream `sys.ping` and emits `sys.keepalive`. Watchdog refresh and cleanup use
+`socket_refresh` and `socket_free`. Session invalidation does not currently
+monitor and disconnect an existing socket, matching the documented limited
+historical behaviour.
 
-## Upstream, keepalive and lifecycle
-
-The generic client preserves historical array upstream shape:
-
-```json
-["sys.ping", {"type":"checkConnection"}]
-```
-
-The server replies `{ "service": "sys.ping", "data": { ..., "ok": true } }`. Unknown or malformed upstream JSON is ignored, matching historical no-default-dispatch behaviour. The server sends `sys.keepalive` at a 15-second watchdog cadence and refreshes active bindings. The client checks every 60 seconds and sends `sys.ping` after two minutes without an incoming message. Unexpected close retries after 5 seconds; the historical 50-attempt cap resets after 10 seconds. Explicit `close()` stops reconnecting. Close removes its row and inactive bindings are pruned after 120 seconds.
-
-Historical code did not actively disconnect an existing socket merely because the corresponding session later becomes invalid. Phase 4.4 documents rather than invents that monitor.
-
-## Consumer API
-
-`ui-runtime` publishes one canonical `Websocket` singleton:
+Runtime READY and socket CONNECTED remain distinct. `ui-runtime::Websocket`
+preserves `bindEvent`, `unbindEvent`, `upstream`, the historical 5-second
+reconnect/50-attempt cap and keepalive. A module receives parsed service data:
 
 ```js
-const off = runtime.Websocket.bindEvent("hello.push", (data, options, model, payload) => {
-  // module-owned interpretation and UI update
-});
+const off = runtime.Websocket.bindEvent("hello.push", (data, options, model) => {});
 off();
-// or runtime.Websocket.unbindEvent("hello.push", listener)
 ```
 
-`upstream(service, data)` remains available for the limited generic protocol. The runtime parses envelopes and dispatches by service; it has no Team/window-manager service switch. `wm/push.js` is consumer evidence only: conference, meeting, workspace, contact, payment, logout and desktop policy stay in applications/distributions.
+The runtime contains no Team/window-manager service switch.

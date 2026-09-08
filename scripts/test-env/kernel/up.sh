@@ -100,6 +100,7 @@ docker run -d \
   --env "KERNEL_HTTP_PORT=$KERNEL_HTTP_PORT" \
   --env "KERNEL_DB_NAME=$KERNEL_DB_NAME" \
   --env "KERNEL_DB_USER=$KERNEL_DB_USER" \
+  --env "KERNEL_WEBSOCKET_ALLOWED_ORIGINS=$KERNEL_WEBSOCKET_ALLOWED_ORIGINS" \
   "$KERNEL_IMAGE" >/dev/null
 
 for attempt in $(seq 1 20); do
