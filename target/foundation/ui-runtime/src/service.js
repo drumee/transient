@@ -8,6 +8,12 @@
  * deliberately out of scope for the anonymous Phase 3 path.
  */
 
+// The historical x-param bridge is transport-only. Keeping it outside the
+// ServiceClient object graph prevents a Widget/plugin that can reach
+// runtime.serviceClient from reading the raw regsid while request() still has
+// the capability to emit the source-compatible headers.
+const sessionAuthorizations = new WeakMap();
+
 function serviceUrl(baseUrl, service) {
   if (typeof service !== "string" || !/^[^.]+\.[^.]+$/.test(service)) {
     throw new Error("A service must be a module.method string");
@@ -42,7 +48,7 @@ class ServiceClient {
     this.baseUrl = baseUrl;
     this.fetch = fetchImpl;
     this.credentials = credentials;
-    this.sessionAuthorization = sessionAuthorization;
+    sessionAuthorizations.set(this, sessionAuthorization);
   }
 
   async request(method, service, payload) {
@@ -53,7 +59,7 @@ class ServiceClient {
       method,
       headers: {
         Accept: "application/json",
-        ...sessionAuthorizationHeaders(this.sessionAuthorization)
+        ...sessionAuthorizationHeaders(sessionAuthorizations.get(this))
       }
     };
     if (this.credentials) options.credentials = this.credentials;

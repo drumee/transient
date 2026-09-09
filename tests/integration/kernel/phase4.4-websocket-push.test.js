@@ -295,7 +295,7 @@ function externalRuntimeProbePage({ apiBase, coreEntry, anonymous = false, recon
   };
   const action = anonymous
     ? `try { await runtime.serviceClient.postService("hello.private", {}); throw new Error("anonymous private request unexpectedly passed"); } catch (error) { if (error.status !== 403) throw error; document.body.dataset.private = "denied"; }`
-    : `var HelloWidget=await runtime.Kind.loadPlugin({name:"hello",kind:"hello"});var widget=runtime.mount({kind:"hello"},document.getElementById("hello-root"));await widget._pingPromise;var pushed=new Promise(function(resolve,reject){widget.once("hello:push",resolve);widget.push().catch(reject);});await pushed;document.body.dataset.push=widget.mget("status");`;
+    : `var HelloWidget=await runtime.Kind.loadPlugin({name:"hello",kind:"hello"});var widget=runtime.mount({kind:"hello"},document.getElementById("hello-root"));var possibleSessionValues=[runtime.sessionAuthorization,runtime.serviceClient&&runtime.serviceClient.sessionAuthorization,widget.runtime&&widget.runtime.sessionAuthorization,widget.runtime&&widget.runtime.serviceClient&&widget.runtime.serviceClient.sessionAuthorization,widget.options&&widget.options.sessionAuthorization,widget.model&&widget.model.get("sessionAuthorization")];document.body.dataset.sessionReadable=String(possibleSessionValues.some(function(value){return value===sessionAuthorization.sid||(value&&value.sid===sessionAuthorization.sid);}));await widget._pingPromise;var pushed=new Promise(function(resolve,reject){widget.once("hello:push",resolve);widget.push().catch(reject);});await pushed;document.body.dataset.push=widget.mget("status");`;
   const reconnectStep = reconnect
     ? `await new Promise(function(resolve,reject){var timer=setTimeout(function(){reject(new Error("cross-site reconnect timed out"));},12000);var once=function(){if(connections<2)return;runtime.Websocket.off("connected",once);clearTimeout(timer);resolve();};runtime.Websocket.on("connected",once);runtime.Websocket.socket.close();});document.body.dataset.reconnected="true";`
     : "";
@@ -320,7 +320,7 @@ async function runExternalOriginPushProbe(origin) {
     await protocol.send("Page.navigate", { url: origin });
     for (let attempt = 0; attempt < 100; attempt++) {
       const result = await protocol.send("Runtime.evaluate", {
-        expression: "({complete:document.body.dataset.complete,socket:document.body.dataset.socket,push:document.body.dataset.push,private:document.body.dataset.private,reconnected:document.body.dataset.reconnected,connections:document.body.dataset.connections,socketId:document.body.dataset.socketId,sessionInDom:document.body.dataset.sessionInDom,error:document.body.dataset.error})",
+        expression: "({complete:document.body.dataset.complete,socket:document.body.dataset.socket,push:document.body.dataset.push,private:document.body.dataset.private,reconnected:document.body.dataset.reconnected,connections:document.body.dataset.connections,socketId:document.body.dataset.socketId,sessionInDom:document.body.dataset.sessionInDom,sessionReadable:document.body.dataset.sessionReadable,error:document.body.dataset.error})",
         returnByValue: true
       });
       const value = result.result.value;
@@ -372,6 +372,12 @@ test("Phase 4.4 authenticates WebSockets through OTAK, preserves anonymous trans
     const noOrigin = await connectionFailure({ token: "invalid-otak-token-0000", origin: null });
     assert.equal(noOrigin.status, 403);
 
+    const expiredAuthn = await authn({ origin: baseUrl });
+    db(`UPDATE authn SET ctime = UNIX_TIMESTAMP() - 61 WHERE token='${expiredAuthn.token}'`);
+    const expired = await connectionFailure({ token: expiredAuthn.token });
+    assert.equal(expired.status, 401);
+    assert.equal(db(`SELECT COUNT(*) FROM authn WHERE token='${expiredAuthn.token}'`), "0");
+
     const unsupportedAuthn = await authn({ origin: baseUrl });
     const unsupported = await connectionFailure({ token: unsupportedAuthn.token, protocol: "ping" });
     assert.equal(unsupported.status, 400);
@@ -392,7 +398,10 @@ test("Phase 4.4 authenticates WebSockets through OTAK, preserves anonymous trans
     assert.equal(anonymous.protocol, "service");
     assert.deepEqual(anonymous.hello.data.user, {});
     assert.equal(db(`SELECT session_id FROM socket WHERE id='${anonymous.hello.data.socket_id}'`), anonymousSid);
-    assert.equal(db(`SELECT COUNT(*) FROM socket WHERE id='${anonymous.hello.data.socket_id}' AND uid IS NULL`), "1");
+    assert.equal(db(`SELECT uid FROM cookie WHERE id='${anonymousSid}'`), "ffffffffffffffff");
+    assert.equal(db(`SELECT uid FROM socket WHERE id='${anonymous.hello.data.socket_id}'`), "ffffffffffffffff");
+    assert.equal(db("SELECT IS_NULLABLE FROM information_schema.columns WHERE table_schema='yp' AND table_name='cookie' AND column_name='uid'"), "NO");
+    assert.equal(db("SELECT IS_NULLABLE FROM information_schema.columns WHERE table_schema='yp' AND table_name='socket' AND column_name='uid'"), "NO");
 
     const existingAnonymousAuthn = await authn({ cookie: anonymousAuthn.cookie, origin: baseUrl });
     assert.equal(existingAnonymousAuthn.cookie, null);
@@ -420,6 +429,51 @@ test("Phase 4.4 authenticates WebSockets through OTAK, preserves anonymous trans
     });
     assert.equal(anonymousHeaderPrivate.response.status, 403);
     assert.equal(anonymousHeaderPrivate.payload.code, "PERMISSION_DENIED");
+
+    const guestId = db("SELECT conf_value FROM sys_conf WHERE conf_key='guest_id'");
+    assert.notEqual(guestId, "ffffffffffffffff");
+    assert.equal(db(`SELECT username FROM drumate WHERE id='${guestId}'`), "guest");
+    db(`INSERT INTO cookie (id, uid, ctime, mtime, ua, ttl, failed, status) VALUES ('guest-session-phase4-01', '${guestId}', UNIX_TIMESTAMP(), UNIX_TIMESTAMP(), 'fixture', 2592000, 0, 'guest')`);
+    const guestCookie = "regsid=guest-session-phase4-01";
+    const guestAuthn = await authn({ cookie: guestCookie, origin: baseUrl });
+    const guestSocket = await connect({ token: guestAuthn.token });
+    assert.equal(db(`SELECT uid FROM socket WHERE id='${guestSocket.hello.data.socket_id}'`), guestId);
+    assert.deepEqual(guestSocket.hello.data.user, {});
+    const guestPrivate = await service("hello.private", { cookie: guestCookie });
+    assert.equal(guestPrivate.response.status, 403);
+    guestSocket.connection.close();
+
+    // Fresh target schemas are NOT NULL, but a pre-existing nullable legacy
+    // row is repaired through session_ensure before it reaches a KernelSession.
+    db("ALTER TABLE cookie MODIFY uid varchar(64) CHARACTER SET ascii COLLATE ascii_general_ci DEFAULT NULL");
+    db("INSERT INTO cookie (id, uid, ctime, mtime, ua, ttl, failed, status) VALUES ('legacy-null-session-01', NULL, UNIX_TIMESTAMP(), UNIX_TIMESTAMP(), 'legacy', 2592000, 0, 'new')");
+    const legacyCookie = "regsid=legacy-null-session-01";
+    const legacyAuthn = await authn({ cookie: legacyCookie, origin: baseUrl });
+    assert.equal(legacyAuthn.cookie, null);
+    assert.equal(db("SELECT uid FROM cookie WHERE id='legacy-null-session-01'"), "ffffffffffffffff");
+    const legacySocket = await connect({ token: legacyAuthn.token });
+    assert.equal(db(`SELECT uid FROM socket WHERE id='${legacySocket.hello.data.socket_id}'`), "ffffffffffffffff");
+    legacySocket.connection.close();
+
+    // An active OTP carries the selected Drumate principal but cannot use a
+    // Domain-protected service. Expiry returns it to the nobody principal.
+    db("INSERT INTO cookie (id, uid, ctime, mtime, ua, ttl, failed, status) VALUES ('otp-session-phase4-live', 'phase4authuser01', UNIX_TIMESTAMP(), UNIX_TIMESTAMP(), 'fixture', 2592000, 0, 'otp')");
+    const otpCookie = "regsid=otp-session-phase4-live";
+    const otpAuthn = await authn({ cookie: otpCookie, origin: baseUrl });
+    const otpSocket = await connect({ token: otpAuthn.token });
+    assert.equal(db(`SELECT uid FROM socket WHERE id='${otpSocket.hello.data.socket_id}'`), "phase4authuser01");
+    assert.deepEqual(otpSocket.hello.data.user, {});
+    const otpPrivate = await service("hello.private", { cookie: otpCookie });
+    assert.equal(otpPrivate.response.status, 403);
+    otpSocket.connection.close();
+    db("INSERT INTO cookie (id, uid, ctime, mtime, ua, ttl, failed, status) VALUES ('otp-session-phase4-expired', 'phase4authuser01', UNIX_TIMESTAMP()-601, UNIX_TIMESTAMP()-601, 'fixture', 2592000, 0, 'otp')");
+    const expiredOtpCookie = "regsid=otp-session-phase4-expired";
+    const expiredOtpAuthn = await authn({ cookie: expiredOtpCookie, origin: baseUrl });
+    assert.equal(db("SELECT uid FROM cookie WHERE id='otp-session-phase4-expired'"), "ffffffffffffffff");
+    assert.equal(db("SELECT status FROM cookie WHERE id='otp-session-phase4-expired'"), "new");
+    const expiredOtpSocket = await connect({ token: expiredOtpAuthn.token });
+    assert.equal(db(`SELECT uid FROM socket WHERE id='${expiredOtpSocket.hello.data.socket_id}'`), "ffffffffffffffff");
+    expiredOtpSocket.connection.close();
 
     const unknownHeader = await service("bootstrap.authn", {
       headers: historicalSessionHeaders("unknown-session-000000"),
@@ -449,6 +503,8 @@ test("Phase 4.4 authenticates WebSockets through OTAK, preserves anonymous trans
     assert.match(deniedSocketId, /^[a-f0-9]{32}$/);
     assert.equal(db(`SELECT uid FROM socket WHERE id='${authorizedSocketId}'`), "phase4authuser01");
     assert.equal(db(`SELECT uid FROM socket WHERE id='${deniedSocketId}'`), "phase4denyuser02");
+    assert.equal(db(`SELECT uid FROM cookie WHERE id='${authorizedSid}'`), "phase4authuser01");
+    assert.equal(db(`SELECT status FROM cookie WHERE id='${authorizedSid}'`), "ok");
     assert.equal(db(`SELECT session_id FROM socket WHERE id='${authorizedSocketId}'`), authorizedSid);
     assert.equal(db(`SELECT COUNT(*) FROM authn WHERE token='${authorizedAuthn.token}'`), "0");
     assert.equal(authorized.requestPath.includes("regsid"), false);
@@ -521,6 +577,7 @@ test("Phase 4.4 authenticates WebSockets through OTAK, preserves anonymous trans
     assert.equal(externalBrowser.connections, "2");
     assert.match(externalBrowser.socketId, /^[a-f0-9]{32}$/);
     assert.equal(externalBrowser.sessionInDom, "false");
+    assert.equal(externalBrowser.sessionReadable, "false");
     assert.equal(externalBrowser.error, undefined);
 
     externalHost.setSessionAuthorization(anonymousSid);
@@ -552,7 +609,7 @@ test("Phase 4.4 authenticates WebSockets through OTAK, preserves anonymous trans
     assert.equal(logs.stdout.includes("?otak="), false);
     assert.equal(db("SELECT COUNT(*) FROM information_schema.schemata WHERE schema_name LIKE 'd\\_%' ESCAPE '\\\\'"), "0");
     assert.equal(db("SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='yp' AND table_name LIKE 'mfs%'"), "0");
-    assert.deepEqual(db("SELECT table_name FROM information_schema.tables WHERE table_schema='yp' ORDER BY table_name").split("\n"), ["authn", "cookie", "domain", "drumate", "entity", "privilege", "socket"]);
+    assert.deepEqual(db("SELECT table_name FROM information_schema.tables WHERE table_schema='yp' ORDER BY table_name").split("\n"), ["authn", "cookie", "domain", "drumate", "entity", "privilege", "socket", "sys_conf"]);
 
     authorized.connection.close();
     await new Promise((resolve) => setTimeout(resolve, 100));

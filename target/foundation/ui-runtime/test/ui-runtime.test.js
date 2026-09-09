@@ -129,8 +129,32 @@ test("service client preserves the historical x-param session authorization brid
   assert.equal(calls[0].options.headers["x-param-keysel"], "regsid");
   assert.equal(calls[0].options.headers["x-param-regsid"], "authorized-session-0001");
   assert.equal(Object.hasOwn(calls[0].options.headers, "Authorization"), false);
+  assert.equal(Object.hasOwn(client, "sessionAuthorization"), false);
+  assert.equal(client.sessionAuthorization, undefined);
   assert.equal(runtimeAssetUrl("/-/plugins/hello/main.js", "https://api.kernel.test/-/svc/"), "https://api.kernel.test/-/plugins/hello/main.js");
   assert.equal(runtimeAssetUrl("/-/plugins/hello/main.js", "/-/svc/"), "/-/plugins/hello/main.js");
+});
+
+test("runtime session bridge stays private while its transport still emits it", async () => {
+  const sid = "widget-secret-session-0001";
+  const calls = [];
+  const target = createBootstrapTarget();
+  const runtime = new UiRuntime({
+    global: target,
+    document: target.document,
+    sessionAuthorization: { keysel: "regsid", sid },
+    fetch: async (url, options) => {
+      calls.push({ url, options });
+      return { ok: true, status: 200, json: async () => ({ status: "ok", data: {} }) };
+    }
+  });
+  await runtime.bootstrap();
+  assert.equal(runtime.sessionAuthorization, undefined);
+  assert.equal(runtime.options.sessionAuthorization, undefined);
+  assert.equal(runtime.serviceClient.sessionAuthorization, undefined);
+  assert.doesNotMatch(JSON.stringify({ runtime: runtime.options }), new RegExp(sid));
+  await runtime.serviceClient.postService("bootstrap.authn", {});
+  assert.equal(calls[0].options.headers["x-param-regsid"], sid);
 });
 
 test("bootstrap creates one deterministic non-MFS singleton environment and preserves bootstrap event semantics", async () => {

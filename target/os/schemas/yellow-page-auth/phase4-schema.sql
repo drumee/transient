@@ -1,6 +1,8 @@
 -- Minimal Phase 4 Yellow Page closure. It intentionally contains only the
--- source-derived identity, cookie, Domain privilege and procedure objects
--- required by session_signin() and domain_permission().
+-- source-derived identity, provisioned system-principal configuration, cookie,
+-- Domain privilege and procedure objects required by session_signin() and
+-- domain_permission(). System Drumates are provisioned by organisation setup;
+-- this runtime closure resolves them but never creates them.
 
 CREATE TABLE IF NOT EXISTS `domain` (
   `id` int(10) NOT NULL AUTO_INCREMENT,
@@ -8,6 +10,12 @@ CREATE TABLE IF NOT EXISTS `domain` (
   PRIMARY KEY (`id`),
   UNIQUE KEY `name` (`name`) USING HASH
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+CREATE TABLE IF NOT EXISTS `sys_conf` (
+  `conf_key` varchar(40) NOT NULL,
+  `conf_value` longtext DEFAULT NULL,
+  PRIMARY KEY (`conf_key`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb3 COLLATE=utf8mb3_general_ci;
 
 CREATE TABLE IF NOT EXISTS `entity` (
   `id` varchar(16) CHARACTER SET ascii COLLATE ascii_general_ci NOT NULL,
@@ -18,6 +26,7 @@ CREATE TABLE IF NOT EXISTS `entity` (
   `fs_host` varchar(255) NOT NULL DEFAULT '',
   `home_dir` varchar(512) NOT NULL DEFAULT '',
   `home_id` varchar(16) DEFAULT NULL,
+  `type` enum('organization','hub','drumate','shop','blog','forum','guest','dummy') DEFAULT NULL,
   `dom_id` int(11) unsigned DEFAULT NULL,
   `area` enum('public','share','limited','restricted','private','personal','system','dummy','dmz-public','dmz-private','dmz','pool','pool/dmz','template') DEFAULT NULL,
   `area_id` varbinary(16) DEFAULT NULL,
@@ -51,7 +60,7 @@ CREATE TABLE IF NOT EXISTS `drumate` (
 
 CREATE TABLE IF NOT EXISTS `cookie` (
   `id` varchar(64) CHARACTER SET ascii COLLATE ascii_general_ci NOT NULL,
-  `uid` varchar(64) CHARACTER SET ascii COLLATE ascii_general_ci DEFAULT NULL,
+  `uid` varchar(64) CHARACTER SET ascii COLLATE ascii_general_ci NOT NULL,
   `ctime` int(11) NOT NULL DEFAULT 0,
   `mtime` int(11) NOT NULL DEFAULT 0,
   `ua` mediumtext NOT NULL DEFAULT '',
@@ -117,12 +126,18 @@ BEGIN
   DECLARE _email VARCHAR(500);
   DECLARE _dom_id INT(8) DEFAULT 1;
   DECLARE _ident VARCHAR(128) DEFAULT NULL;
+  DECLARE _nobody_id VARCHAR(16) CHARACTER SET ascii;
 
   SELECT JSON_VALUE(_args, "$.uid") INTO _ident;
   SELECT JSON_VALUE(_args, "$.password") INTO _pw;
   SELECT JSON_VALUE(_args, "$.sid") INTO _cid;
   SELECT JSON_VALUE(_args, "$.username") INTO _username;
   SELECT JSON_VALUE(_args, "$.host") INTO _host;
+  -- Organisation provisioning records the default anonymous Drumate in
+  -- sys_conf. The canonical constant is a compatibility fallback only; the
+  -- runtime never provisions or synthesizes that principal.
+  SELECT COALESCE((SELECT conf_value FROM sys_conf WHERE conf_key='nobody_id' LIMIT 1), 'ffffffffffffffff')
+    INTO _nobody_id;
 
   IF (_username IS NOT NULL) AND (_host IS NOT NULL) AND (_ident IS NULL) THEN
     SELECT d.id FROM drumate d INNER JOIN domain o ON o.id=d.domain_id
@@ -142,7 +157,7 @@ BEGIN
     SELECT _sid INTO _cid;
     SELECT UNIX_TIMESTAMP() INTO _ctime;
     INSERT INTO cookie (`id`,`uid`,`ctime`,`mtime`,`ua`, `status`)
-      VALUES(_sid, IFNULL('ffffffffffffffff', _uid), _ctime, _ctime, 'no_cookie', 'new');
+      VALUES(_sid, _nobody_id, _ctime, _ctime, 'no_cookie', 'new');
   END IF;
 
   IF _uid IS NULL THEN

@@ -16,6 +16,30 @@ Anonymous visitors, logged-in users and existing session contexts can obtain an
 OTAK. Socket connectivity therefore does not grant `hello.private` or
 `hello.push`: those retain their real Domain authorization.
 
+## Principal state and credential lifetime
+
+The source session model distinguishes a persisted principal from being signed
+in. The target now retains that distinction explicitly:
+
+| Cookie principal/state | Transport identity | Private implementation / Domain ACL |
+| --- | --- | --- |
+| provisioned `nobody_id` | anonymous; `sys.hello.user` is `{}` | public implementation; denied |
+| provisioned `guest_id` | guest; `sys.hello.user` is `{}` | public implementation; denied |
+| regular Drumate, `status=otp` or `otp_pending` | selected principal but unsigned; `sys.hello.user` is `{}` | public implementation; denied |
+| regular Drumate, `status=ok` | signed-in identity | private implementation and normal Domain check |
+
+`session_ensure` requires the pre-provisioned nobody principal, assigns it to
+every fresh cookie, and repairs only an older nullable `cookie.uid` row. It
+never resets a live OTP principal; after the source's ten-minute pending-OTP
+window it restores the nobody principal and `status=new`. This imports neither
+an OTP delivery table nor an OTP-completion service.
+
+OTAK remains a one-use credential and now has a target-specific 60-second
+lifetime. `authn_store` records `ctime`, removes expired rows and
+`socket_bind` rejects/consumes an expired token. This is an intentional
+transport hardening difference from the historical unbounded `authn` row, not
+a new authorization mechanism.
+
 ## Cross-site HTTP session bridge
 
 The pinned code, rather than the descriptive `Authorization` fields in some
@@ -72,6 +96,11 @@ continuation must receive the historical bridge from its embedding/runtime
 owner. The bridge is sensitive and is never placed in a WebSocket URL,
 message, DOM field or log.
 
+The target additionally holds the bridge in a module-private `WeakMap` rather
+than on `UiRuntime`, its options or `ServiceClient`. Request emission remains
+source-compatible, while a loaded Widget/plugin cannot recover the raw
+`regsid` from the runtime object graph.
+
 ## Historical evidence and intentional divergence
 
 The Team `bootstrap.authn` descriptor is `scope: hub` with
@@ -105,6 +134,11 @@ is required.
 consumes it. Its target body deliberately omits historical guest/nobody,
 DMZ/profile/quota, conference, endpoint-state and Hub branches. No Hub or MFS
 schema is installed.
+
+The retained principal lookup does resolve the existing provisioned
+`nobody_id` and `guest_id`, solely to avoid nullable transport ownership and to
+preserve the unsigned distinction above. `socket.uid` is therefore non-null;
+this is not guest, DMZ or MFS behavior.
 
 ## Origin, client and push path
 
@@ -157,6 +191,11 @@ The corrective-pass verification on 2026-09-08 was:
 | `node --test tests/integration/kernel/hello-browser-e2e.test.js` | PASS |
 | `DRUMEE_UI_BUILD_NODE_MODULES=.tmp/test-env/build-src/ui-team/node_modules npm test --prefix target/tooling/ui-build` | PASS |
 | `scripts/test-env/kernel/check.sh` | PASS |
+
+The principal/credential hardening regression on 2026-09-09 additionally
+passed the server-runtime, ui-runtime, Hello and ui-build package suites; the
+real Phase 4 Domain test; the real Phase 4.4 MariaDB/Redis/Nginx/Chrome test;
+the Hello/Nginx browser E2E; and the standalone UI-runtime Chrome fixture.
 
 Team conference/presence/workspace/payment/window-manager behaviour remains
 outside the runtime. Phase 4.5 packaging is not started here.

@@ -108,7 +108,10 @@ test("Phase 4 authenticates with session_signin then authorizes hello.private th
     assert.equal(restored.payload.data.authenticated, true);
 
     const tables = db("SELECT table_name FROM information_schema.tables WHERE table_schema='yp' ORDER BY table_name").split("\n");
-    assert.deepEqual(tables, ["authn", "cookie", "domain", "drumate", "entity", "privilege", "socket"]);
+    assert.deepEqual(tables, ["authn", "cookie", "domain", "drumate", "entity", "privilege", "socket", "sys_conf"]);
+    assert.equal(db("SELECT conf_value FROM sys_conf WHERE conf_key='nobody_id'"), "ffffffffffffffff");
+    assert.notEqual(db("SELECT conf_value FROM sys_conf WHERE conf_key='guest_id'"), "ffffffffffffffff");
+    assert.notEqual(db("SELECT id FROM drumate WHERE username='system'"), "ffffffffffffffff");
     assert.equal(db("SELECT COUNT(*) FROM information_schema.schemata WHERE schema_name LIKE 'd\\_%' ESCAPE '\\\\'"), "0");
     assert.equal(db("SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='yp' AND table_name LIKE 'mfs%'") , "0");
 

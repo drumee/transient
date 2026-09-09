@@ -42,9 +42,10 @@ accounting behavior. Those branches remain outside the runtime.
 
 ## Fixture boundary
 
-`target/os/schemas/yellow-page-auth/phase4-fixture.sh` inserts two deterministic
-test identities in the minimum Yellow Page tables. This is test setup, not an
-authentication bypass:
+`target/os/schemas/yellow-page-auth/phase4-fixture.sh` inserts deterministic
+test identities in the minimum Yellow Page tables: provisioned `nobody`,
+`guest` and `system` principals plus the two Domain-ACL test identities. This
+is test setup, not an authentication bypass or a provisioning replacement:
 
 ```text
 fixture → domain/entity/drumate/privilege rows + SHA2 fingerprint
@@ -103,15 +104,17 @@ scope is neither activated nor emulated.
 | `hub` | Per-Hub shard and Hub permission/MFS boundary | Deferred; no branch, schema or fixture is active. |
 
 The test MariaDB contains only database `yp`; its application tables are
-`cookie`, `domain`, `drumate`, `entity` and `privilege`. No personal Hub
-database or MFS table is created.
+`cookie`, `domain`, `drumate`, `entity`, `privilege` and the small
+system-principal configuration table `sys_conf`. No personal Hub database or
+MFS table is created. `sys_conf` is limited to resolving pre-provisioned
+`nobody_id`/`guest_id` values; the runtime does not provision any identity.
 
 ## SQL closure and provenance
 
 `target/os/schemas/yellow-page-auth/phase4-schema.sql` records source-level
 provenance. The installed closure is only:
 
-- tables: `domain`, `entity`, `drumate`, `cookie`, `privilege`;
+- tables: `domain`, `entity`, `drumate`, `cookie`, `privilege`, `sys_conf`;
 - functions: `uniqueId`, `domain_permission`;
 - procedure: `session_signin`.
 
@@ -119,7 +122,10 @@ provenance. The installed closure is only:
 historical `session_check_cookie` is not installed: its MFS token,
 organisation/support and system-configuration closure is unnecessary. The
 source-derived `YellowPageStore::resolveSession` cookie/entity/drumate/domain
-join supplies only authenticated identity and Domain context.
+join supplies only authenticated identity and Domain context. Phase 4.4's
+separate narrow `session_ensure` reads the two provisioned identity IDs so a
+fresh runtime session has the real nobody principal rather than a nullable UID;
+it does not activate the rest of `session_check_cookie`.
 
 ## Acceptance evidence
 
@@ -139,8 +145,10 @@ clean database and verifies through real HTTP:
 
 The revoke/restore transition without re-login proves session authentication
 and Domain authorization are distinct and that `domain_permission` executes
-on the live path. The test also asserts the exact five-table closure and
-absence of personal-Hub/MFS objects.
+on the live path. The test also asserts the exact six-table Phase 4 identity
+closure and absence of personal-Hub/MFS objects. It verifies that `nobody_id`
+and the distinct guest/system principals are provisioned by the fixture, not
+synthesized by the runtime.
 
 ## Environment and validation
 
