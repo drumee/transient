@@ -6,6 +6,11 @@ require_kernel_name
 require_kernel_db_name
 "$KERNEL_SCRIPT_DIR/configure.sh"
 
+case "$KERNEL_SCHEMA_MODE" in
+  clean|upgrade) ;;
+  *) echo "KERNEL_SCHEMA_MODE must be clean or upgrade." >&2; exit 2 ;;
+esac
+
 if docker container inspect "$KERNEL_CONTAINER" >/dev/null 2>&1; then
   echo "Kernel test container already exists: $KERNEL_CONTAINER" >&2
   echo "Use scripts/test-env/kernel/status.sh or down.sh first." >&2
@@ -49,22 +54,75 @@ for attempt in $(seq 1 20); do
   sleep 1
 done
 
-# Mount the two initialization artifacts individually so their execution
-# order is explicit. The MariaDB image runs init files lexically; mounting
-# the source directory directly would run the fixture before the schema.
-docker run -d \
-  --name "$KERNEL_DB_CONTAINER" \
-  --network "$KERNEL_NETWORK" \
-  --network-alias phase4-db \
-  --env "MARIADB_DATABASE=$KERNEL_DB_NAME" \
-  --env "MARIADB_USER=$KERNEL_DB_USER" \
-  --env "MARIADB_PASSWORD=$KERNEL_DB_PASSWORD" \
-  --env "MARIADB_ROOT_PASSWORD=$KERNEL_DB_ROOT_PASSWORD" \
-  --env "PHASE4_TEST_PASSWORD=$KERNEL_PHASE4_TEST_PASSWORD" \
-  --volume "$TRANSIENT_ROOT/target/os/schemas/yellow-page-auth/phase4-schema.sql:/docker-entrypoint-initdb.d/00-phase4-schema.sql:ro" \
-  --volume "$TRANSIENT_ROOT/target/foundation/server-runtime/schemas/yellow-page/phase4.4-websocket.sql:/docker-entrypoint-initdb.d/05-phase4.4-websocket.sql:ro" \
-  --volume "$TRANSIENT_ROOT/target/os/schemas/yellow-page-auth/phase4-fixture.sh:/docker-entrypoint-initdb.d/10-phase4-fixture.sh:ro" \
-  mariadb:11.4 >/dev/null
+# Mount the initialization artifacts individually so their execution order is
+# explicit. `upgrade` instead starts from the pinned e8e7bac8e tables and
+# applies the current closure twice after representative legacy rows exist.
+db_command=(docker run -d
+  --name "$KERNEL_DB_CONTAINER"
+  --network "$KERNEL_NETWORK"
+  --network-alias phase4-db
+  --env "MARIADB_DATABASE=$KERNEL_DB_NAME"
+  --env "MARIADB_USER=$KERNEL_DB_USER"
+  --env "MARIADB_PASSWORD=$KERNEL_DB_PASSWORD"
+  --env "MARIADB_ROOT_PASSWORD=$KERNEL_DB_ROOT_PASSWORD"
+  --env "PHASE4_TEST_PASSWORD=$KERNEL_PHASE4_TEST_PASSWORD")
+if [[ "$KERNEL_SCHEMA_MODE" == "clean" ]]; then
+  db_command+=(
+    --volume "$TRANSIENT_ROOT/target/os/schemas/yellow-page-auth/phase4-schema.sql:/docker-entrypoint-initdb.d/00-phase4-schema.sql:ro"
+    --volume "$TRANSIENT_ROOT/target/foundation/server-runtime/schemas/yellow-page/phase4.4-websocket.sql:/docker-entrypoint-initdb.d/05-phase4.4-websocket.sql:ro"
+    --volume "$TRANSIENT_ROOT/target/os/schemas/yellow-page-auth/phase4-fixture.sh:/docker-entrypoint-initdb.d/10-phase4-fixture.sh:ro")
+fi
+db_command+=(mariadb:11.4)
+"${db_command[@]}" >/dev/null
+
+if [[ "$KERNEL_SCHEMA_MODE" == "upgrade" ]]; then
+  for attempt in $(seq 1 40); do
+    if docker exec -e "MYSQL_PWD=$KERNEL_DB_ROOT_PASSWORD" "$KERNEL_DB_CONTAINER" \
+      mariadb --protocol=tcp --host=127.0.0.1 --user=root "$KERNEL_DB_NAME" --execute 'SELECT 1' >/dev/null 2>&1; then
+      break
+    fi
+    if [[ "$attempt" == "40" ]]; then
+      docker logs "$KERNEL_DB_CONTAINER" >&2 || true
+      echo "Phase 4.4 upgrade database did not become ready." >&2
+      exit 1
+    fi
+    sleep 1
+  done
+  apply_pinned_schema() {
+    local revision="$1"
+    local schema_path="$2"
+    git -C "$TRANSIENT_ROOT" show "${revision}:${schema_path}" | docker exec -i \
+      -e "MYSQL_PWD=$KERNEL_DB_ROOT_PASSWORD" "$KERNEL_DB_CONTAINER" \
+      mariadb --protocol=tcp --host=127.0.0.1 --user=root "$KERNEL_DB_NAME"
+  }
+  apply_current_schema() {
+    local schema_path="$1"
+    docker exec -i -e "MYSQL_PWD=$KERNEL_DB_ROOT_PASSWORD" "$KERNEL_DB_CONTAINER" \
+      mariadb --protocol=tcp --host=127.0.0.1 --user=root "$KERNEL_DB_NAME" < "$schema_path"
+  }
+  apply_pinned_schema e8e7bac8e target/os/schemas/yellow-page-auth/phase4-schema.sql
+  apply_pinned_schema e8e7bac8e target/foundation/server-runtime/schemas/yellow-page/phase4.4-websocket.sql
+  # The corrected Phase 4 base closure adds sys_conf, which was absent from
+  # e8e7bac8e and is required for organisation-provisioned system principals.
+  # Its CREATE IF NOT EXISTS clauses intentionally leave legacy nullable rows
+  # intact for the Phase 4.4 migration below to repair.
+  apply_current_schema "$TRANSIENT_ROOT/target/os/schemas/yellow-page-auth/phase4-schema.sql"
+  docker exec -i \
+    -e "MARIADB_DATABASE=$KERNEL_DB_NAME" \
+    -e "MARIADB_ROOT_PASSWORD=$KERNEL_DB_ROOT_PASSWORD" \
+    -e "PHASE4_TEST_PASSWORD=$KERNEL_PHASE4_TEST_PASSWORD" \
+    "$KERNEL_DB_CONTAINER" bash < "$TRANSIENT_ROOT/target/os/schemas/yellow-page-auth/phase4-fixture-e8.sh"
+  docker exec -e "MYSQL_PWD=$KERNEL_DB_ROOT_PASSWORD" "$KERNEL_DB_CONTAINER" \
+    mariadb --protocol=tcp --host=127.0.0.1 --user=root "$KERNEL_DB_NAME" --execute "
+      INSERT INTO authn (token, value) VALUES ('legacy-authn-token-00001', JSON_OBJECT('id', 'upgrade-null-session-01', 'type', 'session'));
+      INSERT INTO cookie (id, uid, ctime, mtime, ua, ttl, failed, status)
+        VALUES ('upgrade-null-session-01', NULL, UNIX_TIMESTAMP(), UNIX_TIMESTAMP(), 'legacy', 2592000, 0, 'new');
+      INSERT INTO socket (id, session_id, uid, domain_id, ctime, mtime)
+        VALUES ('upgrade-null-socket-000001', 'upgrade-null-session-01', NULL, 41, UNIX_TIMESTAMP(), UNIX_TIMESTAMP());"
+  apply_current_schema "$TRANSIENT_ROOT/target/foundation/server-runtime/schemas/yellow-page/phase4.4-websocket.sql"
+  # The second application is the idempotency proof for the real upgrade SQL.
+  apply_current_schema "$TRANSIENT_ROOT/target/foundation/server-runtime/schemas/yellow-page/phase4.4-websocket.sql"
+fi
 
 for attempt in $(seq 1 40); do
   if docker exec -e "MYSQL_PWD=$KERNEL_DB_ROOT_PASSWORD" "$KERNEL_DB_CONTAINER" \

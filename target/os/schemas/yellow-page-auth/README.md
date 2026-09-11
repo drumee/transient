@@ -25,6 +25,13 @@ an authentication bypass or provisioning substitute: runtime login still
 invokes `session_signin` through the normal `yp.signin` kernel service and
 returns a real `regsid` cookie.
 
+`phase4-fixture-e8.sh` is an upgrade-characterization fixture only. It
+provisions the same deterministic principals using the `e8e7bac8e` entity
+shape (before `entity.type`) after the current `sys_conf` table is available.
+The Phase 4.4 migration test adds nullable cookie/socket and pre-`ctime`
+`authn` rows around it, then applies the current schema twice. It is not a
+runtime provisioning path.
+
 The source `session_check_cookie` procedure is deliberately not installed.
 `sources/schemas/yellow_page/procedures/session/session_check_cookie.sql`
 also resolves MFS tokens, organisation/support metadata and system

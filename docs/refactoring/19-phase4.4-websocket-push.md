@@ -34,6 +34,77 @@ never resets a live OTP principal; after the source's ten-minute pending-OTP
 window it restores the nobody principal and `status=new`. This imports neither
 an OTP delivery table nor an OTP-completion service.
 
+## Final corrective pass: upgrade, claim and transport ownership
+
+The final Phase 4.4 pass remains deliberately inside the existing session
+model. It does not begin Phase 4.5 or introduce Hub/MFS semantics.
+
+### Upgrade from `e8e7bac8e`
+
+The WebSocket schema file now contains an idempotent, in-place upgrade before
+it recreates procedures that reference `authn.ctime`. It supports the actual
+previous Phase 4.4 shape, not only a new database:
+
+```text
+e8e7bac8e authn (no ctime), nullable cookie.uid/socket.uid
+→ current Phase 4 base prerequisites (sys_conf and entity.type)
+→ provisioned system-principal fixture plus representative legacy rows
+→ current Phase 4.4 schema upgrade
+→ current Phase 4.4 schema upgrade again
+```
+
+Legacy `authn` rows are deleted before adding `ctime`: OTAKs are transient and
+must not acquire a fabricated lifetime. The migration repairs `cookie.uid IS
+NULL` to the provisioned, verified `nobody_id` before tightening it to `NOT
+NULL`. It repairs a nullable socket UID from its persisted cookie when
+possible, and removes only orphaned socket rows. Socket bindings are transient
+live connections, so an orphaned old binding must reconnect with a newly
+claimed OTAK after upgrade. A missing provisioned nobody makes the migration
+fail rather than silently choosing an identity.
+
+`tests/integration/kernel/phase4.4-websocket-push.test.js`, when run with
+`KERNEL_SCHEMA_MODE=upgrade`, creates the pinned `e8e7bac8e` schema, provisions
+the old-compatible fixture, inserts null UID and OTAK rows, applies current
+schema twice, checks the upgraded columns/data, and runs the complete current
+MariaDB/Redis/Nginx/Chrome Phase 4.4 regression against that upgraded database.
+
+### Atomic OTAK claim
+
+`socket_bind` now starts a transaction, selects the valid OTAK row `FOR
+UPDATE`, deletes it while holding that lock, validates the persisted session,
+and commits the socket binding. The router invokes this bind first and resolves
+only the returned session ID afterwards; it no longer pre-reads an OTAK through
+a separate `SELECT` path. Two concurrent Upgrade requests therefore have one
+claim winner and one `401` loser. The real integration test uses two concurrent
+connections for a single token and asserts exactly one fulfillment.
+
+### Guest fail-closed and frontend capability boundary
+
+The Yellow Page context query explicitly validates that `guest_id` exists, is
+different from `nobody_id`, and names the provisioned `entity/drumate` guest.
+If this configuration is absent or inconsistent, every signed-in decision is
+false. A real guest cookie with `status=ok` remains `principal=guest`,
+`isGuest()=true`, and unauthenticated; the integration test also removes
+`guest_id` temporarily and proves `hello.private` remains denied.
+
+The UI transport preserves the historical write-only session pattern from
+`ui-essentials/socket/utils.js::setAuthorization`. Its `regsid` and captured
+`fetch` capability live together in a module-private `WeakMap`; neither is a
+property of `UiRuntime`, options, `ServiceClient`, a LETC Widget, model/state,
+the DOM, WebSocket URL, events, or return data. `setSessionAuthorization()` is
+write-only and permits the embedding/bootstrap owner to replace a cross-site
+bridge after a server-side rotation. Same-origin browser continuations retain
+the server-issued HttpOnly cookie without exposing its value to JavaScript.
+The client sends the unchanged `x-param-keysel: regsid` /
+`x-param-regsid` form whenever that bridge is supplied.
+
+The HTTP function is captured before plugin execution as well. Assigning
+`runtime.serviceClient.fetch` only creates an unused public property; requests
+continue through the private captured transport. Unit tests prove direct
+runtime/widget access and an attempted transport wrapper cannot recover the
+SID, and the real cross-site Hello plugin attempts that wrapper before a
+private request still succeeds.
+
 OTAK remains a one-use credential and now has a target-specific 60-second
 lifetime. `authn_store` records `ctime`, removes expired rows and
 `socket_bind` rejects/consumes an expired token. This is an intentional

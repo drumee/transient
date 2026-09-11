@@ -8,11 +8,11 @@
  * deliberately out of scope for the anonymous Phase 3 path.
  */
 
-// The historical x-param bridge is transport-only. Keeping it outside the
-// ServiceClient object graph prevents a Widget/plugin that can reach
-// runtime.serviceClient from reading the raw regsid while request() still has
-// the capability to emit the source-compatible headers.
-const sessionAuthorizations = new WeakMap();
+// The historical x-param bridge is transport-only. Keeping both it and the
+// browser capability which emits it outside the ServiceClient object graph
+// prevents a Widget/plugin that can reach runtime.serviceClient from reading
+// the raw regsid or replacing the transport used for a credentialed request.
+const transportStates = new WeakMap();
 
 function serviceUrl(baseUrl, service) {
   if (typeof service !== "string" || !/^[^.]+\.[^.]+$/.test(service)) {
@@ -43,26 +43,54 @@ function sessionAuthorizationHeaders(authorization) {
   };
 }
 
+function normalizedSessionAuthorization(authorization) {
+  if (!authorization) return null;
+  const headers = sessionAuthorizationHeaders(authorization);
+  return {
+    keysel: headers["x-param-keysel"],
+    sid: headers[`x-param-${headers["x-param-keysel"]}`]
+  };
+}
+
+function updateSessionAuthorization(client, authorization) {
+  const state = transportStates.get(client);
+  if (!state) throw new Error("Service transport is not configured");
+  state.authorization = normalizedSessionAuthorization(authorization);
+  return client;
+}
+
 class ServiceClient {
   constructor({ baseUrl = "/-/svc/", fetch: fetchImpl = globalThis.fetch, credentials, sessionAuthorization } = {}) {
     this.baseUrl = baseUrl;
-    this.fetch = fetchImpl;
-    this.credentials = credentials;
-    sessionAuthorizations.set(this, sessionAuthorization);
+    transportStates.set(this, {
+      fetch: fetchImpl,
+      credentials,
+      authorization: normalizedSessionAuthorization(sessionAuthorization)
+    });
+    // Keep the write-only rotation entrypoint itself non-replaceable. A plugin
+    // must not wrap it and observe a future bridge supplied by the runtime
+    // owner; it can only assign unrelated public properties such as `fetch`.
+    Object.defineProperty(this, "setSessionAuthorization", {
+      configurable: false,
+      enumerable: false,
+      writable: false,
+      value: (authorization) => updateSessionAuthorization(this, authorization)
+    });
   }
 
   async request(method, service, payload) {
     const call = normalizePayload(service, payload);
-    if (typeof this.fetch !== "function") throw new Error("Browser fetch is not configured");
+    const state = transportStates.get(this);
+    if (!state || typeof state.fetch !== "function") throw new Error("Browser fetch is not configured");
     let url = serviceUrl(this.baseUrl, call.service);
     const options = {
       method,
       headers: {
         Accept: "application/json",
-        ...sessionAuthorizationHeaders(sessionAuthorizations.get(this))
+        ...sessionAuthorizationHeaders(state.authorization)
       }
     };
-    if (this.credentials) options.credentials = this.credentials;
+    if (state.credentials) options.credentials = state.credentials;
     if (method === "GET") {
       const query = new URLSearchParams();
       for (const [key, value] of Object.entries(call.payload)) {
@@ -75,7 +103,7 @@ class ServiceClient {
       options.body = JSON.stringify(call.payload);
       options.cache = "no-cache";
     }
-    const response = await this.fetch(url, options);
+    const response = await state.fetch(url, options);
     let envelope;
     try {
       envelope = await response.json();
@@ -100,4 +128,4 @@ class ServiceClient {
   }
 }
 
-module.exports = { ServiceClient, normalizePayload, serviceUrl, sessionAuthorizationHeaders };
+module.exports = { ServiceClient, normalizePayload, normalizedSessionAuthorization, serviceUrl, sessionAuthorizationHeaders, updateSessionAuthorization };

@@ -295,7 +295,7 @@ function externalRuntimeProbePage({ apiBase, coreEntry, anonymous = false, recon
   };
   const action = anonymous
     ? `try { await runtime.serviceClient.postService("hello.private", {}); throw new Error("anonymous private request unexpectedly passed"); } catch (error) { if (error.status !== 403) throw error; document.body.dataset.private = "denied"; }`
-    : `var HelloWidget=await runtime.Kind.loadPlugin({name:"hello",kind:"hello"});var widget=runtime.mount({kind:"hello"},document.getElementById("hello-root"));var possibleSessionValues=[runtime.sessionAuthorization,runtime.serviceClient&&runtime.serviceClient.sessionAuthorization,widget.runtime&&widget.runtime.sessionAuthorization,widget.runtime&&widget.runtime.serviceClient&&widget.runtime.serviceClient.sessionAuthorization,widget.options&&widget.options.sessionAuthorization,widget.model&&widget.model.get("sessionAuthorization")];document.body.dataset.sessionReadable=String(possibleSessionValues.some(function(value){return value===sessionAuthorization.sid||(value&&value.sid===sessionAuthorization.sid);}));await widget._pingPromise;var pushed=new Promise(function(resolve,reject){widget.once("hello:push",resolve);widget.push().catch(reject);});await pushed;document.body.dataset.push=widget.mget("status");`;
+    : `var HelloWidget=await runtime.Kind.loadPlugin({name:"hello",kind:"hello"});var widget=runtime.mount({kind:"hello"},document.getElementById("hello-root"));var possibleSessionValues=[runtime.regsid,runtime.sessionAuthorization,runtime.options&&runtime.options.regsid,runtime.options&&runtime.options.sessionAuthorization,runtime.serviceClient&&runtime.serviceClient.regsid,runtime.serviceClient&&runtime.serviceClient.sessionAuthorization,widget.runtime&&widget.runtime.regsid,widget.runtime&&widget.runtime.sessionAuthorization,widget.options&&widget.options.regsid,widget.options&&widget.options.sessionAuthorization,widget.model&&widget.model.get("regsid"),widget.model&&widget.model.get("sessionAuthorization"),widget.state&&widget.state.regsid];document.body.dataset.sessionReadable=String(possibleSessionValues.some(function(value){return value===sessionAuthorization.sid||(value&&value.sid===sessionAuthorization.sid);}));await widget._pingPromise;var intercepted=false;runtime.serviceClient.fetch=function(url,options){intercepted=Boolean(options&&options.headers&&options.headers["x-param-regsid"]);throw new Error("plugin intercepted private transport");};var pushed=new Promise(function(resolve,reject){widget.once("hello:push",resolve);widget.push().catch(reject);});await pushed;document.body.dataset.transportIntercepted=String(intercepted);document.body.dataset.push=widget.mget("status");`;
   const reconnectStep = reconnect
     ? `await new Promise(function(resolve,reject){var timer=setTimeout(function(){reject(new Error("cross-site reconnect timed out"));},12000);var once=function(){if(connections<2)return;runtime.Websocket.off("connected",once);clearTimeout(timer);resolve();};runtime.Websocket.on("connected",once);runtime.Websocket.socket.close();});document.body.dataset.reconnected="true";`
     : "";
@@ -320,7 +320,7 @@ async function runExternalOriginPushProbe(origin) {
     await protocol.send("Page.navigate", { url: origin });
     for (let attempt = 0; attempt < 100; attempt++) {
       const result = await protocol.send("Runtime.evaluate", {
-        expression: "({complete:document.body.dataset.complete,socket:document.body.dataset.socket,push:document.body.dataset.push,private:document.body.dataset.private,reconnected:document.body.dataset.reconnected,connections:document.body.dataset.connections,socketId:document.body.dataset.socketId,sessionInDom:document.body.dataset.sessionInDom,sessionReadable:document.body.dataset.sessionReadable,error:document.body.dataset.error})",
+        expression: "({complete:document.body.dataset.complete,socket:document.body.dataset.socket,push:document.body.dataset.push,private:document.body.dataset.private,reconnected:document.body.dataset.reconnected,connections:document.body.dataset.connections,socketId:document.body.dataset.socketId,sessionInDom:document.body.dataset.sessionInDom,sessionReadable:document.body.dataset.sessionReadable,transportIntercepted:document.body.dataset.transportIntercepted,error:document.body.dataset.error})",
         returnByValue: true
       });
       const value = result.result.value;
@@ -352,6 +352,15 @@ test("Phase 4.4 authenticates WebSockets through OTAK, preserves anonymous trans
   let headerAnonymous;
   let rejectedThenAccepted;
   try {
+    if (process.env.KERNEL_SCHEMA_MODE === "upgrade") {
+      assert.equal(db("SELECT COUNT(*) FROM authn WHERE token='legacy-authn-token-00001'"), "0");
+      assert.equal(db("SELECT uid FROM cookie WHERE id='upgrade-null-session-01'"), "ffffffffffffffff");
+      assert.equal(db("SELECT uid FROM socket WHERE id='upgrade-null-socket-000001'"), "ffffffffffffffff");
+      assert.equal(db("SELECT IS_NULLABLE FROM information_schema.columns WHERE table_schema='yp' AND table_name='authn' AND column_name='ctime'"), "NO");
+      assert.equal(db("SELECT IS_NULLABLE FROM information_schema.columns WHERE table_schema='yp' AND table_name='cookie' AND column_name='uid'"), "NO");
+      assert.equal(db("SELECT IS_NULLABLE FROM information_schema.columns WHERE table_schema='yp' AND table_name='socket' AND column_name='uid'"), "NO");
+      assert.equal(db("SELECT COUNT(*) FROM information_schema.columns WHERE table_schema='yp' AND table_name='entity' AND column_name='type'"), "1");
+    }
     const preflight = await fetch(`${baseUrl}/-/svc/bootstrap.authn`, {
       method: "OPTIONS",
       headers: {
@@ -388,6 +397,17 @@ test("Phase 4.4 authenticates WebSockets through OTAK, preserves anonymous trans
     const foreign = await connectionFailure({ token: foreignAuthn.token, origin: "https://foreign.example" });
     assert.equal(foreign.status, 403);
     rejectedThenAccepted = await connect({ token: foreignAuthn.token });
+
+    const concurrentAuthn = await authn({ origin: baseUrl });
+    const concurrent = await Promise.allSettled([
+      connect({ token: concurrentAuthn.token }),
+      connect({ token: concurrentAuthn.token })
+    ]);
+    assert.equal(concurrent.filter((entry) => entry.status === "fulfilled").length, 1);
+    assert.equal(concurrent.filter((entry) => entry.status === "rejected").length, 1);
+    const concurrentWinner = concurrent.find((entry) => entry.status === "fulfilled").value;
+    concurrentWinner.connection.close();
+    assert.equal(db(`SELECT COUNT(*) FROM authn WHERE token='${concurrentAuthn.token}'`), "0");
 
     const anonymousAuthn = await authn({ origin: baseUrl });
     assert.match(anonymousAuthn.cookie || "", /^regsid=/);
@@ -433,7 +453,7 @@ test("Phase 4.4 authenticates WebSockets through OTAK, preserves anonymous trans
     const guestId = db("SELECT conf_value FROM sys_conf WHERE conf_key='guest_id'");
     assert.notEqual(guestId, "ffffffffffffffff");
     assert.equal(db(`SELECT username FROM drumate WHERE id='${guestId}'`), "guest");
-    db(`INSERT INTO cookie (id, uid, ctime, mtime, ua, ttl, failed, status) VALUES ('guest-session-phase4-01', '${guestId}', UNIX_TIMESTAMP(), UNIX_TIMESTAMP(), 'fixture', 2592000, 0, 'guest')`);
+    db(`INSERT INTO cookie (id, uid, ctime, mtime, ua, ttl, failed, status) VALUES ('guest-session-phase4-01', '${guestId}', UNIX_TIMESTAMP(), UNIX_TIMESTAMP(), 'fixture', 2592000, 0, 'ok')`);
     const guestCookie = "regsid=guest-session-phase4-01";
     const guestAuthn = await authn({ cookie: guestCookie, origin: baseUrl });
     const guestSocket = await connect({ token: guestAuthn.token });
@@ -441,19 +461,33 @@ test("Phase 4.4 authenticates WebSockets through OTAK, preserves anonymous trans
     assert.deepEqual(guestSocket.hello.data.user, {});
     const guestPrivate = await service("hello.private", { cookie: guestCookie });
     assert.equal(guestPrivate.response.status, 403);
+    assert.equal(guestPrivate.payload.code, "PERMISSION_DENIED");
     guestSocket.connection.close();
+    // A missing guest configuration must never reinterpret this actual
+    // provisioned guest UID as a signed-in normal Drumate.
+    db("DELETE FROM sys_conf WHERE conf_key='guest_id'");
+    const missingGuestPrivate = await service("hello.private", { cookie: guestCookie });
+    assert.equal(missingGuestPrivate.response.status, 403);
+    assert.equal(missingGuestPrivate.payload.code, "PERMISSION_DENIED");
+    db(`INSERT INTO sys_conf (conf_key, conf_value) VALUES ('guest_id', '${guestId}')`);
 
     // Fresh target schemas are NOT NULL, but a pre-existing nullable legacy
     // row is repaired through session_ensure before it reaches a KernelSession.
     db("ALTER TABLE cookie MODIFY uid varchar(64) CHARACTER SET ascii COLLATE ascii_general_ci DEFAULT NULL");
-    db("INSERT INTO cookie (id, uid, ctime, mtime, ua, ttl, failed, status) VALUES ('legacy-null-session-01', NULL, UNIX_TIMESTAMP(), UNIX_TIMESTAMP(), 'legacy', 2592000, 0, 'new')");
-    const legacyCookie = "regsid=legacy-null-session-01";
-    const legacyAuthn = await authn({ cookie: legacyCookie, origin: baseUrl });
-    assert.equal(legacyAuthn.cookie, null);
-    assert.equal(db("SELECT uid FROM cookie WHERE id='legacy-null-session-01'"), "ffffffffffffffff");
-    const legacySocket = await connect({ token: legacyAuthn.token });
-    assert.equal(db(`SELECT uid FROM socket WHERE id='${legacySocket.hello.data.socket_id}'`), "ffffffffffffffff");
-    legacySocket.connection.close();
+    try {
+      db("INSERT INTO cookie (id, uid, ctime, mtime, ua, ttl, failed, status) VALUES ('legacy-null-session-01', NULL, UNIX_TIMESTAMP(), UNIX_TIMESTAMP(), 'legacy', 2592000, 0, 'new')");
+      const legacyCookie = "regsid=legacy-null-session-01";
+      const legacyAuthn = await authn({ cookie: legacyCookie, origin: baseUrl });
+      assert.equal(legacyAuthn.cookie, null);
+      assert.equal(db("SELECT uid FROM cookie WHERE id='legacy-null-session-01'"), "ffffffffffffffff");
+      const legacySocket = await connect({ token: legacyAuthn.token });
+      assert.equal(db(`SELECT uid FROM socket WHERE id='${legacySocket.hello.data.socket_id}'`), "ffffffffffffffff");
+      legacySocket.connection.close();
+    } finally {
+      db("UPDATE cookie SET uid='ffffffffffffffff' WHERE uid IS NULL");
+      db("ALTER TABLE cookie MODIFY uid varchar(64) CHARACTER SET ascii COLLATE ascii_general_ci NOT NULL");
+    }
+    assert.equal(db("SELECT IS_NULLABLE FROM information_schema.columns WHERE table_schema='yp' AND table_name='cookie' AND column_name='uid'"), "NO");
 
     // An active OTP carries the selected Drumate principal but cannot use a
     // Domain-protected service. Expiry returns it to the nobody principal.
@@ -578,6 +612,7 @@ test("Phase 4.4 authenticates WebSockets through OTAK, preserves anonymous trans
     assert.match(externalBrowser.socketId, /^[a-f0-9]{32}$/);
     assert.equal(externalBrowser.sessionInDom, "false");
     assert.equal(externalBrowser.sessionReadable, "false");
+    assert.equal(externalBrowser.transportIntercepted, "false");
     assert.equal(externalBrowser.error, undefined);
 
     externalHost.setSessionAuthorization(anonymousSid);

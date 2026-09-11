@@ -131,6 +131,8 @@ test("service client preserves the historical x-param session authorization brid
   assert.equal(Object.hasOwn(calls[0].options.headers, "Authorization"), false);
   assert.equal(Object.hasOwn(client, "sessionAuthorization"), false);
   assert.equal(client.sessionAuthorization, undefined);
+  assert.equal(Object.hasOwn(client, "fetch"), false);
+  assert.equal(client.fetch, undefined);
   assert.equal(runtimeAssetUrl("/-/plugins/hello/main.js", "https://api.kernel.test/-/svc/"), "https://api.kernel.test/-/plugins/hello/main.js");
   assert.equal(runtimeAssetUrl("/-/plugins/hello/main.js", "/-/svc/"), "/-/plugins/hello/main.js");
 });
@@ -152,9 +154,122 @@ test("runtime session bridge stays private while its transport still emits it", 
   assert.equal(runtime.sessionAuthorization, undefined);
   assert.equal(runtime.options.sessionAuthorization, undefined);
   assert.equal(runtime.serviceClient.sessionAuthorization, undefined);
+  assert.equal(runtime.regsid, undefined);
+  assert.equal(runtime.serviceClient.regsid, undefined);
+  assert.equal(typeof runtime.getSessionAuthorization, "undefined");
+  assert.equal(typeof runtime.serviceClient.getSessionAuthorization, "undefined");
   assert.doesNotMatch(JSON.stringify({ runtime: runtime.options }), new RegExp(sid));
   await runtime.serviceClient.postService("bootstrap.authn", {});
   assert.equal(calls[0].options.headers["x-param-regsid"], sid);
+});
+
+test("a plugin-facing Widget context cannot intercept the private service transport or read the bridge", async () => {
+  const sid = "widget-secret-session-0002";
+  const calls = [];
+  const target = createBootstrapTarget();
+  const runtime = new UiRuntime({
+    global: target,
+    document: target.document,
+    sessionAuthorization: { keysel: "regsid", sid },
+    fetch: async (url, options) => {
+      calls.push({ url, options });
+      return { ok: true, status: 200, json: async () => ({ status: "ok", data: { ok: true } }) };
+    }
+  });
+  await runtime.bootstrap();
+  // This is the exact runtime/options/model surface supplied to a LETC Widget;
+  // browser integration below exercises the same check through Hello itself.
+  const widget = {
+    runtime,
+    options: { runtime },
+    model: { get() { return undefined; } },
+    postService(service, payload) { return this.runtime.serviceClient.postService(service, payload); }
+  };
+  let intercepted = false;
+  runtime.serviceClient.fetch = (url, options) => {
+    intercepted = Boolean(options && options.headers && options.headers["x-param-regsid"]);
+    throw new Error("a Widget must not replace the private transport");
+  };
+  await widget.postService("hello.ping", {});
+  assert.equal(intercepted, false);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].options.headers["x-param-regsid"], sid);
+  const readable = [
+    runtime.regsid,
+    runtime.sessionAuthorization,
+    runtime.options.regsid,
+    runtime.options.sessionAuthorization,
+    runtime.serviceClient.regsid,
+    runtime.serviceClient.sessionAuthorization,
+    widget.runtime && widget.runtime.regsid,
+    widget.options && widget.options.regsid,
+    widget.options && widget.options.sessionAuthorization,
+    widget.model && widget.model.get("regsid"),
+    widget.model && widget.model.get("sessionAuthorization"),
+    widget.state && widget.state.regsid
+  ];
+  assert.equal(readable.includes(sid), false);
+  assert.doesNotMatch(JSON.stringify(runtime.options), new RegExp(sid));
+});
+
+test("session authorization rotation is write-only and replaces all later request headers", async () => {
+  const first = "rotation-session-value-0001";
+  const second = "rotation-session-value-0002";
+  const calls = [];
+  const client = new ServiceClient({
+    sessionAuthorization: { keysel: "regsid", sid: first },
+    fetch: async (url, options) => {
+      calls.push({ url, options });
+      return { ok: true, status: 200, json: async () => ({ status: "ok", data: {} }) };
+    }
+  });
+  await client.postService("hello.ping", {});
+  const setter = client.setSessionAuthorization;
+  let setterIntercepted = false;
+  client.setSessionAuthorization = (value) => { setterIntercepted = value === second; };
+  client.setSessionAuthorization({ keysel: "regsid", sid: second });
+  await client.postService("hello.ping", {});
+  await client.postService("bootstrap.authn", {});
+  assert.equal(calls[0].options.headers["x-param-regsid"], first);
+  assert.deepEqual(calls.slice(1).map((call) => call.options.headers["x-param-regsid"]), [second, second]);
+  assert.equal(client.setSessionAuthorization, setter);
+  assert.equal(setterIntercepted, false);
+  assert.equal(Object.getOwnPropertyDescriptor(client, "setSessionAuthorization").writable, false);
+  assert.equal(JSON.stringify(client).includes(first), false);
+  assert.equal(JSON.stringify(client).includes(second), false);
+  assert.equal(client.regsid, undefined);
+  assert.equal(client.sessionAuthorization, undefined);
+  assert.equal(typeof client.getRegsid, "undefined");
+  assert.equal(typeof client.getSessionAuthorization, "undefined");
+});
+
+test("the non-replaceable runtime rotation boundary updates the private transport", async () => {
+  const first = "runtime-rotation-value-0001";
+  const second = "runtime-rotation-value-0002";
+  const calls = [];
+  const target = createBootstrapTarget();
+  const runtime = new UiRuntime({
+    global: target,
+    document: target.document,
+    sessionAuthorization: { keysel: "regsid", sid: first },
+    fetch: async (url, options) => {
+      calls.push({ url, options });
+      return { ok: true, status: 200, json: async () => ({ status: "ok", data: {} }) };
+    }
+  });
+  await runtime.bootstrap();
+  await runtime.serviceClient.postService("hello.ping", {});
+  const setter = runtime.setSessionAuthorization;
+  let intercepted = false;
+  runtime.setSessionAuthorization = (value) => { intercepted = value && value.sid === second; };
+  runtime.setSessionAuthorization({ keysel: "regsid", sid: second });
+  await runtime.serviceClient.postService("hello.ping", {});
+  assert.equal(runtime.setSessionAuthorization, setter);
+  assert.equal(intercepted, false);
+  assert.equal(Object.getOwnPropertyDescriptor(runtime, "setSessionAuthorization").writable, false);
+  assert.deepEqual(calls.map((call) => call.options.headers["x-param-regsid"]), [first, second]);
+  assert.equal(runtime.regsid, undefined);
+  assert.equal(runtime.sessionAuthorization, undefined);
 });
 
 test("bootstrap creates one deterministic non-MFS singleton environment and preserves bootstrap event semantics", async () => {

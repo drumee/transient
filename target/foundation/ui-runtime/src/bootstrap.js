@@ -4,7 +4,7 @@ const { loadBrowserScript } = require("./loader");
 const { Skeletons, staticKinds } = require("./skeletons");
 const { Marionette } = require("./letc");
 const { Template, createPreset } = require("./preset");
-const { ServiceClient } = require("./service");
+const { ServiceClient, updateSessionAuthorization } = require("./service");
 const { Validator } = require("./validator");
 const { Websocket } = require("./websocket");
 
@@ -63,6 +63,26 @@ class UiRuntime {
     this.Websocket = websocket || new Websocket({ global, url: websocketUrl, serviceClient: this.serviceClient, WebSocket });
     this.ready = null;
     this.isReady = false;
+    // This is deliberately a write-only, non-replaceable bootstrap boundary.
+    // A server-side rotation can be followed by its embedding/runtime owner,
+    // while a Widget cannot wrap the method to observe a future raw bridge.
+    Object.defineProperty(this, "setSessionAuthorization", {
+      configurable: false,
+      enumerable: false,
+      writable: false,
+      value: (authorization) => {
+        if (this.serviceClient instanceof ServiceClient) {
+          updateSessionAuthorization(this.serviceClient, authorization);
+        } else if (this.serviceClient && typeof this.serviceClient.setSessionAuthorization === "function") {
+          // An explicitly injected transport is owned by its caller; retain
+          // its established update contract without making it kernel state.
+          this.serviceClient.setSessionAuthorization(authorization);
+        } else {
+          throw new Error("The configured service transport cannot update session authorization");
+        }
+        return this;
+      }
+    });
   }
 
   bootstrap() {
@@ -146,6 +166,8 @@ function bootstrap(options = {}) {
   if (!runtime) {
     runtime = new UiRuntime({ ...options, global: globalRef });
     runtimes.set(globalRef, runtime);
+  } else if (Object.hasOwn(options, "sessionAuthorization")) {
+    runtime.setSessionAuthorization(options.sessionAuthorization);
   }
   return runtime.bootstrap();
 }
