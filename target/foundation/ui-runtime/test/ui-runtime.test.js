@@ -212,6 +212,58 @@ test("a plugin-facing Widget context cannot intercept the private service transp
   assert.doesNotMatch(JSON.stringify(runtime.options), new RegExp(sid));
 });
 
+test("a server-issued historical regsid header privately bootstraps a transport with no prior bridge", async () => {
+  const issued = "issued-session-value-0001";
+  const calls = [];
+  const client = new ServiceClient({
+    fetch: async (url, options) => {
+      calls.push({ url, options });
+      return {
+        ok: true,
+        status: 200,
+        headers: { get: (name) => name === "regsid" && calls.length === 1 ? issued : null },
+        json: async () => ({ status: "ok", data: {} })
+      };
+    }
+  });
+  await client.postService("bootstrap.authn", {});
+  await client.postService("hello.ping", {});
+  assert.equal(calls[0].options.headers["x-param-regsid"], undefined);
+  assert.equal(calls[1].options.headers["x-param-keysel"], "regsid");
+  assert.equal(calls[1].options.headers["x-param-regsid"], issued);
+  assert.equal(client.regsid, undefined);
+  assert.equal(client.sessionAuthorization, undefined);
+  assert.equal(JSON.stringify(client).includes(issued), false);
+});
+
+test("a server-reported regsid replacement updates only private later request headers", async () => {
+  const first = "server-session-value-0001";
+  const second = "server-session-value-0002";
+  const calls = [];
+  const client = new ServiceClient({
+    fetch: async (url, options) => {
+      calls.push({ url, options });
+      const replacement = calls.length === 1 ? first : calls.length === 2 ? second : null;
+      return {
+        ok: true,
+        status: 200,
+        headers: { get: (name) => name === "regsid" ? replacement : null },
+        json: async () => ({ status: "ok", data: {} })
+      };
+    }
+  });
+  await client.postService("bootstrap.authn", {});
+  await client.postService("yp.signin", {});
+  await client.postService("hello.ping", {});
+  assert.equal(calls[0].options.headers["x-param-regsid"], undefined);
+  assert.equal(calls[1].options.headers["x-param-regsid"], first);
+  assert.equal(calls[2].options.headers["x-param-regsid"], second);
+  assert.equal(JSON.stringify(client).includes(first), false);
+  assert.equal(JSON.stringify(client).includes(second), false);
+  assert.equal(client.getRegsid, undefined);
+  assert.equal(client.getSessionAuthorization, undefined);
+});
+
 test("session authorization rotation is write-only and replaces all later request headers", async () => {
   const first = "rotation-session-value-0001";
   const second = "rotation-session-value-0002";

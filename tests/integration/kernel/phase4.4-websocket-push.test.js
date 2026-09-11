@@ -266,13 +266,7 @@ async function runBrowserPushProbe() {
 
 async function startExternalOriginProbe() {
   let page = "<!doctype html><html><body>not configured</body></html>";
-  let sessionAuthorization = null;
   const server = http.createServer((request, response) => {
-    if (request.url === "/session-context") {
-      response.writeHead(sessionAuthorization ? 200 : 404, { "content-type": "application/json", "cache-control": "no-store" });
-      response.end(JSON.stringify(sessionAuthorization || {}));
-      return;
-    }
     response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
     response.end(page);
   });
@@ -282,7 +276,6 @@ async function startExternalOriginProbe() {
   return {
     origin,
     setPage(value) { page = value; },
-    setSessionAuthorization(sid) { sessionAuthorization = { keysel: "regsid", sid }; },
     close: () => new Promise((resolve) => server.close(resolve))
   };
 }
@@ -295,11 +288,14 @@ function externalRuntimeProbePage({ apiBase, coreEntry, anonymous = false, recon
   };
   const action = anonymous
     ? `try { await runtime.serviceClient.postService("hello.private", {}); throw new Error("anonymous private request unexpectedly passed"); } catch (error) { if (error.status !== 403) throw error; document.body.dataset.private = "denied"; }`
-    : `var HelloWidget=await runtime.Kind.loadPlugin({name:"hello",kind:"hello"});var widget=runtime.mount({kind:"hello"},document.getElementById("hello-root"));var possibleSessionValues=[runtime.regsid,runtime.sessionAuthorization,runtime.options&&runtime.options.regsid,runtime.options&&runtime.options.sessionAuthorization,runtime.serviceClient&&runtime.serviceClient.regsid,runtime.serviceClient&&runtime.serviceClient.sessionAuthorization,widget.runtime&&widget.runtime.regsid,widget.runtime&&widget.runtime.sessionAuthorization,widget.options&&widget.options.regsid,widget.options&&widget.options.sessionAuthorization,widget.model&&widget.model.get("regsid"),widget.model&&widget.model.get("sessionAuthorization"),widget.state&&widget.state.regsid];document.body.dataset.sessionReadable=String(possibleSessionValues.some(function(value){return value===sessionAuthorization.sid||(value&&value.sid===sessionAuthorization.sid);}));await widget._pingPromise;var intercepted=false;runtime.serviceClient.fetch=function(url,options){intercepted=Boolean(options&&options.headers&&options.headers["x-param-regsid"]);throw new Error("plugin intercepted private transport");};var pushed=new Promise(function(resolve,reject){widget.once("hello:push",resolve);widget.push().catch(reject);});await pushed;document.body.dataset.transportIntercepted=String(intercepted);document.body.dataset.push=widget.mget("status");`;
+    : `var HelloWidget=await runtime.Kind.loadPlugin({name:"hello",kind:"hello"});var widget=runtime.mount({kind:"hello"},document.getElementById("hello-root"));var possibleSessionValues=[runtime.regsid,runtime.sessionAuthorization,runtime.options&&runtime.options.regsid,runtime.options&&runtime.options.sessionAuthorization,runtime.serviceClient&&runtime.serviceClient.regsid,runtime.serviceClient&&runtime.serviceClient.sessionAuthorization,widget.runtime&&widget.runtime.regsid,widget.runtime&&widget.runtime.sessionAuthorization,widget.options&&widget.options.regsid,widget.options&&widget.options.sessionAuthorization,widget.model&&widget.model.get("regsid"),widget.model&&widget.model.get("sessionAuthorization"),widget.state&&widget.state.regsid];document.body.dataset.sessionReadable=String(possibleSessionValues.some(function(value){return value!==undefined&&value!==null;}));await widget._pingPromise;var intercepted=false;runtime.serviceClient.fetch=function(url,options){intercepted=Boolean(options&&options.headers&&options.headers["x-param-regsid"]);throw new Error("plugin intercepted private transport");};var pushed=new Promise(function(resolve,reject){widget.once("hello:push",resolve);widget.push().catch(reject);});await pushed;document.body.dataset.transportIntercepted=String(intercepted);document.body.dataset.push=widget.mget("status");`;
+  const initialSession = anonymous
+    ? ""
+    : `var login=await runtime.serviceClient.postService("yp.signin",{uid:"phase4authuser01",password:${JSON.stringify(password)}});if(!login||login.authenticated!==true)throw new Error("cross-site sign-in did not establish a session");`;
   const reconnectStep = reconnect
     ? `await new Promise(function(resolve,reject){var timer=setTimeout(function(){reject(new Error("cross-site reconnect timed out"));},12000);var once=function(){if(connections<2)return;runtime.Websocket.off("connected",once);clearTimeout(timer);resolve();};runtime.Websocket.on("connected",once);runtime.Websocket.socket.close();});document.body.dataset.reconnected="true";`
     : "";
-  return `<!doctype html><html><head><meta charset="utf-8"></head><body><main id="hello-root"></main><script>window.onerror=function(message,source,line,column){document.body.dataset.error=[message,line,column].join(":");};</script><script src="${apiBase}/-/plugins/ui-runtime/${coreEntry}"></script><script>(async function(){try{var sessionAuthorization=await (await fetch("/session-context",{credentials:"same-origin"})).json();var runtime=await window.DrumeeUiRuntime.bootstrap(Object.assign(${JSON.stringify(options)},{sessionAuthorization:sessionAuthorization}));document.body.dataset.sessionInDom=String(document.documentElement.innerHTML.includes(sessionAuthorization.sid));var connections=0;runtime.Websocket.on("connected",function(data){connections++;document.body.dataset.socket="connected";document.body.dataset.connections=String(connections);document.body.dataset.socketId=(data&&data.socket_id)||"";});await runtime.Websocket.connect();${reconnectStep}${action}document.body.dataset.complete="true";}catch(error){document.body.dataset.error=String(error);}})();</script></body></html>`;
+  return `<!doctype html><html><head><meta charset="utf-8"></head><body><main id="hello-root"></main><script>window.onerror=function(message,source,line,column){document.body.dataset.error=[message,line,column].join(":");};</script><script src="${apiBase}/-/plugins/ui-runtime/${coreEntry}"></script><script>(async function(){try{var runtime=await window.DrumeeUiRuntime.bootstrap(${JSON.stringify(options)});${initialSession}document.body.dataset.sessionInDom=String(/regsid=[A-Za-z0-9_-]{16,64}/.test(document.documentElement.innerHTML));var connections=0;runtime.Websocket.on("connected",function(data){connections++;document.body.dataset.socket="connected";document.body.dataset.connections=String(connections);document.body.dataset.socketId=(data&&data.socket_id)||"";document.body.dataset.socketUser=(data&&data.user&&data.user.id)||"";});await runtime.Websocket.connect();${reconnectStep}${action}document.body.dataset.complete="true";}catch(error){document.body.dataset.error=String(error);}})();</script></body></html>`;
 }
 
 async function runExternalOriginPushProbe(origin) {
@@ -320,7 +316,7 @@ async function runExternalOriginPushProbe(origin) {
     await protocol.send("Page.navigate", { url: origin });
     for (let attempt = 0; attempt < 100; attempt++) {
       const result = await protocol.send("Runtime.evaluate", {
-        expression: "({complete:document.body.dataset.complete,socket:document.body.dataset.socket,push:document.body.dataset.push,private:document.body.dataset.private,reconnected:document.body.dataset.reconnected,connections:document.body.dataset.connections,socketId:document.body.dataset.socketId,sessionInDom:document.body.dataset.sessionInDom,sessionReadable:document.body.dataset.sessionReadable,transportIntercepted:document.body.dataset.transportIntercepted,error:document.body.dataset.error})",
+        expression: "({complete:document.body.dataset.complete,socket:document.body.dataset.socket,push:document.body.dataset.push,private:document.body.dataset.private,reconnected:document.body.dataset.reconnected,connections:document.body.dataset.connections,socketId:document.body.dataset.socketId,socketUser:document.body.dataset.socketUser,sessionInDom:document.body.dataset.sessionInDom,sessionReadable:document.body.dataset.sessionReadable,transportIntercepted:document.body.dataset.transportIntercepted,error:document.body.dataset.error})",
         returnByValue: true
       });
       const value = result.result.value;
@@ -354,6 +350,7 @@ test("Phase 4.4 authenticates WebSockets through OTAK, preserves anonymous trans
   try {
     if (process.env.KERNEL_SCHEMA_MODE === "upgrade") {
       assert.equal(db("SELECT COUNT(*) FROM authn WHERE token='legacy-authn-token-00001'"), "0");
+      assert.equal(db("SELECT COUNT(*) FROM authn WHERE token='legacy-null-ctime-otak-01'"), "0");
       assert.equal(db("SELECT uid FROM cookie WHERE id='upgrade-null-session-01'"), "ffffffffffffffff");
       assert.equal(db("SELECT uid FROM socket WHERE id='upgrade-null-socket-000001'"), "ffffffffffffffff");
       assert.equal(db("SELECT IS_NULLABLE FROM information_schema.columns WHERE table_schema='yp' AND table_name='authn' AND column_name='ctime'"), "NO");
@@ -373,6 +370,7 @@ test("Phase 4.4 authenticates WebSockets through OTAK, preserves anonymous trans
     assert.equal(preflight.headers.get("access-control-allow-origin"), externalHost.origin);
     assert.match(preflight.headers.get("access-control-allow-headers") || "", /x-param-keysel/i);
     assert.match(preflight.headers.get("access-control-allow-headers") || "", /x-param-regsid/i);
+    assert.equal(preflight.headers.get("access-control-expose-headers"), "regsid");
 
     const missing = await connectionFailure({ token: null });
     assert.equal(missing.status, 401);
@@ -598,7 +596,6 @@ test("Phase 4.4 authenticates WebSockets through OTAK, preserves anonymous trans
 
     const runtimeMetadata = await (await fetch(`${baseUrl}/-/plugins/ui-runtime/index.json`)).json();
     assert.match(runtimeMetadata.entry, /\.js$/);
-    externalHost.setSessionAuthorization(authorizedSid);
     externalHost.setPage(externalRuntimeProbePage({
       apiBase: crossSiteApiBase,
       coreEntry: runtimeMetadata.entry,
@@ -610,12 +607,12 @@ test("Phase 4.4 authenticates WebSockets through OTAK, preserves anonymous trans
     assert.equal(externalBrowser.reconnected, "true");
     assert.equal(externalBrowser.connections, "2");
     assert.match(externalBrowser.socketId, /^[a-f0-9]{32}$/);
+    assert.equal(externalBrowser.socketUser, "phase4authuser01");
     assert.equal(externalBrowser.sessionInDom, "false");
     assert.equal(externalBrowser.sessionReadable, "false");
     assert.equal(externalBrowser.transportIntercepted, "false");
     assert.equal(externalBrowser.error, undefined);
 
-    externalHost.setSessionAuthorization(anonymousSid);
     externalHost.setPage(externalRuntimeProbePage({
       apiBase: crossSiteApiBase,
       coreEntry: runtimeMetadata.entry,
@@ -625,6 +622,7 @@ test("Phase 4.4 authenticates WebSockets through OTAK, preserves anonymous trans
     assert.equal(anonymousBrowser.socket, "connected");
     assert.equal(anonymousBrowser.private, "denied");
     assert.match(anonymousBrowser.socketId, /^[a-f0-9]{32}$/);
+    assert.equal(anonymousBrowser.socketUser, "");
     assert.equal(anonymousBrowser.sessionInDom, "false");
     assert.equal(anonymousBrowser.error, undefined);
 

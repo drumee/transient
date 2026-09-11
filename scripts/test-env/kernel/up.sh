@@ -120,7 +120,18 @@ if [[ "$KERNEL_SCHEMA_MODE" == "upgrade" ]]; then
       INSERT INTO socket (id, session_id, uid, domain_id, ctime, mtime)
         VALUES ('upgrade-null-socket-000001', 'upgrade-null-session-01', NULL, 41, UNIX_TIMESTAMP(), UNIX_TIMESTAMP());"
   apply_current_schema "$TRANSIENT_ROOT/target/foundation/server-runtime/schemas/yellow-page/phase4.4-websocket.sql"
-  # The second application is the idempotency proof for the real upgrade SQL.
+  # A partially applied predecessor may already have a nullable ctime column.
+  # Its NULL-aged OTAKs must be invalidated rather than made fresh by the
+  # upgrade. Exercise that exact fail-closed branch before the idempotency
+  # application below.
+  docker exec -e "MYSQL_PWD=$KERNEL_DB_ROOT_PASSWORD" "$KERNEL_DB_CONTAINER" \
+    mariadb --protocol=tcp --host=127.0.0.1 --user=root "$KERNEL_DB_NAME" --execute "
+      ALTER TABLE authn MODIFY COLUMN ctime int(11) unsigned DEFAULT NULL;
+      INSERT INTO authn (token, value, ctime)
+        VALUES ('legacy-null-ctime-otak-01', JSON_OBJECT('id', 'upgrade-null-session-01', 'type', 'session'), NULL);"
+  apply_current_schema "$TRANSIENT_ROOT/target/foundation/server-runtime/schemas/yellow-page/phase4.4-websocket.sql"
+  # The third application is the idempotency proof for the corrected target
+  # schema after both historical upgrade branches have run.
   apply_current_schema "$TRANSIENT_ROOT/target/foundation/server-runtime/schemas/yellow-page/phase4.4-websocket.sql"
 fi
 

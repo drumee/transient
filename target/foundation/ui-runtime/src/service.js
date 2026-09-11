@@ -59,6 +59,23 @@ function updateSessionAuthorization(client, authorization) {
   return client;
 }
 
+// `Output.cookie()` in the pinned server-core source emits the selected
+// session value as a response header in addition to Set-Cookie:
+//
+//   response.setHeader(keysel, sid)
+//
+// For the minimal kernel, `regsid` is the sole accepted selector.  Consume
+// that historical hand-off only inside the private transport boundary.  A
+// Widget receives the decoded service envelope, never the Response object or
+// this header value.
+function updateSessionAuthorizationFromResponse(client, response) {
+  const headers = response && response.headers;
+  if (!headers || typeof headers.get !== "function") return client;
+  const sid = headers.get("regsid");
+  if (sid == null || sid === "") return client;
+  return updateSessionAuthorization(client, { keysel: "regsid", sid });
+}
+
 class ServiceClient {
   constructor({ baseUrl = "/-/svc/", fetch: fetchImpl = globalThis.fetch, credentials, sessionAuthorization } = {}) {
     this.baseUrl = baseUrl;
@@ -104,6 +121,7 @@ class ServiceClient {
       options.cache = "no-cache";
     }
     const response = await state.fetch(url, options);
+    updateSessionAuthorizationFromResponse(this, response);
     let envelope;
     try {
       envelope = await response.json();
@@ -128,4 +146,12 @@ class ServiceClient {
   }
 }
 
-module.exports = { ServiceClient, normalizePayload, normalizedSessionAuthorization, serviceUrl, sessionAuthorizationHeaders, updateSessionAuthorization };
+module.exports = {
+  ServiceClient,
+  normalizePayload,
+  normalizedSessionAuthorization,
+  serviceUrl,
+  sessionAuthorizationHeaders,
+  updateSessionAuthorization,
+  updateSessionAuthorizationFromResponse
+};
