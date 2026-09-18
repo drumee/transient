@@ -38,8 +38,9 @@ Phase 2.6   LETC bootstrap completeness                         IMPLEMENTED
 Phase 3     hello vertical slice                                IMPLEMENTED
 Phase 4     authenticated private Domain capability              IMPLEMENTED
 Phase 4.4   WebSocket / push runtime capability                  IMPLEMENTED
-Phase 4.5   NPM + schema exportability lock                      NEXT
-Phase 5     marketing as first real application
+Phase 4.5   NPM + schema exportability lock                      IMPLEMENTED / CLOSED
+Phase 4.6   platform bootstrap contract + system-mfs             NEXT
+Phase 5     marketing as first real business application         AFTER 4.6
 Phase 6     kernel stabilization from real application needs
 Phase 7+    Team migration module by module
 ```
@@ -280,8 +281,9 @@ minimal runtime
 → hello
 → authenticated private Domain capability
 → WebSocket / push runtime capability
-→ intentional resource capabilities
-→ MFS where required
+→ NPM + schema exportability lock
+→ platform bootstrap contract
+→ MFS as the first system/kernel module
 → marketing
 → kernel stabilization
 → Team migration
@@ -1051,7 +1053,8 @@ complex provisioning
 
 The governing rule is:
 
-> **`hello` validates the kernel; `marketing` drives the next useful kernel capabilities.**
+> **`hello` validates the kernel; Phase 4.6 establishes platform bootstrap and
+> the first system/kernel module; `marketing` is the first business consumer.**
 
 ---
 
@@ -1097,8 +1100,8 @@ Finder remains a system application, not the MFS engine.
 WebSocket transport and Redis push distribution are kernel capabilities;
 application-specific interpretation of pushed services belongs to modules or
 distributions. Phase 4.4 does not establish Hub, MFS, broadcast policy or Team
-application behaviour. Phase 4.5 may only lock the proven NPM/schema boundary
-when explicitly authorized.
+application behaviour. Phase 4.5 locked only the proven NPM/schema boundary;
+it did not provision a complete Drumee instance.
 
 `regsid` is the runtime/session continuity identifier and must always exist;
 when absent, the backend allocates it automatically. `bootstrap.authn` is a
@@ -1111,18 +1114,96 @@ session context may be recovered through the historical `Input.authorization`
 header mechanism; `regsid` remains session continuity and OTAK remains the
 WebSocket credential.
 
+## Phase 4.5 closed boundary and platform invariants
+
+Phase 4.5 is implemented and closed. It proves private CommonJS package
+exportability, package-relative intrinsic runtime schemas, manifest-driven
+installation and artifact-isolated regression behavior. It does not establish
+platform provisioning.
+
+The following are canonical platform invariants:
+
+```text
+DEFAULT_ORG_ID = 1
+NOBODY_UID = ffffffffffffffff
+```
+
+A valid minimal Drumee instance must contain organisation `id = 1`, nobody
+`uid = ffffffffffffffff`, and provisioned `guest` and `system` identities.
+Guest and system have no new hardcoded identifiers: they remain resolved from
+existing configuration/provisioning state and must each be distinct from one
+another and from nobody.
+
+`server-runtime` may know, resolve and require these invariants and must fail
+clearly when a supposedly valid installation does not provide them. It must
+not create or silently repair the organisation, nobody, guest or system during
+startup, request handling, session resolution or schema installation. Runtime
+consumes platform invariants; platform bootstrap provisions them.
+
+The lifecycle boundary is:
+
+```text
+install runtime package
+→ install intrinsic runtime schemas
+→ bootstrap platform invariants
+→ valid minimal Drumee instance
+```
+
+Phase 4.5 owns the first two steps and their exportability only.
+
+## Phase 4.6 — platform bootstrap contract + system-mfs (next, not implemented)
+
+Phase 4.6 is the next planned implementation boundary and still requires
+explicit authorization. It will define the minimal platform-bootstrap contract
+and introduce MFS as the first system/kernel module. MFS may require
+organisation `id = 1`, nobody, guest and system as preconditions, but it must
+not own their creation.
+
+The intended ownership split is:
+
+```text
+server-runtime
+    boot/runtime, session/authentication, Domain ACL,
+    module loading/dispatch, intrinsic runtime schemas
+
+platform bootstrap / control plane
+    orchestration of organisation id=1, nobody, guest and system provisioning
+
+system-mfs
+    MFS runtime code, schemas, migrations and MFS-specific provisioning hooks
+
+marketing
+    business schema and lifecycle, including Profile / Source / Crawl /
+    Document and Claim / Evidence / Review
+```
+
+For Phase 4.6 and later, each module owns the knowledge required to install and
+provision its resources—schema, migrations and provisioning contract/hooks—but
+does not decide when or for whom provisioning occurs. A bootstrap/control-plane
+orchestrator makes those decisions for an organisation/context.
+
+`system-mfs` is a system/kernel module, not intrinsic `server-runtime`. The
+kernel must still boot without MFS. A module declaring MFS as required must
+eventually fail deterministically when it is unavailable; Phase 4.6 must define
+that contract before implementing consumers. Finder remains a future system
+application, and no dependency mechanism or provisioning framework is added by
+this documentation pass.
+
 ---
 
 # 30. Marketing is the first real application
 
-After `hello` validates the kernel, `marketing` is the first real application intended to exercise actual business needs.
+After Phase 4.6 establishes platform bootstrap and `system-mfs`, `marketing` is
+the first real business application intended to exercise actual business
+needs. It consumes MFS rather than owning the MFS or platform-bootstrap
+boundary.
 
 Marketing may drive requirements such as:
 
 ```text
 private hub usage
 authenticated ACL
-MFS
+MFS-backed business resources
 hub-local schemas
 dynamic services
 LETC frontend
@@ -1135,7 +1216,8 @@ Use:
 
 ```text
 hello → validate kernel
-marketing → discover real kernel requirements
+Phase 4.6 → platform bootstrap contract + system-mfs
+marketing → first business application consuming MFS
 ```
 
 ---
@@ -1203,7 +1285,7 @@ Examples:
 ```text
 service dispatcher       → KEEP_OS
 ACL engine integration   → KEEP_OS
-MFS primitive            → KEEP_OS when actually required
+system-mfs               → SYSTEM_MODULE / kernel capability; not intrinsic runtime
 Finder                    → SYSTEM_MODULE
 Window Manager            → INVESTIGATE after MFS/resource semantics
 Chat                      → TEAM_MODULE
@@ -1367,11 +1449,14 @@ Current important documents include:
 15-phase2-runtime-extraction.md
 16-phase2.6-letc-bootstrap.md
 17-phase3-hello.md
+18-phase4-authenticated-private.md
+19-phase4.4-websocket-push.md
+20-phase4.5-exportability.md
+21-phase4.6-system-mfs.md
 ```
 
-Phase 2.6, Phase 3, Phase 4 and Phase 4.4 implementation evidence is recorded in
-`16-phase2.6-letc-bootstrap.md`, `17-phase3-hello.md` and
-`18-phase4-authenticated-private.md` and `19-phase4.4-websocket-push.md`.
+Phase 2.6 through Phase 4.5 implementation evidence and the Phase 4.6 planning
+boundary are recorded in the corresponding numbered documents above.
 
 Risk register updates must be evidence-based.
 

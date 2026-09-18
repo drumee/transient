@@ -45,6 +45,37 @@ The disposable fixtures under `target/os/schemas/yellow-page-auth/` therefore
 remain test-only provisioning inputs; they are intentionally absent from the
 tarball.
 
+## Platform invariants are not schema provisioning
+
+Phase 4.5 closes the exportability boundary but does not claim that schema
+installation alone produces a valid Drumee instance. The platform contract
+requires these canonical identities/context values:
+
+```text
+DEFAULT_ORG_ID = 1
+NOBODY_UID = ffffffffffffffff
+```
+
+Organisation `id = 1` and nobody `uid = ffffffffffffffff` are canonical.
+Guest and system are also mandatory, mutually distinct identities, but their
+IDs remain generated/provisioned and resolved through existing configuration;
+this phase introduces no hardcoded guest or system ID.
+
+`server-runtime` may know, resolve and require these invariants and fail clearly
+when they are absent. It does not create or silently repair them during startup,
+request handling or schema installation. The complete conceptual lifecycle is:
+
+```text
+install runtime package
+→ install intrinsic runtime schemas
+→ bootstrap platform invariants
+→ valid minimal Drumee instance
+```
+
+Phase 4.5 covers the first two steps and their validation. Platform bootstrap
+is the next-phase orchestration responsibility, not part of the runtime schema
+manifest or the disposable provisioning fixtures.
+
 ## Executable evidence
 
 `scripts/test-env/kernel/phase4.5-validation.sh` is the standard gate. Its
@@ -87,4 +118,6 @@ consumers are temporary artifacts only; no npm package is published.
 
 This lock does not add a package installer, module lifecycle, provisioning,
 Hub ACL/shards, MFS, Finder, Window Manager, Team decomposition, Debian
-packaging or Marketing. Those remain explicit later-phase decisions.
+packaging or Marketing. Phase 4.6 is the next planned boundary for the minimal
+platform-bootstrap contract and `system-mfs`; Phase 5 Marketing follows as its
+first business consumer. Neither later phase is implemented here.
