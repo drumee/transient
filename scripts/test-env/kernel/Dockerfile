@@ -22,16 +22,14 @@ WORKDIR /opt/kernel/server-essentials
 RUN npm ci --omit=dev --ignore-scripts
 WORKDIR /opt/kernel
 COPY server-essentials/lib ./server-essentials/lib/
-COPY server-runtime/package.json server-runtime/package-lock.json ./server-runtime/
+COPY server-runtime/package.json ./server-runtime/
 WORKDIR /opt/kernel/server-runtime
-RUN npm ci --omit=dev --ignore-scripts
+RUN npm install --omit=dev --ignore-scripts --no-audit --no-fund
 WORKDIR /opt/kernel
 COPY server-runtime/ ./server-runtime/
-RUN mkdir -p /opt/kernel/server-runtime/node_modules/@drumee \
-  && ln -s /opt/kernel/server-essentials /opt/kernel/server-runtime/node_modules/@drumee/server-essentials
-COPY ui-runtime/package.json ui-runtime/package-lock.json ./ui-runtime/
+COPY ui-runtime/package.json ./ui-runtime/
 WORKDIR /opt/kernel/ui-runtime
-RUN npm ci --omit=dev --ignore-scripts
+RUN npm install --omit=dev --ignore-scripts --no-audit --no-fund
 WORKDIR /opt/kernel
 COPY ui-runtime/ ./ui-runtime/
 COPY hello/ ./hello/

@@ -2,6 +2,7 @@
 set -euo pipefail
 
 source "$(cd -- "$(dirname -- "$0")" && pwd)/lib.sh"
+resolve_kernel_runtime_inputs
 
 if [[ "$(uname -s)" != "Linux" ]]; then
   echo "Phase 2 kernel integration requires Linux." >&2
@@ -21,17 +22,21 @@ for required in \
   sources/schemas/yellow_page/procedures/domain/permission.sql \
   sources/schemas/yellow_page/procedures/session/session_signin.sql \
   sources/server-essentials/lib/lex/permission.js \
-  target/foundation/server-runtime/lib/index.js \
-  target/foundation/server-runtime/schemas/SCHEMA_MANIFEST.json \
-  target/foundation/server-runtime/schemas/yellow-page/phase4.4-websocket.sql \
-  target/foundation/ui-runtime/src/index.js \
+  "$KERNEL_SERVER_RUNTIME_SOURCE/lib/index.js" \
+  "$KERNEL_SERVER_RUNTIME_SOURCE/schemas/SCHEMA_MANIFEST.json" \
+  "$KERNEL_SERVER_RUNTIME_SOURCE/schemas/yellow-page/phase4-schema.sql" \
+  "$KERNEL_SERVER_RUNTIME_SOURCE/schemas/yellow-page/phase4.4-websocket.sql" \
+  "$KERNEL_UI_RUNTIME_SOURCE/src/index.js" \
   target/modules/hello/server/acl/hello.json \
-  target/os/schemas/yellow-page-auth/phase4-schema.sql \
   target/os/schemas/yellow-page-auth/phase4-fixture.sh \
   target/modules/hello/ui/index.js \
   target/tooling/ui-build/lib/index.js; do
-  if [[ ! -e "$TRANSIENT_ROOT/$required" ]]; then
-    echo "Required Phase 2 path is missing: $required" >&2
+  case "$required" in
+    /*) candidate="$required" ;;
+    *) candidate="$TRANSIENT_ROOT/$required" ;;
+  esac
+  if [[ ! -e "$candidate" ]]; then
+    echo "Required kernel path is missing: $required" >&2
     exit 2
   fi
 done

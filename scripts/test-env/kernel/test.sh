@@ -35,6 +35,12 @@ docker exec "$KERNEL_CONTAINER" sh -ec '
   test -f /srv/drumee/runtime/plugins/ui/main/hello/index.json
   test -f /srv/drumee/runtime/plugins/ui/main/hello/probe.html
 '
+if [[ -n "${KERNEL_SERVER_RUNTIME_TGZ:-}${KERNEL_UI_RUNTIME_TGZ:-}" ]]; then
+  docker exec "$KERNEL_CONTAINER" sh -ec '
+    test ! -e /opt/kernel/server-runtime/test
+    test ! -e /opt/kernel/ui-runtime/test
+  '
+fi
 docker exec -e "MYSQL_PWD=$KERNEL_DB_ROOT_PASSWORD" "$KERNEL_DB_CONTAINER" \
   mariadb --protocol=tcp --host=127.0.0.1 --user=root "$KERNEL_DB_NAME" \
   --execute 'SELECT domain_permission("phase4authuser01", 41, 2) AS granted' | grep -q '2'

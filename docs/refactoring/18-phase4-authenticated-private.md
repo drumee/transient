@@ -111,8 +111,10 @@ MFS table is created. `sys_conf` is limited to resolving pre-provisioned
 
 ## SQL closure and provenance
 
-`target/os/schemas/yellow-page-auth/phase4-schema.sql` records source-level
-provenance. The installed closure is only:
+As of Phase 4.5,
+`target/foundation/server-runtime/schemas/yellow-page/phase4-schema.sql`
+records the intrinsic runtime closure and travels with the transitional server
+package. The installed closure is only:
 
 - tables: `domain`, `entity`, `drumate`, `cookie`, `privilege`, `sys_conf`;
 - functions: `uniqueId`, `domain_permission`;

@@ -2,6 +2,7 @@
 set -euo pipefail
 
 source "$(cd -- "$(dirname -- "$0")" && pwd)/lib.sh"
+resolve_kernel_runtime_inputs
 require_kernel_name
 require_kernel_db_name
 "$KERNEL_SCRIPT_DIR/configure.sh"
@@ -68,8 +69,8 @@ db_command=(docker run -d
   --env "PHASE4_TEST_PASSWORD=$KERNEL_PHASE4_TEST_PASSWORD")
 if [[ "$KERNEL_SCHEMA_MODE" == "clean" ]]; then
   db_command+=(
-    --volume "$TRANSIENT_ROOT/target/os/schemas/yellow-page-auth/phase4-schema.sql:/docker-entrypoint-initdb.d/00-phase4-schema.sql:ro"
-    --volume "$TRANSIENT_ROOT/target/foundation/server-runtime/schemas/yellow-page/phase4.4-websocket.sql:/docker-entrypoint-initdb.d/05-phase4.4-websocket.sql:ro"
+    --volume "$KERNEL_SERVER_RUNTIME_SOURCE/schemas/yellow-page/phase4-schema.sql:/docker-entrypoint-initdb.d/00-phase4-schema.sql:ro"
+    --volume "$KERNEL_SERVER_RUNTIME_SOURCE/schemas/yellow-page/phase4.4-websocket.sql:/docker-entrypoint-initdb.d/05-phase4.4-websocket.sql:ro"
     --volume "$TRANSIENT_ROOT/target/os/schemas/yellow-page-auth/phase4-fixture.sh:/docker-entrypoint-initdb.d/10-phase4-fixture.sh:ro")
 fi
 db_command+=(mariadb:11.4)
@@ -106,7 +107,7 @@ if [[ "$KERNEL_SCHEMA_MODE" == "upgrade" ]]; then
   # e8e7bac8e and is required for organisation-provisioned system principals.
   # Its CREATE IF NOT EXISTS clauses intentionally leave legacy nullable rows
   # intact for the Phase 4.4 migration below to repair.
-  apply_current_schema "$TRANSIENT_ROOT/target/os/schemas/yellow-page-auth/phase4-schema.sql"
+  apply_current_schema "$KERNEL_SERVER_RUNTIME_SOURCE/schemas/yellow-page/phase4-schema.sql"
   docker exec -i \
     -e "MARIADB_DATABASE=$KERNEL_DB_NAME" \
     -e "MARIADB_ROOT_PASSWORD=$KERNEL_DB_ROOT_PASSWORD" \
@@ -119,7 +120,7 @@ if [[ "$KERNEL_SCHEMA_MODE" == "upgrade" ]]; then
         VALUES ('upgrade-null-session-01', NULL, UNIX_TIMESTAMP(), UNIX_TIMESTAMP(), 'legacy', 2592000, 0, 'new');
       INSERT INTO socket (id, session_id, uid, domain_id, ctime, mtime)
         VALUES ('upgrade-null-socket-000001', 'upgrade-null-session-01', NULL, 41, UNIX_TIMESTAMP(), UNIX_TIMESTAMP());"
-  apply_current_schema "$TRANSIENT_ROOT/target/foundation/server-runtime/schemas/yellow-page/phase4.4-websocket.sql"
+  apply_current_schema "$KERNEL_SERVER_RUNTIME_SOURCE/schemas/yellow-page/phase4.4-websocket.sql"
   # A partially applied predecessor may already have a nullable ctime column.
   # Its NULL-aged OTAKs must be invalidated rather than made fresh by the
   # upgrade. Exercise that exact fail-closed branch before the idempotency
@@ -129,10 +130,10 @@ if [[ "$KERNEL_SCHEMA_MODE" == "upgrade" ]]; then
       ALTER TABLE authn MODIFY COLUMN ctime int(11) unsigned DEFAULT NULL;
       INSERT INTO authn (token, value, ctime)
         VALUES ('legacy-null-ctime-otak-01', JSON_OBJECT('id', 'upgrade-null-session-01', 'type', 'session'), NULL);"
-  apply_current_schema "$TRANSIENT_ROOT/target/foundation/server-runtime/schemas/yellow-page/phase4.4-websocket.sql"
+  apply_current_schema "$KERNEL_SERVER_RUNTIME_SOURCE/schemas/yellow-page/phase4.4-websocket.sql"
   # The third application is the idempotency proof for the corrected target
   # schema after both historical upgrade branches have run.
-  apply_current_schema "$TRANSIENT_ROOT/target/foundation/server-runtime/schemas/yellow-page/phase4.4-websocket.sql"
+  apply_current_schema "$KERNEL_SERVER_RUNTIME_SOURCE/schemas/yellow-page/phase4.4-websocket.sql"
 fi
 
 for attempt in $(seq 1 40); do

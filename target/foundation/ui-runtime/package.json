@@ -1,9 +1,19 @@
 {
   "name": "@drumee/ui-runtime-extraction",
-  "version": "0.0.0-phase4.4",
+  "version": "0.0.0-phase4.5",
   "private": true,
   "description": "Private Phase 4.4 CommonJS LETC runtime extraction workspace; not a public package or final repository boundary.",
   "main": "src/index.js",
+  "exports": {
+    ".": "./src/index.js",
+    "./browser": "./src/browser.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "src/",
+    "PROVENANCE.md",
+    "README.md"
+  ],
   "type": "commonjs",
   "engines": {
     "node": ">=18"
