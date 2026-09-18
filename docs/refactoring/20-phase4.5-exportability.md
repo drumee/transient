@@ -75,10 +75,12 @@ regaining a second current-schema filename list.
 
 The normal source-based regression commands follow in the same gate. A final
 source guard proves both a pristine checkout under `sources/**` and committed
-tree equality. The original imports are compared directly (two-endpoint tree
-diff, not merge-base diff) with `baseline/drumee-pre-minimal-os`. The two
-controlled imports made after that tag are compared with their recorded import
-commits: `setup-infra@621abecb6` and `ui-dev-tools@ba532969e`. Tarballs and
+tree equality. The immutable validation snapshot is the shared transient
+commit `ba532969ecac093faad8be05bdb22403464bd4bb`, the last controlled
+provenance import and therefore the complete post-import `sources/**` tree.
+This monorepo commit is not a substitute for the per-repository upstream SHAs
+retained in `SOURCE_MANIFEST.md`. A direct two-endpoint diff against the commit
+avoids any dependency on a local tag or merge-base semantics. Tarballs and
 consumers are temporary artifacts only; no npm package is published.
 
 ## Out of scope
