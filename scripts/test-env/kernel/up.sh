@@ -11,6 +11,16 @@ case "$KERNEL_SCHEMA_MODE" in
   clean|upgrade) ;;
   *) echo "KERNEL_SCHEMA_MODE must be clean or upgrade." >&2; exit 2 ;;
 esac
+schema_manifest_section="$KERNEL_SCHEMA_MODE"
+if [[ "$schema_manifest_section" == "clean" ]]; then
+  schema_manifest_section="install"
+fi
+schema_entries_output="$(schema_manifest_entries "$KERNEL_SERVER_RUNTIME_SOURCE" "$schema_manifest_section")"
+mapfile -t runtime_schema_paths <<< "$schema_entries_output"
+if [[ "${#runtime_schema_paths[@]}" -eq 0 ]]; then
+  echo "Runtime schema manifest returned no $KERNEL_SCHEMA_MODE entries." >&2
+  exit 2
+fi
 
 if docker container inspect "$KERNEL_CONTAINER" >/dev/null 2>&1; then
   echo "Kernel test container already exists: $KERNEL_CONTAINER" >&2
@@ -55,9 +65,9 @@ for attempt in $(seq 1 20); do
   sleep 1
 done
 
-# Mount the initialization artifacts individually so their execution order is
-# explicit. `upgrade` instead starts from the pinned e8e7bac8e tables and
-# applies the current closure twice after representative legacy rows exist.
+# Clean installation mounts the manifest-selected runtime SQL in its declared
+# order. `upgrade` instead starts from the pinned e8e7bac8e tables and applies
+# the manifest-selected current closure after representative legacy rows exist.
 db_command=(docker run -d
   --name "$KERNEL_DB_CONTAINER"
   --network "$KERNEL_NETWORK"
@@ -68,10 +78,11 @@ db_command=(docker run -d
   --env "MARIADB_ROOT_PASSWORD=$KERNEL_DB_ROOT_PASSWORD"
   --env "PHASE4_TEST_PASSWORD=$KERNEL_PHASE4_TEST_PASSWORD")
 if [[ "$KERNEL_SCHEMA_MODE" == "clean" ]]; then
-  db_command+=(
-    --volume "$KERNEL_SERVER_RUNTIME_SOURCE/schemas/yellow-page/phase4-schema.sql:/docker-entrypoint-initdb.d/00-phase4-schema.sql:ro"
-    --volume "$KERNEL_SERVER_RUNTIME_SOURCE/schemas/yellow-page/phase4.4-websocket.sql:/docker-entrypoint-initdb.d/05-phase4.4-websocket.sql:ro"
-    --volume "$TRANSIENT_ROOT/target/os/schemas/yellow-page-auth/phase4-fixture.sh:/docker-entrypoint-initdb.d/10-phase4-fixture.sh:ro")
+  for schema_index in "${!runtime_schema_paths[@]}"; do
+    schema_target="$(printf '/docker-entrypoint-initdb.d/%03d-runtime-schema.sql' "$((schema_index + 1))")"
+    db_command+=(--volume "${runtime_schema_paths[$schema_index]}:${schema_target}:ro")
+  done
+  db_command+=(--volume "$TRANSIENT_ROOT/target/os/schemas/yellow-page-auth/phase4-fixture.sh:/docker-entrypoint-initdb.d/900-phase4-fixture.sh:ro")
 fi
 db_command+=(mariadb:11.4)
 "${db_command[@]}" >/dev/null
@@ -103,11 +114,10 @@ if [[ "$KERNEL_SCHEMA_MODE" == "upgrade" ]]; then
   }
   apply_pinned_schema e8e7bac8e target/os/schemas/yellow-page-auth/phase4-schema.sql
   apply_pinned_schema e8e7bac8e target/foundation/server-runtime/schemas/yellow-page/phase4.4-websocket.sql
-  # The corrected Phase 4 base closure adds sys_conf, which was absent from
-  # e8e7bac8e and is required for organisation-provisioned system principals.
-  # Its CREATE IF NOT EXISTS clauses intentionally leave legacy nullable rows
-  # intact for the Phase 4.4 migration below to repair.
-  apply_current_schema "$KERNEL_SERVER_RUNTIME_SOURCE/schemas/yellow-page/phase4-schema.sql"
+  # The first declared upgrade entrypoint adds the current identity/session
+  # base, including sys_conf. The external fixture can then represent already
+  # provisioned principals before the remaining runtime migrations execute.
+  apply_current_schema "${runtime_schema_paths[0]}"
   docker exec -i \
     -e "MARIADB_DATABASE=$KERNEL_DB_NAME" \
     -e "MARIADB_ROOT_PASSWORD=$KERNEL_DB_ROOT_PASSWORD" \
@@ -120,7 +130,9 @@ if [[ "$KERNEL_SCHEMA_MODE" == "upgrade" ]]; then
         VALUES ('upgrade-null-session-01', NULL, UNIX_TIMESTAMP(), UNIX_TIMESTAMP(), 'legacy', 2592000, 0, 'new');
       INSERT INTO socket (id, session_id, uid, domain_id, ctime, mtime)
         VALUES ('upgrade-null-socket-000001', 'upgrade-null-session-01', NULL, 41, UNIX_TIMESTAMP(), UNIX_TIMESTAMP());"
-  apply_current_schema "$KERNEL_SERVER_RUNTIME_SOURCE/schemas/yellow-page/phase4.4-websocket.sql"
+  for ((schema_index = 1; schema_index < ${#runtime_schema_paths[@]}; schema_index++)); do
+    apply_current_schema "${runtime_schema_paths[$schema_index]}"
+  done
   # A partially applied predecessor may already have a nullable ctime column.
   # Its NULL-aged OTAKs must be invalidated rather than made fresh by the
   # upgrade. Exercise that exact fail-closed branch before the idempotency
@@ -130,10 +142,13 @@ if [[ "$KERNEL_SCHEMA_MODE" == "upgrade" ]]; then
       ALTER TABLE authn MODIFY COLUMN ctime int(11) unsigned DEFAULT NULL;
       INSERT INTO authn (token, value, ctime)
         VALUES ('legacy-null-ctime-otak-01', JSON_OBJECT('id', 'upgrade-null-session-01', 'type', 'session'), NULL);"
-  apply_current_schema "$KERNEL_SERVER_RUNTIME_SOURCE/schemas/yellow-page/phase4.4-websocket.sql"
-  # The third application is the idempotency proof for the corrected target
-  # schema after both historical upgrade branches have run.
-  apply_current_schema "$KERNEL_SERVER_RUNTIME_SOURCE/schemas/yellow-page/phase4.4-websocket.sql"
+  # Reapply the complete declared upgrade sequence to exercise the nullable
+  # ctime repair, then once more as the idempotency proof.
+  for repetition in 1 2; do
+    for schema_path in "${runtime_schema_paths[@]}"; do
+      apply_current_schema "$schema_path"
+    done
+  done
 fi
 
 for attempt in $(seq 1 40); do

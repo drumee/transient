@@ -20,6 +20,7 @@ scripts/test-env/kernel/down.sh >/dev/null
 # installs them below /tmp consumers, and runs the clean/upgrade integration
 # environments from the extracted archives. The remaining commands retain the
 # direct Phase 4/4.4 regression evidence for the normal source workspace.
+node --test tests/integration/kernel/schema-manifest.test.js
 node --test tests/integration/kernel/phase4.5-exportability.test.js
 node --test target/foundation/server-runtime/test/*.test.js
 npm test --prefix target/foundation/ui-runtime
@@ -29,5 +30,5 @@ node --test tests/integration/kernel/hello-browser-e2e.test.js
 node --test tests/integration/kernel/ui-runtime-browser.test.js
 node --test tests/integration/kernel/phase4-authenticated-private.test.js
 scripts/test-env/kernel/phase4.4-validation.sh
-git diff --exit-code -- sources/
+scripts/test-source-immutability.sh
 echo "Phase 4.5 exportability and Phase 4/4.4 regression gate: PASS"

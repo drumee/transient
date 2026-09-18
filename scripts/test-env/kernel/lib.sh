@@ -76,6 +76,12 @@ runtime_file() {
   printf '%s/%s\n' "$KERNEL_RUNTIME_ROOT" "$1"
 }
 
+schema_manifest_entries() {
+  local package_root="$1"
+  local section="$2"
+  node "$KERNEL_SCRIPT_DIR/schema-manifest.js" "$package_root" "$section"
+}
+
 extract_runtime_tarball() {
   local artifact="$1"
   local destination="$2"

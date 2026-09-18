@@ -21,16 +21,20 @@ the separate owner of Webpack and build metadata.
 
 ## Intrinsic runtime schemas
 
-`server-runtime/schemas/SCHEMA_MANIFEST.json` is the package-relative schema
-contract. Manifest version 1 identifies the package and `phase4.5-runtime-schema-1`,
-and installs in this exact order:
+`server-runtime/schemas/SCHEMA_MANIFEST.json` is the executable,
+package-relative schema contract. The kernel harness validates its owner and
+package version against the installed artifact, validates every path below the
+package root, rejects traversal/absolute/repository paths and missing files,
+then sorts the integer `install[].order` values and installs in this exact
+order:
 
 1. `schemas/yellow-page/phase4-schema.sql` — identity, provisioned-principal
    lookup, cookie session and Domain privilege base.
 2. `schemas/yellow-page/phase4.4-websocket.sql` — OTAK/socket closure and the
    idempotent upgrade from the previous Phase 4.4 shape.
 
-The upgrade entry points are the same ordered pair. The WebSocket migration
+The harness likewise reads `upgrade.entrypoints` from the installed artifact;
+there is no second current-schema list in `up.sh`. The WebSocket migration
 invalidates legacy pre-`ctime` and NULL-`ctime` OTAKs, repairs nullable cookie
 UIDs only to a verified provisioned nobody principal, repairs recoverable
 socket UIDs and discards orphaned transient sockets before non-null constraints
@@ -48,7 +52,10 @@ artifact test runs `npm pack --json`, audits each tarball, installs it under a
 fresh `/tmp` consumer, and asserts `require.resolve()` is under that consumer's
 `node_modules`. The UI consumer executes the genuine `Kind.loadPlugin →
 bootstrap.plugin → loadJS → registerAddons` coordination without a source
-alias.
+alias. Dependency auditing starts from every `package/*.js` tar entry and reads
+the corresponding installed file. The current external-import sets are exactly
+`websocket` for the server and Backbone, Marionette, DOMPurify, jQuery and
+lodash for the UI.
 
 The same test passes both archives through `KERNEL_SERVER_RUNTIME_TGZ` and
 `KERNEL_UI_RUNTIME_TGZ`. The disposable kernel harness extracts them below
@@ -61,10 +68,18 @@ tests then prove Hello, Domain ACL, principal semantics, regsid lifecycle,
 cross-site frontend behavior, OTAK claim/expiry, WebSocket Origin and Redis
 targeted push against the packaged runtime inputs.
 
+Focused manifest tests reject traversal, absolute/repository paths, missing
+files, package identity/version mismatches, non-integer or duplicate install
+orders and duplicate paths. A static coupling assertion prevents `up.sh` from
+regaining a second current-schema filename list.
+
 The normal source-based regression commands follow in the same gate. A final
-`git diff --exit-code -- sources/` proves the immutable historical baseline
-was not altered. Tarballs and consumers are temporary artifacts only; no npm
-package is published.
+source guard proves both a pristine checkout under `sources/**` and committed
+tree equality. The original imports are compared directly (two-endpoint tree
+diff, not merge-base diff) with `baseline/drumee-pre-minimal-os`. The two
+controlled imports made after that tag are compared with their recorded import
+commits: `setup-infra@621abecb6` and `ui-dev-tools@ba532969e`. Tarballs and
+consumers are temporary artifacts only; no npm package is published.
 
 ## Out of scope
 

@@ -4,6 +4,9 @@ const fs = require("fs");
 const os = require("os");
 const path = require("path");
 const test = require("node:test");
+const { isBuiltin } = require("module");
+
+const { loadSchemaEntries } = require("../../../scripts/test-env/kernel/schema-manifest");
 
 const root = path.resolve(__dirname, "../../..");
 const workdir = fs.mkdtempSync(path.join(os.tmpdir(), "transient-phase45-"));
@@ -66,6 +69,13 @@ function installConsumer(name, artifact) {
   return consumer;
 }
 
+function installedPackageRoot(consumer, packageName) {
+  const packageJson = require.resolve(`${packageName}/package.json`, { paths: [consumer] });
+  const packageRoot = path.dirname(packageJson);
+  assert.ok(packageRoot.startsWith(path.join(consumer, "node_modules") + path.sep));
+  return packageRoot;
+}
+
 function installedScript(consumer, script) {
   const filename = path.join(consumer, "smoke.cjs");
   fs.writeFileSync(filename, `${script}\n`);
@@ -75,26 +85,40 @@ function installedScript(consumer, script) {
   });
 }
 
-function externalDependencies(source) {
-  const names = new Set();
-  for (const filename of fs.readdirSync(source, { recursive: true })) {
-    if (!filename.endsWith(".js")) continue;
-    const text = fs.readFileSync(path.join(source, filename), "utf8");
-    for (const match of text.matchAll(/require\((['"])([^'"]+)\1\)/g)) {
-      if (!match[2].startsWith(".")) names.add(match[2]);
-    }
-  }
-  return [...names].sort();
+function packageName(specifier) {
+  if (specifier.startsWith("@")) return specifier.split("/").slice(0, 2).join("/");
+  return specifier.split("/", 1)[0];
 }
 
-function assertDeclaredDependencies(packageRoot) {
-  const manifest = require(path.join(packageRoot, "package.json"));
-  const builtins = new Set(require("module").builtinModules);
+function artifactDependencies(packageRoot, entries) {
+  const names = new Set();
+  const files = entries
+    .filter((entry) => /^package\/.*\.js$/.test(entry))
+    .map((entry) => entry.slice("package/".length))
+    .sort();
+  for (const filename of files) {
+    const installed = path.join(packageRoot, filename);
+    assert.ok(fs.existsSync(installed), `packed JavaScript is absent from installed package: ${filename}`);
+    const text = fs.readFileSync(installed, "utf8");
+    for (const match of text.matchAll(/require\((['"])([^'"]+)\1\)/g)) {
+      const specifier = match[2];
+      if (specifier.startsWith(".")) continue;
+      assert.equal(path.isAbsolute(specifier), false, `absolute require is forbidden in ${filename}: ${specifier}`);
+      if (!isBuiltin(specifier)) names.add(packageName(specifier));
+    }
+  }
+  return { files, dependencies: [...names].sort() };
+}
+
+function assertArtifactDependencies(packageRoot, entries, expected) {
+  const manifest = JSON.parse(fs.readFileSync(path.join(packageRoot, "package.json"), "utf8"));
   const declared = new Set(Object.keys(manifest.dependencies || {}));
-  for (const dependency of externalDependencies(path.join(packageRoot, "lib"))) {
-    if (builtins.has(dependency) || dependency.startsWith("node:")) continue;
+  const audit = artifactDependencies(packageRoot, entries);
+  for (const dependency of audit.dependencies) {
     assert.ok(declared.has(dependency), `${manifest.name} does not declare runtime dependency ${dependency}`);
   }
+  assert.deepEqual(audit.dependencies, expected);
+  return audit;
 }
 
 test("Phase 4.5 packs, installs and starts the Phase 4.4 runtime only from tarballs", { timeout: 900000 }, (t) => {
@@ -117,9 +141,16 @@ test("Phase 4.5 packs, installs and starts the Phase 4.4 runtime only from tarba
   ]);
   const uiEntries = assertTarball(ui, ["src/index.js", "src/browser.js", "src/letc/skin/index.scss"]);
 
-  const schema = JSON.parse(fs.readFileSync(path.join(serverRoot, "schemas/SCHEMA_MANIFEST.json"), "utf8"));
-  assert.equal(schema.owner, server.name);
-  assert.equal(schema.packageVersion, server.version);
+  const serverConsumer = installConsumer("server", server.path);
+  const uiConsumer = installConsumer("ui", ui.path);
+  const installedServerRoot = installedPackageRoot(serverConsumer, server.name);
+  const installedUiRoot = installedPackageRoot(uiConsumer, ui.name);
+
+  const installedSchema = loadSchemaEntries(installedServerRoot, "install");
+  const installedUpgrade = loadSchemaEntries(installedServerRoot, "upgrade");
+  const schema = installedSchema.manifest;
+  assert.equal(installedSchema.packageJson.name, server.name);
+  assert.equal(installedSchema.packageJson.version, server.version);
   assert.equal(schema.upgrade.idempotent, true);
   assert.deepEqual(schema.install.map((entry) => entry.order), [10, 20]);
   assert.deepEqual(schema.objects.tables, [
@@ -131,24 +162,25 @@ test("Phase 4.5 packs, installs and starts the Phase 4.4 runtime only from tarba
     "socket_free", "socket_list_session", "socket_refresh"
   ]);
   assert.match(schema.upgrade.legacyOtakPolicy, /invalidate/);
-  for (const entry of schema.install) {
-    assert.ok(tarEntries(server.path).includes(`package/${entry.path}`), `schema manifest entry is absent from tarball: ${entry.path}`);
+  for (const filename of [...installedSchema.paths, ...installedUpgrade.paths]) {
+    const relative = path.relative(installedServerRoot, filename);
+    assert.ok(serverEntries.includes(`package/${relative}`), `schema manifest entry is absent from tarball: ${relative}`);
   }
   assert.doesNotMatch(JSON.stringify(schema), /(?:sources|target)\//, "schema manifest must be package-relative");
+
+  const serverAudit = assertArtifactDependencies(installedServerRoot, serverEntries, ["websocket"]);
+  const uiAudit = assertArtifactDependencies(installedUiRoot, uiEntries, [
+    "backbone", "backbone.marionette", "dompurify", "jquery", "lodash"
+  ]);
   const sourceCommit = mustRun("git", ["rev-parse", "HEAD"]).stdout.trim();
   t.diagnostic(`source=${sourceCommit} server=${server.filename} ui=${ui.filename} schema=${schema.schemaVersion}`);
   t.diagnostic(`server contents=${serverEntries.join(",")}`);
   t.diagnostic(`ui contents=${uiEntries.join(",")}`);
+  t.diagnostic(`server JavaScript audit=${serverAudit.files.join(",")}`);
+  t.diagnostic(`server external dependencies=${serverAudit.dependencies.join(",")}`);
+  t.diagnostic(`ui JavaScript audit=${uiAudit.files.join(",")}`);
+  t.diagnostic(`ui external dependencies=${uiAudit.dependencies.join(",")}`);
 
-  assertDeclaredDependencies(serverRoot);
-  const uiManifest = require(path.join(uiRoot, "package.json"));
-  const uiDependencies = new Set(Object.keys(uiManifest.dependencies));
-  for (const dependency of externalDependencies(path.join(uiRoot, "src"))) {
-    if (new Set(require("module").builtinModules).has(dependency) || dependency.startsWith("node:")) continue;
-    assert.ok(uiDependencies.has(dependency), `${uiManifest.name} does not declare runtime dependency ${dependency}`);
-  }
-
-  const serverConsumer = installConsumer("server", server.path);
   installedScript(serverConsumer, `
     const assert = require("assert/strict");
     const path = require("path");
@@ -160,7 +192,6 @@ test("Phase 4.5 packs, installs and starts the Phase 4.4 runtime only from tarba
     assert.equal(typeof runtime.WebSocketPushRouter, "function");
   `);
 
-  const uiConsumer = installConsumer("ui", ui.path);
   installedScript(uiConsumer, `
     const assert = require("assert/strict");
     const path = require("path");

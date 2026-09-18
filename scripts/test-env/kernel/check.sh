@@ -24,8 +24,6 @@ for required in \
   sources/server-essentials/lib/lex/permission.js \
   "$KERNEL_SERVER_RUNTIME_SOURCE/lib/index.js" \
   "$KERNEL_SERVER_RUNTIME_SOURCE/schemas/SCHEMA_MANIFEST.json" \
-  "$KERNEL_SERVER_RUNTIME_SOURCE/schemas/yellow-page/phase4-schema.sql" \
-  "$KERNEL_SERVER_RUNTIME_SOURCE/schemas/yellow-page/phase4.4-websocket.sql" \
   "$KERNEL_UI_RUNTIME_SOURCE/src/index.js" \
   target/modules/hello/server/acl/hello.json \
   target/os/schemas/yellow-page-auth/phase4-fixture.sh \
@@ -40,6 +38,11 @@ for required in \
     exit 2
   fi
 done
+
+# The manifest validator, rather than this prerequisite list, owns the current
+# runtime schema filenames and verifies both install and upgrade entrypoints.
+schema_manifest_entries "$KERNEL_SERVER_RUNTIME_SOURCE" install >/dev/null
+schema_manifest_entries "$KERNEL_SERVER_RUNTIME_SOURCE" upgrade >/dev/null
 
 assert_sources_pristine
 available_kib="$(df -Pk "$TRANSIENT_ROOT" | awk 'NR==2 {print $4}')"
