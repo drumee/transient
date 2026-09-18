@@ -39,7 +39,9 @@ Phase 3     hello vertical slice                                IMPLEMENTED
 Phase 4     authenticated private Domain capability              IMPLEMENTED
 Phase 4.4   WebSocket / push runtime capability                  IMPLEMENTED
 Phase 4.5   NPM + schema exportability lock                      IMPLEMENTED / CLOSED
-Phase 4.6   platform bootstrap contract + system-mfs             NEXT
+R0          runtime repository extraction                        IN PROGRESS
+R1          first npm runtime release                            AFTER R0
+Phase 4.6   platform bootstrap contract + system-mfs             AFTER R1
 Phase 5     marketing as first real business application         AFTER 4.6
 Phase 6     kernel stabilization from real application needs
 Phase 7+    Team migration module by module
@@ -48,6 +50,12 @@ Phase 7+    Team migration module by module
 Do not repeat Phase 2 unless correcting a demonstrated defect.
 
 Do not begin a later phase merely because the previous phase is complete. Perform only the phase explicitly requested by the user.
+
+R0 and R1 are repository extraction/release milestones, not feature phases.
+They do not renumber the historical phase sequence. R0 preserves the validated
+Phase 4.5 boundary in standalone `server-runtime` and `ui-runtime`
+repositories; R1 owns the first npm publication decision. Neither milestone
+authorizes Phase 4.6 implementation.
 
 Historical sections or documents that say "mapping only" or recommend a particular future branch are no longer authoritative phase gates.
 
@@ -1151,13 +1159,21 @@ install runtime package
 
 Phase 4.5 owns the first two steps and their exportability only.
 
-## Phase 4.6 — platform bootstrap contract + system-mfs (next, not implemented)
+## R0 / R1 repository milestones
 
-Phase 4.6 is the next planned implementation boundary and still requires
-explicit authorization. It will define the minimal platform-bootstrap contract
-and introduce MFS as the first system/kernel module. MFS may require
-organisation `id = 1`, nobody, guest and system as preconditions, but it must
-not own their creation.
+R0 extracts the validated Phase 4.5 server and UI runtime boundaries into the
+standalone `drumee/server-runtime` and `drumee/ui-runtime` repositories while
+retaining the transitional copies in this repository. R1, only after review of
+R0, owns publication metadata and the first npm runtime release. These are
+packaging/repository milestones and add no platform feature.
+
+## Phase 4.6 — platform bootstrap contract + system-mfs (after R1, not implemented)
+
+Phase 4.6 is the next planned feature implementation boundary after R1 and
+still requires explicit authorization. It will define the minimal
+platform-bootstrap contract and introduce MFS as the first system/kernel
+module. MFS may require organisation `id = 1`, nobody, guest and system as
+preconditions, but it must not own their creation.
 
 The intended ownership split is:
 
