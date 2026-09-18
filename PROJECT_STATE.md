@@ -6,8 +6,8 @@ Project:
 
 Current:
     Phase 4.5 CLOSED
-    R0 IN PROGRESS
-    R1 AFTER R0
+    R0 CLOSED
+    R1 NEXT
     Phase 4.6 AFTER R1
 
 Local repositories:
@@ -34,6 +34,20 @@ Architecture:
 Next:
     R1 npm publication
     Phase 4.6 platform bootstrap + system-mfs
+```
+
+R0 validation:
+
+```text
+server-runtime:
+    repo: drumee/server-runtime
+    version: 0.1.0-alpha.1
+    validated commit: 0d4e0fc967c3260d595372f1579dabd8d303bee3
+
+ui-runtime:
+    repo: drumee/ui-runtime
+    version: 0.1.0-alpha.1
+    validated commit: 26f3e599290f552712523d7d829190f9bf46b81f
 ```
 
 Validated source lineage:

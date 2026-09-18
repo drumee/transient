@@ -39,8 +39,8 @@ Phase 3     hello vertical slice                                IMPLEMENTED
 Phase 4     authenticated private Domain capability              IMPLEMENTED
 Phase 4.4   WebSocket / push runtime capability                  IMPLEMENTED
 Phase 4.5   NPM + schema exportability lock                      IMPLEMENTED / CLOSED
-R0          runtime repository extraction                        IN PROGRESS
-R1          first npm runtime release                            AFTER R0
+R0          runtime repository extraction                        CLOSED
+R1          first npm runtime release                            NEXT
 Phase 4.6   platform bootstrap contract + system-mfs             AFTER R1
 Phase 5     marketing as first real business application         AFTER 4.6
 Phase 6     kernel stabilization from real application needs
