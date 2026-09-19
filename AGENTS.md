@@ -40,8 +40,8 @@ Phase 4     authenticated private Domain capability              IMPLEMENTED
 Phase 4.4   WebSocket / push runtime capability                  IMPLEMENTED
 Phase 4.5   NPM + schema exportability lock                      IMPLEMENTED / CLOSED
 R0          runtime repository extraction                        CLOSED
-R1          first npm runtime release                            NEXT
-Phase 4.6   platform bootstrap contract + system-mfs             AFTER R1
+R1          first npm runtime release                            CLOSED
+Phase 4.6   platform bootstrap contract + system-mfs             NEXT / NOT AUTHORIZED
 Phase 5     marketing as first real business application         AFTER 4.6
 Phase 6     kernel stabilization from real application needs
 Phase 7+    Team migration module by module
@@ -1158,6 +1158,24 @@ install runtime package
 ```
 
 Phase 4.5 owns the first two steps and their exportability only.
+
+## R1 publication status
+
+The first runtime prereleases are published and independently installable:
+
+```text
+@drumee/server-runtime@0.1.0-alpha.1
+@drumee/ui-runtime@0.1.0-alpha.1
+```
+
+Their registry artifacts match the prepared standalone repository commits
+byte-for-byte by npm SHA-1 and SHA-512 integrity. Both releases carry the
+intended `next` alias. npm also retains its mandatory `latest` metadata alias;
+because these are the only published versions, it resolves to the same alpha
+release and cannot be deleted. The registry rejects that deletion with HTTP
+400. R1 accepts this registry constraint rather than publishing a fabricated
+stable version solely to move the alias. R1 is closed and does not authorize
+Phase 4.6.
 
 ## R0 / R1 repository milestones
 

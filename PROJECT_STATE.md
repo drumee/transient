@@ -7,8 +7,8 @@ Project:
 Current:
     Phase 4.5 CLOSED
     R0 CLOSED
-    R1 NEXT
-    Phase 4.6 AFTER R1
+    R1 CLOSED
+    Phase 4.6 NEXT — NOT AUTHORIZED
 
 Local repositories:
     transient      ~/github/transient
@@ -32,8 +32,7 @@ Architecture:
     Marketing = first business application
 
 Next:
-    R1 npm publication
-    Phase 4.6 platform bootstrap + system-mfs
+    explicit authorization for Phase 4.6 platform bootstrap + system-mfs
 ```
 
 R0 validation:
@@ -58,3 +57,33 @@ Validated source lineage:
 - `e3f4468d3ea882baeee4c7fefbd956aca4128d28` — Phase 4.6 invariant documentation and R0 extraction source.
 
 R0 does not publish npm packages and does not authorize Phase 4.6.
+
+R1 publication evidence:
+
+```text
+@drumee/server-runtime@0.1.0-alpha.1
+    prepared commit: e582f708ad85579d7c1238d361a32b5e486c08be
+    published:       2026-09-19T14:42:05.963Z
+    shasum:          2bd53842ebfaad72e63897ee0682d9ed7aba0264
+    integrity:       sha512-665KKd9/qoLWSZxYz3yCfMr+5gQTyDapFj2T9kgj9ET+Ftu6PA5hLAJesJEGm8P68zS3kfPfb170aEiJqKaOEg==
+
+@drumee/ui-runtime@0.1.0-alpha.1
+    prepared commit: 75a67fb2efbbc0db69db54b5d3c08c49a8fccc20
+    published:       2026-09-19T14:42:16.575Z
+    shasum:          1fd9308470aead70e3537a626bff2862cf525257
+    integrity:       sha512-dACvcMrviBOSoyv9/qb9PIVX/XrC1j4ru1F2PB1yRy6zoZiYvwQh30utlRRumR7nNeOrVziKrKcrjwEsqRXC6Q==
+```
+
+The published tarballs exactly match `npm pack --dry-run` at the prepared
+standalone commits. Both standalone test suites pass and fresh registry
+consumers load the expected server API and UI plugin handshake with
+`NODE_PATH` disabled.
+
+Both packages expose the intended `next` alias. npm also requires every package
+to have `latest` metadata; because each runtime has only one published version,
+`latest` resolves to the same `0.1.0-alpha.1` artifact. Authenticated deletion
+was rejected by the registry with HTTP 400. R1 accepts this registry constraint
+rather than publishing an artificial stable version solely to move the alias.
+
+R1 is closed. Phase 4.6 is next but remains unauthorized until explicitly
+requested.

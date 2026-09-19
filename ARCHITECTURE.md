@@ -4,7 +4,8 @@ This file is the short stable-rule index. Detailed evidence and phase contracts
 remain under `docs/refactoring/`, especially
 [`06-target-architecture.md`](docs/refactoring/06-target-architecture.md),
 [`07-migration-plan.md`](docs/refactoring/07-migration-plan.md),
-[`20-phase4.5-exportability.md`](docs/refactoring/20-phase4.5-exportability.md)
+[`20-phase4.5-exportability.md`](docs/refactoring/20-phase4.5-exportability.md),
+[`22-r1-runtime-release.md`](docs/refactoring/22-r1-runtime-release.md)
 and [`21-phase4.6-system-mfs.md`](docs/refactoring/21-phase4.6-system-mfs.md).
 
 - `sources/**` is immutable imported evidence.
