@@ -13,3 +13,6 @@ coverage/
 
 # Dependencies generated while testing imported sources
 node_modules/
+
+tests/
+scripts/test-env/
