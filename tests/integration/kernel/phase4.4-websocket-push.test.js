@@ -642,7 +642,7 @@ test("Phase 4.4 authenticates WebSockets through OTAK, preserves anonymous trans
     assert.equal(logs.stdout.includes("?otak="), false);
     assert.equal(db("SELECT COUNT(*) FROM information_schema.schemata WHERE schema_name LIKE 'd\\_%' ESCAPE '\\\\'"), "0");
     assert.equal(db("SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='yp' AND table_name LIKE 'mfs%'"), "0");
-    assert.deepEqual(db("SELECT table_name FROM information_schema.tables WHERE table_schema='yp' ORDER BY table_name").split("\n"), ["authn", "cookie", "domain", "drumate", "entity", "privilege", "socket", "sys_conf"]);
+    assert.deepEqual(db("SELECT table_name FROM information_schema.tables WHERE table_schema='yp' ORDER BY table_name").split("\n"), ["authn", "cookie", "domain", "drumate", "entity", "organisation", "privilege", "socket", "sys_conf"]);
 
     authorized.connection.close();
     await new Promise((resolve) => setTimeout(resolve, 100));

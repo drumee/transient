@@ -41,7 +41,9 @@ Phase 4.4   WebSocket / push runtime capability                  IMPLEMENTED
 Phase 4.5   NPM + schema exportability lock                      IMPLEMENTED / CLOSED
 R0          runtime repository extraction                        CLOSED
 R1          first npm runtime release                            CLOSED
-Phase 4.6   platform bootstrap contract + system-mfs             NEXT / NOT AUTHORIZED
+Phase 4.6   platform bootstrap contract + system-mfs             IN PROGRESS
+            4.6A platform bootstrap                              IMPLEMENTED / VALIDATED
+            4.6B system-mfs                                      REMAINING / NOT AUTHORIZED
 Phase 5     marketing as first real business application         AFTER 4.6
 Phase 6     kernel stabilization from real application needs
 Phase 7+    Team migration module by module
@@ -1185,13 +1187,13 @@ retaining the transitional copies in this repository. R1, only after review of
 R0, owns publication metadata and the first npm runtime release. These are
 packaging/repository milestones and add no platform feature.
 
-## Phase 4.6 — platform bootstrap contract + system-mfs (after R1, not implemented)
+## Phase 4.6 — platform bootstrap contract + system-mfs (in progress)
 
-Phase 4.6 is the next planned feature implementation boundary after R1 and
-still requires explicit authorization. It will define the minimal
-platform-bootstrap contract and introduce MFS as the first system/kernel
-module. MFS may require organisation `id = 1`, nobody, guest and system as
-preconditions, but it must not own their creation.
+Phase 4.6A implements and validates the minimal platform-bootstrap contract
+after R1. Phase 4.6B, which will introduce MFS as the first system/kernel
+module, remains unimplemented and requires explicit authorization. MFS may
+require organisation `id = 1`, nobody, guest and system as preconditions, but
+it must not own their creation.
 
 The intended ownership split is:
 
@@ -1216,12 +1218,15 @@ provision its resources—schema, migrations and provisioning contract/hooks—b
 does not decide when or for whom provisioning occurs. A bootstrap/control-plane
 orchestrator makes those decisions for an organisation/context.
 
-`system-mfs` is a system/kernel module, not intrinsic `server-runtime`. The
-kernel must still boot without MFS. A module declaring MFS as required must
-eventually fail deterministically when it is unavailable; Phase 4.6 must define
-that contract before implementing consumers. Finder remains a future system
-application, and no dependency mechanism or provisioning framework is added by
-this documentation pass.
+The Phase 4.6A implementation is under `target/control-plane/bootstrap/`. It
+separates mutating bootstrap from read-only validation, uses the intrinsic
+`uniqueId()` function for guest and system IDs, and creates no Hub, MFS or
+filesystem state. `system-mfs` is a system/kernel module, not intrinsic
+`server-runtime`. The kernel must still boot without MFS. A module declaring
+MFS as required must eventually fail deterministically when it is unavailable;
+Phase 4.6B must define that contract before implementing consumers. Finder
+remains a future system application, and no generic dependency mechanism or
+provisioning framework has been added.
 
 ---
 

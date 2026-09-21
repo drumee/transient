@@ -8,7 +8,9 @@ Current:
     Phase 4.5 CLOSED
     R0 CLOSED
     R1 CLOSED
-    Phase 4.6 NEXT — NOT AUTHORIZED
+    Phase 4.6 IN PROGRESS
+    Phase 4.6A platform bootstrap IMPLEMENTED / VALIDATED
+    Phase 4.6B system-mfs REMAINING / NOT AUTHORIZED
 
 Local repositories:
     transient      ~/github/transient
@@ -32,7 +34,8 @@ Architecture:
     Marketing = first business application
 
 Next:
-    explicit authorization for Phase 4.6 platform bootstrap + system-mfs
+    review Phase 4.6A
+    explicit authorization before Phase 4.6B system-mfs
 ```
 
 R0 validation:

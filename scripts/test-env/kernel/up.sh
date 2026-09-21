@@ -133,6 +133,13 @@ if [[ "$KERNEL_SCHEMA_MODE" == "upgrade" ]]; then
   for ((schema_index = 1; schema_index < ${#runtime_schema_paths[@]}; schema_index++)); do
     apply_current_schema "${runtime_schema_paths[$schema_index]}"
   done
+  # The legacy fixture supplied only the nobody principal needed by the
+  # nullable-cookie migration. Complete the remaining state through the
+  # control plane once the current entity shape is available.
+  docker exec -e "MYSQL_PWD=$KERNEL_DB_ROOT_PASSWORD" "$KERNEL_DB_CONTAINER" \
+    mariadb --protocol=tcp --host=127.0.0.1 --user=root "$KERNEL_DB_NAME" \
+    --execute "UPDATE entity SET type='drumate' WHERE id='ffffffffffffffff' AND type IS NULL"
+  node "$KERNEL_SCRIPT_DIR/bootstrap-platform.js" bootstrap kernel.test --require-invalid >/dev/null
   # A partially applied predecessor may already have a nullable ctime column.
   # Its NULL-aged OTAKs must be invalidated rather than made fresh by the
   # upgrade. Exercise that exact fail-closed branch before the idempotency
@@ -164,6 +171,15 @@ for attempt in $(seq 1 40); do
   fi
   sleep 1
 done
+
+# A clean runtime schema installation deliberately leaves platform identities
+# absent. Upgrade mode provisioned them immediately before the migration that
+# validates historical nullable session rows.
+if [[ "$KERNEL_SCHEMA_MODE" == "clean" ]]; then
+  node "$KERNEL_SCRIPT_DIR/bootstrap-platform.js" bootstrap kernel.test --require-invalid >/dev/null
+else
+  node "$KERNEL_SCRIPT_DIR/bootstrap-platform.js" validate kernel.test >/dev/null
+fi
 
 assert_kernel_root "$KERNEL_RUNTIME_ROOT"
 credential_dir="$(runtime_file credential)"

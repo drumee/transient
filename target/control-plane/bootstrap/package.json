@@ -1,0 +1,11 @@
+{
+  "name": "@drumee/platform-bootstrap-transitional",
+  "version": "0.0.0-phase4.6a",
+  "private": true,
+  "description": "Private transitional Phase 4.6A platform bootstrap workspace; not a public package or final repository boundary.",
+  "main": "lib/index.js",
+  "type": "commonjs",
+  "scripts": {
+    "test": "node --test test/**/*.test.js"
+  }
+}

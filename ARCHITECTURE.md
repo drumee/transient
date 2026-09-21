@@ -21,9 +21,14 @@ and [`21-phase4.6-system-mfs.md`](docs/refactoring/21-phase4.6-system-mfs.md).
 - `DEFAULT_ORG_ID = 1` and `NOBODY_UID = ffffffffffffffff` are canonical
   platform invariants. Guest and system remain distinct provisioned identities.
 - Runtime consumes platform invariants; it does not provision or repair them.
+- The Phase 4.6A control-plane bootstrap owns idempotent creation and read-only
+  validation of organisation `1`, nobody, guest and system. It reuses the
+  intrinsic identity tables but remains outside `server-runtime`.
 - `system-mfs` is the first system/kernel module, not intrinsic runtime.
 - Finder is a future system application and is not the MFS engine.
 - Marketing is the first business application and consumes MFS.
 - R0 extracts repositories; R1 owns the first npm release. Neither introduces a
   feature phase.
+- Phase 4.6 is in progress: 4.6A is implemented and validated; 4.6B
+  `system-mfs` remains unimplemented and requires explicit authorization.
 - No later milestone or phase starts without explicit authorization.
