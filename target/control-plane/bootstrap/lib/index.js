@@ -13,7 +13,7 @@ function named(principals, username) {
   return principals.filter((principal) => principal.username === username && Number(principal.domain_id) === DEFAULT_ORG_ID);
 }
 
-function principal_problems(principal, { id, username, privilege }) {
+function principalProblems(principal, { id, username, privilege }) {
   const problems = [];
   if (!principal) return problems;
   if (id && principal.id !== id) problems.push(`${username} has uid ${principal.id}, expected ${id}`);
@@ -55,7 +55,7 @@ function assess(snapshot, { domain } = {}) {
   else if (snapshot.configuration.nobody_id !== NOBODY_UID) conflicts.push("nobody_id does not equal the canonical nobody uid");
   if (!nobody) missing.push("principal:nobody");
   if (nobody_candidates.some((candidate) => candidate.id !== NOBODY_UID)) conflicts.push("a non-canonical nobody identity exists");
-  conflicts.push(...principal_problems(nobody, { id: NOBODY_UID, username: "nobody", privilege: BASIC_PRIVILEGE }));
+  conflicts.push(...principalProblems(nobody, { id: NOBODY_UID, username: "nobody", privilege: BASIC_PRIVILEGE }));
 
   const guest_candidates = named(snapshot.principals, "guest");
   const guest_id = snapshot.configuration.guest_id;
@@ -68,14 +68,14 @@ function assess(snapshot, { domain } = {}) {
   if (!guest_candidates.length) missing.push("principal:guest");
   if (guest_id && (!guest || guest.username !== "guest")) conflicts.push("guest_id does not resolve to the guest identity");
   if ((guest || guest_candidates[0]) && !GENERATED_UID.test((guest || guest_candidates[0]).id || "")) conflicts.push("guest has no generated Drumee uid");
-  conflicts.push(...principal_problems(guest || guest_candidates[0], { username: "guest", privilege: BASIC_PRIVILEGE }));
+  conflicts.push(...principalProblems(guest || guest_candidates[0], { username: "guest", privilege: BASIC_PRIVILEGE }));
 
   const system_candidates = named(snapshot.principals, "system");
   if (!system_candidates.length) missing.push("principal:system");
   if (system_candidates.length > 1) conflicts.push("multiple system identities exist");
   const system = system_candidates[0];
   if (system && !GENERATED_UID.test(system.id || "")) conflicts.push("system has no generated Drumee uid");
-  conflicts.push(...principal_problems(system, { username: "system", privilege: SYSTEM_PRIVILEGE }));
+  conflicts.push(...principalProblems(system, { username: "system", privilege: SYSTEM_PRIVILEGE }));
   if (system && (system.id === NOBODY_UID || system.id === guest_id)) conflicts.push("system is not distinct from nobody and guest");
 
   return {
@@ -108,7 +108,7 @@ async function bootstrap({ store, database, domain, organisation_name = "Drumee"
     throw new PlatformBootstrapError("PLATFORM_BOOTSTRAP_CONFLICT", "Platform state conflicts with the Phase 4.6A contract", report);
   }
   if (report.valid) return { ...report, changed: false };
-  await platform_store.install_schema();
+  await platform_store.installSchema();
   return platform_store.transaction(async () => {
     snapshot = await platform_store.inspect();
     report = assess(snapshot, { domain });
@@ -116,25 +116,25 @@ async function bootstrap({ store, database, domain, organisation_name = "Drumee"
       throw new PlatformBootstrapError("PLATFORM_BOOTSTRAP_CONFLICT", "Platform state conflicts with the Phase 4.6A contract", report);
     }
 
-    if (!snapshot.domains.some((row) => Number(row.id) === DEFAULT_ORG_ID)) await platform_store.create_domain(domain);
+    if (!snapshot.domains.some((row) => Number(row.id) === DEFAULT_ORG_ID)) await platform_store.createDomain(domain);
     if (!snapshot.organisations.some((row) => Number(row.sys_id) === 1 || Number(row.domain_id) === 1)) {
-      await platform_store.create_organisation({ id: await platform_store.generate_id(), domain, name: organisation_name });
+      await platform_store.createOrganisation({ id: await platform_store.generateId(), domain, name: organisation_name });
     }
     if (!snapshot.principals.some((principal) => principal.id === NOBODY_UID)) {
-      await platform_store.create_principal({ id: NOBODY_UID, username: "nobody", domain, privilege: BASIC_PRIVILEGE });
+      await platform_store.createPrincipal({ id: NOBODY_UID, username: "nobody", domain, privilege: BASIC_PRIVILEGE });
     }
-    if (!Object.hasOwn(snapshot.configuration, "nobody_id")) await platform_store.set_configuration("nobody_id", NOBODY_UID);
+    if (!Object.hasOwn(snapshot.configuration, "nobody_id")) await platform_store.setConfiguration("nobody_id", NOBODY_UID);
 
     const existing_guest = named(snapshot.principals, "guest")[0];
     let guest_id = snapshot.configuration.guest_id || existing_guest && existing_guest.id;
     if (!existing_guest) {
-      guest_id = await platform_store.generate_id();
-      await platform_store.create_principal({ id: guest_id, username: "guest", domain, privilege: BASIC_PRIVILEGE });
+      guest_id = await platform_store.generateId();
+      await platform_store.createPrincipal({ id: guest_id, username: "guest", domain, privilege: BASIC_PRIVILEGE });
     }
-    if (!Object.hasOwn(snapshot.configuration, "guest_id")) await platform_store.set_configuration("guest_id", guest_id);
+    if (!Object.hasOwn(snapshot.configuration, "guest_id")) await platform_store.setConfiguration("guest_id", guest_id);
 
     if (!named(snapshot.principals, "system").length) {
-      await platform_store.create_principal({ id: await platform_store.generate_id(), username: "system", domain, privilege: SYSTEM_PRIVILEGE });
+      await platform_store.createPrincipal({ id: await platform_store.generateId(), username: "system", domain, privilege: SYSTEM_PRIVILEGE });
     }
 
     snapshot = await platform_store.inspect();

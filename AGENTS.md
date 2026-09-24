@@ -275,6 +275,10 @@ variables use `_snake_case`, while SQL table and column names use `snake_case`
 without the leading underscore. Do not introduce broad camelCase normalization
 during refactoring.
 
+JavaScript function and method names are not subject to a global snake_case
+conversion rule. Preserve the established naming convention of the component
+or historical contract being extended.
+
 ---
 
 # 7. Team is a migration source, not the first target

@@ -26,7 +26,7 @@ class SqlPlatformStore {
     return this._query(sql, ...parameters);
   }
 
-  async install_schema() {
+  async installSchema() {
     await this.query(fs.readFileSync(ORGANISATION_SCHEMA, "utf8"));
   }
 
@@ -69,7 +69,7 @@ class SqlPlatformStore {
     return { organisation_table, domains, organisations, configuration: configured, principals };
   }
 
-  async generate_id() {
+  async generateId() {
     const result = rows(await this.query("SELECT uniqueId() AS id"))[0];
     if (!result || !/^[a-f0-9]{16}$/i.test(result.id || "")) {
       throw new PlatformBootstrapError("PLATFORM_ID_GENERATION_FAILED", "The intrinsic uniqueId() function did not return a Drumee identifier");
@@ -77,11 +77,11 @@ class SqlPlatformStore {
     return result.id;
   }
 
-  async create_domain(domain) {
+  async createDomain(domain) {
     await this.query("INSERT INTO domain (id, name) VALUES (1, ?)", domain);
   }
 
-  async create_organisation({ id, domain, name }) {
+  async createOrganisation({ id, domain, name }) {
     const metadata = JSON.stringify({ name, ident: "drumee", domain_id: 1, isOrganization: 1 });
     await this.query(
       "INSERT INTO organisation (sys_id,id,domain_id,name,link,ident,password_level,dir_visibility,dir_info,double_auth,usb_auth,owner_id,metadata) VALUES (1,?,1,?,?,'drumee',1,'all','all',0,0,NULL,?)",
@@ -89,7 +89,7 @@ class SqlPlatformStore {
     );
   }
 
-  async create_principal({ id, username, domain, privilege }) {
+  async createPrincipal({ id, username, domain, privilege }) {
     const profile = JSON.stringify({
       email: `${username}@${domain}`,
       firstname: username === "system" ? "System" : username === "guest" ? "Drumee" : "",
@@ -116,7 +116,7 @@ class SqlPlatformStore {
     );
   }
 
-  async set_configuration(key, value) {
+  async setConfiguration(key, value) {
     await this.query("INSERT INTO sys_conf (conf_key,conf_value) VALUES (?,?)", key, value);
   }
 }

@@ -3,7 +3,7 @@
 
 const child_process = require("child_process");
 const path = require("path");
-const { MfsNamespace, SqlMfsStore, install, provision, validate_installation, validate_provisioning } = require(path.resolve(__dirname, "../../../target/modules/system-mfs/lib"));
+const { MfsNamespace, SqlMfsStore, install, provision, validateInstallation, validateProvisioning } = require(path.resolve(__dirname, "../../../target/modules/system-mfs/lib"));
 
 const container = process.env.KERNEL_DB_CONTAINER || "transient-kernel-phase4-db";
 const database_name = process.env.KERNEL_DB_NAME || "yp";
@@ -42,7 +42,7 @@ const database = {
     if (result.status !== 0) throw new Error(`${result.stdout}\n${result.stderr}`.trim());
     return parse(result.stdout);
   },
-  async execute_script(script, { database: selected = database_name } = {}) {
+  async executeScript(script, { database: selected = database_name } = {}) {
     const result = child_process.spawnSync("docker", [
       "exec", "-i", "-e", `MYSQL_PWD=${password}`, container,
       "mariadb", "--protocol=tcp", "--host=127.0.0.1", "--user=root", "--batch", "--raw", selected
@@ -58,15 +58,15 @@ async function main() {
   const store = new SqlMfsStore({ database });
   let report;
   if (operation === "install") report = await install({ store });
-  else if (operation === "validate-installation") report = await validate_installation({ store });
+  else if (operation === "validate-installation") report = await validateInstallation({ store });
   else if (operation === "provision") report = await provision({ store, context });
-  else if (operation === "validate") report = await validate_provisioning({ store, context });
+  else if (operation === "validate") report = await validateProvisioning({ store, context });
   else if (operation === "exercise") {
-    const ready = await validate_provisioning({ store, context });
+    const ready = await validateProvisioning({ store, context });
     if (!ready.valid) throw new Error(`MFS context is not ready: ${ready.status}`);
     const mfs = new MfsNamespace({ store, context });
-    const created = await mfs.make_directory(ready.root_id, process.argv[5] || "Phase46B");
-    report = { ready, created, resolved: await mfs.resolve_node(created.nid), children: await mfs.list_children(ready.root_id) };
+    const created = await mfs.makeDirectory(ready.root_id, process.argv[5] || "Phase46B");
+    report = { ready, created, resolved: await mfs.resolveNode(created.nid), children: await mfs.listChildren(ready.root_id) };
   } else throw new Error(`Unknown system-mfs operation: ${operation}`);
   process.stdout.write(`${JSON.stringify(report)}\n`);
 }

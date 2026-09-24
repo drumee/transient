@@ -32,12 +32,12 @@ class ServiceDispatcher {
       throw new RuntimeError("PERMISSION_DENIED", `Access denied to ${resolved.service}`, decision);
     }
     if (resolved.requires.length) {
-      if (!this.capability_resolver || typeof this.capability_resolver.require_all !== "function") {
+      if (!this.capability_resolver || typeof this.capability_resolver.requireAll !== "function") {
         throw new RuntimeError("CAPABILITY_UNAVAILABLE", `Required capability '${resolved.requires[0]}' is unavailable`, {
           capability: resolved.requires[0], status: "unavailable"
         });
       }
-      await this.capability_resolver.require_all(resolved.requires, { input, service: resolved.service, session });
+      await this.capability_resolver.requireAll(resolved.requires, { input, service: resolved.service, session });
     }
     const WorkerClass = this.getWorkerClass(resolved.workerPath);
     const worker = new WorkerClass({ ...this.workerOptions, session, permission: resolved.permission });

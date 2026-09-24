@@ -42,7 +42,7 @@ const yellowPage = new Mariadb({ name: process.env.KERNEL_DB_NAME || "yp", user:
 const yellowPageStore = new YellowPageStore({ database: yellowPage });
 let mfs_api;
 let mfs_store;
-function resolve_mfs_store() {
+function resolveMfsStore() {
   if (!fs.existsSync("/opt/kernel/system-mfs/lib/index.js")) return null;
   if (!mfs_store) {
     mfs_api = require("/opt/kernel/system-mfs/lib");
@@ -61,15 +61,15 @@ const websocketAllowedOrigins = (process.env.KERNEL_WEBSOCKET_ALLOWED_ORIGINS ||
 const capability_resolver = new CapabilityResolver({
   providers: {
     "system-mfs": ({ input = {} }) => {
-      const store = resolve_mfs_store();
+      const store = resolveMfsStore();
       if (!store) return { available: false, status: "not-installed" };
-      return mfs_api.capability_available({
+      return mfs_api.capabilityAvailable({
         store, context: { organisation_id: Number(input.organisation_id || 1), principal_id: input.principal_id }
       });
     }
   }
 });
-const dispatcher = new ServiceDispatcher({ registry, authorize, capability_resolver, workerOptions: { pluginResolver, push, resolve_mfs_store } });
+const dispatcher = new ServiceDispatcher({ registry, authorize, capability_resolver, workerOptions: { pluginResolver, push, resolveMfsStore } });
 const server = createServiceServer({
   dispatcher,
   sessionFactory: (request) => sessionManager.fromRequest(request),

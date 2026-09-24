@@ -31,7 +31,7 @@ function platform(operation) {
   return JSON.parse(result.stdout);
 }
 
-function runtime_implementation() {
+function runtimeImplementation() {
   const package_root = path.join(root, "target/foundation/server-runtime");
   const files = [];
   function visit(directory) {
@@ -94,7 +94,7 @@ test("Phase 4.6A bootstraps and validates a minimal platform without MFS", { tim
     assert.equal(ready, true);
     assert.equal(db("SELECT CONCAT((SELECT id FROM organisation WHERE sys_id=1),'|',(SELECT conf_value FROM sys_conf WHERE conf_key='guest_id'),'|',(SELECT id FROM drumate WHERE username='system' AND domain_id=1),'|',(SELECT COUNT(*) FROM drumate))"), before);
 
-    const runtime = runtime_implementation();
+    const runtime = runtimeImplementation();
     assert.doesNotMatch(runtime, /INSERT\s+INTO\s+(organisation|drumate|privilege)/i);
     assert.doesNotMatch(runtime, /createNobody|createGuest|createSystemUser/i);
   } finally {
