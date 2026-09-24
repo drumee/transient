@@ -40,15 +40,15 @@ const pluginResolver = new FrontendPluginResolver({
 });
 const yellowPage = new Mariadb({ name: process.env.KERNEL_DB_NAME || "yp", user: process.env.KERNEL_DB_USER, limit: 1, throwOnError: true });
 const yellowPageStore = new YellowPageStore({ database: yellowPage });
-let mfsApi;
-let mfsStore;
-function resolveMfsStore() {
+let mfs_api;
+let mfs_store;
+function resolve_mfs_store() {
   if (!fs.existsSync("/opt/kernel/system-mfs/lib/index.js")) return null;
-  if (!mfsStore) {
-    mfsApi = require("/opt/kernel/system-mfs/lib");
-    mfsStore = new mfsApi.SqlMfsStore({ database: yellowPage });
+  if (!mfs_store) {
+    mfs_api = require("/opt/kernel/system-mfs/lib");
+    mfs_store = new mfs_api.SqlMfsStore({ database: yellowPage });
   }
-  return mfsStore;
+  return mfs_store;
 }
 const sessionManager = new SessionManager({ store: yellowPageStore });
 const authorize = createAuthorizer({ domainAuthorizer: new DomainAuthorizer({ store: yellowPageStore }) });
@@ -58,18 +58,18 @@ const websocketAllowedOrigins = (process.env.KERNEL_WEBSOCKET_ALLOWED_ORIGINS ||
   .split(",")
   .map((origin) => origin.trim())
   .filter(Boolean);
-const capabilityResolver = new CapabilityResolver({
+const capability_resolver = new CapabilityResolver({
   providers: {
     "system-mfs": ({ input = {} }) => {
-      const store = resolveMfsStore();
+      const store = resolve_mfs_store();
       if (!store) return { available: false, status: "not-installed" };
-      return mfsApi.capabilityAvailable({
-        store, context: { organisationId: Number(input.organisationId || 1), principalId: input.principalId }
+      return mfs_api.capability_available({
+        store, context: { organisation_id: Number(input.organisation_id || 1), principal_id: input.principal_id }
       });
     }
   }
 });
-const dispatcher = new ServiceDispatcher({ registry, authorize, capabilityResolver, workerOptions: { pluginResolver, push, resolveMfsStore } });
+const dispatcher = new ServiceDispatcher({ registry, authorize, capability_resolver, workerOptions: { pluginResolver, push, resolve_mfs_store } });
 const server = createServiceServer({
   dispatcher,
   sessionFactory: (request) => sessionManager.fromRequest(request),

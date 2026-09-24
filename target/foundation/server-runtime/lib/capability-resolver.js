@@ -12,7 +12,7 @@ class CapabilityResolver {
     this.providers.set(name, provider);
   }
 
-  async requireAll(required = [], context = {}) {
+  async require_all(required = [], context = {}) {
     for (const name of required) {
       const provider = this.providers.get(name);
       if (!provider) {

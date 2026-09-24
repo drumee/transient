@@ -1,18 +1,18 @@
 "use strict";
 
 const assert = require("assert/strict");
-const childProcess = require("child_process");
+const child_process = require("child_process");
 const fs = require("fs");
 const path = require("path");
 const test = require("node:test");
 
 const root = path.resolve(__dirname, "../../..");
-const baseUrl = `http://127.0.0.1:${process.env.KERNEL_HTTP_PORT || "28642"}`;
+const base_url = `http://127.0.0.1:${process.env.KERNEL_HTTP_PORT || "28642"}`;
 const container = process.env.KERNEL_CONTAINER || "transient-kernel-phase2";
 const database = process.env.KERNEL_DB_CONTAINER || "transient-kernel-phase4-db";
 
 function run(command, args, options = {}) {
-  return childProcess.spawnSync(command, args, { cwd: root, encoding: "utf8", ...options });
+  return child_process.spawnSync(command, args, { cwd: root, encoding: "utf8", ...options });
 }
 
 function db(sql) {
@@ -31,8 +31,8 @@ function platform(operation) {
   return JSON.parse(result.stdout);
 }
 
-function runtimeImplementation() {
-  const packageRoot = path.join(root, "target/foundation/server-runtime");
+function runtime_implementation() {
+  const package_root = path.join(root, "target/foundation/server-runtime");
   const files = [];
   function visit(directory) {
     for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
@@ -41,7 +41,7 @@ function runtimeImplementation() {
       else if (/\.(js|sql)$/.test(entry.name)) files.push(filename);
     }
   }
-  visit(packageRoot);
+  visit(package_root);
   return files.map((filename) => fs.readFileSync(filename, "utf8")).join("\n");
 }
 
@@ -70,7 +70,7 @@ test("Phase 4.6A bootstraps and validates a minimal platform without MFS", { tim
     assert.equal(db("SELECT COUNT(*) FROM information_schema.routines WHERE routine_schema='yp' AND routine_name IN ('mfs_init_folders','desk_create_hub')"), "0");
     assert.equal(db("SELECT COUNT(*) FROM information_schema.schemata WHERE schema_name LIKE 'd\\_%'"), "0");
 
-    const response = await fetch(`${baseUrl}/-/svc/bootstrap.authn`, {
+    const response = await fetch(`${base_url}/-/svc/bootstrap.authn`, {
       method: "POST", headers: { "content-type": "application/json" }, body: "{}"
     });
     assert.equal(response.status, 200);
@@ -86,7 +86,7 @@ test("Phase 4.6A bootstraps and validates a minimal platform without MFS", { tim
     let ready = false;
     for (let attempt = 0; attempt < 30; attempt++) {
       try {
-        const status = await fetch(`${baseUrl}/-/svc/kernel.status`);
+        const status = await fetch(`${base_url}/-/svc/kernel.status`);
         if (status.ok) { ready = true; break; }
       } catch (_) {}
       await new Promise((resolve) => setTimeout(resolve, 500));
@@ -94,7 +94,7 @@ test("Phase 4.6A bootstraps and validates a minimal platform without MFS", { tim
     assert.equal(ready, true);
     assert.equal(db("SELECT CONCAT((SELECT id FROM organisation WHERE sys_id=1),'|',(SELECT conf_value FROM sys_conf WHERE conf_key='guest_id'),'|',(SELECT id FROM drumate WHERE username='system' AND domain_id=1),'|',(SELECT COUNT(*) FROM drumate))"), before);
 
-    const runtime = runtimeImplementation();
+    const runtime = runtime_implementation();
     assert.doesNotMatch(runtime, /INSERT\s+INTO\s+(organisation|drumate|privilege)/i);
     assert.doesNotMatch(runtime, /createNobody|createGuest|createSystemUser/i);
   } finally {

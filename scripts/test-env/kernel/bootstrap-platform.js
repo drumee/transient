@@ -1,12 +1,12 @@
 #!/usr/bin/env node
 "use strict";
 
-const childProcess = require("child_process");
+const child_process = require("child_process");
 const path = require("path");
 const { bootstrap, validate, SqlPlatformStore } = require(path.resolve(__dirname, "../../../target/control-plane/bootstrap/lib"));
 
 const container = process.env.KERNEL_DB_CONTAINER || "transient-kernel-phase4-db";
-const databaseName = process.env.KERNEL_DB_NAME || "yp";
+const database_name = process.env.KERNEL_DB_NAME || "yp";
 const password = process.env.KERNEL_DB_ROOT_PASSWORD || "phase4-disposable-root";
 const operation = process.argv[2] || "validate";
 const domain = process.argv[3] || "kernel.test";
@@ -38,10 +38,10 @@ function parse(output) {
 
 const database = {
   async query(sql, ...parameters) {
-    const result = childProcess.spawnSync("docker", [
+    const result = child_process.spawnSync("docker", [
       "exec", "-e", `MYSQL_PWD=${password}`, container,
       "mariadb", "--protocol=tcp", "--host=127.0.0.1", "--user=root",
-      "--batch", "--raw", databaseName, "--execute", bind(sql, parameters)
+      "--batch", "--raw", database_name, "--execute", bind(sql, parameters)
     ], { encoding: "utf8" });
     if (result.status !== 0) throw new Error(`${result.stdout}\n${result.stderr}`.trim());
     return parse(result.stdout);
@@ -53,7 +53,7 @@ async function main() {
   if (operation === "bootstrap") {
     const before = await validate({ store, domain });
     if (process.argv.includes("--require-invalid") && before.valid) throw new Error("Expected platform invariants to be absent before bootstrap");
-    const report = await bootstrap({ store, domain, organisationName: "Kernel integration" });
+    const report = await bootstrap({ store, domain, organisation_name: "Kernel integration" });
     process.stdout.write(`${JSON.stringify({ before, after: report })}\n`);
     return;
   }

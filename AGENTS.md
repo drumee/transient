@@ -266,6 +266,15 @@ Deployment installs/configures Drumee but must not leak into the application run
 
 Applications consume kernel contracts but must not define them implicitly through Team-specific assumptions.
 
+## Naming convention
+
+New code must follow the naming convention of the historical Drumee component
+it extends. Backend JavaScript variables, parameters and internal properties
+normally use `snake_case`. SQL procedure/function parameters and local
+variables use `_snake_case`, while SQL table and column names use `snake_case`
+without the leading underscore. Do not introduce broad camelCase normalization
+during refactoring.
+
 ---
 
 # 7. Team is a migration source, not the first target

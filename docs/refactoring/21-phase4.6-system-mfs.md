@@ -163,11 +163,11 @@ The public lifecycle operations are deliberately separate:
 
 ```text
 install()                       mutating, module schema only
-validateInstallation()         read-only installation inspection
-provision({ organisationId,
-            principalId })     mutating, explicit and idempotent
-validateProvisioning(context)  read-only context inspection
-capabilityAvailable(context)   deterministic installed/provisioned answer
+validate_installation()        read-only installation inspection
+provision({ organisation_id,
+            principal_id })    mutating, explicit and idempotent
+validate_provisioning(context) read-only context inspection
+capability_available(context)  deterministic installed/provisioned answer
 ```
 
 Installation never enumerates or provisions Drumates. Provisioning requires an

@@ -96,7 +96,7 @@ test("declared capabilities fail before worker loading and pass when context is 
   assert.equal(unavailable.workers.size, 0);
 
   let received;
-  const capabilityResolver = new CapabilityResolver({
+  const capability_resolver = new CapabilityResolver({
     providers: {
       "system-mfs": async (context) => {
         received = context;
@@ -104,7 +104,7 @@ test("declared capabilities fail before worker loading and pass when context is 
       }
     }
   });
-  const available = new ServiceDispatcher({ registry: value, capabilityResolver });
+  const available = new ServiceDispatcher({ registry: value, capability_resolver });
   const result = await available.dispatch({ service: "dependent.status", session, input: { sequence: "capability" } });
   assert.equal(result.input.sequence, "capability");
   assert.equal(received.service, "dependent.status");
@@ -134,7 +134,7 @@ test("capability availability is not disclosed before authorization succeeds", a
   const dispatcher = new ServiceDispatcher({
     registry: value,
     authorize: async () => ({ granted: false }),
-    capabilityResolver: new CapabilityResolver({ providers: { "system-mfs": async () => { checked = true; return false; } } })
+    capability_resolver: new CapabilityResolver({ providers: { "system-mfs": async () => { checked = true; return false; } } })
   });
   await assert.rejects(() => dispatcher.dispatch({ service: "dependent.status", session: { isAnonymous: () => true }, input: {} }), (error) => error.code === "PERMISSION_DENIED");
   assert.equal(checked, false);

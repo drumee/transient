@@ -13,7 +13,7 @@ function clone(value) {
 class MemoryStore {
   constructor(state = {}) {
     this.state = {
-      organisationTable: false,
+      organisation_table: false,
       domains: [],
       organisations: [],
       configuration: {},
@@ -25,18 +25,18 @@ class MemoryStore {
   }
 
   async inspect() { return clone(this.state); }
-  async installSchema() { this.state.organisationTable = true; }
+  async install_schema() { this.state.organisation_table = true; }
   async transaction(operation) {
     const before = clone(this.state);
     try { return await operation(); } catch (error) { this.state = before; throw error; }
   }
-  async generateId() { return this.ids.shift(); }
-  async createDomain(name) { this.creations++; this.state.domains.push({ id: 1, name }); }
-  async createOrganisation({ id, domain, name }) {
+  async generate_id() { return this.ids.shift(); }
+  async create_domain(name) { this.creations++; this.state.domains.push({ id: 1, name }); }
+  async create_organisation({ id, domain, name }) {
     this.creations++;
     this.state.organisations.push({ sys_id: 1, id, domain_id: 1, name, link: domain, ident: "drumee" });
   }
-  async createPrincipal({ id, username, domain, privilege }) {
+  async create_principal({ id, username, domain, privilege }) {
     this.creations++;
     this.state.principals.push({
       id, ident: username, username, type: "drumate", area: "system", status: "system",
@@ -44,7 +44,7 @@ class MemoryStore {
       email: `${username}@${domain}`
     });
   }
-  async setConfiguration(key, value) { this.creations++; this.state.configuration[key] = value; }
+  async set_configuration(key, value) { this.creations++; this.state.configuration[key] = value; }
 }
 
 test("fresh bootstrap creates the minimal generated identity set", async () => {
@@ -103,7 +103,7 @@ test("validation is read-only and reports missing invariants", async () => {
 
 test("conflicting canonical and aliased identities fail deterministically", async () => {
   const store = new MemoryStore({
-    organisationTable: true,
+    organisation_table: true,
     domains: [{ id: 1, name: "kernel.test" }],
     organisations: [{ sys_id: 1, id: "a000000000000001", domain_id: 1, link: "kernel.test" }],
     configuration: { nobody_id: NOBODY_UID, guest_id: NOBODY_UID },

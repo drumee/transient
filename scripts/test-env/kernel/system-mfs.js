@@ -1,12 +1,12 @@
 #!/usr/bin/env node
 "use strict";
 
-const childProcess = require("child_process");
+const child_process = require("child_process");
 const path = require("path");
-const { MfsNamespace, SqlMfsStore, install, provision, validateInstallation, validateProvisioning } = require(path.resolve(__dirname, "../../../target/modules/system-mfs/lib"));
+const { MfsNamespace, SqlMfsStore, install, provision, validate_installation, validate_provisioning } = require(path.resolve(__dirname, "../../../target/modules/system-mfs/lib"));
 
 const container = process.env.KERNEL_DB_CONTAINER || "transient-kernel-phase4-db";
-const databaseName = process.env.KERNEL_DB_NAME || "yp";
+const database_name = process.env.KERNEL_DB_NAME || "yp";
 const password = process.env.KERNEL_DB_ROOT_PASSWORD || "phase4-disposable-root";
 
 function literal(value) {
@@ -32,18 +32,18 @@ function parse(output) {
 }
 
 const database = {
-  runtimeUser: process.env.KERNEL_DB_USER || "kernel_phase4",
+  runtime_user: process.env.KERNEL_DB_USER || "kernel_phase4",
   async query(sql, ...parameters) {
-    const result = childProcess.spawnSync("docker", [
+    const result = child_process.spawnSync("docker", [
       "exec", "-e", `MYSQL_PWD=${password}`, container,
-      "mariadb", "--protocol=tcp", "--host=127.0.0.1", "--user=root", "--batch", "--raw", databaseName,
+      "mariadb", "--protocol=tcp", "--host=127.0.0.1", "--user=root", "--batch", "--raw", database_name,
       "--execute", bind(sql, parameters)
     ], { encoding: "utf8" });
     if (result.status !== 0) throw new Error(`${result.stdout}\n${result.stderr}`.trim());
     return parse(result.stdout);
   },
-  async executeScript(script, { database: selected = databaseName } = {}) {
-    const result = childProcess.spawnSync("docker", [
+  async execute_script(script, { database: selected = database_name } = {}) {
+    const result = child_process.spawnSync("docker", [
       "exec", "-i", "-e", `MYSQL_PWD=${password}`, container,
       "mariadb", "--protocol=tcp", "--host=127.0.0.1", "--user=root", "--batch", "--raw", selected
     ], { encoding: "utf8", input: script });
@@ -53,20 +53,20 @@ const database = {
 
 async function main() {
   const operation = process.argv[2] || "validate-installation";
-  const principalId = process.argv[3];
-  const context = principalId ? { organisationId: Number(process.argv[4] || 1), principalId } : undefined;
+  const principal_id = process.argv[3];
+  const context = principal_id ? { organisation_id: Number(process.argv[4] || 1), principal_id } : undefined;
   const store = new SqlMfsStore({ database });
   let report;
   if (operation === "install") report = await install({ store });
-  else if (operation === "validate-installation") report = await validateInstallation({ store });
+  else if (operation === "validate-installation") report = await validate_installation({ store });
   else if (operation === "provision") report = await provision({ store, context });
-  else if (operation === "validate") report = await validateProvisioning({ store, context });
+  else if (operation === "validate") report = await validate_provisioning({ store, context });
   else if (operation === "exercise") {
-    const ready = await validateProvisioning({ store, context });
+    const ready = await validate_provisioning({ store, context });
     if (!ready.valid) throw new Error(`MFS context is not ready: ${ready.status}`);
     const mfs = new MfsNamespace({ store, context });
-    const created = await mfs.makeDirectory(ready.rootId, process.argv[5] || "Phase46B");
-    report = { ready, created, resolved: await mfs.resolveNode(created.nid), children: await mfs.listChildren(ready.rootId) };
+    const created = await mfs.make_directory(ready.root_id, process.argv[5] || "Phase46B");
+    report = { ready, created, resolved: await mfs.resolve_node(created.nid), children: await mfs.list_children(ready.root_id) };
   } else throw new Error(`Unknown system-mfs operation: ${operation}`);
   process.stdout.write(`${JSON.stringify(report)}\n`);
 }

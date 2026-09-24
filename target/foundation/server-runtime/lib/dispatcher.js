@@ -2,11 +2,11 @@ const { RuntimeError } = require("./errors");
 const { authorizeFastPath } = require("./permission");
 
 class ServiceDispatcher {
-  constructor({ registry, authorize = authorizeFastPath, capabilityResolver, requireWorker = require, workerOptions = {} } = {}) {
+  constructor({ registry, authorize = authorizeFastPath, capability_resolver, requireWorker = require, workerOptions = {} } = {}) {
     if (!registry) throw new RuntimeError("REGISTRY_REQUIRED", "A descriptor registry is required");
     this.registry = registry;
     this.authorize = authorize;
-    this.capabilityResolver = capabilityResolver;
+    this.capability_resolver = capability_resolver;
     this.requireWorker = requireWorker;
     this.workerOptions = workerOptions;
     this.workers = new Map();
@@ -32,12 +32,12 @@ class ServiceDispatcher {
       throw new RuntimeError("PERMISSION_DENIED", `Access denied to ${resolved.service}`, decision);
     }
     if (resolved.requires.length) {
-      if (!this.capabilityResolver || typeof this.capabilityResolver.requireAll !== "function") {
+      if (!this.capability_resolver || typeof this.capability_resolver.require_all !== "function") {
         throw new RuntimeError("CAPABILITY_UNAVAILABLE", `Required capability '${resolved.requires[0]}' is unavailable`, {
           capability: resolved.requires[0], status: "unavailable"
         });
       }
-      await this.capabilityResolver.requireAll(resolved.requires, { input, service: resolved.service, session });
+      await this.capability_resolver.require_all(resolved.requires, { input, service: resolved.service, session });
     }
     const WorkerClass = this.getWorkerClass(resolved.workerPath);
     const worker = new WorkerClass({ ...this.workerOptions, session, permission: resolved.permission });
