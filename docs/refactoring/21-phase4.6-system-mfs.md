@@ -21,7 +21,7 @@ runtime package installation
 → organisation 1 + nobody + guest + system
 → valid minimal Drumee instance
 → optional system-mfs capability
-→ business applications such as Marketing
+→ system applications such as Finder
 ```
 
 The canonical invariants are:
@@ -41,7 +41,8 @@ Runtime may resolve and validate them but must never create or repair them.
   create and validate organisation `1`, nobody, guest and system;
 - `system-mfs`: will own MFS behavior, schemas, migrations and MFS-specific
   provisioning hooks, but not platform identity creation;
-- Marketing: will own its business lifecycle and schemas;
+- Finder: future system application consuming `system-mfs`, not the MFS engine;
+- Oxymot: separate future project owning Marketing business lifecycle and schemas;
 - Finder: remains a future system application, not the MFS engine.
 
 Phase 4.6A implements only a small explicit orchestrator. It does not introduce
@@ -279,5 +280,7 @@ regressions pass. The standalone `server-runtime` repository and npm release
 were not modified; extraction of the generic capability resolver belongs to a
 later runtime release milestone.
 
-Phase 4.6 is therefore `CLOSED / VALIDATED`. The next work is Phase 5 Marketing
-only after explicit authorization.
+Phase 4.6 is therefore `CLOSED / VALIDATED`. The former Phase 5 Marketing plan
+is superseded by [`23-kernel-roadmap.md`](23-kernel-roadmap.md). The next
+milestone is R2 standalone `system-mfs` extraction. Phase 4.7 remains
+unauthorized.

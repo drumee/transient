@@ -20,9 +20,11 @@ server-runtime                              ui-runtime
                                 │
                               hello
                                 │
-                            marketing
+                           system-mfs
                                 │
-                     later system and Team modules
+                    Window Manager + Finder
+                                │
+                    kernel maintenance/evolution
 ```
 
 `server-runtime` and `ui-runtime` are transitional extraction workspaces, not approved final package names. They are populated symbol by symbol from `sources/server-core`, `sources/ui-core`, and generic seams currently mixed into Team. Neither is a wholesale copy of `server-core` or `ui-core`.
@@ -50,18 +52,24 @@ The first frontend runtime candidates are minimal LETC hosting, Kind and addon r
 
 The kernel supplies mechanisms, never a module's product policy. Team service allow/deny lists, secure-share behavior, billing/over-limit policy and other service-specific checks stay with their owning service or remain `INVESTIGATE`; they must not be carried across simply because they are currently mixed into `server-team/router/rest/index.js`.
 
-The sequence is intentionally strict:
+The sequence below supersedes this document's earlier Marketing-first plan;
+full phase contracts are authoritative in
+[`23-kernel-roadmap.md`](23-kernel-roadmap.md):
 
 ```text
 minimal server-runtime + ui-runtime
   → hello proves the vertical slice
-  → intentional MFS backend/frontend primitives
-  → marketing, the first real application
-  → kernel stabilization
-  → Finder / Window Manager and Team migration, capability by capability
+  → platform bootstrap + system-mfs
+  → standalone system-mfs
+  → Window Manager independent from MFS
+  → Finder implementation and integration
+  → real Finder stabilization and standalone extraction
 ```
 
-MFS remains a `KEEP_OS` capability when it is intentionally introduced, but it is excluded from `hello`. Finder, Desktop, media-specific kinds, drag/drop and Window Manager are not first-kernel prerequisites; their post-MFS ownership remains `INVESTIGATE` until resource/application contracts are proven.
+MFS remains a system/kernel capability but is excluded from `hello`. Window
+Manager is a generic UI capability independent from MFS. Finder is a system
+application that consumes Window Manager and `system-mfs`; it is not the MFS
+engine.
 
 ## Existing plugin contracts retained initially
 
@@ -82,9 +90,15 @@ frontend: Kind.loadPlugin → bootstrap.plugin → plugin index.json → { path 
 
 ## Modules, distribution, control plane and deployment
 
-After `hello`, `marketing` is the first real application. Each capability it needs—private hub, MFS, hub-local schema, ACL, dynamic services, LETC UI or AI integration—must be classified as Essentials, backend kernel, frontend kernel, system module or marketing module before it is added. Application workflows, campaign data, AI/provider integration, billing and marketing policy remain marketing-owned unless kernel necessity is proven.
+Window Manager and Finder are the next system-module/application boundaries.
+Finder supplies the first substantial real-use stabilization pressure before
+business application work. Chat, tasks, meetings and collaboration workflows
+remain Team-owned or later compatibility subjects.
 
-Only after the kernel has been exercised by marketing may Team functionality migrate module by module. Candidate system modules remain Signin/Loby and generic preview/editor capabilities; candidate Team modules remain Finder, chat, tasks, meetings and collaboration workflows, subject to evidence. A later Team distribution composes the stable kernel and selected modules; it does not define the first extraction boundary.
+Marketing and its application workflows, campaign data, AI/provider
+integration, measurement, billing and policy belong to the separate future
+Oxymot project. A later Team distribution composes the stable kernel and
+selected modules; it does not define these extraction boundaries.
 
 The Control Plane remains independently above the runtime. The CLI may eventually administer stable module lifecycle contracts, but source does not prove that capability today and the question remains `INVESTIGATE`. Deployment remains responsible for Docker/native packages, configuration, artifact acquisition, installation and rollback; it must later consume runtime/module/distribution artifacts instead of accidental Team checkout layout.
 

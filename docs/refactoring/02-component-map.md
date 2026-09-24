@@ -2,7 +2,15 @@
 
 The classification column classifies the responsibility named in the first column. “Repo/path” identifies current evidence and implementation locations only. It is not a move list: each location may mix OS, module, SDK, control-plane, deployment and legacy concerns and must be decomposed at symbol/behavior boundaries during an approved implementation phase.
 
-The first extraction sequence is intentionally narrower than the classifications below: minimal backend/frontend runtime candidates, then one `hello` module, then MFS and `marketing`. Team remains an immutable migration source and later compatibility reference. A `KEEP_OS` responsibility is therefore not an instruction to copy its current implementation into the first `server-runtime` or `ui-runtime` iteration.
+The first extraction sequence was intentionally narrower than the
+classifications below: minimal backend/frontend runtime candidates, then one
+`hello` module and then MFS. Its former Marketing continuation is superseded
+by [`23-kernel-roadmap.md`](23-kernel-roadmap.md): Window Manager and Finder are
+the next kernel-project boundaries, while Marketing belongs to the separate
+future Oxymot project. Team remains an immutable migration source and later
+compatibility reference. A `KEEP_OS` responsibility is therefore not an
+instruction to copy its current implementation into the first
+`server-runtime` or `ui-runtime` iteration.
 
 | Responsibility | Current evidence location | Current implementation / dependencies | Responsibility classification | Risk |
 |---|---|---|---|---|

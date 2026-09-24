@@ -1,5 +1,8 @@
 # Project state
 
+The authoritative phase definitions are in
+[`docs/refactoring/23-kernel-roadmap.md`](docs/refactoring/23-kernel-roadmap.md).
+
 ```text
 Project:
     Drumee Minimal Kernel Refactor
@@ -8,19 +11,30 @@ Current:
     Phase 4.5 CLOSED
     R0 CLOSED
     R1 CLOSED
-    Phase 4.6 CLOSED
+    Phase 4.6 CLOSED / VALIDATED
     Phase 4.6A platform bootstrap IMPLEMENTED / VALIDATED
     Phase 4.6B system-mfs IMPLEMENTED / VALIDATED
+    R2 standalone system-mfs extraction CURRENT
+
+Planned:
+    Phase 4.7 Window Manager NEXT / NOT AUTHORIZED
+    Phase 4.8 Finder implementation/integration PLANNED
+    Phase 4.9 Finder real-use stabilization and standalone extraction PLANNED
+
+External:
+    Oxymot = separate future Marketing/business project
 
 Local repositories:
     transient      ~/github/transient
     server-runtime ~/github/server-runtime
     ui-runtime     ~/github/ui-runtime
+    system-mfs     ~/github/system-mfs
 
 GitHub:
     drumee/transient
     drumee/server-runtime
     drumee/ui-runtime
+    drumee/system-mfs
 
 Canonical invariants:
     DEFAULT_ORG_ID = 1
@@ -29,12 +43,15 @@ Canonical invariants:
 Architecture:
     server-runtime = intrinsic backend runtime
     ui-runtime = intrinsic frontend runtime
-    system-mfs = first system/kernel module
-    Finder = system application
-    Marketing = first business application
+    platform bootstrap = control-plane identity provisioning
+    system-mfs = standalone system/kernel module
+    Window Manager = generic UI capability independent from MFS
+    Finder = substantial system application
+    Marketing = externalized to the future Oxymot project
 
 Next:
-    explicit authorization for Phase 5 Marketing
+    complete R2 standalone system-mfs extraction
+    do not begin Phase 4.7 without explicit authorization
 ```
 
 R0 validation:
@@ -57,8 +74,10 @@ Validated source lineage:
 - `0e70b7cd685c4a122ce70e5cfff60b7b788789ae` — finalized exportability contract.
 - `7401aeafb70a90ba1b581e93d3b763801c50535a` — portable source immutability gate.
 - `e3f4468d3ea882baeee4c7fefbd956aca4128d28` — Phase 4.6 invariant documentation and R0 extraction source.
-
-R0 does not publish npm packages and does not authorize Phase 4.6.
+- `573df7b00998e811ed5650f2e896ecaab354a287` — Phase 4.6A platform bootstrap.
+- `48d4254e8e98bc32485935a405005c173822e00b` — Phase 4.6B system-mfs.
+- `5139e5aa34a0fc2f58e12fb112a6ba18e18f334a` — data naming correction.
+- `078e71378a52acd06478d9df556a7cd5b4d6a223` — method naming correction and R2 extraction source.
 
 R1 publication evidence:
 
@@ -76,16 +95,11 @@ R1 publication evidence:
     integrity:       sha512-dACvcMrviBOSoyv9/qb9PIVX/XrC1j4ru1F2PB1yRy6zoZiYvwQh30utlRRumR7nNeOrVziKrKcrjwEsqRXC6Q==
 ```
 
-The published tarballs exactly match `npm pack --dry-run` at the prepared
-standalone commits. Both standalone test suites pass and fresh registry
-consumers load the expected server API and UI plugin handshake with
-`NODE_PATH` disabled.
+The published runtime tarballs exactly match their prepared standalone
+repository commits. R1 accepted npm's mandatory `latest` metadata alias and is
+closed.
 
-Both packages expose the intended `next` alias. npm also requires every package
-to have `latest` metadata; because each runtime has only one published version,
-`latest` resolves to the same `0.1.0-alpha.1` artifact. Authenticated deletion
-was rejected by the registry with HTTP 400. R1 accepts this registry constraint
-rather than publishing an artificial stable version solely to move the alias.
-
-R1 and Phase 4.6 are closed. Phase 5 Marketing requires explicit
-authorization.
+The generic capability resolver validated in Phase 4.6B exists only in the
+transitional runtime today. A later runtime extraction/release milestone must
+synchronize it into standalone `server-runtime`; this packaging debt does not
+block R2.

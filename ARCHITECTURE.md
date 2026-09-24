@@ -5,8 +5,10 @@ remain under `docs/refactoring/`, especially
 [`06-target-architecture.md`](docs/refactoring/06-target-architecture.md),
 [`07-migration-plan.md`](docs/refactoring/07-migration-plan.md),
 [`20-phase4.5-exportability.md`](docs/refactoring/20-phase4.5-exportability.md),
-[`22-r1-runtime-release.md`](docs/refactoring/22-r1-runtime-release.md)
-and [`21-phase4.6-system-mfs.md`](docs/refactoring/21-phase4.6-system-mfs.md).
+[`22-r1-runtime-release.md`](docs/refactoring/22-r1-runtime-release.md),
+[`21-phase4.6-system-mfs.md`](docs/refactoring/21-phase4.6-system-mfs.md), and
+the authoritative post-Phase 4.6 roadmap in
+[`23-kernel-roadmap.md`](docs/refactoring/23-kernel-roadmap.md).
 
 - `sources/**` is immutable imported evidence.
 - Runtime packages remain CommonJS; the browser architecture has no SSR.
@@ -25,8 +27,13 @@ and [`21-phase4.6-system-mfs.md`](docs/refactoring/21-phase4.6-system-mfs.md).
   validation of organisation `1`, nobody, guest and system. It reuses the
   intrinsic identity tables but remains outside `server-runtime`.
 - `system-mfs` is the first system/kernel module, not intrinsic runtime.
-- Finder is a future system application and is not the MFS engine.
-- Marketing is the first business application and consumes MFS.
+- Window Manager is a generic UI capability independent from MFS and is
+  planned for Phase 4.7 with standalone extraction.
+- Finder is the first substantial real system application used for kernel
+  stabilization. Its implementation/integration is Phase 4.8; its real-use
+  stabilization and standalone extraction are Phase 4.9.
+- Marketing and business capabilities belong to the separate future Oxymot
+  project, not this kernel project.
 - R0 extracts repositories; R1 owns the first npm release. Neither introduces a
   feature phase.
 - Phase 4.6 is closed and validated: 4.6A owns platform bootstrap, while 4.6B
@@ -40,4 +47,8 @@ and [`21-phase4.6-system-mfs.md`](docs/refactoring/21-phase4.6-system-mfs.md).
 - MFS readiness is recorded in module-owned lifecycle state and validated
   against its context database. `entity.db_name`, `entity.home_dir` and
   `entity.home_id` are not capability signals.
+- R2 extracts the validated Phase 4.6B `system-mfs` boundary as standalone
+  `@drumee/system-mfs`; it adds no MFS feature.
+- After R2 the standalone repository is authoritative. A transitional copy may
+  remain only as an explicitly synchronized integration fixture.
 - No later milestone or phase starts without explicit authorization.

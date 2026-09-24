@@ -36,8 +36,8 @@ All remain `INVESTIGATE` until code/history/runtime evidence or approval resolve
 32. Can the current `bootstrap.plugin` resolution logic operate from a runtime-owned installed-plugin root without Team endpoint/layout assumptions?
 33. Beyond identified secure-share and over-limit branches, which portions of `Acl.run` are generic dispatch and which encode Team policy?
 34. What version/compatibility relationship is required between a backend ACL descriptor, a frontend `index.json` entry and independently built plugin artifacts?
-35. What minimal MFS semantics, storage behavior and ACL surface does `marketing` actually require after `hello`?
-36. After MFS exists, are Finder and Window Manager modules, or does a proven resource-host primitive belong in the frontend kernel?
-37. Which selected Team contracts remain valuable regression evidence after the new kernel is validated by `hello` and `marketing`?
+35. Which additional MFS semantics, storage behavior and ACL surface are demonstrated by real Finder usage?
+36. Which Window Manager and Finder contracts should remain internal through Phase 4.8 and become public only after Phase 4.9 stabilization?
+37. Which selected Team contracts remain valuable regression evidence after the kernel is validated by `hello` and Finder?
 38. What deterministic inputs and container-root mapping let the pinned `setup-infra` generator render the selected Nginx configuration without writing host paths or requiring DNS, mail or Jitsi prerequisites?
 39. Which generated Nginx includes are the minimum supported Phase 2 service and plugin/static contract, and which of the broader current route template must remain outside the no-Team runtime?

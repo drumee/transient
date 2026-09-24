@@ -2,7 +2,8 @@
 
 Phase 4.5 locks the validated Phase 4.4 boundary as two private,
 transitional CommonJS npm artifacts. It is not a publication, final API or
-repository split, and it introduces no Phase 5 application capability.
+repository split, and it introduces no later application capability. The
+former Phase 5 label is superseded by the canonical post-Phase 4.6 roadmap.
 
 ## Package boundary
 
@@ -118,6 +119,8 @@ consumers are temporary artifacts only; no npm package is published.
 
 This lock does not add a package installer, module lifecycle, provisioning,
 Hub ACL/shards, MFS, Finder, Window Manager, Team decomposition, Debian
-packaging or Marketing. Phase 4.6 is the next planned boundary for the minimal
-platform-bootstrap contract and `system-mfs`; Phase 5 Marketing follows as its
-first business consumer. Neither later phase is implemented here.
+packaging or Marketing. Phase 4.6 was the next planned boundary for the minimal
+platform-bootstrap contract and `system-mfs`. The former Phase 5 Marketing
+continuation is superseded by
+[`23-kernel-roadmap.md`](23-kernel-roadmap.md); this historical Phase 4.5 lock
+does not implement any later milestone.

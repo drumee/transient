@@ -44,20 +44,23 @@ R1          first npm runtime release                            CLOSED
 Phase 4.6   platform bootstrap contract + system-mfs             CLOSED
             4.6A platform bootstrap                              IMPLEMENTED / VALIDATED
             4.6B system-mfs                                      IMPLEMENTED / VALIDATED
-Phase 5     marketing as first real business application         AFTER 4.6
-Phase 6     kernel stabilization from real application needs
-Phase 7+    Team migration module by module
+R2          standalone system-mfs extraction                      CURRENT
+Phase 4.7   Window Manager UI capability + standalone extraction AFTER R2 / NOT AUTHORIZED
+Phase 4.8   Finder implementation and integration                 PLANNED
+Phase 4.9   Finder real-use stabilization + standalone extraction PLANNED
+Oxymot      separate future Marketing/business project
 ```
 
 Do not repeat Phase 2 unless correcting a demonstrated defect.
 
 Do not begin a later phase merely because the previous phase is complete. Perform only the phase explicitly requested by the user.
 
-R0 and R1 are repository extraction/release milestones, not feature phases.
+R0, R1 and R2 are repository extraction/release milestones, not feature phases.
 They do not renumber the historical phase sequence. R0 preserves the validated
 Phase 4.5 boundary in standalone `server-runtime` and `ui-runtime`
-repositories; R1 owns the first npm publication decision. Neither milestone
-authorizes Phase 4.6 implementation.
+repositories; R1 owns the first npm publication decision. R2 extracts the
+validated Phase 4.6B `system-mfs` boundary. No repository milestone
+automatically authorizes a later feature phase.
 
 Historical sections or documents that say "mapping only" or recommend a particular future branch are no longer authoritative phase gates.
 
@@ -307,9 +310,11 @@ minimal runtime
 → NPM + schema exportability lock
 → platform bootstrap contract
 → MFS as the first system/kernel module
-→ marketing
-→ kernel stabilization
-→ Team migration
+→ standalone system-mfs extraction
+→ Window Manager independent from MFS
+→ Finder implementation and integration
+→ real Finder stabilization and standalone extraction
+→ kernel maintenance and evolution
 ```
 
 Do not reproduce every Team-era behavior before new independent applications can run.
@@ -1076,8 +1081,9 @@ complex provisioning
 
 The governing rule is:
 
-> **`hello` validates the kernel; Phase 4.6 establishes platform bootstrap and
-> the first system/kernel module; `marketing` is the first business consumer.**
+> **`hello` validates the minimal kernel; Phase 4.6 establishes platform
+> bootstrap and the first system/kernel module; Finder becomes the first
+> substantial real system application used to stabilize the kernel.**
 
 ---
 
@@ -1221,9 +1227,9 @@ platform bootstrap / control plane
 system-mfs
     MFS runtime code, schemas, migrations and MFS-specific provisioning hooks
 
-marketing
-    business schema and lifecycle, including Profile / Source / Crawl /
-    Document and Claim / Evidence / Review
+Oxymot (separate future project)
+    Marketing business schema and lifecycle, including Profile / Source /
+    Crawl / Document and Claim / Evidence / Review
 ```
 
 For Phase 4.6 and later, each module owns the knowledge required to install and
@@ -1243,34 +1249,21 @@ future system application.
 
 ---
 
-# 30. Marketing is the first real application
+# 30. Canonical post-Phase 4.6 roadmap
 
-After Phase 4.6 establishes platform bootstrap and `system-mfs`, `marketing` is
-the first real business application intended to exercise actual business
-needs. It consumes MFS rather than owning the MFS or platform-bootstrap
-boundary.
+The authoritative roadmap is
+`docs/refactoring/23-kernel-roadmap.md`. The former Phase 5 Marketing and Phase
+6 Marketing-driven stabilization plan is superseded.
 
-Marketing may drive requirements such as:
+R2 extracts standalone `system-mfs`. Phase 4.7 introduces and extracts Window
+Manager as a UI capability that must work without MFS. Phase 4.8 implements and
+integrates Finder with Window Manager and `system-mfs`, but does not perform
+the final Finder extraction. Phase 4.9 uses real Finder workflows to stabilize
+the kernel and then extracts Finder as a standalone module/package.
 
-```text
-private hub usage
-authenticated ACL
-MFS-backed business resources
-hub-local schemas
-dynamic services
-LETC frontend
-AI integration
-```
-
-Do not pre-build these capabilities speculatively before the application requires them.
-
-Use:
-
-```text
-hello → validate kernel
-Phase 4.6 → platform bootstrap contract + system-mfs
-marketing → first business application consuming MFS
-```
+This project owns the kernel, system modules, Window Manager and Finder. A
+future separate Oxymot project owns Marketing and business capabilities.
+Neither Oxymot nor Phase 4.7 is authorized by R2.
 
 ---
 
@@ -1339,7 +1332,7 @@ service dispatcher       → KEEP_OS
 ACL engine integration   → KEEP_OS
 system-mfs               → SYSTEM_MODULE / kernel capability; not intrinsic runtime
 Finder                    → SYSTEM_MODULE
-Window Manager            → INVESTIGATE after MFS/resource semantics
+Window Manager            → SYSTEM_MODULE / generic UI capability independent from MFS
 Chat                      → TEAM_MODULE
 CLI administration       → CONTROL_PLANE
 Webpack ui-build          → tooling/build infrastructure
@@ -1619,8 +1612,8 @@ The target is:
                              │
               ┌──────────────┼──────────────┐
               │              │              │
-         Drumee Team      Marketing      Future apps
-         distribution     application
+         Drumee Team       Finder       Future apps
+         distribution   system app
 ```
 
 with:
@@ -1631,7 +1624,9 @@ shared build tooling outside browser runtime
 real module/plugin contracts
 minimal infrastructure contract
 applications dynamically loadable
+standalone Window Manager, system-mfs and Finder contracts
 Team reconstructed later as a distribution
+Marketing and business logic owned by the separate Oxymot project
 ```
 
 The minimal OS must remain business-domain neutral.

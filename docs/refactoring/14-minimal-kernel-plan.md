@@ -4,7 +4,11 @@
 
 The primary target is an application-neutral Drumee kernel that can host a new independent module. The current Team repositories are immutable migration sources and later compatibility references; they are not the design template for the first kernel.
 
-The first proof is exactly one synthetic module, `hello`. The first useful application is `marketing`. Team capabilities are considered only after that kernel has been exercised and stabilized.
+The first proof is exactly one synthetic module, `hello`. This document's
+former Marketing-first continuation is superseded by the authoritative
+post-Phase 4.6 roadmap in [`23-kernel-roadmap.md`](23-kernel-roadmap.md).
+Finder is now the first substantial real system application used to stabilize
+the kernel. Marketing belongs to the separate future Oxymot project.
 
 This is an extraction plan, not an extraction. `server-runtime` and `ui-runtime` are transitional workspaces, not approved final package names or repository boundaries.
 
@@ -24,9 +28,11 @@ server-runtime                              ui-runtime
                                 │
                               hello
                                 │
-                            marketing
+                           system-mfs
                                 │
-                     later system and Team modules
+                    Window Manager + Finder
+                                │
+                    kernel maintenance/evolution
 ```
 
 `server-essentials` must remain usable by a non-Drumee Node/MariaDB service. In particular, it must not acquire dependencies on Hub, Drumate, Drumee ACL, MFS semantics, `module.method`, plugin discovery, or Team behavior. The existing generic MariaDB API belongs at that independent boundary (`sources/server-essentials/lib/mariadb.js`). `ui-essentials` remains the generic frontend foundation for the same reason.
@@ -196,28 +202,33 @@ minimal backend runtime + minimal frontend runtime
   → hello validates plugin and service hosting
   → intentional MFS backend primitives
   → intentional MFS frontend primitives
-  → marketing
-  → Finder / Window Manager when resource/application semantics require them
+  → standalone system-mfs
+  → Window Manager independent from MFS
+  → Finder implementation and integration
+  → real Finder stabilization and standalone extraction
 ```
 
 This order prevents the current `server-core` MFS, UI media kinds, Finder and window model from being pulled into the first kernel merely because they are co-located today. It also makes MFS ownership, storage failure handling, identity/ACL, and shard/provisioning contracts explicit before user-facing file workflows are extracted.
 
-## 10. Marketing role
+## 10. Finder and Oxymot roles
 
-After `hello`, `marketing` is the first real application and the only source of new capability pressure before Team migration. Possible needs—private hub, MFS, hub-local schemas, ACL, dynamic services, LETC UI and AI integration—must be classified individually as:
+Finder is the first substantial real system application and provides the
+capability pressure used in Phases 4.8 and 4.9. Window Manager remains an
+independent UI capability; Finder consumes it on the UI side and consumes
+`system-mfs` on the backend side.
 
-```text
-server-essentials | ui-essentials | backend kernel | frontend kernel |
-system module | marketing module
-```
-
-Application-specific workflows, campaign data, AI prompts/providers, billing behavior, and marketing policy remain module-owned unless their application-neutral kernel necessity is proven.
+Marketing, campaigns, business data, AI/provider integration, measurement and
+business policy belong to the separate future Oxymot project. They are not
+kernel milestones in this repository.
 
 ## 11. Team migration policy
 
 Team remains available as immutable source evidence and a later compatibility target. It does not determine the first kernel's scope.
 
-Only after the kernel has passed `hello` and been exercised by `marketing` may Team capabilities be classified and migrated one by one—for example Finder, chat, tasks, meetings, and other collaboration modules. No Team reconstruction, Finder extraction, or Window Manager extraction begins in this plan.
+Window Manager and Finder now have the explicit Phase 4.7–4.9 contracts in the
+canonical roadmap. Other Team capabilities such as chat, tasks, meetings and
+collaboration workflows remain later compatibility/migration work and do not
+enter those generic system-module boundaries.
 
 ## 12. Compatibility policy
 
@@ -243,8 +254,8 @@ All items remain `INVESTIGATE` until code or runtime evidence resolves them.
 4. Can the existing `bootstrap.plugin` resolver operate from a runtime-owned installed-plugin root without any Team endpoint/layout assumption?
 5. Which parts of `Acl.run` are generic dispatch, and which are hidden Team-specific policy beyond the already identified secure-share/over-limit branches?
 6. What compatibility/version relationship is required between the frontend `index.json` entry, backend ACL descriptor and their independently built artifacts?
-7. What is the minimal MFS semantic/storage/ACL surface marketing actually requires after `hello`?
-8. When MFS is introduced, do Finder and Window Manager remain modules or does a proven resource-host primitive belong in the frontend kernel?
+7. Which additional MFS semantic/storage/ACL needs are demonstrated by real Finder usage?
+8. Which Window Manager and Finder contracts become stable only after Phase 4.9 real-use validation?
 9. Which selected Team contracts deserve later compatibility tests, and which Team behaviors are deliberately outside the new kernel?
 10. What minimum deterministic inputs and container-root mapping let the pinned `setup-infra` generator render the selected Nginx contract without touching host paths or requiring unrelated DNS/mail/Jitsi setup?
 11. Which exact generated Nginx files/includes are sufficient for the Phase 2 service and plugin/static checks, and which versioned route details must remain selected compatibility contracts rather than become kernel API?

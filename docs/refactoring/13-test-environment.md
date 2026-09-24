@@ -29,7 +29,11 @@ Phase 1 compatibility harness + sources/debian/tests/e2e-local.sh
 
 `sources/debian` remains the deployment implementation. The wrapper supplies paths and isolated configuration; it does not duplicate Dockerfiles or patch the renderer/Compose model. Like the authoritative E2E, the persistent stack omits Caddy to avoid ports 80/443 and publishes the server's UI and REST listeners directly on configurable loopback-only ports.
 
-The scope is deliberately the immutable Team baseline. Future `server-runtime` / `ui-runtime`, `hello` and `marketing` tests must use their own target artifacts and focused kernel contracts; this wrapper remains useful when a later decision selects a Team, deployment or provisioning behavior for regression comparison.
+The scope is deliberately the immutable Team baseline. `server-runtime`,
+`ui-runtime`, `hello`, Window Manager and Finder tests must use their own
+artifacts and focused kernel contracts. Future Oxymot/Marketing tests belong to
+that separate project. This wrapper remains useful when a later decision
+selects a Team, deployment or provisioning behavior for regression comparison.
 
 ## Authoritative path validation
 
