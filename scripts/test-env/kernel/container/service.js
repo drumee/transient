@@ -1,6 +1,8 @@
 const http = require("http");
+const fs = require("fs");
 const {
   DescriptorRegistry,
+  CapabilityResolver,
   DomainAuthorizer,
   FrontendPluginResolver,
   PushBus,
@@ -18,6 +20,11 @@ const { RedisStore } = require("/opt/kernel/server-essentials/lib");
 const registry = new DescriptorRegistry({ permissionValue });
 registry.registerDirectory("/opt/kernel/server-runtime/acl");
 registry.registerDirectory("/opt/kernel/hello/server/acl");
+registry.registerDescriptor("mfs-proof", {
+  requires: ["system-mfs"],
+  modules: { public: "mfs-proof-worker" },
+  services: { probe: { permission: { src: "anonymous", fast_check: "public-api" } } }
+}, { workdir: __dirname });
 registry.registerDescriptor("kernel", {
   services: {
     status: {
@@ -33,6 +40,16 @@ const pluginResolver = new FrontendPluginResolver({
 });
 const yellowPage = new Mariadb({ name: process.env.KERNEL_DB_NAME || "yp", user: process.env.KERNEL_DB_USER, limit: 1, throwOnError: true });
 const yellowPageStore = new YellowPageStore({ database: yellowPage });
+let mfsApi;
+let mfsStore;
+function resolveMfsStore() {
+  if (!fs.existsSync("/opt/kernel/system-mfs/lib/index.js")) return null;
+  if (!mfsStore) {
+    mfsApi = require("/opt/kernel/system-mfs/lib");
+    mfsStore = new mfsApi.SqlMfsStore({ database: yellowPage });
+  }
+  return mfsStore;
+}
 const sessionManager = new SessionManager({ store: yellowPageStore });
 const authorize = createAuthorizer({ domainAuthorizer: new DomainAuthorizer({ store: yellowPageStore }) });
 global.endpointAddress = process.env.KERNEL_PUSH_ENDPOINT || "kernel-runtime:23000";
@@ -41,7 +58,18 @@ const websocketAllowedOrigins = (process.env.KERNEL_WEBSOCKET_ALLOWED_ORIGINS ||
   .split(",")
   .map((origin) => origin.trim())
   .filter(Boolean);
-const dispatcher = new ServiceDispatcher({ registry, authorize, workerOptions: { pluginResolver, push } });
+const capabilityResolver = new CapabilityResolver({
+  providers: {
+    "system-mfs": ({ input = {} }) => {
+      const store = resolveMfsStore();
+      if (!store) return { available: false, status: "not-installed" };
+      return mfsApi.capabilityAvailable({
+        store, context: { organisationId: Number(input.organisationId || 1), principalId: input.principalId }
+      });
+    }
+  }
+});
+const dispatcher = new ServiceDispatcher({ registry, authorize, capabilityResolver, workerOptions: { pluginResolver, push, resolveMfsStore } });
 const server = createServiceServer({
   dispatcher,
   sessionFactory: (request) => sessionManager.fromRequest(request),

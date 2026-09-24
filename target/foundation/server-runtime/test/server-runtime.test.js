@@ -6,6 +6,7 @@ const test = require("node:test");
 
 const {
   DescriptorRegistry,
+  CapabilityResolver,
   FrontendPluginResolver,
   RuntimeError,
   ServiceDispatcher,
@@ -77,6 +78,66 @@ test("lazy worker loading caches the class and dispatches without Team policy", 
   for (const file of ["../lib/dispatcher.js", "../lib/descriptor-registry.js"]) {
     assert.doesNotMatch(fs.readFileSync(path.join(__dirname, file), "utf8"), /secure-share|over-limit|billing/i);
   }
+});
+
+test("declared capabilities fail before worker loading and pass when context is available", async () => {
+  const value = new DescriptorRegistry({ permissionValue });
+  value.registerDescriptor("dependent", {
+    requires: ["system-mfs"],
+    modules: { public: "../workers/public-worker" },
+    services: { status: { method: "public_status", permission: { src: "anonymous", fast_check: "public-api" } } }
+  }, { workdir: fixture("acl") });
+  const session = { isAnonymous: () => true, uid: "principal-1" };
+  const unavailable = new ServiceDispatcher({ registry: value });
+  await assert.rejects(
+    () => unavailable.dispatch({ service: "dependent.status", session, input: {} }),
+    (error) => error.code === "CAPABILITY_UNAVAILABLE" && error.details.capability === "system-mfs"
+  );
+  assert.equal(unavailable.workers.size, 0);
+
+  let received;
+  const capabilityResolver = new CapabilityResolver({
+    providers: {
+      "system-mfs": async (context) => {
+        received = context;
+        return { available: context.session.uid === "principal-1", status: "provisioned" };
+      }
+    }
+  });
+  const available = new ServiceDispatcher({ registry: value, capabilityResolver });
+  const result = await available.dispatch({ service: "dependent.status", session, input: { sequence: "capability" } });
+  assert.equal(result.input.sequence, "capability");
+  assert.equal(received.service, "dependent.status");
+});
+
+test("descriptor capability declarations are flat, named and deduplicated", () => {
+  const value = new DescriptorRegistry({ permissionValue });
+  const descriptor = value.registerDescriptor("dependent", {
+    requires: ["system-mfs", "system-mfs"],
+    modules: { public: "../workers/public-worker" },
+    services: { status: { method: "public_status", permission: { src: "anonymous", fast_check: "public-api" } } }
+  }, { workdir: fixture("acl") });
+  assert.deepEqual(descriptor.requires, ["system-mfs"]);
+  assert.throws(() => value.registerDescriptor("bad", {
+    requires: "system-mfs", modules: {}, services: {}
+  }), (error) => error.code === "INVALID_DESCRIPTOR");
+});
+
+test("capability availability is not disclosed before authorization succeeds", async () => {
+  const value = new DescriptorRegistry({ permissionValue });
+  value.registerDescriptor("dependent", {
+    requires: ["system-mfs"],
+    modules: { public: "../workers/public-worker" },
+    services: { status: { method: "public_status", permission: { src: "read" } } }
+  }, { workdir: fixture("acl") });
+  let checked = false;
+  const dispatcher = new ServiceDispatcher({
+    registry: value,
+    authorize: async () => ({ granted: false }),
+    capabilityResolver: new CapabilityResolver({ providers: { "system-mfs": async () => { checked = true; return false; } } })
+  });
+  await assert.rejects(() => dispatcher.dispatch({ service: "dependent.status", session: { isAnonymous: () => true }, input: {} }), (error) => error.code === "PERMISSION_DENIED");
+  assert.equal(checked, false);
 });
 
 test("private resolution is selected for a non-anonymous session", async () => {

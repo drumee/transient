@@ -8,9 +8,9 @@ Current:
     Phase 4.5 CLOSED
     R0 CLOSED
     R1 CLOSED
-    Phase 4.6 IN PROGRESS
+    Phase 4.6 CLOSED
     Phase 4.6A platform bootstrap IMPLEMENTED / VALIDATED
-    Phase 4.6B system-mfs REMAINING / NOT AUTHORIZED
+    Phase 4.6B system-mfs IMPLEMENTED / VALIDATED
 
 Local repositories:
     transient      ~/github/transient
@@ -34,8 +34,7 @@ Architecture:
     Marketing = first business application
 
 Next:
-    review Phase 4.6A
-    explicit authorization before Phase 4.6B system-mfs
+    explicit authorization for Phase 5 Marketing
 ```
 
 R0 validation:
@@ -88,5 +87,5 @@ to have `latest` metadata; because each runtime has only one published version,
 was rejected by the registry with HTTP 400. R1 accepts this registry constraint
 rather than publishing an artificial stable version solely to move the alias.
 
-R1 is closed. Phase 4.6 is next but remains unauthorized until explicitly
-requested.
+R1 and Phase 4.6 are closed. Phase 5 Marketing requires explicit
+authorization.

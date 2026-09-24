@@ -1,10 +1,10 @@
 # Phase 4.6 — platform bootstrap contract and system-mfs
 
-Phase 4.6 is in progress after the closed Phase 4.5 exportability lock.
+Phase 4.6 is closed and validated after the closed Phase 4.5 exportability lock.
 
 ```text
 4.6A platform bootstrap implemented and validated
-4.6B system-mfs remaining and not authorized
+4.6B system-mfs implemented and validated
 ```
 
 Phase 4.6A adds no MFS code, MFS schema, package publication or application.
@@ -152,15 +152,132 @@ and the database contains no MFS tables, user databases, Hub/DMZ/role tables,
 `mfs_init_folders` or `desk_create_hub`. Static checks also reject provisioning
 in the runtime and MFS/Hub/Team/filesystem calls in the bootstrap.
 
-## Remaining Phase 4.6B boundary
+## Phase 4.6B module contract
+
+Phase 4.6B uses a private transitional CommonJS module at
+`target/modules/system-mfs/`. The control plane remains the lifecycle owner:
+installing the module creates only module-owned schema, while provisioning is
+an explicit request for one organisation/principal context.
+
+The public lifecycle operations are deliberately separate:
+
+```text
+install()                       mutating, module schema only
+validateInstallation()         read-only installation inspection
+provision({ organisationId,
+            principalId })     mutating, explicit and idempotent
+validateProvisioning(context)  read-only context inspection
+capabilityAvailable(context)   deterministic installed/provisioned answer
+```
+
+Installation never enumerates or provisions Drumates. Provisioning requires an
+existing, unambiguous principal in the requested organisation and never creates
+or repairs a platform identity. Validation never installs schema, repairs a
+namespace or creates filesystem state.
+
+The authoritative capability state is the module-owned
+`system_mfs_provisioning` registry in the Yellow Page database. It records the
+organisation, principal, per-context database, stable root identifier, schema
+version and lifecycle status. Its state is cross-checked against the actual
+context database, tables, routines, root row and owner permission. Therefore
+`entity.db_name`, `entity.home_dir` and `entity.home_id` are never capability
+signals. The Phase 4.6A placeholder values remain unchanged; the MFS database
+locator lives in the MFS registry.
+
+The deterministic states are:
+
+```text
+not-installed        module installation marker/schema absent
+installed            module installed, context has no registry or database
+provisioning          incomplete mutation; not capability-available
+provisioned           registry and complete namespace agree
+partial               registry/database/object state is incomplete
+conflicting           identity, locator, version or root state disagrees
+```
+
+Provisioning writes `provisioned` only after the context namespace validates.
+An interrupted or failed operation remains explicitly non-ready and is not
+silently repaired or destructively rebuilt. Repeating a valid provisioning
+request is a no-op and preserves the database and node identifiers.
+When a runtime database account is configured on the provisioning adapter, the
+module grants that account only context-database DML and routine execution;
+this access grant is part of provisioning, not runtime startup.
+
+## Historical MFS dependency closure and selected slice
+
+The historical factory path creates a database per Drumate, loads the large
+Drumate factory template, initializes MFS folders, creates filesystem paths and
+then often creates Hubs. That full path is not the MFS core. The selected slice
+retains the historical per-principal database and `media`/`permission` namespace
+model, root ownership, `mfs_init_folders`, `mfs_make_dir`, node resolution and
+child listing. The procedures are reduced only where the current historical
+versions have acquired dependencies outside this slice.
+
+| Historical object/path | Direct and transitive dependencies | Classification | Phase 4.6B decision |
+|---|---|---|---|
+| `common/tables/media.sql` | Node identity, parent/path hierarchy and metadata | `SYSTEM_MFS_CORE` | Extract the compatible table shape needed by folders and listing. |
+| `common/tables/permission.sql`, owner grant | Principal and root/node permission | `SYSTEM_MFS_CORE` | Extract root ownership only; sharing policy is excluded. |
+| `mfs_make_dir` | `media`, path normalization, `yp.uniqueId()` and node attributes | `SYSTEM_MFS_CORE`; `uniqueId()` is `RUNTIME_INTRINSIC` | Extract with the same path/idempotency semantics and a module-local node result. |
+| `mfs_init_folders` | Root lookup and `mfs_make_dir` | `SYSTEM_MFS_CORE` | Extract; no default principal is provisioned automatically. |
+| `mfs_show_node_by` | `media`; current version also reaches `yp.entity`, Hub/vhost, DMZ, `user_permission`, `user_expiry`, `mfs_changelog` and `mfs_ack` | Core listing plus `HUB_CAPABILITY`, `TEAM_COMPATIBILITY`, and `OPTIONAL` notification state | Extract only direct-child MFS listing semantics. Exclude Hub/DMZ/new-file decoration. |
+| `mfs_changelog`, `mfs_ack` | Global event stream, per-user read cursor and current listing decoration | `OPTIONAL` | Excluded from the minimal namespace. |
+| `mfs_trash_init` | Root mutation and hidden trash folder through `mfs_make_dir` | `OPTIONAL` | Excluded; trash is not needed for root/create/resolve/list proof. |
+| `Drumate.initFolders()` | Per-user database plus `mfs_init_folders` | `SYSTEM_MFS_CORE` orchestration | Replaced by explicit module provisioning, not identity bootstrap. |
+| `drumate_create`, factory database creation | Factory pool, entity/vhost mutation, large Drumate template, MFS, chat, acknowledgement and filesystem paths | Mixed `PLATFORM_BOOTSTRAP`, `SYSTEM_MFS_CORE`, `TEAM_COMPATIBILITY`, `LEGACY` | Not reused. Platform identity already exists; the module creates only its context database. |
+| `Drumate.createHub()` / `desk_create_hub` | Hub entity/database, vhost, Hub membership, storage and permission policy | `HUB_CAPABILITY` | Excluded completely. |
+| Physical storage-root creation | Configured production MFS root and host filesystem | `OPTIONAL` for the folder-only slice | Excluded. Folder nodes in this slice require no physical payload directory. |
+| Finder/media service layer | HTTP operations, UI behavior and broad media workflows | `FINDER` | Excluded. |
+| Team rooms, DMZ, chat, conference and tasks | Distribution policy and collaboration schemas | `TEAM_COMPATIBILITY` | Excluded. |
+
+This is an intentional compatibility cut, not a new filesystem design: the
+vertical proof executes extracted SQL against a real MariaDB namespace using
+the historical root → folder → resolve/list model.
+
+## Capability dependency contract
+
+Backend descriptors may declare a flat `requires` array. The runtime checks
+those names through an injected capability resolver after service authorization
+and before worker loading. It does not know how MFS is installed and
+never installs or provisions a capability. Missing installation and missing
+context provisioning fail with a deterministic `CAPABILITY_UNAVAILABLE` error
+that names `system-mfs`. No version solving, recursive installation or package
+management is introduced.
+
+## Validated Phase 4.6B boundary
 
 `system-mfs` is a system/kernel module, not intrinsic runtime. It may require
 organisation `1`, nobody, guest and system as preconditions, but must not create
-them. The kernel remains independently bootable without MFS. A future declared
-MFS dependency must fail deterministically when unavailable; its contract is
-deferred to the explicitly authorized Phase 4.6B implementation.
+them. The kernel remains independently bootable without MFS. A declared MFS
+dependency fails deterministically when unavailable through the contract above.
 
 Phase 4.6A adds no MFS, Hub/resource ACL, storage, Finder, Window Manager,
 Marketing, generic provisioning engine, module lifecycle framework, npm
-publication, ESM migration, Team migration or deployment packaging. Phase 4.6B
-must not start without explicit authorization.
+publication, ESM migration, Team migration or deployment packaging.
+
+## Integration evidence and closure
+
+The disposable Phase 4.6B test performs the complete lifecycle:
+
+```text
+runtime schemas + Phase 4.6A bootstrap
+→ kernel boot and anonymous bootstrap.authn with canonical nobody
+→ no system-mfs tables or context databases
+→ MFS-dependent descriptor fails with CAPABILITY_UNAVAILABLE
+→ module-relative installation, repeated without mutation
+→ explicit provisioning of the selected system test principal
+→ stable root ownership and unchanged identity placeholders
+→ mfs_make_dir + mfs_node_attr + mfs_show_node_by
+→ the same dependent service succeeds
+→ runtime restart
+→ persisted capability validation and no-op repeated provisioning
+```
+
+Focused tests also cover read-only validation, partial and conflicting states,
+failed provisioning, stable identifiers, manifest isolation and forbidden
+dependency absence. Phase 4, Phase 4.4, Phase 4.5 and Phase 4.6A integration
+regressions pass. The standalone `server-runtime` repository and npm release
+were not modified; extraction of the generic capability resolver belongs to a
+later runtime release milestone.
+
+Phase 4.6 is therefore `CLOSED / VALIDATED`. The next work is Phase 5 Marketing
+only after explicit authorization.

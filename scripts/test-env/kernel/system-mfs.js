@@ -1,0 +1,77 @@
+#!/usr/bin/env node
+"use strict";
+
+const childProcess = require("child_process");
+const path = require("path");
+const { MfsNamespace, SqlMfsStore, install, provision, validateInstallation, validateProvisioning } = require(path.resolve(__dirname, "../../../target/modules/system-mfs/lib"));
+
+const container = process.env.KERNEL_DB_CONTAINER || "transient-kernel-phase4-db";
+const databaseName = process.env.KERNEL_DB_NAME || "yp";
+const password = process.env.KERNEL_DB_ROOT_PASSWORD || "phase4-disposable-root";
+
+function literal(value) {
+  if (value === null || value === undefined) return "NULL";
+  if (typeof value === "number") return String(value);
+  return `'${String(value).replaceAll("\\", "\\\\").replaceAll("'", "''")}'`;
+}
+
+function bind(sql, parameters) {
+  let index = 0;
+  const bound = sql.replace(/\?/g, () => literal(parameters[index++]));
+  if (index !== parameters.length) throw new Error("SQL parameter count does not match placeholders");
+  return bound;
+}
+
+function parse(output) {
+  const lines = output.trim().split("\n").filter(Boolean);
+  if (lines.length < 2) return [];
+  const headers = lines[0].split("\t");
+  return lines.slice(1).filter((line) => line.split("\t").length === headers.length).map((line) => Object.fromEntries(
+    line.split("\t").map((value, index) => [headers[index], value === "NULL" ? null : value])
+  ));
+}
+
+const database = {
+  runtimeUser: process.env.KERNEL_DB_USER || "kernel_phase4",
+  async query(sql, ...parameters) {
+    const result = childProcess.spawnSync("docker", [
+      "exec", "-e", `MYSQL_PWD=${password}`, container,
+      "mariadb", "--protocol=tcp", "--host=127.0.0.1", "--user=root", "--batch", "--raw", databaseName,
+      "--execute", bind(sql, parameters)
+    ], { encoding: "utf8" });
+    if (result.status !== 0) throw new Error(`${result.stdout}\n${result.stderr}`.trim());
+    return parse(result.stdout);
+  },
+  async executeScript(script, { database: selected = databaseName } = {}) {
+    const result = childProcess.spawnSync("docker", [
+      "exec", "-i", "-e", `MYSQL_PWD=${password}`, container,
+      "mariadb", "--protocol=tcp", "--host=127.0.0.1", "--user=root", "--batch", "--raw", selected
+    ], { encoding: "utf8", input: script });
+    if (result.status !== 0) throw new Error(`${result.stdout}\n${result.stderr}`.trim());
+  }
+};
+
+async function main() {
+  const operation = process.argv[2] || "validate-installation";
+  const principalId = process.argv[3];
+  const context = principalId ? { organisationId: Number(process.argv[4] || 1), principalId } : undefined;
+  const store = new SqlMfsStore({ database });
+  let report;
+  if (operation === "install") report = await install({ store });
+  else if (operation === "validate-installation") report = await validateInstallation({ store });
+  else if (operation === "provision") report = await provision({ store, context });
+  else if (operation === "validate") report = await validateProvisioning({ store, context });
+  else if (operation === "exercise") {
+    const ready = await validateProvisioning({ store, context });
+    if (!ready.valid) throw new Error(`MFS context is not ready: ${ready.status}`);
+    const mfs = new MfsNamespace({ store, context });
+    const created = await mfs.makeDirectory(ready.rootId, process.argv[5] || "Phase46B");
+    report = { ready, created, resolved: await mfs.resolveNode(created.nid), children: await mfs.listChildren(ready.rootId) };
+  } else throw new Error(`Unknown system-mfs operation: ${operation}`);
+  process.stdout.write(`${JSON.stringify(report)}\n`);
+}
+
+main().catch((error) => {
+  process.stderr.write(`${error.stack || error.message}\n`);
+  process.exitCode = 1;
+});

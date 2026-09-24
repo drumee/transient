@@ -28,3 +28,15 @@ organisation-provisioning responsibility.
 
 The package name and boundary are still transitional and are not a public API
 or publication commitment.
+
+## Phase 4.6B transitional capability seam
+
+ACL descriptors may declare a flat `requires` array. `ServiceDispatcher`
+checks those names through an injected `CapabilityResolver` after authorization
+and before worker loading. The resolver has no MFS knowledge and never
+installs or provisions modules. An absent or context-unavailable requirement
+fails deterministically with `CAPABILITY_UNAVAILABLE`.
+
+This smallest generic runtime change is validated only in `transient`. It must
+be extracted and released through a later standalone `server-runtime`
+milestone; Phase 4.6B does not modify or publish that repository.

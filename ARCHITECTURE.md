@@ -29,6 +29,15 @@ and [`21-phase4.6-system-mfs.md`](docs/refactoring/21-phase4.6-system-mfs.md).
 - Marketing is the first business application and consumes MFS.
 - R0 extracts repositories; R1 owns the first npm release. Neither introduces a
   feature phase.
-- Phase 4.6 is in progress: 4.6A is implemented and validated; 4.6B
-  `system-mfs` remains unimplemented and requires explicit authorization.
+- Phase 4.6 is closed and validated: 4.6A owns platform bootstrap, while 4.6B
+  provides the independently installed and explicitly provisioned
+  `system-mfs` module. Kernel boot and authentication remain MFS-independent.
+- Backend descriptors may declare flat capability names. Runtime checks them
+  through an injected, application-neutral resolver and never installs or
+  provisions a capability. The transitional runtime change must be extracted
+  into a later `server-runtime` release milestone; no standalone repository or
+  npm package was changed in Phase 4.6B.
+- MFS readiness is recorded in module-owned lifecycle state and validated
+  against its context database. `entity.db_name`, `entity.home_dir` and
+  `entity.home_id` are not capability signals.
 - No later milestone or phase starts without explicit authorization.

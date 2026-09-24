@@ -1,4 +1,5 @@
 const { DescriptorRegistry, parseService } = require("./descriptor-registry");
+const { CapabilityResolver } = require("./capability-resolver");
 const { ServiceDispatcher } = require("./dispatcher");
 const { FrontendPluginResolver } = require("./plugin-resolver");
 const { corsHeaders, createServiceServer } = require("./http");
@@ -13,6 +14,7 @@ const { WebSocketPushRouter, createPushServer } = require("./websocket-router");
 
 module.exports = {
   DescriptorRegistry,
+  CapabilityResolver,
   DomainAuthorizer,
   FrontendPluginResolver,
   KernelSession,
