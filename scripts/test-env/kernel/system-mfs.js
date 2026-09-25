@@ -3,7 +3,8 @@
 
 const child_process = require("child_process");
 const path = require("path");
-const { MfsNamespace, SqlMfsStore, install, provision, validateInstallation, validateProvisioning } = require(path.resolve(__dirname, "../../../target/modules/system-mfs/lib"));
+const module_root = process.env.KERNEL_SYSTEM_MFS_ROOT || path.resolve(__dirname, "../../../../system-mfs");
+const { MfsNamespace, SqlMfsStore, install, provision, validateInstallation, validateProvisioning } = require(path.join(module_root, "lib"));
 
 const container = process.env.KERNEL_DB_CONTAINER || "transient-kernel-phase4-db";
 const database_name = process.env.KERNEL_DB_NAME || "yp";

@@ -7,6 +7,7 @@ const path = require("path");
 const test = require("node:test");
 
 const root = path.resolve(__dirname, "../../..");
+const module_root = process.env.KERNEL_SYSTEM_MFS_ROOT || path.resolve(root, "../system-mfs");
 const base_url = `http://127.0.0.1:${process.env.KERNEL_HTTP_PORT || "28642"}`;
 const container = process.env.KERNEL_CONTAINER || "transient-kernel-phase2";
 const database = process.env.KERNEL_DB_CONTAINER || "transient-kernel-phase4-db";
@@ -31,6 +32,15 @@ function mfs(operation, principal_id) {
   const result = run("node", args);
   assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
   return JSON.parse(result.stdout);
+}
+
+function installModule() {
+  const create_root = run("docker", ["exec", "--user", "root", container, "mkdir", "-p", "/opt/kernel/system-mfs"]);
+  assert.equal(create_root.status, 0, create_root.stderr);
+  for (const entry of ["lib", "schemas", "package.json"]) {
+    const copy_entry = run("docker", ["cp", path.join(module_root, entry), `${container}:/opt/kernel/system-mfs/${entry}`]);
+    assert.equal(copy_entry.status, 0, copy_entry.stderr);
+  }
 }
 
 async function post(service, body) {
@@ -64,8 +74,7 @@ test("Phase 4.6B keeps kernel boot independent and adds explicit real MFS capabi
     assert.equal(absent.response.status, 500);
     assert.equal(absent.payload.code, "CAPABILITY_UNAVAILABLE");
 
-    const copy_module = run("docker", ["cp", `${path.join(root, "target/modules/system-mfs")}/.`, `${container}:/opt/kernel/system-mfs`]);
-    assert.equal(copy_module.status, 0, copy_module.stderr);
+    installModule();
     assert.equal(mfs("validate-installation").status, "not-installed");
     assert.equal(mfs("install").changed, true);
     assert.equal(mfs("install").changed, false);
@@ -106,7 +115,7 @@ test("Phase 4.6B keeps kernel boot independent and adds explicit real MFS capabi
 });
 
 test("system-mfs stays module-relative and excludes forbidden ownership", () => {
-  const module_root = path.join(root, "target/modules/system-mfs");
+  assert.equal(require(path.join(module_root, "package.json")).name, "@drumee/system-mfs");
   const files = [];
   function visit(directory) {
     for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
@@ -115,7 +124,7 @@ test("system-mfs stays module-relative and excludes forbidden ownership", () => 
       else files.push(filename);
     }
   }
-  for (const directory of ["lib", "server", "schemas"]) visit(path.join(module_root, directory));
+  for (const directory of ["lib", "schemas"]) visit(path.join(module_root, directory));
   const implementation = files.map((filename) => fs.readFileSync(filename, "utf8")).join("\n");
   assert.doesNotMatch(implementation, /require\([^)]*sources\/|NODE_PATH|server-team|ui-team|desk_create_hub|createHub|\/data\/mfs/i);
 });

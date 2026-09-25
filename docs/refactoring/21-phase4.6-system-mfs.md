@@ -281,6 +281,7 @@ were not modified; extraction of the generic capability resolver belongs to a
 later runtime release milestone.
 
 Phase 4.6 is therefore `CLOSED / VALIDATED`. The former Phase 5 Marketing plan
-is superseded by [`23-kernel-roadmap.md`](23-kernel-roadmap.md). The next
-milestone is R2 standalone `system-mfs` extraction. Phase 4.7 remains
-unauthorized.
+is superseded by [`23-kernel-roadmap.md`](23-kernel-roadmap.md). R2 later
+completed the standalone `system-mfs` extraction, as recorded in
+[`24-r2-system-mfs-extraction.md`](24-r2-system-mfs-extraction.md). Phase 4.7
+is next but remains unauthorized.

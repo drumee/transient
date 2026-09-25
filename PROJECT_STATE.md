@@ -14,7 +14,7 @@ Current:
     Phase 4.6 CLOSED / VALIDATED
     Phase 4.6A platform bootstrap IMPLEMENTED / VALIDATED
     Phase 4.6B system-mfs IMPLEMENTED / VALIDATED
-    R2 standalone system-mfs extraction CURRENT
+    R2 standalone system-mfs extraction CLOSED / VALIDATED
 
 Planned:
     Phase 4.7 Window Manager NEXT / NOT AUTHORIZED
@@ -50,7 +50,7 @@ Architecture:
     Marketing = externalized to the future Oxymot project
 
 Next:
-    complete R2 standalone system-mfs extraction
+    Phase 4.7 Window Manager — NOT AUTHORIZED
     do not begin Phase 4.7 without explicit authorization
 ```
 
@@ -103,3 +103,18 @@ The generic capability resolver validated in Phase 4.6B exists only in the
 transitional runtime today. A later runtime extraction/release milestone must
 synchronize it into standalone `server-runtime`; this packaging debt does not
 block R2.
+
+R2 validation:
+
+```text
+repository:       ~/github/system-mfs
+package:          @drumee/system-mfs@0.1.0-alpha.1
+source boundary:  transient@078e71378a52acd06478d9df556a7cd5b4d6a223
+standalone commit: cd87db7085bc8dd40614af7fa37cdd1a76ffc5a0
+publication:      not performed
+authority:        standalone repository
+integration copy: target/modules/system-mfs (verified synchronized fixture)
+```
+
+The extraction and validation evidence is recorded in
+[`docs/refactoring/24-r2-system-mfs-extraction.md`](docs/refactoring/24-r2-system-mfs-extraction.md).

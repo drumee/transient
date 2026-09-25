@@ -8,7 +8,9 @@ remain under `docs/refactoring/`, especially
 [`22-r1-runtime-release.md`](docs/refactoring/22-r1-runtime-release.md),
 [`21-phase4.6-system-mfs.md`](docs/refactoring/21-phase4.6-system-mfs.md), and
 the authoritative post-Phase 4.6 roadmap in
-[`23-kernel-roadmap.md`](docs/refactoring/23-kernel-roadmap.md).
+[`23-kernel-roadmap.md`](docs/refactoring/23-kernel-roadmap.md). R2 extraction
+evidence is in
+[`24-r2-system-mfs-extraction.md`](docs/refactoring/24-r2-system-mfs-extraction.md).
 
 - `sources/**` is immutable imported evidence.
 - Runtime packages remain CommonJS; the browser architecture has no SSR.
@@ -47,8 +49,9 @@ the authoritative post-Phase 4.6 roadmap in
 - MFS readiness is recorded in module-owned lifecycle state and validated
   against its context database. `entity.db_name`, `entity.home_dir` and
   `entity.home_id` are not capability signals.
-- R2 extracts the validated Phase 4.6B `system-mfs` boundary as standalone
+- R2 extracted the validated Phase 4.6B `system-mfs` boundary as standalone
   `@drumee/system-mfs`; it adds no MFS feature.
-- After R2 the standalone repository is authoritative. A transitional copy may
-  remain only as an explicitly synchronized integration fixture.
+- The standalone `drumee/system-mfs` repository is authoritative. The
+  transitional copy remains only as an explicitly synchronized integration
+  fixture, checked by `scripts/check-system-mfs-sync.js`.
 - No later milestone or phase starts without explicit authorization.

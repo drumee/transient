@@ -44,8 +44,8 @@ R1          first npm runtime release                            CLOSED
 Phase 4.6   platform bootstrap contract + system-mfs             CLOSED
             4.6A platform bootstrap                              IMPLEMENTED / VALIDATED
             4.6B system-mfs                                      IMPLEMENTED / VALIDATED
-R2          standalone system-mfs extraction                      CURRENT
-Phase 4.7   Window Manager UI capability + standalone extraction AFTER R2 / NOT AUTHORIZED
+R2          standalone system-mfs extraction                      CLOSED / VALIDATED
+Phase 4.7   Window Manager UI capability + standalone extraction NEXT / NOT AUTHORIZED
 Phase 4.8   Finder implementation and integration                 PLANNED
 Phase 4.9   Finder real-use stabilization + standalone extraction PLANNED
 Oxymot      separate future Marketing/business project

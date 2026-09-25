@@ -26,6 +26,7 @@ Phase 4.6
 
 R2
     standalone system-mfs extraction
+    CLOSED / VALIDATED
 
 Phase 4.7
     Window Manager UI capability
@@ -54,7 +55,7 @@ Repository and release milestones do not renumber feature phases. No phase
 starts merely because its predecessor closes; explicit authorization remains
 required.
 
-## R2 — standalone system-mfs extraction
+## R2 — standalone system-mfs extraction (closed / validated)
 
 R2 extracts the validated Phase 4.6B implementation without adding MFS
 features. The standalone repository/package owns its code, schemas, schema
@@ -71,6 +72,8 @@ The generic capability resolver introduced in the transitional runtime during
 Phase 4.6B remains validated packaging debt. A later runtime extraction/release
 milestone must synchronize it into the standalone `server-runtime` repository.
 R2 neither redesigns that seam nor modifies the standalone runtime repository.
+The completed extraction and isolation evidence is recorded in
+[`24-r2-system-mfs-extraction.md`](24-r2-system-mfs-extraction.md).
 
 ## Phase 4.7 — Window Manager
 
