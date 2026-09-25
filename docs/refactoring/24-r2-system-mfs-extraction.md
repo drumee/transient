@@ -1,6 +1,6 @@
 # R2 — standalone system-mfs extraction
 
-Status: **CLOSED / VALIDATED**
+Status: **CLOSED / VALIDATED / PUBLISHED**
 
 R2 extracted the validated Phase 4.6B module without adding MFS behavior. The
 source boundary was `target/modules/system-mfs/` at transient commit
@@ -79,9 +79,12 @@ The packed artifact is installed in an isolated temporary directory with
 is `8c107a79dfebcf22dc03fd20c778321fa398a112`; its integrity is
 `sha512-5mwDVkeqMG773h99b+9xPHe7S+zFTAFcK+NWKaruBZpPWpowi+kSpq0nplV0uMfO5BNYXkX+GojG1pZyoPsojw==`.
 
-Publication was not authorized and was not performed. The repository is
-release-ready for an explicit `npm publish --tag next --access public` from its
-clean `main` branch after publication authorization.
+The package was published at `2026-09-25T06:56:33.907Z` from standalone commit
+`cd87db7085bc8dd40614af7fa37cdd1a76ffc5a0` with
+`npm publish --tag next --access public`. Registry metadata resolves both
+`next` and npm's mandatory first-version `latest` tag to `0.1.0-alpha.1`. A
+clean isolated registry installation exposed the expected eight public API
+symbols and required no transient or sibling checkout.
 
 The closing transient regression run passed:
 

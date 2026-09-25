@@ -14,7 +14,7 @@ Current:
     Phase 4.6 CLOSED / VALIDATED
     Phase 4.6A platform bootstrap IMPLEMENTED / VALIDATED
     Phase 4.6B system-mfs IMPLEMENTED / VALIDATED
-    R2 standalone system-mfs extraction CLOSED / VALIDATED
+    R2 standalone system-mfs extraction CLOSED / VALIDATED / PUBLISHED
 
 Planned:
     Phase 4.7 Window Manager NEXT / NOT AUTHORIZED
@@ -111,10 +111,20 @@ repository:       ~/github/system-mfs
 package:          @drumee/system-mfs@0.1.0-alpha.1
 source boundary:  transient@078e71378a52acd06478d9df556a7cd5b4d6a223
 standalone commit: cd87db7085bc8dd40614af7fa37cdd1a76ffc5a0
-publication:      not performed
+publication:      2026-09-25T06:56:33.907Z (`next`)
 authority:        standalone repository
 integration copy: target/modules/system-mfs (verified synchronized fixture)
 ```
 
 The extraction and validation evidence is recorded in
 [`docs/refactoring/24-r2-system-mfs-extraction.md`](docs/refactoring/24-r2-system-mfs-extraction.md).
+
+Published package evidence:
+
+```text
+@drumee/system-mfs@0.1.0-alpha.1
+next:      0.1.0-alpha.1
+latest:    0.1.0-alpha.1 (mandatory npm metadata for the first version)
+shasum:    8c107a79dfebcf22dc03fd20c778321fa398a112
+integrity: sha512-5mwDVkeqMG773h99b+9xPHe7S+zFTAFcK+NWKaruBZpPWpowi+kSpq0nplV0uMfO5BNYXkX+GojG1pZyoPsojw==
+```
