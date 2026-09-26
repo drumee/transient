@@ -99,7 +99,8 @@ test("Phase 4.7 mounts real LETC windows and physically exercises drag, resize a
   const output_path = fs.mkdtempSync(path.join(os.tmpdir(), "drumee-phase47-"));
   const profile = fs.mkdtempSync(path.join(os.tmpdir(), "drumee-phase47-profile-"));
   const runtime_root = path.join(root, "target/foundation/ui-runtime");
-  const module_root = path.join(root, "target/modules/window-manager");
+  const module_root = process.env.KERNEL_WINDOW_MANAGER_ROOT || path.resolve(root, "../window-manager");
+  assert.equal(fs.existsSync(path.join(module_root, "package.json")), true, `Standalone Window Manager repository not found: ${module_root}`);
   const { createConfig } = require(path.join(root, "target/tooling/ui-build/lib"));
   const config = createConfig({
     root,
@@ -114,21 +115,25 @@ test("Phase 4.7 mounts real LETC windows and physically exercises drag, resize a
     moduleRoots: [path.join(module_root, "node_modules"), path.join(runtime_root, "node_modules"), dependencyRoot()]
   });
   config.resolve = config.resolve || {};
-  config.resolve.alias = { ...(config.resolve.alias || {}), jquery: path.join(runtime_root, "node_modules/jquery") };
+  config.resolve.alias = {
+    ...(config.resolve.alias || {}),
+    jquery: path.join(runtime_root, "node_modules/jquery"),
+    "@drumee/window-manager/browser$": path.join(module_root, "lib/browser.js")
+  };
   await compile(config);
   const metadata = JSON.parse(fs.readFileSync(path.join(output_path, "index.json"), "utf8"));
   fs.writeFileSync(path.join(output_path, "index.html"), `<!doctype html><html><head><meta charset="utf-8"><style>html,body{margin:0;width:100%;height:100%;overflow:hidden}#workspace{width:1000px;height:700px;background:#eef2f7}#token{position:absolute;left:20px;top:640px;width:52px;height:32px;background:#ef4444;z-index:9999}</style></head><body><main id="workspace"></main><div id="token" class="generic-token">token</div><script>window.onerror=(m,s,l,c,e)=>document.body.dataset.error=String(e||m)</script><script src="${metadata.entry}"></script></body></html>`);
   const port = 29570 + Math.floor(Math.random() * 100);
-  const process = child_process.spawn(chrome(), ["--headless=new", "--no-sandbox", "--disable-gpu", "--window-size=1200,800", `--remote-debugging-port=${port}`, `--user-data-dir=${profile}`, "about:blank"], { stdio: ["ignore", "ignore", "pipe"] });
+  const chrome_process = child_process.spawn(chrome(), ["--headless=new", "--no-sandbox", "--disable-gpu", "--window-size=1200,800", `--remote-debugging-port=${port}`, `--user-data-dir=${profile}`, "about:blank"], { stdio: ["ignore", "ignore", "pipe"] });
   let chrome_stderr = "";
-  process.stderr.on("data", (chunk) => { chrome_stderr += chunk; });
+  chrome_process.stderr.on("data", (chunk) => { chrome_stderr += chunk; });
   let protocol;
   try {
     let page;
     try {
       page = await endpoint(port);
     } catch (error) {
-      throw new Error(`${error.message}; Chrome exit=${process.exitCode}; ${chrome_stderr}`);
+      throw new Error(`${error.message}; Chrome exit=${chrome_process.exitCode}; ${chrome_stderr}`);
     }
     protocol = await devtools(page.webSocketDebuggerUrl);
     await protocol.send("Page.enable");
@@ -188,8 +193,8 @@ test("Phase 4.7 mounts real LETC windows and physically exercises drag, resize a
     assert.ok(["window-a", "window-c"].includes(closed.active));
   } finally {
     if (protocol) protocol.close();
-    process.kill("SIGTERM");
-    await Promise.race([events.once(process, "exit"), new Promise((resolve) => setTimeout(resolve, 1500))]);
+    chrome_process.kill("SIGTERM");
+    await Promise.race([events.once(chrome_process, "exit"), new Promise((resolve) => setTimeout(resolve, 1500))]);
     fs.rmSync(output_path, { recursive: true, force: true });
     fs.rmSync(profile, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
   }
