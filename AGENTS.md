@@ -45,8 +45,8 @@ Phase 4.6   platform bootstrap contract + system-mfs             CLOSED
             4.6A platform bootstrap                              IMPLEMENTED / VALIDATED
             4.6B system-mfs                                      IMPLEMENTED / VALIDATED
 R2          standalone system-mfs extraction                      CLOSED / VALIDATED
-Phase 4.7   Window Manager UI capability + standalone extraction NEXT / NOT AUTHORIZED
-Phase 4.8   Finder implementation and integration                 PLANNED
+Phase 4.7   Window Manager UI capability + standalone extraction CLOSED / VALIDATED
+Phase 4.8   Finder implementation and integration                 NEXT / NOT AUTHORIZED
 Phase 4.9   Finder real-use stabilization + standalone extraction PLANNED
 Oxymot      separate future Marketing/business project
 ```
@@ -1255,15 +1255,17 @@ The authoritative roadmap is
 `docs/refactoring/23-kernel-roadmap.md`. The former Phase 5 Marketing and Phase
 6 Marketing-driven stabilization plan is superseded.
 
-R2 extracts standalone `system-mfs`. Phase 4.7 introduces and extracts Window
-Manager as a UI capability that must work without MFS. Phase 4.8 implements and
+R2 extracts standalone `system-mfs`. Phase 4.7 introduced and extracted Window
+Manager as a UI capability that works without MFS. The standalone
+`drumee/window-manager` repository is authoritative; the transitional copy is
+an explicitly synchronized integration fixture. Phase 4.8 implements and
 integrates Finder with Window Manager and `system-mfs`, but does not perform
 the final Finder extraction. Phase 4.9 uses real Finder workflows to stabilize
 the kernel and then extracts Finder as a standalone module/package.
 
 This project owns the kernel, system modules, Window Manager and Finder. A
 future separate Oxymot project owns Marketing and business capabilities.
-Neither Oxymot nor Phase 4.7 is authorized by R2.
+Neither Oxymot nor Phase 4.8 is authorized by Phase 4.7 closure.
 
 ---
 

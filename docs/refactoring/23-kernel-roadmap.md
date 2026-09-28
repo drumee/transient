@@ -31,7 +31,7 @@ R2
 Phase 4.7
     Window Manager UI capability
     independent from system-mfs
-    validate and extract as a standalone module/package
+    CLOSED / VALIDATED / NOT PUBLISHED
 
 Phase 4.8
     Finder / File Manager implementation and integration
@@ -75,7 +75,7 @@ R2 neither redesigns that seam nor modifies the standalone runtime repository.
 The completed extraction and isolation evidence is recorded in
 [`24-r2-system-mfs-extraction.md`](24-r2-system-mfs-extraction.md).
 
-## Phase 4.7 — Window Manager
+## Phase 4.7 — Window Manager (closed / validated)
 
 Window Manager is a generic UI capability, not an MFS capability:
 
@@ -91,12 +91,15 @@ It must support applications such as CRM, analytics, campaign editors,
 settings, dashboards and administration tools without requiring `system-mfs`,
 Finder, Team, Hub or chat.
 
-Phase 4.7 owns extraction from historical UI evidence, the minimum generic
+Phase 4.7 owned extraction from historical UI evidence, the minimum generic
 application/window lifecycle, `ui-runtime` integration, MFS-independent
-validation, standalone extraction and standalone validation. It must close
-with Window Manager available as a standalone module/package.
+validation, standalone extraction and standalone validation. It closed with
+`@drumee/window-manager@0.1.0-alpha.1` validated locally from the standalone
+`~/github/window-manager` repository and intentionally not published.
 
-Phase 4.7 is not authorized by this roadmap update or by R2.
+The standalone checkout is authoritative. The transitional target copy is a
+synchronized integration fixture. Phase 4.8 remains not authorized by Phase
+4.7 closure.
 
 ## Phase 4.8 — Finder implementation and integration
 

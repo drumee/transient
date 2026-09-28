@@ -1,6 +1,6 @@
 # Phase 4.7 — standalone Window Manager UI capability
 
-Status: **IMPLEMENTED / VALIDATION IN PROGRESS**
+Status: **CLOSED / VALIDATED / NOT PUBLISHED**
 
 Phase 4.7 was authorized from transient commit
 `af553f0770a0ce14b5b930bac928f9621bcc81e4`. The pinned historical source is
@@ -160,9 +160,7 @@ real LETC content into the windows and repeats physical browser interaction. No
 backend service or optional system module participates.
 
 Production static checks exclude hidden application, Desk, backend, historical
-source and global-manager dependencies. Standalone extraction, artifact
-isolation, synchronization and complete regression results are recorded below
-when Phase 4.7 validation closes.
+source and global-manager dependencies.
 
 ## Touch support level
 
@@ -173,9 +171,98 @@ patched the mouse widget and was loaded conditionally by Desk; it is not needed
 for the validated desktop contract and is not declared. Phase 4.7 therefore
 does not claim touch drag/resize support.
 
-## Closure evidence
+## Standalone extraction and authority
 
-Pending final standalone repository extraction, artifact-isolation results,
-synchronization result, full regression matrix and final commit identities.
+```text
+repository path:   /home/somanos/github/window-manager
+intended remote:   git@github.com:drumee/window-manager.git
+branch:            main
+package:           @drumee/window-manager@0.1.0-alpha.1
+standalone commit: 60eee8b11a787703801b467c8b83e69f5b2cb508
+publication:       NOT PUBLISHED
+```
+
+The repository was extracted with `git subtree split`, preserving the Phase
+4.7 path history. The standalone checkout is authoritative. Transient consumes
+its browser entry in the integration proof through an explicit Webpack alias;
+`target/modules/window-manager/` remains only a synchronized fixture.
+`scripts/check-window-manager-sync.js` compares full inventories and contents,
+excluding only repository/generated artifacts, and reports 18 synchronized
+files.
+
+Creating the intended GitHub repository was attempted, but the current GitHub
+token lacks `createRepository` permission. The local standalone repository and
+remote configuration are complete; hosting creation/push remains external
+technical debt and does not change package isolation or runtime validation.
+
+## Artifact isolation
+
+`npm pack --json` from the standalone repository produced:
+
+```text
+filename:       drumee-window-manager-0.1.0-alpha.1.tgz
+files:          11
+package size:   7,207 bytes
+unpacked size:  24,247 bytes
+shasum:         c2474f99f9a56eb786301751465c2d961d7ae400
+integrity:      sha512-XPizf3Cmqg4wu2oYedZ19NvyvELNN6ChGLyNy0D8UA7zkr4jOK35GYpI5rEfrL+NrFA9QmYnjPPY3EThDqH+aQ==
+```
+
+The archive contains only `LICENSE`, `README.md`, `PROVENANCE.md`, `package.json`,
+six `lib/*.js` files and `skin/window-manager.css`. Installation in a clean
+temporary directory with empty `NODE_PATH` and no transient/sibling fallback
+loaded all six public exports and resolved the CSS inside the installed
+package. Runtime dependencies are exactly `jquery@3.7.1` and
+`jquery-ui@1.14.2`; `@drumee/ui-runtime` is a documented optional peer because
+the embedding application supplies the READY runtime and canonical jQuery.
+
+The publish command, deliberately not run, is:
+
+```bash
+npm publish --tag next --access public
+```
+
+## Validation results
+
+```text
+standalone window-manager:       4/4
+Phase 4.7 ui-runtime browser:    1/1
+server-runtime package:         32/32
+ui-runtime package:             21/21
+ui-runtime browser:              2/2
+platform-bootstrap package:      7/7
+system-mfs package:               9/9
+hello package:                    6/6
+Phase 3 hello browser:            2/2
+Phase 4 authenticated private:    1/1
+Phase 4.4 WebSocket/push:          1/1
+Phase 4.5 artifact isolation:      1/1
+Phase 4.6A platform bootstrap:     1/1
+Phase 4.6B system-mfs:             2/2
+R2 system-mfs synchronization:   17 files
+Phase 4.7 synchronization:       18 files
+```
+
+The first Phase 4.5 attempt collided with its own disposable database after an
+earlier interrupted parallel invocation. Targeted cleanup showed no remaining
+namespace, and the unchanged test passed serially, including its nested Phase 4
+and Phase 4.4 clean/upgrade artifact runs. A later direct Phase 4.4 invocation
+was user-interrupted; targeted cleanup found no remaining containers, and the
+unchanged direct test then passed. These were environmental interruptions, not
+product defects.
+
+The Phase 4.7 browser proofs use actual Chrome DevTools mouse input. They do not
+assign style geometry as a substitute for interaction. Window A is dragged by
+its header and retains its clamped coordinates; dragging its body does not move
+it. Window B is resized through its real southeast handle and respects minimums.
+The generic token triggers `over`, `out` and exactly one accepted `drop` on A;
+B is not a drop target. Closing B destroys all three jQuery UI behaviors,
+removes its registry/DOM state and leaves A/C operational. The transient proof
+boots real `ui-runtime`, shares its canonical jQuery instance and mounts real
+LETC Notes in all three windows. No backend or MFS capability is installed or
+called.
+
+All new data fields follow `snake_case`; historical/component method style is
+preserved. New engineering documentation and comments are English.
 
 Phase 4.8 Finder remains **NOT AUTHORIZED**.

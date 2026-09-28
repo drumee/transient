@@ -29,8 +29,13 @@ evidence is in
   validation of organisation `1`, nobody, guest and system. It reuses the
   intrinsic identity tables but remains outside `server-runtime`.
 - `system-mfs` is the first system/kernel module, not intrinsic runtime.
-- Window Manager is a generic UI capability independent from MFS and is
-  planned for Phase 4.7 with standalone extraction.
+- Window Manager is a validated standalone generic UI capability independent
+  from MFS, Finder, Team and backend file services. It owns multi-window
+  lifecycle, focus/stacking, draggable, resizable and optional generic
+  droppable behavior above `ui-runtime`.
+- The standalone `drumee/window-manager` checkout is authoritative after Phase
+  4.7. `target/modules/window-manager/` is a synchronized integration fixture
+  verified by `scripts/check-window-manager-sync.js`.
 - Finder is the first substantial real system application used for kernel
   stabilization. Its implementation/integration is Phase 4.8; its real-use
   stabilization and standalone extraction are Phase 4.9.

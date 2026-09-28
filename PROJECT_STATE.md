@@ -15,10 +15,10 @@ Current:
     Phase 4.6A platform bootstrap IMPLEMENTED / VALIDATED
     Phase 4.6B system-mfs IMPLEMENTED / VALIDATED
     R2 standalone system-mfs extraction CLOSED / VALIDATED / PUBLISHED
+    Phase 4.7 Window Manager CLOSED / VALIDATED / NOT PUBLISHED
 
 Planned:
-    Phase 4.7 Window Manager NEXT / NOT AUTHORIZED
-    Phase 4.8 Finder implementation/integration PLANNED
+    Phase 4.8 Finder implementation/integration NEXT / NOT AUTHORIZED
     Phase 4.9 Finder real-use stabilization and standalone extraction PLANNED
 
 External:
@@ -29,12 +29,14 @@ Local repositories:
     server-runtime ~/github/server-runtime
     ui-runtime     ~/github/ui-runtime
     system-mfs     ~/github/system-mfs
+    window-manager ~/github/window-manager
 
 GitHub:
     drumee/transient
     drumee/server-runtime
     drumee/ui-runtime
     drumee/system-mfs
+    drumee/window-manager (intended remote; creation permission still required)
 
 Canonical invariants:
     DEFAULT_ORG_ID = 1
@@ -50,9 +52,29 @@ Architecture:
     Marketing = externalized to the future Oxymot project
 
 Next:
-    Phase 4.7 Window Manager — NOT AUTHORIZED
-    do not begin Phase 4.7 without explicit authorization
+    Phase 4.8 Finder — NOT AUTHORIZED
+    do not begin Phase 4.8 without explicit authorization
 ```
+
+Phase 4.7 validation:
+
+```text
+repository:       ~/github/window-manager
+package:          @drumee/window-manager@0.1.0-alpha.1
+source boundary:  transient@3fc5ac929a53650d695c9c18426308cfc04cd809
+standalone commit: 60eee8b11a787703801b467c8b83e69f5b2cb508
+publication:      NOT PUBLISHED
+authority:        standalone local repository
+integration copy: target/modules/window-manager (verified synchronized fixture)
+```
+
+The package provides three-window coexistence, identity, activation, stacking,
+header-handle dragging, all-edge resizing, optional generic jQuery UI drop
+targets, close/removal and interaction cleanup. Real Chromium input validates
+drag, resize and drop with real LETC content after `ui-runtime` READY. The proof
+has no backend or `system-mfs`, Finder, Desk or Team dependency. The intended
+GitHub remote is `drumee/window-manager`; creating it remains external hosting
+work because the current token lacks `createRepository` permission.
 
 R0 validation:
 
