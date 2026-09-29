@@ -3,12 +3,12 @@
 This file records the exact source baseline imported into the
 `transient` refactoring monorepo.
 
-Generated: 2026-09-02T07:40:25Z
+Generated: 2026-09-29T00:00:00Z
 
 | Repository | Source | Branch | Commit SHA | Imported | Method |
 |---|---|---|---|---|---|
-| `ui-team` | `git@github.com:drumee/ui-team.git` | `main` | `0fb6fe4953281cf9f53b87b4d0712bd41c8cf4c3` | 2026-08-28T08:57:38Z | git subtree (history preserved, no squash) |
-| `server-team` | `git@github.com:drumee/server-team.git` | `main` | `9923d32a117324af1d802ea0909d61aa6d31c7e0` | 2026-08-28T08:57:54Z | git subtree (history preserved, no squash) |
+| `ui-team` | `git@github.com:drumee/ui-team.git` | `main` | `17d1d4a03a135c33b44bbb22054fa2d140bbc1a6` | 2026-09-29T00:00:00Z | git subtree update (history preserved, no squash) |
+| `server-team` | `git@github.com:drumee/server-team.git` | `main` | `7fb16c449ed09258c501e88e3c87a4d71c51a941` | 2026-09-29T00:00:00Z | git subtree update (history preserved, no squash) |
 | `schemas` | `git@github.com:drumee/schemas.git` | `main` | `cb838e255600a4ec3797dc7ac13659ad9d187421` | 2026-08-28T08:58:07Z | git subtree (history preserved, no squash) |
 | `setup-schemas` | `git@github.com:drumee/setup-schemas.git` | `main` | `1582eb557ce092dd2cc5fa6f9d533d64911f4dce` | 2026-08-28T08:58:24Z | git subtree (history preserved, no squash) |
 | `setup-infra` | `git@github.com:drumee/setup-infra.git` | `main` | `643d74fa8bc89d418ff1169daa09554ae84e48ef` | 2026-09-02T07:40:25Z | git subtree (history preserved, no squash) |
