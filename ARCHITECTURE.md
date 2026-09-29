@@ -57,6 +57,7 @@ evidence is in
 - R2 extracted the validated Phase 4.6B `system-mfs` boundary as standalone
   `@drumee/system-mfs`; it adds no MFS feature.
 - The standalone `drumee/system-mfs` repository is authoritative. The
-  transitional copy remains only as an explicitly synchronized integration
-  fixture, checked by `scripts/check-system-mfs-sync.js`.
+  Phase 4.8 integration resolves that repository directly; the former
+  transitional implementation copy was removed so it cannot diverge. This
+  authority boundary is checked by `scripts/check-system-mfs-sync.js`.
 - No later milestone or phase starts without explicit authorization.

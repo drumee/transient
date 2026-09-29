@@ -63,10 +63,10 @@ manifest, metadata, tests, documentation and provenance. It remains dependent
 only on Node.js built-ins, caller-supplied adapters and documented
 runtime/platform SQL contracts.
 
-After R2, the standalone `drumee/system-mfs` repository is authoritative. Any
-copy retained under `target/modules/system-mfs/` is a synchronized integration
-fixture, not an independently owned implementation. Its synchronization and
-verification mechanism must remain explicit.
+After R2, the standalone `drumee/system-mfs` repository is authoritative.
+Phase 4.8 removed the former synchronized integration copy under
+`target/modules/system-mfs/`; integration resolves the standalone working copy
+directly and audits that no second production implementation exists.
 
 The generic capability resolver introduced in the transitional runtime during
 Phase 4.6B remains validated packaging debt. A later runtime extraction/release
@@ -94,33 +94,36 @@ Finder, Team, Hub or chat.
 Phase 4.7 owned extraction from historical UI evidence, the minimum generic
 application/window lifecycle, `ui-runtime` integration, MFS-independent
 validation, standalone extraction and standalone validation. It closed with
-`@drumee/window-manager@0.1.0-alpha.1` validated locally from the standalone
-`~/github/window-manager` repository and intentionally not published.
+`@drumee/window-manager@0.1.0-alpha.2` validated and published from the
+standalone `~/github/window-manager` repository.
 
-The standalone checkout is authoritative. The transitional target copy is a
-synchronized integration fixture. Phase 4.8 remains not authorized by Phase
-4.7 closure.
+The standalone checkout is authoritative. Phase 4.8 was subsequently
+authorized explicitly; its closure does not authorize Phase 4.9.
 
-## Phase 4.8 — Finder implementation and integration
+## Phase 4.8 — Finder implementation and integration (closed / validated)
 
 Finder is the first substantial system application. Its intended dependency
 structure is:
 
 ```text
-UI:       ui-runtime → window-manager → Finder
-Backend:  server-runtime → system-mfs → Finder
+UI:       FinderWindow → Finder → ui-runtime
+          FinderWindow → window-manager
+Backend:  Finder → mfs-service → system-mfs
+          Finder → mfs-transfer → mfs-service
 ```
 
-Finder may require Window Manager on the UI side and `system-mfs` on the
-backend side. It must not require Team, chat, conference, tasks, Team rooms,
-DMZ collaboration behavior or Team-specific desktop policy. Finder is a file
-manager, not a collaboration suite.
+Finder is independently mountable and does not require Window Manager.
+FinderWindow is the optional adapter to the standalone Window Manager.
+Browser code reaches `system-mfs` only through the MFS frontend/service
+boundary. Finder requires no Team, chat, conference, tasks, Team rooms, DMZ
+collaboration behavior or Team-specific desktop policy.
 
-Phase 4.8 owns implementation, Window Manager integration, `system-mfs`
-integration, minimal file-management workflows, integration tests and
-architectural validation. Finder may remain in the kernel integration
-workspace while these contracts evolve. Phase 4.8 does not perform the final
-standalone Finder extraction.
+Phase 4.8 implemented Finder, its Window Manager adapter, `mfs-service`,
+`mfs-transfer`, the generic standalone `system-mfs` increment and real-browser
+integration evidence. The detailed closure record is
+[`26-phase4.8-finder-integration.md`](26-phase4.8-finder-integration.md).
+Finder remains in the integration workspace; standalone extraction is not part
+of this phase.
 
 ## Phase 4.9 — Finder stabilization and standalone extraction
 

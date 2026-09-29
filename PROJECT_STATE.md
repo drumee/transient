@@ -15,10 +15,10 @@ Current:
     Phase 4.6A platform bootstrap IMPLEMENTED / VALIDATED
     Phase 4.6B system-mfs IMPLEMENTED / VALIDATED
     R2 standalone system-mfs extraction CLOSED / VALIDATED / PUBLISHED
-    Phase 4.7 Window Manager CLOSED / VALIDATED / NOT PUBLISHED
+    Phase 4.7 Window Manager CLOSED / VALIDATED / PUBLISHED
+    Phase 4.8 Finder integration CLOSED / VALIDATED
 
 Planned:
-    Phase 4.8 Finder implementation/integration NEXT / NOT AUTHORIZED
     Phase 4.9 Finder real-use stabilization and standalone extraction PLANNED
 
 External:
@@ -36,7 +36,7 @@ GitHub:
     drumee/server-runtime
     drumee/ui-runtime
     drumee/system-mfs
-    drumee/window-manager (intended remote; creation permission still required)
+    drumee/window-manager
 
 Canonical invariants:
     DEFAULT_ORG_ID = 1
@@ -52,18 +52,18 @@ Architecture:
     Marketing = externalized to the future Oxymot project
 
 Next:
-    Phase 4.8 Finder — NOT AUTHORIZED
-    do not begin Phase 4.8 without explicit authorization
+    Phase 4.9 Finder stabilization/extraction — NOT AUTHORIZED
+    do not begin Phase 4.9 without explicit authorization
 ```
 
 Phase 4.7 validation:
 
 ```text
 repository:       ~/github/window-manager
-package:          @drumee/window-manager@0.1.0-alpha.1
+package:          @drumee/window-manager@0.1.0-alpha.2
 source boundary:  transient@3fc5ac929a53650d695c9c18426308cfc04cd809
-standalone commit: 60eee8b11a787703801b467c8b83e69f5b2cb508
-publication:      NOT PUBLISHED
+standalone commit: e294979dfcb59f73af19975e40f890a0b366cd8c
+publication:      PUBLISHED
 authority:        standalone local repository
 integration copy: target/modules/window-manager (verified synchronized fixture)
 ```
@@ -72,9 +72,8 @@ The package provides three-window coexistence, identity, activation, stacking,
 header-handle dragging, all-edge resizing, optional generic jQuery UI drop
 targets, close/removal and interaction cleanup. Real Chromium input validates
 drag, resize and drop with real LETC content after `ui-runtime` READY. The proof
-has no backend or `system-mfs`, Finder, Desk or Team dependency. The intended
-GitHub remote is `drumee/window-manager`; creating it remains external hosting
-work because the current token lacks `createRepository` permission.
+has no backend or `system-mfs`, Finder, Desk or Team dependency. The standalone
+repository and published alpha.2 are the Phase 4.8 baseline.
 
 R0 validation:
 
@@ -135,7 +134,7 @@ source boundary:  transient@078e71378a52acd06478d9df556a7cd5b4d6a223
 standalone commit: cd87db7085bc8dd40614af7fa37cdd1a76ffc5a0
 publication:      2026-09-25T06:56:33.907Z (`next`)
 authority:        standalone repository
-integration copy: target/modules/system-mfs (verified synchronized fixture)
+integration:      direct standalone repository consumption (no target copy)
 ```
 
 The extraction and validation evidence is recorded in
