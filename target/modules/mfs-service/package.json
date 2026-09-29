@@ -1,0 +1,9 @@
+{
+  "name": "@drumee/mfs-service-phase48",
+  "version": "0.0.0-phase4.8",
+  "private": true,
+  "description": "Phase 4.8 semantic MFS service integration boundary.",
+  "type": "commonjs",
+  "main": "lib/index.js",
+  "scripts": { "test": "node --test test/*.test.js" }
+}

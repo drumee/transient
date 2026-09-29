@@ -1,0 +1,13 @@
+{
+  "services": {
+    "list": { "scope": "domain", "permission": { "src": "read" } },
+    "get": { "scope": "domain", "permission": { "src": "read" } },
+    "mkdir": { "scope": "domain", "permission": { "src": "write" } },
+    "rename": { "scope": "domain", "permission": { "src": "write" } },
+    "remove": { "scope": "domain", "permission": { "src": "write" } },
+    "move": { "scope": "domain", "permission": { "src": "write" } },
+    "copy": { "scope": "domain", "permission": { "src": "read" } },
+    "commit_upload": { "scope": "domain", "permission": { "src": "write" } }
+  },
+  "modules": { "private": "service/mfs" }
+}
