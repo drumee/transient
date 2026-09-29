@@ -1,5 +1,6 @@
 const { uploadFile, copyToClipboard } = require("@drumee/ui-essentials");
 const { sendOtp, openOtpModal, resendOtpGate } = require("../../otp-gate");
+const readCache = require("libs/read-cache");
 
 /**
  * Full-area Settings page rendered into the desk main center
@@ -50,17 +51,59 @@ class settings_main extends LetcBox {
     // flight — rendering then showed the wrong on/off state, so a click read
     // the wrong baseline and toggled the wrong way. Awaiting here means the
     // switch only renders once it reflects the server's stored mfa.
+    await this._refreshPage({ force: true });
+  }
+
+  /**
+   * Load everything the page renders from, then feed it — unconditionally on
+   * `force` (the mount), otherwise only if any of it CHANGED since the last
+   * paint. The gate is what makes a re-show safe: a feed rebuilds every card
+   * from the model, which would wipe an uncommitted bio draft or close a
+   * sub-dialog the user left open, so it must not run for an identical answer.
+   *
+   * @param {Object} [opt]
+   * @param {Boolean} [opt.force]  feed even when nothing changed
+   */
+  async _refreshPage(opt = {}) {
     const [links, gdrive, , referral] = await Promise.all([
       this._loadOauthLinks(),
       this._loadGdriveState(),
       this._refreshVisitorProfile(),
       this._loadReferral(),
     ]);
+    if (this.isDestroyed && this.isDestroyed()) return;
     this._oauthLinks = links;
     this._gdriveState = gdrive;
     this._referral = referral;
     this._reconcilePasswordSet();
+    // Visitor.profile() is what the 2FA switch and the identity card read, so
+    // it is part of what a repaint must be justified by.
+    const signature = readCache.signature([links, gdrive, referral, Visitor.profile()]);
+    if (!opt.force && signature === this._pageSignature) return;
+    this._pageSignature = signature;
+    // New feed, new billing card: let the status line resolve itself again.
+    this._subStatusText = null;
     this.feed(require("./skeleton").default(this));
+  }
+
+  /**
+   * The desk keeps this screen mounted when the user navigates away and
+   * reveals it again on the next Settings press (desk/index.js
+   * _slotKeepsChild), so coming back is instant. The data the mount fetched —
+   * profile, linked providers, Drive migration state, referral — is then
+   * re-read behind the visible page and the page re-fed when it lands, which
+   * is onDomRefresh exactly. One refresh at a time: a second re-show while
+   * the first is still out just lets it finish.
+   */
+  onPanelShown() {
+    if (this._reshowing) return;
+    this._reshowing = true;
+    Promise.resolve()
+      .then(() => this._refreshPage())
+      .catch((e) => this.warn("settings_main: refresh on re-show failed", e))
+      .then(() => {
+        this._reshowing = false;
+      });
   }
 
   /**
@@ -647,7 +690,12 @@ class settings_main extends LetcBox {
    * "upgrade-plan" up to the desk, which swaps this slot to the billing page.
    */
   openBilling() {
-    this.triggerHandlers({ service: "upgrade-plan" });
+    // MANAGE, not buy. This card reuses the desk's "upgrade-plan" service
+    // because it wants the same screen, but the reader clicked "Manage
+    // subscription" — they have not asked to be put in front of a payment
+    // form. The intent keeps them on the plans view, where the desk now sends
+    // every genuine Upgrade CTA straight to checkout instead.
+    this.triggerHandlers({ service: "upgrade-plan", intent: "manage" });
   }
 
   /**
@@ -658,25 +706,53 @@ class settings_main extends LetcBox {
    */
   onPartReady(child, pn) {
     if (pn === "billing-sub-status") {
+      // A Note re-renders on set() (ui-core text.set -> mould -> render), and
+      // every render of a sys_pn part fires onPartReady again. Setting the
+      // status line from here therefore re-enters this handler: without the
+      // guards below each pass fetched subscription_status and set the same
+      // text again, an unbounded loop at ~10 req/s that froze the whole tab
+      // for any subscriber who opened Settings (only subscribers reach the
+      // set — a caller with no subscription_id returns before it).
+      if (this._subStatusText != null && child.mget(_a.content) === this._subStatusText) return;
       this._fillSubscriptionStatus(child);
       return;
     }
     if (super.onPartReady) super.onPartReady(child, pn);
   }
 
+  /**
+   * Resolve the status line ONCE per page feed (cached in _subStatusText,
+   * cleared by _refreshPage before it feeds) and write it only when the part
+   * does not already show it — the write itself re-renders the part and
+   * re-enters onPartReady, which is where the loop lived.
+   */
   async _fillSubscriptionStatus(part) {
+    if (this._subStatusPending) return;
+    this._subStatusPending = true;
     try {
-      const sub = await this.fetchService(SERVICE.payment.subscription_status, { hub_id: Visitor.id });
-      if (!part || !part.el || !sub || !sub.subscription_id) return;
-      const when = sub.period_end ? Dayjs(Number(sub.period_end) * 1000).format("MMM D, YYYY") : "";
-      if (!when) return;
-      const canceled = ["canceled", "unpaid", "incomplete_expired"].includes(sub.status);
-      const text = canceled
-        ? (LOCALE.SUBSCRIPTION_CANCELS_ON || "Your subscription will be canceled on {0}").format(when)
-        : (LOCALE.SUBSCRIPTION_RENEWS_ON || "Your subscription renews on {0}").format(when);
+      let text = this._subStatusText;
+      if (text == null) {
+        text = "";
+        const sub = await this.fetchService(SERVICE.payment.subscription_status, { hub_id: Visitor.id });
+        if (sub && sub.subscription_id) {
+          const when = sub.period_end ? Dayjs(Number(sub.period_end) * 1000).format("MMM D, YYYY") : "";
+          if (when) {
+            const canceled = ["canceled", "unpaid", "incomplete_expired"].includes(sub.status);
+            text = canceled
+              ? (LOCALE.SUBSCRIPTION_CANCELS_ON || "Your subscription will be canceled on {0}").format(when)
+              : (LOCALE.SUBSCRIPTION_RENEWS_ON || "Your subscription renews on {0}").format(when);
+          }
+        }
+        this._subStatusText = text;
+      }
+      if (this.isDestroyed && this.isDestroyed()) return;
+      if (!part || !part.el || (part.isDestroyed && part.isDestroyed())) return;
+      if (!text || part.mget(_a.content) === text) return;
       part.set({ content: text });
     } catch (e) {
       /* status line is cosmetic — leave empty on failure */
+    } finally {
+      this._subStatusPending = false;
     }
   }
 

@@ -1,3 +1,6 @@
+const { trackDeskCanvas } = require("libs/desk-canvas");
+const { armItemsReady, markItemsReady } = require("libs/items-ready");
+
 const idOf = (c) =>
   (c && (c.id || c.contact_id || c.drumate_id || c.entity_id || c.entity)) ||
   null;
@@ -26,6 +29,12 @@ function normalizeTags(raw) {
     .filter((t) => t && t.tag_id);
 }
 
+// Contacts built on first paint, and the step each scroll adds. Mirrors the
+// task board's CARD_WINDOW: big enough that a normal book never pages, small
+// enough that a large one does not mount in one burst.
+const CONTACT_WINDOW = 60;
+const CONTACT_WINDOW_STEP = 60;
+
 class __address_book extends LetcBox {
   initialize(opt = {}) {
     require("./skin");
@@ -35,6 +44,7 @@ class __address_book extends LetcBox {
     // attribute is ignored.
     opt.dataset = { ...opt.dataset, anim: "out", mview: "sidebar" };
     super.initialize(opt);
+    armItemsReady(this);
     this.declareHandlers();
     this._tab = "all";
     this._search = "";
@@ -68,6 +78,7 @@ class __address_book extends LetcBox {
   onBeforeDestroy() {
     this.unbindEvent(_a.live);
     RADIO_CLICK.off(_e.click, this._onOutsideClick);
+    if (this._untrackCanvas) this._untrackCanvas();
   }
 
   /**
@@ -85,6 +96,9 @@ class __address_book extends LetcBox {
 
   async onDomRefresh() {
     this.feed(require("./skeleton")(this));
+    // Cover the workspace at ≤ 1024px (see libs/desk-canvas).
+    if (this._untrackCanvas) this._untrackCanvas();
+    this._untrackCanvas = trackDeskCanvas(this.el);
     await Promise.all([
       this._loadContacts(),
       this._loadInvitations(),
@@ -92,6 +106,10 @@ class __address_book extends LetcBox {
       this._loadTags(),
     ]);
     this._refreshList();
+    // Contacts painted (the _load* calls swallow their own failures, so this
+    // is reached with an empty list too). A reload's screen restore waits on
+    // this (libs/items-ready).
+    markItemsReady(this);
     this.el.dataset.anim = "in";
     RADIO_CLICK.on(_e.click, this._onOutsideClick);
   }
@@ -145,6 +163,9 @@ class __address_book extends LetcBox {
 
       case "filter-tag":
         this._selectedTagId = trigger.mget("tagId") || null;
+        // A different filter is a different list — reset the window with it,
+        // for the same reason switchTab does.
+        this._contactWin = 0;
         return this._refreshList();
 
       case "select-contact":
@@ -190,12 +211,20 @@ class __address_book extends LetcBox {
         return this._acceptInvitation(trigger);
       case "refuse-invitation":
         return this._refuseInvitation(trigger);
+      // Delete / Archive / Cancel-invite never run straight off the click:
+      // they are one-tap destructive actions on hover controls, and
+      // `contact.delete_contact` is a hard delete with no trash behind it.
       case "delete-contact":
-        return this._deleteContact(trigger);
       case "archive-contact":
-        return this._setStatus(trigger, "archived");
+        return this._askConfirm(trigger, service);
+      case "confirm-dismiss":
+        return this._closeConfirm();
+      case "confirm-proceed":
+        return this._runConfirm();
+
+      // Restore is not destructive — it stays a direct action.
       case "restore-contact":
-        return this._setStatus(trigger, "active");
+        return this._setStatus(trigger.mget("contactId"), "active");
       case "block-contact":
         return this._block(trigger);
       case "unblock-contact":
@@ -393,6 +422,10 @@ class __address_book extends LetcBox {
     this._tab = tab;
     this._selectedKey = null;
     this._editing = false;
+    // Back to the first window. Without this a deep scroll in one tab would
+    // carry its grown window into the next, mounting hundreds of rows in one
+    // burst on a list the user has not scrolled at all.
+    this._contactWin = 0;
     // `my_contact_show_next` honours 'active', 'archived', or 'sent'. The All
     // and Blocked tabs share the 'active' fetch (Blocked filters client-side
     // on `is_blocked`). Pending combines received invitations (notification
@@ -537,8 +570,7 @@ class __address_book extends LetcBox {
     this._refreshDetail();
   }
 
-  async _deleteContact(trigger) {
-    const id = trigger.mget("contactId");
+  async _deleteContact(id) {
     if (!id) return;
     try {
       await this.postService({
@@ -572,8 +604,7 @@ class __address_book extends LetcBox {
     }
   }
 
-  async _setStatus(trigger, status) {
-    const id = trigger.mget("contactId");
+  async _setStatus(id, status) {
     if (!id) return;
     try {
       await this.postService({
@@ -1183,12 +1214,63 @@ class __address_book extends LetcBox {
   _refreshList() {
     return this.ensurePart("ab-list").then((part) => {
       part.feed(require("./skeleton/contact-list")(this, this._listForView()));
+      this._installContactWindow(part);
     });
+  }
+
+  /**
+   * How many contacts the list is currently allowed to build.
+   *
+   * `contact.show_contact` has no limit and the skeleton mapped every row it
+   * returned, so the whole address book mounted as widgets in one synchronous
+   * burst — a real account measured 245 contacts, each a Box with a Note, an
+   * avatar and an action cluster. Every element is a style-recalc candidate
+   * for the rest of the session.
+   *
+   * Same shape as the task board's cardWindow: a soft cap that grows when the
+   * user actually scrolls near the bottom. `_listForView().length` still gates
+   * the empty state, so a non-empty book can never render "no contacts".
+   */
+  contactWindow() {
+    return this._contactWin || CONTACT_WINDOW;
+  }
+
+  /**
+   * Grow the window as the list is scrolled. Bound once per part — the part is
+   * re-fed on every _refreshList, and a listener per feed would accumulate the
+   * way media/interact's parent-scroll handler did.
+   */
+  _installContactWindow(part) {
+    const body =
+      part && part.el && part.el.querySelector
+        ? part.el.querySelector(`.${this.fig.family}__contact-list`)
+        : null;
+    if (!body || body._abWindowBound) return;
+    body._abWindowBound = 1;
+    body.addEventListener(
+      "scroll",
+      () => {
+        const total = this._listForView();
+        const have = this.contactWindow();
+        if (!Array.isArray(total) || total.length <= have) return;
+        // Only near the end, and only reading scroll offsets — these are
+        // already-computed values, not a forced layout flush.
+        if (body.scrollTop + body.clientHeight < body.scrollHeight - 240) return;
+        this._contactWin = have + CONTACT_WINDOW_STEP;
+        this._refreshList();
+      },
+      true,
+    );
   }
 
   _refreshDetail() {
     return this.ensurePart("ab-detail").then((part) => {
       const sel = this.getSelectedContact();
+      // Nothing selected any more (accept/refuse/delete/status change clear
+      // it): on mobile/tablet the detail pane would be left showing the empty
+      // placeholder, so fall back to the list — same as chat-p2p's
+      // _clearConversation. Inert ≥ 1024px.
+      if (!sel && this.el) this.el.dataset.mview = "sidebar";
       part.feed(
         sel
           ? require("./skeleton/contact-detail")(this, sel)
@@ -1206,6 +1288,63 @@ class __address_book extends LetcBox {
 
   _closeInviteModal() {
     return this.ensurePart("wrapper-invite-modal").then((w) => w.clear());
+  }
+
+  // ─── Destructive-action confirmation ────────────────────────────
+
+  /**
+   * Stage a destructive action and raise the confirmation dialog.
+   *
+   * `service` is the action that was clicked; the sent-invitation row reuses
+   * "delete-contact" for its Cancel-invite button, so it tags itself with
+   * `confirmKind` to get its own copy rather than "Delete contact?".
+   */
+  _askConfirm(trigger, service) {
+    const contactId = trigger.mget("contactId");
+    if (!contactId) return;
+    // `kind` picks the dialog's copy; `status` (archive only) picks what runs
+    // on confirm — everything else is a delete.
+    this._confirm =
+      service === "archive-contact"
+        ? { kind: "archive", contactId, status: "archived" }
+        : { kind: trigger.mget("confirmKind") || "delete", contactId };
+    this._confirmBusy = false;
+    return this._renderConfirmModal();
+  }
+
+  _renderConfirmModal() {
+    return this.ensurePart("wrapper-confirm-modal").then((wrap) => {
+      wrap.clear();
+      const skl = require("./skeleton/confirm-modal")(this);
+      if (skl) wrap.feed(skl);
+    });
+  }
+
+  _closeConfirm() {
+    this._confirm = null;
+    this._confirmBusy = false;
+    return this.ensurePart("wrapper-confirm-modal").then((w) => w.clear());
+  }
+
+  /**
+   * Run the staged action. The dialog stays up, disabled, until the request
+   * settles — closing it first would let a second click re-raise the dialog
+   * for a contact whose delete is already in flight.
+   */
+  async _runConfirm() {
+    const pending = this._confirm;
+    if (!pending || this._confirmBusy) return;
+    this._confirmBusy = true;
+    await this._renderConfirmModal();
+    try {
+      if (pending.status) {
+        await this._setStatus(pending.contactId, pending.status);
+      } else {
+        await this._deleteContact(pending.contactId);
+      }
+    } finally {
+      await this._closeConfirm();
+    }
   }
 
   _showToast(message, kind = "success") {
@@ -1351,6 +1490,13 @@ class __address_book extends LetcBox {
   }
   isInviteSubmitting() {
     return this._inviteSubmitting === true;
+  }
+
+  getPendingConfirm() {
+    return this._confirm || null;
+  }
+  isConfirmBusy() {
+    return this._confirmBusy === true;
   }
 
   isEditing() {

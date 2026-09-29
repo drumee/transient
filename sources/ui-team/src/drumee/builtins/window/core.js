@@ -73,17 +73,33 @@ class __window_core extends __utils {
 
     if (t != null) {
       if (t.fifo) {
-        t.fifo.on("upload:end", this.newContent);
+        // Kept so the destroy hook below removes the SAME reference (newContent
+        // is re-bound in a subclass constructor, after this initialize runs).
+        this._fifoUploadEnd = this.newContent;
+        t.fifo.on("upload:end", this._fifoUploadEnd);
       }
       t.once(_e.trash, () => {
         this.goodbye();
       });
     }
     this.declareHandlers();
-    window.addEventListener("beforeunload", (e) => {
+    // Stored and removed on destroy. The anonymous listener this used to add
+    // was never removed, so `window` kept every window ever opened reachable —
+    // each workspace switch leaked the whole outgoing pane (file tiles, chat,
+    // task board, detached DOM) — and on unload it re-ran onBeforeDestroy on
+    // windows that were already dead. The `destroy` event (not onDestroy) so a
+    // subclass overriding onDestroy without super cannot skip it.
+    this._onUnload = () => {
       try {
         this.onBeforeDestroy();
       } catch (error) { }
+    };
+    window.addEventListener("beforeunload", this._onUnload);
+    this.once("destroy", () => {
+      window.removeEventListener("beforeunload", this._onUnload);
+      if (t && t.fifo && _.isFunction(t.fifo.off) && this._fifoUploadEnd) {
+        t.fifo.off("upload:end", this._fifoUploadEnd);
+      }
     });
     this.contextmenuSkeleton = require("builtins/contextmenu/skeleton");
     this._raised = 0;
@@ -529,6 +545,56 @@ class __window_core extends __utils {
       return;
     }
     const fType = media.mget(_a.filetype);
+    // A WORKSPACE TILE OPENS THE DESK PANE, not a second window on top of it.
+    //
+    // A pane's listing can hold workspace rows — a hub symlink dropped in a
+    // folder, a workspace reached through a share. Opening one fell through to
+    // Wm.openContent, whose hub branch LAUNCHES a window_folder with no
+    // `headless` flag: that window renders the WINDOWED shape (its own title
+    // row and its own tab bar — window/folder/skeleton) and launch() puts it in
+    // getWindowsPool(), which is headlessLayer while a workspace is open. It
+    // therefore landed over the pane, showing a second header right under the
+    // desk topbar — the old pre-2.0 header position, saying the same thing
+    // twice. It also became the LAST window_folder in that layer, so
+    // Wm.folderWindowIn() answered it instead of the pane, and later breadcrumb
+    // clicks drove the window nobody was looking at.
+    //
+    // loadWorkspace is what the sidebar rows and the home grid's tiles already
+    // use (desk/wm "open-node"), so a workspace opens the same way wherever it
+    // is clicked.
+    //
+    // SCOPED TO THE HEADLESS PANE, which is the only window that IS the desk.
+    // window/core is the base of nearly every window (share, sharebox, search,
+    // trash, dmz…) and in a popup the desk sits BEHIND it, so switching a pane
+    // the user cannot see would read as the click doing nothing — those keep
+    // the behaviour they had. Wm.loadWorkspace is checked for the same reason:
+    // the DMZ window manager has no pane to switch.
+    if (
+      fType === _a.hub &&
+      this.mget(_a.headless) &&
+      media.model &&
+      media.mget(_a.status) !== _a.deleted &&
+      window.Wm &&
+      _.isFunction(Wm.loadWorkspace)
+    ) {
+      // wait(0) releases the tile's open latch: media/interact sets it on the
+      // click for an opener that is expected to clear it, and loadWorkspace
+      // opens a pane rather than a window bound to this tile.
+      if (_.isFunction(media.wait)) media.wait(0);
+      const row = media.model.toJSON();
+      return Wm.loadWorkspace({
+        hub_id: row.hub_id,
+        // The workspace ROOT, never the row's own nid: a hub row lives in the
+        // PARENT hub's media table, so its nid names nothing inside the
+        // workspace it points at. actual_home_id is that root (the same field
+        // Wm.getWindowPreset read for hubs); 0 is the server's own "this hub's
+        // root" input when the row does not carry it (Wm._rootNid).
+        nid: row.actual_home_id || 0,
+        filename: row.filename || row.name,
+        hub_name: row.hub_name,
+        area: row.area,
+      });
+    }
     if (this.mget(_a.kind) == "window_search" || fType != _a.folder) {
       Wm.openContent(media, args);
       return;
@@ -889,7 +955,11 @@ class __window_core extends __utils {
       .then((data) => {
         aw.spinner(0);
         if (!data || !data.nid) {
-          Wm.alert(LOCALE.ERROR_NETWORK);
+          // A refusal already said why (onServerComplain → permission-denied);
+          // "network error" on top of it would contradict it.
+          if (!require("libs/permission-denied").saidRecently()) {
+            Wm.alert(LOCALE.ERROR_NETWORK);
+          }
           return;
         }
         // The new file opens in its editor right away: in a busy folder the
@@ -959,7 +1029,13 @@ class __window_core extends __utils {
         // message — a 500 or a dead connection must NOT be reported as a
         // permission problem (the inverse mistake, see webrtc/room/index.js).
         const status = e && (e.status || e.error_code);
-        Wm.alert(status == 403 ? LOCALE.WEAK_PRIVILEGE : LOCALE.ERROR_NETWORK);
+        Wm.alert(
+          status == 403
+            ? require("libs/permission-denied").weakPrivilegeMessage(
+              LOCALE.PERMISSION_ACTION_CREATE_DOCUMENT, aw.mget(_a.privilege), _K.permission.write,
+            )
+            : LOCALE.ERROR_NETWORK,
+        );
         if (this.onServerError) this.onServerError(e);
       });
   }
@@ -1143,6 +1219,23 @@ class __window_core extends __utils {
         if (require("libs/over-limit").guardWrite("write")) return;
         return Wm.launch(
           { kind: "editor_markdown", uiHandler: [this] },
+          { explicit: 1 }
+        );
+
+      case "add-sheet":
+        if (require("libs/over-limit").guardWrite("write")) return;
+        // IN-APP: open the spreadsheet as a desk window (PO's call). The
+        // standalone #/sheet tab route still exists for later.
+        return Wm.launch(
+          { kind: "editor_sheet", uiHandler: [this] },
+          { explicit: 1 }
+        );
+
+      case "add-doc":
+        if (require("libs/over-limit").guardWrite("write")) return;
+        // Casual Docs (native DocxEditor) as a desk window.
+        return Wm.launch(
+          { kind: "editor_docs", uiHandler: [this] },
           { explicit: 1 }
         );
 
@@ -1334,6 +1427,9 @@ class __window_core extends __utils {
       });
       return;
     }
+    // A 403 on something the member did on purpose was silent: doRequest
+    // swallows it here and the caller sees `undefined`. Say why instead.
+    require("libs/permission-denied").notifyServerDenied(this, xhr);
   }
 
   /**

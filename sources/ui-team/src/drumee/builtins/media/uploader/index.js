@@ -2,6 +2,7 @@ const { filesize, arcLength } = require("@drumee/ui-essentials")
 
 const __spinner = '-\|/';
 const { uploadFile } = require("@drumee/ui-essentials")
+const { chunkedUpload, isChunkable } = require("media/chunked");
 
 class __media_uploader extends LetcBox {
   constructor(...args) {
@@ -127,6 +128,7 @@ class __media_uploader extends LetcBox {
       this._index++;
       return;
     }
+    this._notifyProgress(e);
     const rate = (e.loaded + this._bytesSent) / this._bytesToBeSent;
     const val = Math.min(100, parseInt(100 * rate));
 
@@ -201,6 +203,7 @@ class __media_uploader extends LetcBox {
       if (!this._skipped.includes(key)) {
         this._skipped.push(key)
       }
+      this._emitPopup("upload:error", { file });
       this._run();
       return;
     }
@@ -383,8 +386,11 @@ class __media_uploader extends LetcBox {
     this._bytesPending = this._bytesPending + file.size;
     let xhr;
     try {
-      xhr = this.uploadFile(file, opt);
+      // Big files go chunked (parallel + resumable); the handle mimics an XHR
+      // so the bookkeeping below and the popup hooks stay the same.
+      xhr = isChunkable(file) ? chunkedUpload(this, file, opt) : this.uploadFile(file, opt);
       xhr.file = file;
+      this._watchForPopup(xhr, file);
       this.xhr.push(xhr)
       this._pendingCount++;
     } catch (e) {
@@ -392,6 +398,68 @@ class __media_uploader extends LetcBox {
       this._pendingCount--;
       this.warn("_send[331]: failed to upoad", e)
     }
+  }
+
+  /**
+   * The upload-progress popup (window/upload-progress) listens on RADIO_MEDIA
+   * for "upload:progress" / "upload:end" / "upload:error", keyed by file name.
+   * Nothing emitted them for this uploader, so a file dropped on a folder
+   * window sat at 0% in the popup until it was done. Tag the XHR so the
+   * progress event can find its file, and report the server's answer.
+   * @param {XMLHttpRequest} xhr
+   * @param {File} file
+   */
+  _watchForPopup(xhr, file) {
+    if (!xhr || !file) return;
+    // onUploadProgress is bound on xhr.upload: the event's target is that object
+    if (xhr.upload) xhr.upload.file = file;
+    xhr.addEventListener("load", () => {
+      // Non-200 goes through onUploadError, which reports once retries are spent
+      if (xhr.status !== 200) return;
+      let result = null;
+      try {
+        result = JSON.parse(xhr.responseText).data || null;
+      } catch (e) {
+        return;
+      }
+      if (!result || !result.nid) return;
+      this._emitPopup("upload:end", { file, result });
+    });
+  }
+
+  /**
+   * @param {string} name
+   * @param {object} data
+   */
+  _emitPopup(name, data) {
+    if (typeof RADIO_MEDIA === "undefined") return;
+    RADIO_MEDIA.trigger(name, data);
+  }
+
+  /**
+   * Per-file progress for the popup, throttled to ~3 events/s per file.
+   * Held at 99: the popup treats 100 as done, and the server has not answered
+   * yet when the last byte leaves the browser.
+   * @param {ProgressEvent} e
+   */
+  _notifyProgress(e) {
+    const file = (e.target && e.target.file) || null;
+    if (!file || !e.total) return;
+    if (!this._progressMeta) this._progressMeta = new WeakMap();
+    const now = Date.now();
+    let meta = this._progressMeta.get(file);
+    if (!meta) {
+      meta = { time: now, loaded: 0 };
+      this._progressMeta.set(file, meta);
+    } else if (now - meta.time < 300 && e.loaded < e.total) {
+      return;
+    }
+    const dt = (now - meta.time) / 1000;
+    const speed = dt > 0 ? Math.max(0, (e.loaded - meta.loaded) / dt) : 0;
+    meta.time = now;
+    meta.loaded = e.loaded;
+    const progress = Math.min(99, Math.floor((100 * e.loaded) / e.total));
+    this._emitPopup("upload:progress", { file, progress, speed, loaded: e.loaded, total: e.total });
   }
 
   /**

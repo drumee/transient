@@ -1,18 +1,12 @@
 
 // Human-readable file size for the chat attachment card (Figma "1.2 MB").
-const humanFileSize = (bytes) => {
-  const n = Number(bytes);
-  if (!n || n < 0) return '';
-  if (n < 1024) return `${n} B`;
-  const units = ['KB', 'MB', 'GB', 'TB'];
-  let v = n / 1024;
-  let i = 0;
-  while (v >= 1024 && i < units.length - 1) {
-    v /= 1024;
-    i++;
-  }
-  return `${v < 10 ? v.toFixed(1) : Math.round(v)} ${units[i]}`;
-};
+//
+// Moved to libs/file-meta so the share tour's subject row can render the same
+// string (Figma 148:41930) instead of copying it. Same function, same output —
+// a formatter with two definitions drifts, and this one is the only correct
+// answer for these cards: @drumee/ui-essentials `filesize()` is SI and
+// two-decimal, which turns "1.2 MB" into "1.26 MB" and "1.5 KB" into "1.54 kB".
+const { humanFileSize, chipGlyph } = require('libs/file-meta');
 
 /**
  *
@@ -28,6 +22,21 @@ const __media_tpl_grid = function (ui) {
   m.imgCapable = ui.imgCapable();
   m._id = ui._id;
   m.fig = ui.fig;
+  // Composer chip (chat's attachment-wrapper, flagged by media-wrapper's
+  // _markIconOnly): a file-TYPE glyph, never a thumbnail, so the queued files
+  // read as a list of names rather than a row of pictures.
+  //
+  // CSS cannot do this: for an image, preview.js emits only a div with an
+  // inline background-image, and the sprite is a <symbol> sheet with no
+  // url()-addressable form, so there is no glyph on the page to reveal.
+  //
+  // imgCapable goes off so nothing downstream still treats the card as
+  // previewable; the icon itself comes from `chipGlyph` rather than from
+  // preview.js's own icon branch, because those two disagree on exactly the
+  // types a chip shows most (png -> desktop_picture vs bg-image, txt -> the
+  // literal text "txt" vs app-txt-file) and this card has to match the tasks
+  // panel's comment chips, which is the same card in another place.
+  if (m.iconOnly) m.imgCapable = false;
   switch (m.filetype) {
     case _a.folder:
     case _a.hub:
@@ -45,7 +54,58 @@ const __media_tpl_grid = function (ui) {
       preview = require('./preview')(m);
   }
 
+  // Applied AFTER the switch so every non-folder type is covered — a queued
+  // .mp3 or .md takes the audio / note branch above and would otherwise keep
+  // its own artwork while its neighbours turned into glyphs.
+  if (m.iconOnly && !isFolder) {
+    // data-ext, not a class naming the glyph: the skin needs to single out the
+    // office icons (their page body has no fill and would take the SVG default
+    // of black behind the coloured detail), and `preview.js` puts only
+    // filetype / area in the class — never the sprite name — so there would be
+    // nothing there to match on. The tasks panel's comment chip carries the
+    // same attribute for the same rule.
+    const chipExt = String(m.extension || m.ext || '').toLowerCase();
+    preview =
+      `<div class="preview-container ${m.filetype}">` +
+        `<svg id="${m._id}-preview" class="preview-icon ${m.filetype}" data-ext="${chipExt}">` +
+          Template.Xmlns(chipGlyph(m)) +
+        `</svg>` +
+      `</div>`;
+  }
+
   const filenameHtml = require('./filename')(m);
+
+  // A chat message's image / video, shown as itself (chat-item sets
+  // inlineMedia). Never for a composer chip (iconOnly) — that stays a name.
+  // `slide` is the large rendition the image player shows; a fresh upload may
+  // not have one yet, and media_grid _wireInlineMedia falls back to the
+  // original when it 404s. Video plays the original natively, and loads
+  // NOTHING until played (preload="none": "metadata" can pull most of a file
+  // whose index sits at its end, for every video in the conversation). A codec
+  // the browser cannot play falls back to the card (see _wireInlineMedia).
+  const inline =
+    m.inlineMedia && m.isAttachment && !m.iconOnly && !isFolder &&
+    (m.filetype === _a.image || m.filetype === _a.video);
+  if (inline) {
+    const slide = ui.actualNode(_a.slide).url;
+    const orig = ui.actualNode(_a.orig).url;
+    const media = m.filetype === _a.image
+      ? `<img class="media-grid__inline-img" src="${slide}" data-orig="${orig}" alt="" loading="lazy" draggable="false">`
+      : `<video class="media-grid__inline-video" src="${orig}" poster="${slide}" controls preload="none" playsinline></video>`;
+    const size = humanFileSize(m.filesize);
+    const sizeHtml = size ? `<span class="media-grid__filesize">${size}</span>` : '';
+    const sep = size ? `<span class="media-grid__meta-sep"> · </span>` : '';
+    html =
+      `<div class="media-grid__background media-grid__inline ${m.filetype}">${media}${require('../../template/command')(m)}</div>` +
+      `<div class="media-grid__meta-row">` +
+        `<div class="media-grid__meta-row-top">${filenameHtml}</div>` +
+        `<span class="media-grid__chatmeta">${sizeHtml}${sep}` +
+          `<a class="media-grid__reveal" data-service="show-in-folder">${LOCALE.SHOW_IN_FOLDER}</a>` +
+        `</span>` +
+      `</div>`;
+    if (!Visitor.inDmz) html = html + require('../../template/notify')(m);
+    return `<div class="full media-grid__content inline-media ${m.filetype}">${html}</div>`;
+  }
 
   if (isFolder) {
     // Folder/hub items keep flat layout (SVG folder shape + absolute-positioned filename).

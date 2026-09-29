@@ -1,13 +1,25 @@
 const { supportContactId, isSupportEntity } = require("libs/support");
+// Preview text for a row's last message — shared with chat_contact_item's
+// skeleton so the line reads the same on load and on a live push.
+const {
+  chatPreview,
+  findMeetingRow,
+  meetingStatusOf,
+} = require("libs/chat-preview");
+const { armItemsReady, markItemsReady } = require("libs/items-ready");
 
 class __chat_p2p extends LetcBox {
   constructor(...args) {
     super(...args);
     this.getCurrentApi = this.getCurrentApi.bind(this);
+    this.getDirectApi = this.getDirectApi.bind(this);
+    this.getWorkspaceApi = this.getWorkspaceApi.bind(this);
     this.getContactsApi = this.getContactsApi.bind(this);
+    this.getPeopleApi = this.getPeopleApi.bind(this);
     this.openChat = this.openChat.bind(this);
     this.openPeer = this.openPeer.bind(this);
     this._onDocClick = this._onDocClick.bind(this);
+    this._onLightboxKey = this._onLightboxKey.bind(this);
   }
 
   initialize(opt = {}) {
@@ -15,11 +27,46 @@ class __chat_p2p extends LetcBox {
     // `mview` drives the single-pane mobile/tablet layout (≤ 1024px):
     // "sidebar" shows the inbox, "chat" shows the conversation. On wider
     // screens both panes show side-by-side and the attribute is ignored.
-    opt.dataset = { ...opt.dataset, anim: "out", mview: "sidebar" };
+    //
+    // anim starts "in", NOT "out". As a slide-out this mounted parked
+    // off-screen and slid in later, so "out" was the right initial state. It
+    // is now a full-canvas screen mounted on demand into settings-main-slot
+    // (desk INBOX_SLOT) — it is created precisely because the user asked to
+    // see it, so it must be visible from the first frame.
+    //
+    // Load-bearing: the skin maps data-anim="out" to display:none, and in
+    // that slot nothing flips it to "in" — _loadKind only feeds the kind.
+    // Mounting "out" left the Inbox rendered but invisible; the only thing
+    // that ever revealed it was the contact list's `eod`, so an empty or slow
+    // list showed a blank screen. "out" now means only one thing: the desk is
+    // closing this screen (_hidePanel / togglePanel's animate-then-destroy).
+    //
+    // `loading` gates BOTH loading skeletons (see skin). Seeded here rather
+    // than flipped on later, so the FIRST paint is already the skeleton: the
+    // inbox mounts with an empty list and a chat_rooms fetch in flight, and
+    // the list's own spinner option draws nothing in ui-team. Failing closed
+    // matters more than the switch case — an unstamped root reads as ready
+    // and shows the blank screen this exists to replace.
+    //
+    // One flag for both columns, not one each: that is what makes them move
+    // together (see _raiseSkeletons).
+    opt.dataset = { ...opt.dataset, anim: "in", mview: "sidebar", loading: 1, scope: "direct" };
     super.initialize(opt);
+    armItemsReady(this);
     this.declareHandlers();
     this._radioId = `peer-${this.mget(_a.widgetId)}`;
     this._filter = _a.contact;
+    // One inbox list per SOURCE and one conversation per scope tab, kept
+    // alive across tab switches (see _selectScope). Switching used to throw
+    // both away and rebuild them through four serial round trips.
+    //   _lists: { direct, workspace }   — Support narrows the direct list
+    //   _panes: { direct, workspace, support } → { peer, type, contact, widget }
+    this._lists = {};
+    this._panes = {};
+    this._openSeq = {};
+    // media.home per hub_id. Immutable for the life of this screen, and the
+    // personal one was refetched on EVERY direct conversation opened.
+    this._homeCache = new Map();
     this.bindEvent(_a.live);
     this._onOutsideClick = this._onOutsideClick.bind(this);
     this._onPeerData = this._onPeerData.bind(this);
@@ -67,14 +114,28 @@ class __chat_p2p extends LetcBox {
       )
         return;
     }
-    if (this.el.dataset.anim === "in" && !this.el.contains(e.target)) {
-      this.el.dataset.anim = "out";
-    }
+    // Deliberately NOT self-hiding any more. As a slide-out this panel closed
+    // itself on an outside click; as a FULL-CANVAS screen (Figma 43:32209) it
+    // owns the whole centre column, so a click on the rail or the top bar —
+    // both "outside" — would have blanked the screen the user is working in.
+    // The desk opens and closes this slot now (INBOX_SLOT), the same way it
+    // does Settings and Calendar.
   }
 
   onBeforeDestroy() {
+    clearTimeout(this._searchDebounce);
+    clearTimeout(this._composeSearchDebounce);
+    clearTimeout(this._peopleDebounce);
+    clearTimeout(this._peopleSyncTimer);
+    clearTimeout(this._settleTimer);
+    clearTimeout(this._skeletonFallback);
+    if (this._paintWatcher) {
+      this._paintWatcher.disconnect();
+      this._paintWatcher = null;
+    }
     this.unbindEvent(_a.live);
     document.removeEventListener("mousedown", this._onDocClick);
+    document.removeEventListener("keydown", this._onLightboxKey, true);
     RADIO_CLICK.off(_e.click, this._onOutsideClick);
     RADIO_BROADCAST.off(_e.peerData, this._onPeerData);
   }
@@ -97,15 +158,17 @@ class __chat_p2p extends LetcBox {
       }
     }
 
-    const list = this._contactList;
-    if (list && list.getItemsByAttr) {
+    // Every live list, not just the one showing — a hidden one is shown
+    // again as it is, without a refetch to correct it.
+    Object.values(this._lists).forEach((list) => {
+      if (!list || !list.getItemsByAttr) return;
       const items = list.getItemsByAttr(_a.entity_id, peerId) || [];
       items.forEach((item) => {
         if (!item) return;
         item.mset && item.mset(_a.online, status);
         if (item.el) item.el.dataset.online = status == null ? "" : status;
       });
-    }
+    });
   }
 
   /**
@@ -131,13 +194,563 @@ class __chat_p2p extends LetcBox {
   /**
    * Returns the API config for the contact list.
    */
+  /**
+   * The inbox list source, chosen by the active scope tab (Figma 43:32209).
+   *
+   * Direct Chat  → chat.chat_rooms with flag=contact — person-to-person rooms.
+   * Workspace chat → chat.share_rooms (group_chat_rooms) — the group rooms
+   *   that belong to workspaces rather than to a contact pair.
+   *
+   * Support keeps the direct query: a support conversation IS a contact room;
+   * that tab narrows it client-side in _applyFilter, exactly as before.
+   */
   getCurrentApi() {
+    return this._roomScope === "workspace"
+      ? this.getWorkspaceApi()
+      : this.getDirectApi();
+  }
+
+  /**
+   * Each list is bound to its OWN source. They used to share getCurrentApi,
+   * which reads the active tab — harmless while only one list existed, but
+   * with both kept alive a page fetched by the hidden direct list (scrolling
+   * it before the switch, paging on its way out) would have come back from
+   * share_rooms.
+   */
+  getDirectApi() {
     return {
       service: SERVICE.chat.chat_rooms,
       flag: _a.contact,
       option: _a.active,
       hub_id: Visitor.get(_a.id),
     };
+  }
+
+  getWorkspaceApi() {
+    // Empty until the tab is first visited. The Workspace list is in the
+    // skeleton from the start, but group_chat_rooms is the expensive query
+    // (it visits every workspace's database) and most visits to the inbox
+    // never open this tab — an api without a service makes the list's fetch
+    // a no-op, and _loadWorkspaceList restarts it for real.
+    if (!this._wsActivated) return {};
+    return {
+      service: SERVICE.chat.share_rooms,
+      hub_id: Visitor.get(_a.id),
+    };
+  }
+
+  /**
+   * The "Contacts" section under the Direct search results.
+   *
+   * Same query as the Direct list, plus the typed term: chat_rooms returns
+   * every contact and same-domain colleague — messaged or not — and filters
+   * every page by `key` on the server (a prefix match on first/last name).
+   * No term, no service: the list's fetch is then a no-op, so it costs
+   * nothing until someone searches.
+   */
+  getPeopleApi() {
+    const key = (this._peopleQuery || "").trim();
+    if (!key) return {};
+    return {
+      service: SERVICE.chat.chat_rooms,
+      flag: _a.contact,
+      option: _a.active,
+      hub_id: Visitor.get(_a.id),
+      [_a.key]: key,
+    };
+  }
+
+  /**
+   * Which list a scope reads. Support is a client-side narrowing of the
+   * direct list (see _applyFilter), not a source of its own.
+   */
+  _listKey(scope) {
+    return (scope || this._scopeKey()) === "workspace" ? "workspace" : "direct";
+  }
+
+  /**
+   * media.home for a hub, fetched once per screen. The in-flight promise is
+   * what is cached, so two opens racing share one request; a failure is
+   * evicted so the next open retries instead of inheriting it.
+   */
+  _homeFor(hub_id) {
+    const key = String(hub_id);
+    let p = this._homeCache.get(key);
+    if (!p) {
+      p = this.fetchService(SERVICE.media.home, { hub_id }, { async: 1 });
+      this._homeCache.set(key, p);
+      p.then(
+        (home) => {
+          if (!home) this._homeCache.delete(key);
+        },
+        () => this._homeCache.delete(key),
+      );
+    }
+    return p;
+  }
+
+  /**
+   * A scope tab was pressed. No-op when the scope is unchanged, so re-clicking
+   * the active tab (including Direct before any tab was ever pressed — the
+   * unset scope IS Direct) costs nothing.
+   */
+  async _setRoomScope(scope) {
+    return this._selectScope(scope || "direct", { land: true });
+  }
+
+  /**
+   * Show a scope: its list, and its conversation.
+   *
+   * A SHOW/HIDE, not a refetch. This used to restart the one list against the
+   * other service and remount the conversation — list fetch, media.home,
+   * media.home again inside widget_chat, then the messages, all in series and
+   * all under the skeleton — on every single press. Now each source keeps its
+   * own list (kept current by onWsMessage, exactly as the visible one always
+   * was) and each tab keeps its conversation parked, so only the FIRST visit to
+   * Workspace chat loads anything.
+   *
+   * @param {String} next        direct | workspace | support
+   * @param {Object} opt.land    open the scope's first row when it has no
+   *                             conversation of its own yet (a tab press).
+   *                             Off when a caller is about to open a specific
+   *                             conversation itself (_openConversation).
+   */
+  async _selectScope(next, opt = {}) {
+    const { land = false } = opt;
+    if (this._scopeKey() === next) return;
+    if (this._lightboxMedia) this._closeLightbox();
+    this._roomScope = next;
+    // Support narrows the direct list, so it shares that list.
+    this._activeFilter = next === "support" ? "support" : "all";
+    this._syncScopeTabs(next);
+    const key = this._listKey(next);
+    const list = this._lists[key];
+
+    // Park every conversation except this scope's; brings its header and
+    // active peer back with it (or empties them when it has none).
+    this._showPane(next);
+
+    if (key === "workspace" && (!this._wsActivated || !list || list._loadFailed)) {
+      // First visit to Workspace chat (or a retry after a failed load): the
+      // only case that still goes to the server.
+      this._raiseSkeletons();
+      this._showList(key);
+      return this._loadWorkspaceList();
+    }
+    if (!list) {
+      // The direct list is built by the mount's feed; a scope chosen before
+      // it registered lands through its first-page handler.
+      this._showList(key);
+      return;
+    }
+
+    this._showList(key);
+    // The Unreads toggle and the search term survive a scope switch, so the
+    // shown list has to be re-gated for them.
+    this._applyFilter();
+
+    // Its first page has not landed yet: its own first-eod handler lands it
+    // (and lowers the skeletons) when it does — it re-checks the scope then.
+    if (!list._loaded) return;
+
+    const pane = this._panes[next];
+    if (pane) {
+      // A skeleton raised by a first Workspace load still in flight covers
+      // this scope too; this conversation is already here.
+      if (this._isPanePainted(pane)) this._lowerSkeletons();
+      return;
+    }
+    if (land) return this._landScope(list, next);
+    if (this.el && this.el.dataset.loading === "1") this._lowerSkeletons();
+  }
+
+  /**
+   * Reflect the active scope on the tab row. The tabs are a radio group that
+   * flips itself on a click; a scope chosen in code (a conversation opened
+   * from elsewhere into the other tab's list) has to set them itself.
+   */
+  _syncScopeTabs(scope) {
+    ["direct", "workspace", "support"].forEach((key) => {
+      const tab = this.getPart && this.getPart(`scope-tab-${key}`);
+      if (tab && _.isFunction(tab.setState)) tab.setState(key === scope ? 1 : 0);
+    });
+  }
+
+  /**
+   * Show one list, hide the other. Driven from the root's data-scope (see
+   * skin), so both lists — including one not yet registered — agree.
+   */
+  _showList(key) {
+    if (this.el) this.el.dataset.scope = key;
+    this._contactList = this._lists[key] || null;
+    this._syncPeople();
+  }
+
+  /**
+   * Start the Workspace chat list: on its first visit, or again after its
+   * first page failed.
+   */
+  async _loadWorkspaceList() {
+    // Warm the desk's workspace index BEFORE the rows arrive.
+    // group_chat_rooms returns no area/kind, so the per-workspace icon is
+    // resolved by joining on that index (see _workspaceMeta). prepareData is
+    // synchronous, so the cache has to be populated by the time rows arrive or
+    // every row falls back to the generic room glyph for that render.
+    // Prefetched at mount (onDomRefresh), so this is normally already settled.
+    await this._warmWorkspaceIndex();
+    if (this.isDestroyed && this.isDestroyed()) return;
+    const list = await this.ensurePart("contact-list-ws");
+    if (!list || !_.isFunction(list.restart)) return;
+    // Two presses while the index warmed: one start is enough.
+    if (this._wsActivated && !list._loadFailed) return;
+    this._wsActivated = 1;
+    list._loadFailed = 0;
+    list._loaded = 0;
+    list.restart();
+    // AFTER restart(), never before: restart() fires `eod` synchronously to
+    // flush stale listeners, which would burn a handler armed earlier.
+    this._armWorkspaceFirstPage(list);
+  }
+
+  _warmWorkspaceIndex() {
+    if (typeof Desk === "undefined" || !Desk || !_.isFunction(Desk._fetchWorkspaces)) {
+      return Promise.resolve();
+    }
+    if (!this._wsIndexWarm) {
+      this._wsIndexWarm = Promise.resolve()
+        .then(() => Desk._fetchWorkspaces())
+        .catch((e) => {
+          this._wsIndexWarm = null;
+          this.warn && this.warn("[inbox] workspace index unavailable", e);
+        });
+    }
+    return this._wsIndexWarm;
+  }
+
+  /**
+   * The Workspace list's first page: register it as loaded and, if the user
+   * is still on that tab, land on its first row.
+   */
+  _armWorkspaceFirstPage(list) {
+    const opens = this._openCount || 0;
+    list.once(_e.eod, () => {
+      if (this.isDestroyed && this.isDestroyed()) return;
+      list._loaded = 1;
+      if (this._scopeKey() !== "workspace") return;
+      this._applyFilter();
+      if (this._panes.workspace || (this._openCount || 0) !== opens) {
+        // Already has its conversation; just make sure nothing stays covered.
+        if (this._isPanePainted(this._panes.workspace)) this._lowerSkeletons();
+        return;
+      }
+      this._landScope(list, "workspace");
+    });
+    // A failed page fires `error`, never `eod` (ui-core list
+    // onServerComplain). Nothing is coming that could paint, so reveal now
+    // rather than at the 6s deadline, and retry on the next visit.
+    list.once(_e.error, () => {
+      if (this.isDestroyed && this.isDestroyed()) return;
+      list._loadFailed = 1;
+      if (this._scopeKey() === "workspace") this._lowerSkeletons();
+    });
+  }
+
+  /**
+   * Park every conversation but `scope`'s, and put that one's header and
+   * active peer back. The parked ones stay mounted and current (they still
+   * receive their messages) but hold their read-acks — see widget_chat park().
+   */
+  _showPane(scope) {
+    Object.keys(this._panes).forEach((k) => {
+      const pane = this._panes[k];
+      if (!pane || !pane.widget) return;
+      if (pane.widget.isDestroyed && pane.widget.isDestroyed()) {
+        delete this._panes[k];
+        return;
+      }
+      if (k !== scope && _.isFunction(pane.widget.park)) pane.widget.park();
+    });
+    const pane = this._panes[scope];
+    if (pane && _.isFunction(pane.widget.unpark)) pane.widget.unpark();
+    this.activePeer = pane ? pane.peer : null;
+    this.activePeerType = pane ? pane.type : null;
+    this.chatWidget = pane ? pane.widget : null;
+    // Selection lives on the row; direct and support share one list, so the
+    // row that was on is the other tab's.
+    if (pane && pane.contact && pane.contact.el) {
+      this._markSelected(this._lists[this._listKey(scope)], pane.contact);
+    }
+    this.ensurePart("chat-header").then((header) => {
+      header.clear();
+      header.feed(require("./skeleton/chat-header")(this, pane ? pane.contact : null));
+    });
+  }
+
+  _isPanePainted(pane) {
+    const el = pane && pane.widget && pane.widget.el;
+    return !!(el && el.dataset && el.dataset.painted === "1");
+  }
+
+  /**
+   * Put the selection mark on one row of a list and take it off the rest.
+   */
+  _markSelected(list, contact) {
+    if (!list || !list.children) return;
+    list.children.forEach((c) => {
+      if (c.el) c.el.dataset.radio = c === contact ? "on" : "off";
+    });
+  }
+
+  /**
+   * The list a row view belongs to, or null (a compose-picker row, a shim).
+   */
+  _listOf(contact) {
+    if (!contact) return null;
+    return (
+      Object.values(this._lists).find(
+        (l) =>
+          l &&
+          l.children &&
+          _.isFunction(l.children.toArray) &&
+          l.children.toArray().includes(contact),
+      ) || null
+    );
+  }
+
+  /**
+   * Which tab a conversation belongs under. A workspace room is Workspace
+   * chat; anything else is a person — it stays under Support when that is the
+   * tab showing, and goes to Direct otherwise.
+   */
+  _scopeForPeer(peer) {
+    if (peer && peer.flag === _a.share) return "workspace";
+    return this._scopeKey() === "support" ? "support" : "direct";
+  }
+
+  /**
+   * Raise BOTH loading skeletons, for the length of one scope load.
+   *
+   * The inbox column deliberately does NOT lower on its own `eod`. It waits
+   * for the conversation — the slower of the two — so the screen resolves in
+   * one step instead of the list uncovering, sitting beside a blank pane, and
+   * the pane uncovering a round trip later. One flag, so both columns raise on
+   * the same frame and their pulses run in phase.
+   *
+   * The pane is cleared HERE rather than in _openConversation, which is where
+   * it used to happen. Until the previous scope's widget_chat goes, the pane
+   * has a painted conversation in it and there is nothing for a skeleton to
+   * cover — the old conversation would simply stay on screen beside a
+   * skeletonised list. Nothing is wasted by clearing early: _openConversation
+   * clears the pane anyway, this only moves it a round trip forward.
+   *
+   * Only a scope load calls this. Clicking another conversation must not put
+   * the inbox list under a skeleton — the list is fine, and the row the user
+   * just clicked would disappear under it.
+   */
+  _raiseSkeletons() {
+    if (this.el) this.el.dataset.loading = "1";
+    // The conversation being left is PARKED, not destroyed (see _showPane,
+    // which the caller has already run) — switching back must find it. The
+    // header likewise is re-fed by _showPane, with nothing for a scope that
+    // has no conversation yet.
+    this._armSkeletonRelease();
+  }
+
+  /**
+   * Arm the two things that bring the skeletons back down: the conversation's
+   * paint, and a deadline in case it never comes.
+   *
+   * Split out of _raiseSkeletons so the FIRST mount can share it. At mount
+   * there is no previous conversation to clear — the pane and header do not
+   * exist yet, they are built by the feed in onDomRefresh — so that path wants
+   * the arming without the clearing.
+   */
+  _armSkeletonRelease() {
+    this._watchConversationPaint();
+    clearTimeout(this._skeletonFallback);
+    // The paint is the only thing that lowers these, and a chat_rooms request
+    // that never answers means nothing ever opens, so nothing ever paints.
+    // Without a deadline both columns would pulse for the rest of the session,
+    // which reads far worse than the blank screen this replaces.
+    this._skeletonFallback = setTimeout(() => {
+      if (this.isDestroyed && this.isDestroyed()) return;
+      this._lowerSkeletons();
+    }, 6000);
+  }
+
+  /**
+   * Lower both skeletons, revealing the two columns on the same frame.
+   */
+  _lowerSkeletons() {
+    clearTimeout(this._skeletonFallback);
+    this._skeletonFallback = null;
+    if (this._paintWatcher) {
+      this._paintWatcher.disconnect();
+      this._paintWatcher = null;
+    }
+    if (this.el) this.el.dataset.loading = "0";
+  }
+
+  /**
+   * Lower both skeletons once the conversation has painted.
+   *
+   * widget_chat stamps data-painted on itself when its message list first
+   * readies, with a 4s fallback of its own (widget/chat) — but it announces
+   * that stamp to nobody, so there is no event to subscribe to and the DOM is
+   * the only place the fact exists. Hence an observer, scoped to the pane and
+   * to that one attribute, disconnected the moment it fires.
+   *
+   * Not expressible as `:has([data-painted="1"])` in the stylesheet, which was
+   * the previous shape: that condition is equally true while the user is
+   * merely switching conversations, and would drag the inbox list under a
+   * skeleton on every click.
+   */
+  _watchConversationPaint() {
+    if (this._paintWatcher) {
+      this._paintWatcher.disconnect();
+      this._paintWatcher = null;
+    }
+    this.ensurePart("chat-panel").then((panel) => {
+      if (!panel || !panel.el) return;
+      if (this.isDestroyed && this.isDestroyed()) return;
+      // Already painted: the conversation beat the observer here. Nothing
+      // would ever mutate, so the skeletons would sit up until the fallback.
+      // A PARKED conversation (the other tab's, kept mounted) is painted
+      // too, and must not count: it is not the one the skeleton is covering.
+      const painted = () =>
+        Array.from(panel.el.querySelectorAll('[data-painted="1"]')).some(
+          (el) => !el.closest('[data-parked="1"]'),
+        );
+      if (painted()) {
+        return this._lowerSkeletons();
+      }
+      const watcher = new MutationObserver(() => {
+        if (!painted()) return;
+        this._lowerSkeletons();
+      });
+      // subtree, because the widget_chat that will carry the stamp is fed
+      // into this pane AFTER the observer starts.
+      watcher.observe(panel.el, {
+        subtree: true,
+        attributes: true,
+        attributeFilter: ["data-painted"],
+      });
+      this._paintWatcher = watcher;
+    });
+  }
+
+  /**
+   * The active scope, normalised.
+   *
+   * `_roomScope` is UNSET until the first tab press — getCurrentApi reads the
+   * absence as Direct — so comparing it raw would make every first-load guard
+   * a comparison against undefined, which is never equal to the "direct" a
+   * later press sets. Everything that captures or checks a scope goes through
+   * here so both spellings of Direct are the same value.
+   */
+  _scopeKey() {
+    return this._roomScope || "direct";
+  }
+
+  /**
+   * Open a scope's first conversation, now that its list has rows.
+   *
+   * Runs when a scope with a loaded list but no conversation of its own is
+   * shown (a tab press, or the Workspace list's first page landing). Without
+   * it the pane would keep showing nothing beside a list full of rows.
+   *
+   * @param {View} list    the scope's list
+   * @param {String} scope the scope this landing belongs to
+   */
+  async _landScope(list, scope) {
+    if (this.isDestroyed && this.isDestroyed()) return;
+    if (this._scopeKey() !== scope) return;
+    const opens = this._openCount || 0;
+    const row = this._landingRow(list);
+    // Nothing to open: the pane must not keep showing the scope we just
+    // left. Cleared even on mobile, where the pane is behind the sidebar —
+    // the back button would otherwise reveal a stale conversation. This also
+    // lowers the skeletons — nothing is coming that could ever paint.
+    if (!row) return this._clearConversation();
+    // Mobile/tablet stays on the inbox. The user just tapped a tab THERE,
+    // and opening flips data-mview to "chat" and hides it — same reason the
+    // first-load landing bails (see onPartReady). Lower on the way out for
+    // the same reason as above: nothing will paint, so nothing else would.
+    if (this._isMobile()) return this._lowerSkeletons();
+    await Kind.waitFor("widget_chat");
+    // Re-checked after the await: the wait is a suspension point, and a tab
+    // press during it must win.
+    if (this._scopeKey() !== scope) return;
+    if (this.isDestroyed && this.isDestroyed()) return;
+    // Something else opened a conversation meanwhile (a click).
+    if (this._panes[scope] || (this._openCount || 0) !== opens) return;
+    this.openChat(row);
+  }
+
+  /**
+   * Put the conversation pane back to its empty state.
+   *
+   * Used when a scope has nothing to land on. chat-header renders its
+   * `--empty` variant when it is fed a null contact (see skeleton/chat-header),
+   * and dropping chatWidget matters as much as clearing the pane: a live
+   * widget_chat left mounted keeps acknowledging messages in a scope the user
+   * is no longer looking at.
+   */
+  _clearConversation() {
+    this.activePeer = null;
+    this.activePeerType = null;
+    this.chatWidget = null;
+    if (this.el) this.el.dataset.mview = "sidebar";
+    // Empty ON PURPOSE, not waiting for anything: no conversation is coming,
+    // so nothing would ever paint and lower these. Both columns reveal here.
+    this._lowerSkeletons();
+    this.ensurePart("chat-header").then((header) => {
+      header.clear();
+      header.feed(require("./skeleton/chat-header")(this, null));
+    });
+    // Only THIS scope's conversation. The other tab's stays parked for when
+    // the user switches back.
+    this._dropPane(this._scopeKey());
+  }
+
+  /**
+   * Destroy a scope's conversation. Dropping it matters as much as hiding
+   * it: a live widget_chat keeps receiving that conversation's traffic.
+   */
+  _dropPane(scope) {
+    const pane = this._panes[scope];
+    delete this._panes[scope];
+    const w = pane && pane.widget;
+    if (w && !(w.isDestroyed && w.isDestroyed())) {
+      // Now, not animated: the replacement mounts into the same pane on this
+      // tick, and selfDestroy also takes it out of the pane's collection.
+      if (_.isFunction(w.selfDestroy)) w.selfDestroy({ now: 1 });
+      else if (_.isFunction(w.destroy)) w.destroy();
+    }
+  }
+
+  /**
+   * The desk's cached desk.home row for a hub, or null.
+   *
+   * That payload is where `area` and `kind` live — the two fields the
+   * workspace glyph is chosen from, and the two group_chat_rooms does not
+   * return.
+   */
+  _workspaceMeta(hubId) {
+    if (typeof Desk === "undefined" || !Desk || !hubId) return null;
+    const rows = Desk._workspaces || [];
+    // Indexed, not scanned. This is called once PER ROW while normalising a
+    // page, so a linear find made it O(rows x workspaces). The index is
+    // rebuilt only when the underlying array identity changes, which is
+    // whenever the desk refetches.
+    if (this._wsIndexSrc !== rows) {
+      this._wsIndexSrc = rows;
+      this._wsIndex = new Map();
+      rows.forEach((r) => {
+        if (r) this._wsIndex.set(String(r.hub_id || r.id), r);
+      });
+    }
+    return this._wsIndex.get(String(hubId)) || null;
   }
 
   /**
@@ -146,17 +759,134 @@ class __chat_p2p extends LetcBox {
    * which feeds straight into openChat().
    */
   getContactsApi() {
-    return {
+    const api = {
       service: SERVICE.chat.chat_rooms,
       flag: _a.contact,
       option: _a.active,
       hub_id: Visitor.get(_a.id),
     };
+    // THE SEARCH MUST GO TO THE SERVER, not stay a filter over the loaded rows.
+    //
+    // chat_rooms is paged (20 rows a page) and ordered
+    // `IFNULL(ctime,0) DESC` — ctime being the last message exchanged with that
+    // peer. A contact you have NEVER messaged has no p2p_time row, so ctime is
+    // NULL and they sort to the very BOTTOM of the whole address book — which
+    // is exactly the person you open this picker to find. Past ~20 contacts
+    // they are never on page one.
+    //
+    // The proc takes `key` and filters every page with it, so handing the typed
+    // text over is what makes an unmessaged contact reachable at all. `restart()`
+    // re-runs this function (start() -> _initApi()), so the value is picked up
+    // on the next fetch.
+    const key = (this._composeQuery || "").trim();
+    if (key) api[_a.key] = key;
+    return api;
   }
 
   onDomRefresh() {
+    // Re-stamped here, before the skeleton builds the columns, because the
+    // seed in initialize rides opt.dataset — and a widget mounted as a FED kid
+    // takes its model from the parent's descriptor, so an opt edit does not
+    // always survive the trip. Writing the element directly costs one
+    // assignment and removes the question; both paths target the same
+    // attribute, so whichever landed first, the screen is never unstamped.
+    if (this.el && !this.el.dataset.loading) this.el.dataset.loading = "1";
     this.feed(require("./skeleton")(this));
+    // AFTER the feed, which is what builds the chat-panel this waits on. Not
+    // _raiseSkeletons: at mount there is no previous conversation to clear,
+    // and the skeleton has just fed the empty header itself.
+    this._armSkeletonRelease();
     RADIO_CLICK.on(_e.click, this._onOutsideClick);
+    // The Workspace tab joins its rows on the desk's workspace index (see
+    // _loadWorkspaceList). Warm it now, off the critical path, so the first
+    // press of that tab does not queue behind it. Usually already cached.
+    setTimeout(() => {
+      if (this.isDestroyed && this.isDestroyed()) return;
+      this._warmWorkspaceIndex();
+    }, 0);
+  }
+
+  /**
+   * Workspace-chat rows arrive in a DIFFERENT shape from contact rows.
+   * chat.share_rooms -> group_chat_rooms returns one row per hub
+   * { id, group_name, room_count, message, ctime }, while every consumer
+   * downstream (chat_contact_item, openChat, _openConversation) speaks
+   * the contact shape { entity_id, fullname, flag, ... }.
+   *
+   * Normalised HERE, by wrapping prepareData, rather than by teaching
+   * the shared row widget a second shape or by adding an itemsMap to the
+   * list: itemsMap assigns unconditionally, so mapping id -> entity_id
+   * would blank entity_id on ordinary contact rows. Same technique
+   * desk/workspace-list uses to reshape its own mixed payload.
+   *
+   * Installed on BOTH lists, as it was on the one list both scopes shared:
+   * a contact row (entity_id set, no group_name) passes through untouched.
+   */
+  _installRowShape(child) {
+    if (!child._wsRowShapeInstalled) {
+      child._wsRowShapeInstalled = 1;
+      const original = child.prepareData.bind(child);
+      child.prepareData = (data) => {
+        let rows = original(data) || [];
+        // A list service with exactly ONE row answers with the object
+        // itself, not a one-element array — a user in a single workspace
+        // would otherwise get an empty Workspace-chat tab.
+        if (!_.isArray(rows)) rows = rows ? [rows] : [];
+        return rows.filter((r) => this._isChatWorkspace(r)).map((r) => {
+          if (!r || r.entity_id || !r.group_name) return r;
+          // area/kind come from the desk's workspace index, not from the
+          // chat payload — group_chat_rooms returns neither, so without
+          // this join every workspace drew the same generic room glyph.
+          const meta = this._workspaceMeta(r.id) || {};
+          return {
+            ...r,
+            entity_id: r.id,
+            fullname: r.group_name,
+            display: r.group_name,
+            // `share` is what makes _openConversation resolve the hub's
+            // home node (media.home -> home_id) and mount the conversation
+            // rooted at the workspace — which IS its team chat.
+            flag: _a.share,
+            is_workspace: 1,
+            area: meta.area,
+            ws_kind: meta.kind,
+            ws_filetype: meta.filetype,
+          };
+        });
+      };
+    }
+    if (child.collection) {
+      // A never-messaged contact has no ctime: `-undefined` is NaN, and a NaN
+      // comparator puts those rows in an arbitrary order. 0 mirrors the
+      // server's `ORDER BY IFNULL(ctime,0) DESC`.
+      child.collection.comparator = (item) => -(Number(item.get(_a.ctime)) || 0);
+    }
+  }
+
+  /**
+   * Is this group_chat_rooms row a workspace the Workspace-chat tab should
+   * list? Contact rows (and anything that is not a hub row) always pass.
+   *
+   * group_chat_rooms returns EVERY hub node in the user's database — the
+   * personal hub, the DMZ "wicket", system hubs, workspaces since deleted or
+   * frozen — with no area and no status. Their rows had no entry in the
+   * desk's workspace index, so the icon fell back to the folder shape's
+   * default purple (#885eff): the "personal folder/workspace" rows that
+   * should not be in a workspace chat list at all. The desk's index is the
+   * app's own definition of "a workspace" (active hubs in share / private /
+   * restricted / public, see desk _fetchWorkspaces) — the same list the
+   * workspace switcher shows — so a hub row it does not hold is dropped.
+   *
+   * No index (not loaded, or its fetch failed): keep everything — an
+   * over-full list beats an empty tab.
+   */
+  _isChatWorkspace(r) {
+    if (!r || r.entity_id || !r.group_name) return true;
+    if (typeof Desk === "undefined" || !Desk) return true;
+    const all = Desk._workspaces;
+    if (!_.isArray(all) || !all.length) return true;
+    const meta = this._workspaceMeta(r.id);
+    return !!(meta && meta.filetype === _a.hub);
   }
 
   /**
@@ -166,18 +896,34 @@ class __chat_p2p extends LetcBox {
   onPartReady(child, pn) {
     switch (pn) {
       case "contact-list":
-        this._contactList = child;
-        if (child.collection) {
-          child.collection.comparator = (item) => -item.get(_a.ctime);
-        }
+        this._lists.direct = child;
+        if (this._listKey() === "direct") this._contactList = child;
+        this._installRowShape(child);
+        const opensAtArm = this._openCount || 0;
         child.once(_e.eod, async () => {
-          this.el.dataset.anim = "in";
-          this._applyFilter();
+          // Loaded whichever tab is showing: a later switch back to Direct
+          // finds it ready instead of waiting on an eod that already passed.
+          child._loaded = 1;
+          // The conversation list is painted (rows or none). A reload's screen
+          // restore waits on this (libs/items-ready); it does not wait for the
+          // first conversation to open.
+          markItemsReady(this);
           // Deliberately NOT awaited: resolving the support account is a
           // network call, and putting it in front of the landing below would
           // mean a slow or hanging lookup leaves the inbox with nothing open.
           // It pins its own row and opens it only if nothing else did.
+          // Always into THIS list — the direct one — whichever tab is showing;
+          // it opens the row only when Direct is the tab in view.
           this._ensureSupportRow();
+          // The user pressed Workspace chat before this first page landed:
+          // that tab owns the pane now, and _selectScope lands this list when
+          // they come back to it.
+          if (this._listKey() !== "direct") return;
+          this.el.dataset.anim = "in";
+          // NOT lowering the skeletons here, although this page has landed —
+          // they come down together when the conversation paints. See
+          // _raiseSkeletons.
+          this._applyFilter();
           await Kind.waitFor("widget_chat");
           // Mounted with a conversation to open (Contact Support): honour it
           // instead of landing on the first row, on every screen size — the
@@ -187,12 +933,87 @@ class __chat_p2p extends LetcBox {
             this.mset("open_peer", null);
             return this.openPeer(pending.entity_id, pending);
           }
+          // Re-checked after the await: a tab press, or a conversation opened
+          // meanwhile (a click, the support row), owns the pane now.
+          if (this._listKey() !== "direct") return;
+          if (this._panes[this._scopeKey()]) return;
+          if ((this._openCount || 0) !== opensAtArm) return;
           // On mobile/tablet stay on the inbox — auto-opening the first
           // conversation would jump past the sidebar the user expects to
-          // land on. They tap a contact to reveal the chat pane.
-          if (this._isMobile()) return;
-          this.openChat(this._landingRow(child));
+          // land on. They tap a contact to reveal the chat pane. Lower on the
+          // way out: nothing is opening, so nothing will ever paint.
+          if (this._isMobile()) return this._lowerSkeletons();
+          const landing = this._landingRow(child);
+          // An account with NO conversations at all. _ensureSupportRow above
+          // may still pin one and open it — but it may equally find nothing
+          // configured, and then no paint is coming and only the deadline
+          // would uncover the screen. Reveal the empty inbox now; a support
+          // row arriving later opens into an already-revealed pane.
+          if (!landing) return this._lowerSkeletons();
+          this.openChat(landing);
         });
+        // A failed first page fires `error`, never `eod` (ui-core list
+        // onServerComplain) — and a failed load is still a finished one.
+        child.once(_e.error, () => {
+          child._loaded = 1;
+          markItemsReady(this);
+        });
+        break;
+
+      case "contact-list-ws":
+        // Started lazily — see getWorkspaceApi / _loadWorkspaceList.
+        this._lists.workspace = child;
+        if (this._listKey() === "workspace") this._contactList = child;
+        this._installRowShape(child);
+        break;
+
+      case "sidebar":
+        break;
+
+      case "lightbox-img": {
+        // `slide` is not generated yet for a fresh upload: fall back to the
+        // original once.
+        const img = child.el && (child.el.tagName === "IMG" ? child.el : child.el.querySelector("img"));
+        if (img) {
+          img.addEventListener("error", () => {
+            const orig = img.dataset.orig || (child.el.dataset && child.el.dataset.orig);
+            if (orig && !img.dataset.fellBack) {
+              img.dataset.fellBack = "1";
+              img.src = orig;
+            }
+          });
+        }
+        break;
+      }
+
+      case "lightbox-video": {
+        // A codec the browser cannot play: say so, and leave Download.
+        const video = child.el && (child.el.tagName === "VIDEO" ? child.el : child.el.querySelector("video"));
+        if (video) {
+          video.addEventListener("error", () => {
+            this.ensurePart("lightbox-stage").then((stage) => {
+              if (!stage || !this._lightboxMedia) return;
+              stage.feed(
+                Skeletons.Note({
+                  className: `${this.fig.family}__lightbox-error`,
+                  content: LOCALE.UNABLE_TO_GENERATE_PREVIEW,
+                }),
+              );
+            });
+          });
+        }
+        break;
+      }
+
+      case "people-list":
+        this._peopleList = child;
+        if (child.collection) {
+          child.collection.comparator = (item) => -(Number(item.get(_a.ctime)) || 0);
+          // Rows land page by page; re-hide duplicates and re-decide what
+          // shows once each batch is in.
+          child.collection.on("update reset", () => this._schedulePeopleSync());
+        }
+        child.on(_e.eod, () => this._schedulePeopleSync());
         break;
 
       case "compose-popup":
@@ -203,7 +1024,13 @@ class __chat_p2p extends LetcBox {
       case "compose-list":
         this._composeList = child;
         if (child.collection) {
-          child.collection.comparator = (item) => -item.get(_a.ctime);
+          // `~~` before negating, because a contact you have never messaged
+          // has NO ctime: plain `-undefined` is NaN, and a NaN comparator
+          // compares false against everything, so those rows landed in an
+          // arbitrary order instead of a predictable one. Coercing to 0 first
+          // mirrors the server's own `ORDER BY IFNULL(ctime,0) DESC`, so the
+          // merged pages keep exactly the order they were fetched in.
+          child.collection.comparator = (item) => -~~item.get(_a.ctime);
         }
         break;
 
@@ -228,6 +1055,123 @@ class __chat_p2p extends LetcBox {
       default:
         if (super.onPartReady) super.onPartReady(child, pn);
     }
+  }
+
+  /**
+   * Show a chat image / video inside the Inbox.
+   *
+   * Called by the desk window manager (Wm.openContent) for a tile that lives
+   * in this screen: the regular viewer is launched into the window-manager
+   * layers, which this full-canvas screen covers, so it opened invisibly
+   * behind the Inbox — and every further click stacked another one there.
+   *
+   * @param {View} media  the media_grid tile that was clicked
+   */
+  previewMedia(media) {
+    if (!media || !_.isFunction(media.actualNode)) return;
+    // Every picture / video of this conversation, oldest first, so the
+    // viewer can step through them (arrows, ← →) the way the full viewer
+    // steps through a folder.
+    this._gallery = this._galleryFor(media);
+    this._galleryIndex = Math.max(0, this._gallery.indexOf(media));
+    this._renderLightbox();
+  }
+
+  /**
+   * The conversation's inline pictures / videos, in reading order, or just
+   * `media` when it is not one of them (a reply quote's thumbnail).
+   */
+  _galleryFor(media) {
+    const out = [];
+    const chat = _.isFunction(media.getParentByKind)
+      ? media.getParentByKind("widget_chat")
+      : null;
+    const rows = chat && chat.__list && chat.__list.children;
+    if (rows && _.isFunction(rows.forEach)) {
+      rows.forEach((row) => {
+        const tiles = row && row.__list && row.__list.children;
+        if (!tiles || !_.isFunction(tiles.forEach)) return;
+        tiles.forEach((t) => {
+          if (!t || !_.isFunction(t.mget) || !_.isFunction(t.actualNode)) return;
+          if (t.isDestroyed && t.isDestroyed()) return;
+          const ft = t.mget(_a.filetype);
+          if (ft === _a.image || ft === _a.video) out.push(t);
+        });
+      });
+    }
+    return out.includes(media) ? out : [media];
+  }
+
+  _renderLightbox() {
+    const gallery = this._gallery || [];
+    const media = gallery[this._galleryIndex];
+    if (!media || (media.isDestroyed && media.isDestroyed())) {
+      return this._closeLightbox();
+    }
+    const type = media.mget(_a.filetype);
+    const name = _.isFunction(media.fullname)
+      ? media.fullname()
+      : media.mget(_a.filename) || "";
+    const slide = media.actualNode(_a.slide).url;
+    const orig = media.actualNode(_a.orig).url;
+    const count = gallery.length;
+    const index = this._galleryIndex;
+    this._lightboxMedia = media;
+    this.ensurePart("wrapper-lightbox").then((w) => {
+      if (!w || (this.isDestroyed && this.isDestroyed())) return;
+      if (this._lightboxMedia !== media) return;
+      // One viewer at a time: opening another replaces it.
+      w.feed(
+        require("./skeleton/lightbox")(this, {
+          type,
+          name,
+          slide,
+          orig,
+          position: count > 1 ? `${index + 1} / ${count}` : "",
+          hasPrev: index > 0,
+          hasNext: index < count - 1,
+        }),
+      );
+      document.removeEventListener("keydown", this._onLightboxKey, true);
+      document.addEventListener("keydown", this._onLightboxKey, true);
+    });
+  }
+
+  /**
+   * Step the viewer to the previous (-1) / next (+1) picture. Stops at the
+   * ends rather than wrapping: the conversation has a first and a last.
+   */
+  _stepLightbox(delta) {
+    const gallery = this._gallery || [];
+    const next = this._galleryIndex + delta;
+    if (next < 0 || next >= gallery.length) return;
+    this._galleryIndex = next;
+    this._renderLightbox();
+  }
+
+  _closeLightbox() {
+    this._lightboxMedia = null;
+    this._gallery = null;
+    document.removeEventListener("keydown", this._onLightboxKey, true);
+    const w = this.getPart && this.getPart("wrapper-lightbox");
+    if (w && _.isFunction(w.clear)) w.clear();
+  }
+
+  /**
+   * Escape closes the viewer — and only the viewer: taken in the capture
+   * phase so the conversation's own Escape handling (reply, edit) does not
+   * also act on the same key.
+   */
+  _onLightboxKey(e) {
+    if (!e || !this._lightboxMedia) return;
+    const step = { ArrowLeft: -1, ArrowRight: 1 }[e.key];
+    if (e.key !== "Escape" && !step) return;
+    // A video's own controls take the arrows (seek) while they have focus.
+    if (step && e.target && e.target.tagName === "VIDEO") return;
+    e.stopPropagation();
+    e.preventDefault();
+    if (step) return this._stepLightbox(step);
+    this._closeLightbox();
   }
 
   _toggleComposePopup(force) {
@@ -260,10 +1204,10 @@ class __chat_p2p extends LetcBox {
         inputEl.value = "";
         setTimeout(() => inputEl.focus(), 0);
       }
-      if (this._composeList && _.isFunction(this._composeList.restart)) {
-        this._composeList.restart();
-      }
-      this._filterComposeList("");
+      // Clear the term BEFORE restarting: getContactsApi reads it, so leaving
+      // it set would reopen the picker still filtered by the last search.
+      this._composeQuery = "";
+      this._restartComposeList();
     }
   }
 
@@ -281,43 +1225,39 @@ class __chat_p2p extends LetcBox {
     this._toggleComposePopup(false);
   }
 
+  /**
+   * Search the compose picker.
+   *
+   * This used to hide non-matching rows with `display:none`, which could only
+   * ever find someone already loaded — and it also DEADLOCKED paging: once
+   * every row is hidden the scroll container has no height, so neither
+   * `_onScroll` nor `_onMouseWheel` can fire and the list can never reach the
+   * page the contact is actually on. Refetching with the term instead searches
+   * the whole address book and leaves the rows real, so scrolling still pages.
+   *
+   * Server-side matching is a PREFIX match on firstname / lastname / surname /
+   * source, so a mid-name fragment no longer matches the way the old local
+   * `includes()` did over page one. That is the deliberate trade: reaching
+   * every contact beats substring-matching the first twenty.
+   */
   _filterComposeList(text) {
-    if (!this._composeList || !this._composeList.children) return;
-    const q = (text || "").trim().toLowerCase();
-    this._composeList.children.forEach((item) => {
-      if (!item.el) return;
-      if (!q) {
-        item.el.style.display = "";
-        return;
-      }
-      // Read the DISPLAYED name from the item's rendered DOM — this is the
-      // ground truth no matter which model field fed it (firstname,
-      // fullname, name, display_name, etc.). Fall back to a wide net of
-      // common model keys to cover items rendered before their DOM is
-      // ready or with non-text avatars.
-      let haystack = "";
-      const nameEl = item.el.querySelector(
-        ".widget-chatcontactItem__note.name",
-      );
-      if (nameEl) haystack += " " + (nameEl.textContent || "");
-      if (item.mget) {
-        haystack +=
-          " " +
-          [
-            item.mget(_a.firstname),
-            item.mget(_a.lastname),
-            item.mget(_a.fullname),
-            item.mget(_a.name),
-            item.mget(_a.email),
-            item.mget("display_name"),
-            item.mget("username"),
-            item.mget("hubname"),
-          ]
-            .filter(Boolean)
-            .join(" ");
-      }
-      item.el.style.display = haystack.toLowerCase().includes(q) ? "" : "none";
-    });
+    const next = (text || "").trim();
+    if (next === (this._composeQuery || "")) return;
+    this._composeQuery = next;
+    clearTimeout(this._composeSearchDebounce);
+    // The entry is `interactive`, so this arrives on every keystroke and each
+    // restart is a round trip — debounce before going to the server.
+    this._composeSearchDebounce = setTimeout(
+      () => this._restartComposeList(),
+      250,
+    );
+  }
+
+  _restartComposeList() {
+    clearTimeout(this._composeSearchDebounce);
+    if (this._composeList && _.isFunction(this._composeList.restart)) {
+      this._composeList.restart();
+    }
   }
 
   /**
@@ -341,13 +1281,17 @@ class __chat_p2p extends LetcBox {
       contact.el.style.display = "none";
     }
 
-    this.ensurePart("contact-list").then((list) => {
-      if (list.children) {
-        list.children.forEach((c) => {
-          if (c.el) c.el.dataset.radio = c === contact ? "on" : "off";
-        });
-      }
-    });
+    // Selection is marked in the list the row lives in. A row from the
+    // compose picker lives in neither, and only clears the selection of the
+    // list its conversation will show under — as it always did.
+    const ownList = this._listOf(contact);
+    if (ownList) {
+      this._markSelected(ownList, contact);
+    } else {
+      const flag0 = contact.mget && contact.mget(_a.flag);
+      const scope0 = this._scopeForPeer({ flag: flag0 });
+      this._markSelected(this._lists[this._listKey(scope0)], contact);
+    }
 
     const peer = contact.toLETC
       ? contact.toLETC()
@@ -355,6 +1299,11 @@ class __chat_p2p extends LetcBox {
     delete peer.kids;
     delete peer.uiHandler;
 
+    // toLETC filters fields, so anything the header or the conversation needs
+    // is re-read from the model below. `area` joins them: it is what tints a
+    // workspace row's folder icon, and a peer built by _peerShim reads it
+    // straight off this object.
+    if (contact.mget && contact.mget(_a.area)) peer.area = contact.mget(_a.area);
     // Ensure flag survives toLETC filtering — read directly from model
     const flag = (contact.mget && contact.mget(_a.flag)) || peer.flag;
     peer.flag = flag;
@@ -511,7 +1460,15 @@ class __chat_p2p extends LetcBox {
     // An account with no conversations at all lands on nothing, because the
     // landing above ran before this row existed. Support is then the only
     // thing in the inbox, and the right first screen.
-    if (item && !this.chatWidget && !this._isMobile()) {
+    // Only while Direct is the tab in view: opening it from anywhere else
+    // would yank the user off the tab they chose.
+    if (
+      item &&
+      this._scopeKey() === "direct" &&
+      !this._panes.direct &&
+      !this._openCount &&
+      !this._isMobile()
+    ) {
       this.openChat(item);
     }
   }
@@ -523,6 +1480,16 @@ class __chat_p2p extends LetcBox {
    * support row would bury the conversation the user actually came back for.
    * Falls back to the placeholder when it is all there is, which is the right
    * first screen for an account with no conversations yet.
+   *
+   * "Placeholder" is overloaded here and the two senses are unrelated:
+   * `is_placeholder` marks the support row WE draw (a real, openable
+   * conversation), while an EMPTY list has the ui-core smart list's own
+   * NO_CONTACT note sitting in `children` as `__placeholder` — a Note, not a
+   * conversation. Only the first is landable, so the note is dropped by
+   * requiring an entity_id, which every conversation row carries (contact rows
+   * from chat_rooms directly, workspace rows via the prepareData normaliser in
+   * onPartReady). Without that, an empty scope lands on the note and openChat
+   * runs until _openConversation bails on a missing hub_id.
    *
    * @param {View} list
    * @returns {View|null}
@@ -541,7 +1508,13 @@ class __chat_p2p extends LetcBox {
       return children.first() || null;
     }
     const visible = kids.filter(
-      (c) => c && c.el && c.el.style.display !== "none",
+      (c) =>
+        c &&
+        c.el &&
+        c.el.style.display !== "none" &&
+        c !== list.__placeholder &&
+        _.isFunction(c.mget) &&
+        c.mget(_a.entity_id),
     );
     return visible.find((c) => !c.mget("is_placeholder")) || visible[0] || null;
   }
@@ -650,6 +1623,47 @@ class __chat_p2p extends LetcBox {
     const hub_id = peer.entity_id;
     if (!hub_id) return;
 
+    // The conversation goes under the tab it belongs to. Normally that is the
+    // tab showing; a DM opened while Workspace chat is up (compose picker,
+    // Contact Support, a mention link) switches to Direct rather than mount a
+    // person's conversation under a list of workspaces.
+    // Counted for the automatic landings (first page, tab press): they open a
+    // row only if nothing was opened since they were armed, so they never
+    // replace a conversation the user or a caller asked for.
+    this._openCount = (this._openCount || 0) + 1;
+    const scope = this._scopeForPeer(peer);
+    if (scope !== this._scopeKey()) await this._selectScope(scope, { land: false });
+    // Last open wins. Opens are async (media.home), and two quick clicks used
+    // to mount whichever answered last — not necessarily the one clicked last.
+    const seq = (this._openSeq[scope] = (this._openSeq[scope] || 0) + 1);
+    const stale = () =>
+      this._openSeq[scope] !== seq || (this.isDestroyed && this.isDestroyed());
+    // Resolved alongside media.home rather than after it. Needed before the
+    // append below: an unresolved kind mounts a failover view in its place,
+    // and the pane has to hold the real widget_chat to park it later.
+    const kindReady = Kind.waitFor("widget_chat");
+
+    // Already this tab's conversation (tapping the same row again — on mobile
+    // that is how you go back into it from the list): show it rather than
+    // remount it. It is live, so a remount would only reload what is there.
+    const mounted = this._panes[scope];
+    if (
+      mounted &&
+      mounted.widget &&
+      !(mounted.widget.isDestroyed && mounted.widget.isDestroyed()) &&
+      mounted.peer &&
+      String(mounted.peer.entity_id) === String(hub_id) &&
+      mounted.peer.flag === flag &&
+      !peer.is_support
+    ) {
+      mounted.contact = contact || mounted.contact;
+      if (scope === this._scopeKey()) {
+        this._showPane(scope);
+        this.el.dataset.mview = "chat";
+      }
+      return;
+    }
+
     // Support opens with support having already said hello (Figma
     // 58186-204873). Awaited on purpose: widget_chat loads its messages as it
     // mounts, so a greeting written after that point would not appear until
@@ -669,11 +1683,7 @@ class __chat_p2p extends LetcBox {
       case _a.share:
         type = _a.share;
         try {
-          home = await this.fetchService(
-            SERVICE.media.home,
-            { hub_id },
-            { async: 1 },
-          );
+          home = await this._homeFor(hub_id);
           peer.home = home;
           peer.nid = home && home.home_id;
           nid = peer.nid;
@@ -689,11 +1699,7 @@ class __chat_p2p extends LetcBox {
       default:
         type = _a.privateRoom;
         try {
-          home = await this.fetchService(
-            SERVICE.media.home,
-            { hub_id: Visitor.id },
-            { async: 1 },
-          );
+          home = await this._homeFor(Visitor.id);
           nid = home && home.home_id;
         } catch (e) {
           this.warn("Failed to fetch personal home", e);
@@ -712,28 +1718,70 @@ class __chat_p2p extends LetcBox {
       home,
       nid,
       widgetId: `chat-p2p-${type}-${hub_id}`,
+      // The Inbox attaches from the device only: the attach icon opens the
+      // file picker straight away instead of a From device / From workspace
+      // menu.
+      no_workspace_attach: 1,
     };
+    // The same media.home widget_chat would otherwise refetch as it mounts —
+    // for the SAME hub: its hubId is Visitor.id for a private room (what the
+    // default branch fetched) and hub_id for a share room. A copy, since the
+    // cached answer is shared by every conversation that follows.
+    if (home && (type === _a.privateRoom || type === _a.share)) {
+      widget_chat.prefetched_home = { ...home };
+    }
 
     if (type === _a.supportTicket && peer.ticket_id) {
       widget_chat.ticket_id = peer.ticket_id;
     }
 
-    this.activePeer = peer;
-    this.activePeerType = type;
+    try {
+      await kindReady;
+    } catch (e) {}
+    // A newer open for this tab superseded this one while it resolved.
+    if (stale()) return;
+    // The user left this tab meanwhile: mount it anyway, parked, so it is
+    // there when they come back — but do not touch what is on screen.
+    const current = scope === this._scopeKey();
 
-    // Single-pane mobile/tablet: reveal the chat pane (no effect ≥ 1024px).
-    this.el.dataset.mview = "chat";
+    if (current) {
+      this.activePeer = peer;
+      this.activePeerType = type;
+      // Single-pane mobile/tablet: reveal the chat pane (no effect ≥ 1024px).
+      this.el.dataset.mview = "chat";
+    }
+    // Deliberately NOT raising a skeleton here. This runs for every
+    // conversation the user clicks, and skeletonising on a click would take
+    // the inbox list down with it — including the row just clicked. The
+    // skeletons belong to a scope LOAD; _raiseSkeletons owns that, and the
+    // observer it armed is still watching this pane for the paint below.
 
-    this.ensurePart("chat-header").then((header) => {
-      header.clear();
-      header.feed(require("./skeleton/chat-header")(this, contact));
+    if (current) {
+      this.ensurePart("chat-header").then((header) => {
+        header.clear();
+        header.feed(require("./skeleton/chat-header")(this, contact));
+      });
+    }
+
+    const panel = await this.ensurePart("chat-panel");
+    if (stale() || !panel) return;
+    // Replaces THIS tab's conversation only; the other tab's stays parked —
+    // unless it is this very conversation (Direct and Support share rows):
+    // two live copies would share one widgetId and both hold its traffic.
+    this._dropPane(scope);
+    Object.keys(this._panes).forEach((k) => {
+      const p = this._panes[k];
+      if (p && p.type === type && p.peer && String(p.peer.entity_id) === String(hub_id)) {
+        this._dropPane(k);
+      }
     });
-
-    this.ensurePart("chat-panel").then((panel) => {
-      panel.clear();
-      panel.feed(widget_chat);
-      this.chatWidget = panel.children.last();
-    });
+    const widget = panel.append(widget_chat);
+    this._panes[scope] = { peer, type, contact, widget };
+    if (scope === this._scopeKey()) {
+      this.chatWidget = widget;
+    } else if (widget && _.isFunction(widget.park)) {
+      widget.park();
+    }
   }
 
   /**
@@ -847,7 +1895,15 @@ class __chat_p2p extends LetcBox {
         return this._startCall(false);
 
       case "close-chat":
-        Desk.togglePanel("chat_p2p", "chat-panel");
+        // The Inbox is a full-canvas screen in the desk's settings-main-slot,
+        // not the "chat-panel" slide-out it once was. Toggling "chat-panel"
+        // targeted a slot this screen is not in, so the X did nothing. Leave
+        // it the way the rail leaves any section screen.
+        if (typeof Desk !== "undefined" && _.isFunction(Desk.closeSectionScreen)) {
+          Desk.closeSectionScreen();
+        } else if (typeof Desk !== "undefined" && _.isFunction(Desk.closeMainPanels)) {
+          Desk.closeMainPanels();
+        }
         break;
 
       case "back-to-list":
@@ -855,6 +1911,49 @@ class __chat_p2p extends LetcBox {
         this.el.dataset.mview = "sidebar";
         break;
 
+      // Scope tabs (Figma 43:32209) — these switch the QUERY, see _setRoomScope.
+      case "filter-direct":
+        this._setRoomScope("direct");
+        break;
+
+      case "filter-workspace":
+        this._setRoomScope("workspace");
+        break;
+
+      // Live conversation search (Figma 43:32209). Filters the ALREADY-LOADED
+      // rows rather than refetching: the list is a paged smart list, so a
+      // server round-trip per keystroke would fight pagination and flicker.
+      case "inbox-search-typed": {
+        const next = String((args && args.value) || "").trim().toLowerCase();
+        if (next === this._searchTerm) break;   // key that changed nothing
+        this._searchTerm = next;
+        // Debounced: `watch` fires per keystroke and _applyFilter walks every
+        // loaded row writing style.display. Typing "marketing" would run that
+        // nine times in ~400ms, each pass forcing a style recalc over the list.
+        // One pass 120ms after the user stops is indistinguishable to them and
+        // an order of magnitude less work.
+        clearTimeout(this._searchDebounce);
+        this._searchDebounce = setTimeout(() => this._applyFilter(), 120);
+        // The server half is slower to settle: each restart is a round trip.
+        clearTimeout(this._peopleDebounce);
+        this._peopleDebounce = setTimeout(() => this._searchPeople(), 250);
+        break;
+      }
+
+      case "people-pick":
+        return this._pickPerson(trigger);
+
+      // Unreads is now a header toggle rather than a tab, so it layers on top
+      // of whichever scope is showing instead of replacing it.
+      case "toggle-unreads":
+        this._unreadOnly = this._unreadOnly ? 0 : 1;
+        this.ensurePart("unread-toggle").then((p) => {
+          if (p && p.el) p.el.dataset.state = this._unreadOnly ? "1" : "0";
+        });
+        this._applyFilter();
+        break;
+
+      // Retained for callers outside the tab row (deep links, tests).
       case "filter-all":
         this._activeFilter = "all";
         this._applyFilter();
@@ -871,7 +1970,10 @@ class __chat_p2p extends LetcBox {
         break;
 
       case "filter-support":
-        this._activeFilter = "support";
+        // A support room is a contact room, so this shares the direct query
+        // and narrows it in _applyFilter — but it is still a scope TAB, so it
+        // goes through _setRoomScope to keep the tab state coherent.
+        this._setRoomScope("support");
         this._applyFilter();
         break;
 
@@ -914,6 +2016,23 @@ class __chat_p2p extends LetcBox {
         return;
       }
 
+      case "lightbox-close":
+        return this._closeLightbox();
+
+      case "lightbox-prev":
+        return this._stepLightbox(-1);
+
+      case "lightbox-next":
+        return this._stepLightbox(1);
+
+      case "lightbox-download": {
+        const media = this._lightboxMedia;
+        if (media && !(media.isDestroyed && media.isDestroyed()) && _.isFunction(media.download)) {
+          media.download();
+        }
+        return;
+      }
+
       case "close-overlay": {
         this.ensurePart("overlay-wrapper").then((overlay) => {
           overlay.el.dataset.mode = _a.closed;
@@ -930,9 +2049,27 @@ class __chat_p2p extends LetcBox {
     }
   }
 
-  onWsMessage(svc, data, options = {}) {
-    const { service } = options || svc;
-    switch (service) {
+  onWsMessage(service, data, options = {}) {
+    // THE REAL SERVICE IS IN `options.service`, WITH THE FIRST ARG AS FALLBACK.
+    //
+    // A server push built with `payload(data, {service})` carries the service
+    // inside `options` and NOTHING at the top level, so the push router stamps
+    // the envelope name there instead — `payload.service = "live.update"`
+    // (server-team router/push/index.js) — and that envelope name is exactly
+    // what the dispatcher hands over as the first argument
+    // (router/websocket/index.js reads `payload.service || msg.service`).
+    //
+    // So switching on the first argument alone matched "live.update" every
+    // time: chat.post, channel.post AND the acknowledge cases all fell to
+    // `default`, and live inbox updates were dead — an incoming message never
+    // moved a conversation up the list, never refreshed its preview line and
+    // never bumped its unread badge, so the inbox stayed frozen until a
+    // reload. (The earlier `const { service } = options || svc` was broken for
+    // its own reason: it destructured `options` and dropped the fallback, so a
+    // sender that DOES label the frame itself was missed.) This form is the one
+    // widget_chat, window_tasks, panel_calendar and window_folder all use.
+    const svc = (options && options.service) || service;
+    switch (svc) {
       case SERVICE.chat.post:
       case SERVICE.channel.post:
         this._updateContactItemOnPost(data);
@@ -941,25 +2078,92 @@ class __chat_p2p extends LetcBox {
       case SERVICE.channel.acknowledge:
         this._resetContactItemCount(data);
         break;
+      // A meeting that ends posts nothing: channel.meeting_end flips the start
+      // card's metadata and re-broadcasts that same row. Literal service name —
+      // SERVICE.channel.meeting_end is undefined against an older server.
+      case "channel.meeting_end":
+        this._endMeetingPreview(data);
+        break;
       default:
-        if (super.onWsMessage) super.onWsMessage(svc, data, options);
+        if (super.onWsMessage) super.onWsMessage(service, data, options);
+    }
+  }
+
+  /**
+   * Turn a row's preview from "X started a meeting" into "X ended the meeting"
+   * when the card it is previewing is the one that just ended.
+   *
+   * The status is stored on the row as well as painted: the workspace rows are
+   * reloaded from group_chat_rooms, which returns only
+   * {id, group_name, room_count, message, ctime}, so a re-render with nothing
+   * kept would resurrect the "started" wording.
+   *
+   * @param {Object} data the re-broadcast message row
+   */
+  _endMeetingPreview(data) {
+    // findMeetingRow owns the payload's shape (the hub is in `key_id` on this
+    // service) and picks the row by body — see libs/chat-preview. Both lists
+    // are live, so the row may be in the one not showing.
+    const { direct, workspace } = this._lists;
+    const item =
+      (workspace && findMeetingRow(workspace, data)) ||
+      (direct && findMeetingRow(direct, data));
+    if (!item) return;
+    item.mset("meeting_status", "ended");
+    if (item.__message) {
+      item.__message.set(
+        _a.content,
+        chatPreview(data.message, {
+          metadata: data.metadata,
+          meetingStatus: "ended",
+        })
+      );
     }
   }
 
   _updateContactItemOnPost(data) {
-    const list = this.getPart && this.getPart("contact-list");
-    if (!list || !data) return;
+    if (!data) return;
+    const direct = this._lists.direct;
+    const workspace = this._lists.workspace;
+    if (!direct && !workspace) return;
+    // Both lists stay mounted and are kept current here, the hidden one too —
+    // that is what lets a tab switch show them without a refetch. Same keys
+    // in the same order as when one list served both tabs; each lookup just
+    // asks the list whose rows can carry that key.
+    const find = (l, attr, v) => {
+      if (!l || !_.isFunction(l.getItemsByAttr) || v == null || v === "") return null;
+      const r = l.getItemsByAttr(attr, v);
+      return (r && r[0]) || null;
+    };
+    let list = direct;
 
     // Message payload now has peer_id, but contact items (from chat_rooms)
     // still carry entity_id. Match by value.
-    let item =
-      list.getItemsByAttr && list.getItemsByAttr(_a.entity_id, data.peer_id);
-    item = item && item[0];
-    if (!item && data.hub_id) {
-      item = list.getItemsByAttr && list.getItemsByAttr("hub_id", data.hub_id);
-      item = item && item[0];
+    let item = find(direct, _a.entity_id, data.peer_id);
+    // A WORKSPACE row is keyed by the hub ITSELF — the group_chat_rooms
+    // normaliser in onPartReady maps its `id` onto entity_id, and the row
+    // carries no hub_id of its own — so neither key below could ever find one:
+    // a workspace post moved nothing in the inbox until it was remounted.
+    //
+    // Asked BEFORE the hub_id sweep, because that one is the loose match: the
+    // only rows carrying a hub_id are CONTACT rows, and it is the visitor's own
+    // hub, so a post into the PERSONAL workspace (whose hub is that same hub)
+    // matches an arbitrary contact row. An entity_id equal to the posting hub
+    // can only be that hub's own row.
+    // `key_id` is the same hub under another name on the services that answer
+    // with a bare channel row (see findMeetingRow); channel.post stamps hub_id.
+    // NEVER pass an absent key to getItemsByAttr: it compares strict-equal, so
+    // `undefined` collects every row that merely lacks the attribute.
+    const hub = data.hub_id || data.key_id;
+    if (!item && hub) {
+      item = find(workspace, _a.entity_id, hub);
+      if (item) list = workspace;
     }
-    if (!item) return this._addContactItemOnPost(list, data);
+    if (!item && hub) item = find(direct, _a.entity_id, hub);
+    if (!item && hub) item = find(direct, "hub_id", hub);
+    // A new conversation's first message is a person's: it belongs in the
+    // direct list, whichever tab is showing.
+    if (!item) return direct ? this._addContactItemOnPost(direct, data) : undefined;
 
     let room_count = item.mget("room_count") || 0;
     if (item.mget(_a.state) === 1) {
@@ -968,13 +2172,23 @@ class __chat_p2p extends LetcBox {
       room_count += 1;
     }
 
-    let msg = data.message;
-    if (_.isEmpty(msg) && data.is_attachment === 1) {
-      msg = LOCALE.ATTACHMENT;
-    }
+    // Preview text, not the raw body: a meeting posts a
+    // [[MEETING:start:{json}]] sentinel (channel.post drops a custom
+    // message_type, so the payload rides in the body) and this path used to
+    // print it verbatim next to the workspace whose chat renders it as a card.
+    // Same helper the row's own skeleton uses, so the line reads the same on
+    // load and on a push — which also gets this path the mention strip it never
+    // had ("[@Bob](user:xxx)" previewed literally).
+    const msg = chatPreview(data.message, {
+      metadata: data.metadata,
+      messageType: data.message_type,
+      isAttachment: data.is_attachment === 1,
+    });
 
     item.mset("room_count", room_count);
-    item.mset(_a.message, msg);
+    // The model keeps the RAW body — _endMeetingPreview matches on it.
+    item.mset(_a.message, data.message);
+    item.mset("meeting_status", meetingStatusOf(data));
     item.mset(_a.ctime, data.ctime);
     // The pinned support row stops being a placeholder the moment it carries
     // a real message, so it can be landed on like any other conversation.
@@ -1013,8 +2227,39 @@ class __chat_p2p extends LetcBox {
     }
     if (_.isFunction(item.updateNotification)) item.updateNotification();
 
-    if (list.collection && list.collection.sort) list.collection.sort();
-    this._applyFilter();
+    this._scheduleListSettle(list);
+  }
+
+  /**
+   * Coalesce the re-sort + re-filter that follows an incoming message.
+   *
+   * Both are whole-list operations (sort is O(n log n), _applyFilter walks
+   * every row), and chat traffic is BURSTY — a busy workspace delivers several
+   * posts in the same tick, and each one used to trigger its own pass. Now the
+   * last event in a burst pays for all of them, one frame later.
+   *
+   * This only started to matter once the WS handler was fixed: with the
+   * service misread the whole path was dead, so the cost never showed up.
+   */
+  _scheduleListSettle(list) {
+    // A set: with both lists live, one burst can touch both, and each needs
+    // its own re-sort.
+    if (!this._pendingSettle) this._pendingSettle = new Set();
+    if (list) this._pendingSettle.add(list);
+    if (this._settleTimer) return;
+    this._settleTimer = setTimeout(() => {
+      this._settleTimer = null;
+      const lists = this._pendingSettle;
+      this._pendingSettle = null;
+      if (!lists || (this.isDestroyed && this.isDestroyed())) return;
+      lists.forEach((l) => {
+        if (l && !(l.isDestroyed && l.isDestroyed()) && l.collection && l.collection.sort) {
+          l.collection.sort();
+        }
+      });
+      // Filters the list on screen; a hidden one is re-gated when shown.
+      this._applyFilter();
+    }, 80);
   }
 
   /**
@@ -1034,9 +2279,6 @@ class __chat_p2p extends LetcBox {
     if (!peer_id || peer_id === Visitor.id || data.author_id === Visitor.id) return;
     if (!_.isFunction(list.prepend)) return;
 
-    let msg = data.message;
-    if (_.isEmpty(msg) && data.is_attachment === 1) msg = LOCALE.ATTACHMENT;
-
     const firstname = data.firstname || "";
     const lastname = data.lastname || "";
     const display = `${firstname} ${lastname}`.trim() || peer_id;
@@ -1053,14 +2295,15 @@ class __chat_p2p extends LetcBox {
       // Not in the address book — this is what marks it a support request
       // on the admin's side (see _isSupportRow).
       status: "nocontact",
-      message: msg,
+      // Raw body: chat_contact_item's skeleton derives the preview from it.
+      message: data.message,
+      meeting_status: meetingStatusOf(data),
       ctime: data.ctime,
       room_count: ~~(data.room || 1),
       is_attachment: data.is_attachment === 1 ? 1 : 0,
     });
 
-    if (list.collection && list.collection.sort) list.collection.sort();
-    this._applyFilter();
+    this._scheduleListSettle(list);
   }
 
   /**
@@ -1093,45 +2336,198 @@ class __chat_p2p extends LetcBox {
     const list = this._contactList;
     if (!list || !list.children) return;
     const filter = this._activeFilter || "all";
+    // The Unreads header toggle layers on top of the scope tab: a row must
+    // satisfy BOTH to stay visible. Applied first so every branch below sees
+    // the same gate rather than each re-implementing it.
+    const unreadGate = (item) =>
+      !this._unreadOnly || ~~(item.mget("room_count") || 0) > 0;
+    // Name match, case-insensitive. Reads the same fields the row DISPLAYS
+    // (display / fullname / first+last), so what you type matches what you see
+    // — including workspace rows, whose name arrives as group_name and is
+    // normalised onto fullname/display in prepareData.
+    const term = this._searchTerm || "";
+    const searchGate = (item) => {
+      if (!term) return true;
+      // Built once per row and cached on the view. The name does not change
+      // while the user types, so recomputing four mget()s, a join and a
+      // toLowerCase for every row on every keystroke was pure waste.
+      // _updateContactItemOnPost clears it if a row is renamed.
+      if (item._searchName == null) {
+        item._searchName = [
+          item.mget("display"),
+          item.mget(_a.fullname),
+          `${item.mget(_a.firstname) || ""} ${item.mget(_a.lastname) || ""}`,
+        ]
+          .filter(Boolean)
+          .join(" ")
+          .toLowerCase();
+      }
+      return item._searchName.indexOf(term) !== -1;
+    };
+    // Write only on CHANGE. Assigning style.display invalidates style for the
+    // element even when the value is identical, so the old unconditional
+    // writes dirtied every row on every pass — including the common case where
+    // nothing moved.
+    const show = (item, on) => {
+      const want = on ? "" : "none";
+      if (item.el.style.display !== want) item.el.style.display = want;
+      return on;
+    };
     let visible = 0;
     list.children.forEach((item) => {
       if (!item.el) return;
+      if (!unreadGate(item) || !searchGate(item)) {
+        show(item, false);
+        return;
+      }
       if (filter === "all") {
-        item.el.style.display = "";
+        show(item, true);
         visible += 1;
         return;
       }
       const count = ~~(item.mget("room_count") || 0);
       if (filter === "unread") {
-        const show = count > 0;
-        item.el.style.display = show ? "" : "none";
-        if (show) visible += 1;
+        if (show(item, count > 0)) visible += 1;
       } else if (filter === "mentions") {
         const hasMention = ~~(item.mget("has_mention") || 0) > 0;
-        item.el.style.display = hasMention ? "" : "none";
+        show(item, hasMention);
         if (hasMention) visible += 1;
       } else if (filter === "support") {
-        const show = this._isSupportRow(item);
-        item.el.style.display = show ? "" : "none";
-        if (show) visible += 1;
+        // Named isSupport, not `show`: that shadowed the show() helper above
+        // and bypassed its write-on-change guard for this branch.
+        const isSupport = this._isSupportRow(item);
+        if (show(item, isSupport)) visible += 1;
       }
     });
-    // Show "All read" only when the user is on the Unread tab and nothing
-    // matches (i.e. there ARE rooms, just none with unread messages).
+    // Show "All read" only while unread-only is in force and nothing matches
+    // (i.e. there ARE rooms, just none with unread messages). Now keyed on the
+    // header toggle as well as the retained 'unread' filter value, since the
+    // Unread tab became a toggle.
     if (this._allReadEmpty && this._allReadEmpty.el) {
+      const unreadMode = !!this._unreadOnly || filter === "unread";
       const showAllRead =
-        filter === "unread" && visible === 0 && list.children.length > 0;
+        unreadMode && visible === 0 && list.children.length > 0;
       this._allReadEmpty.el.dataset.state = showAllRead ? 1 : 0;
     }
+    // Which Direct rows are visible just changed, and the Contacts section
+    // hides exactly those.
+    this._syncPeople();
+  }
+
+  /**
+   * Point the Contacts section at the current search term. Separate from
+   * _applyFilter (120ms, local) because this is a server round trip per
+   * restart — see the 250ms debounce in "inbox-search-typed".
+   */
+  _searchPeople() {
+    clearTimeout(this._peopleDebounce);
+    const next = this._searchTerm || "";
+    if (next === (this._peopleQuery || "")) return this._syncPeople();
+    this._peopleQuery = next;
+    const list = this._peopleList;
+    if (list && _.isFunction(list.restart)) list.restart();
+    this._syncPeople();
+  }
+
+  _schedulePeopleSync() {
+    clearTimeout(this._peopleSyncTimer);
+    this._peopleSyncTimer = setTimeout(() => this._syncPeople(), 0);
+  }
+
+  /**
+   * Decide what the sidebar shows while a Direct search is typed, via the
+   * root's data-people (skin):
+   *   "0"    no search, another tab, or nothing beyond the local matches
+   *   "1"    local matches, then the Contacts section under them
+   *   "only" no local match — the Contacts section alone (it carries the
+   *          "No contact found" placeholder and the spinner)
+   *
+   * A person already visible in the Direct list is hidden from Contacts, so
+   * nobody is listed twice. Keyed on entity_id; the placeholder Note has none
+   * and is left alone.
+   */
+  _syncPeople() {
+    if (!this.el) return;
+    const term = this._peopleQuery || "";
+    if (!term || this._listKey() !== "direct") {
+      if (this.el.dataset.people !== "0") this.el.dataset.people = "0";
+      return;
+    }
+    const shown = new Set();
+    const direct = this._lists && this._lists.direct;
+    if (direct && direct.children) {
+      direct.children.forEach((c) => {
+        const id = c.mget && c.mget(_a.entity_id);
+        if (id && c.el && c.el.style.display !== "none") shown.add(id);
+      });
+    }
+    let people = 0;
+    const list = this._peopleList;
+    if (list && list.children) {
+      list.children.forEach((c) => {
+        const id = c.mget && c.mget(_a.entity_id);
+        if (!id || !c.el) return;
+        const dup = shown.has(id);
+        const want = dup ? "none" : "";
+        if (c.el.style.display !== want) c.el.style.display = want;
+        if (!dup) people += 1;
+      });
+    }
+    const mode = shown.size ? (people ? "1" : "0") : "only";
+    if (this.el.dataset.people !== mode) this.el.dataset.people = mode;
+  }
+
+  /**
+   * Open a conversation with someone picked from the Contacts section.
+   *
+   * Through openPeer, not openChat: the row lives in the Contacts list, and
+   * openPeer is what gives the conversation a row in the Direct list (or
+   * reuses the one already loaded). Nothing is written server-side until the
+   * first message — chat.post creates the thread.
+   *
+   * The search is cleared first so the new row, prepended and selected by
+   * openPeer, is actually on screen.
+   */
+  _pickPerson(row) {
+    if (!row || !row.mget) return;
+    const entity_id = row.mget(_a.entity_id);
+    if (!entity_id) return;
+    const meta = row.toLETC ? row.toLETC() : { ...row.model.toJSON() };
+    // toLETC serialises the whole view, not just the row's data: the Contacts
+    // list's itemsOpt wiring, the rendered kids, and the style/data models.
+    // openPeer spreads meta over the Direct list's own itemsOpt, so any of
+    // these would ride onto the new row — "people-pick" instead of
+    // "load-conversation", a duplicated widgetId, a copied inline style.
+    [
+      "kids", "kind", "service", "uiHandler", "partHandler", "radio",
+      "widgetId", "sys_pn", "className", "styleOpt", "styleMobile",
+      "styleIcon", "dataOpt", "attrOpt", "dataset", "state", "rank",
+    ].forEach((k) => delete meta[k]);
+    this._clearSearch();
+    return this.openPeer(entity_id, meta);
+  }
+
+  _clearSearch() {
+    const entry = this.getPart && this.getPart("list-search");
+    const input = entry && entry.el && entry.el.querySelector("input");
+    if (input) input.value = "";
+    clearTimeout(this._searchDebounce);
+    this._searchTerm = "";
+    this._applyFilter();
+    this._searchPeople();
   }
 
   _resetContactItemCount(data) {
-    const list = this.getPart && this.getPart("contact-list");
-    if (!list || !data) return;
-    // Message payload has peer_id, contact items have entity_id.
-    let item =
-      list.getItemsByAttr && list.getItemsByAttr(_a.entity_id, data.peer_id);
-    item = item && item[0];
+    if (!data || data.peer_id == null || data.peer_id === "") return;
+    // Message payload has peer_id, contact items have entity_id. Both lists
+    // are live; a workspace row is keyed by its hub, never by a peer.
+    let item = null;
+    [this._lists.direct, this._lists.workspace].some((list) => {
+      if (!list || !_.isFunction(list.getItemsByAttr)) return false;
+      const r = list.getItemsByAttr(_a.entity_id, data.peer_id);
+      item = (r && r[0]) || null;
+      return !!item;
+    });
     if (!item) return;
     item.mset("room_count", 0);
     item.mset("has_mention", 0);

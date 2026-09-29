@@ -36,9 +36,15 @@ const __skl_widget_chat_footer = function (ui) {
         service: _e.send,
         content: ui.getStoredMessage(),
         placeholder: ui.mget(_a.placeholder),
+        // Renders the drop affordance inside the messenger; chat's droppable
+        // reveals it with data-drop-active. Opt-in, so every other host of the
+        // messenger is unchanged.
+        drop_overlay: 1,
         no_emoji: ui.mget('no_emoji'),
         send_icon: ui.mget('send_icon'),
         attach_icon: ui.mget('attach_icon'),
+        // Opt-in: hosts that attach from the device only (the Inbox).
+        no_workspace_attach: ui.mget('no_workspace_attach'),
         bubble: 0
       }),
 

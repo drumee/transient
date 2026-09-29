@@ -1,0 +1,1300 @@
+// Personal Calendar — the aggregated read view over every Task and Meeting the
+// user can see, plus their personal-only items. Mounted full-canvas in the
+// desk's settings-main-slot (the same slot Settings / Get help / Billing use).
+//
+// ── The one rule this widget exists to keep ──────────────────────────────────
+// The Calendar is a RENDERER, never a source of truth for a folder-owned item.
+// Reads come from calendar.list (server-authoritative aggregation — see
+// skeleton/helpers.js for the row contract). Writes go straight back to the
+// service that owns the record, addressed with the ROW'S OWN hub_id, so ACL and
+// audit stay identical to editing from the folder. Nothing is merged client-side
+// and nothing is cached beyond the visible window.
+//
+// Personal items live in the user's personal hub — hub_id: Visitor.id,
+// nid: Visitor.get(_a.home_id) — which is the same pair the desk already uses
+// for its own personal-scope launches. A personal task carries no assignee: the
+// field is omitted here, and refused server-side, which is the half that counts.
+const { copyToClipboard } = require("@drumee/ui-essentials");
+const { overMeetingCap } = require("libs/billing");
+const {
+  normalizeRow,
+  expandRecurrence,
+  passesFilter,
+  viewRange,
+  rowStart,
+  fromEpoch,
+  day,
+  ymd,
+  DAY_START_HOUR,
+} = require("./skeleton/helpers");
+const { armItemsReady, markItemsReady } = require("libs/items-ready");
+
+const VIEW_KEYS = ["month", "week", "day"];
+const FILTER_KEYS = ["all", "task", "meeting"];
+// A parked calendar (desk keep-alive) revealed after this long re-reads its
+// window even if no push arrived meanwhile — a missed push is plausible by then.
+const PARKED_REFRESH_MS = 60 * 1000;
+
+class __calendar_main extends LetcBox {
+  initialize(opt = {}) {
+    require("./skin");
+    super.initialize(opt);
+    armItemsReady(this);
+    this.declareHandlers();
+
+    // Month, unless the entry point NAMED a view: the Daily Reminder card's
+    // [My calendar] asks for today in `day` view. Validated against VIEW_KEYS,
+    // so a malformed or stale option can only ever fall back to the default —
+    // an unknown string would otherwise reach GRIDS[view] in the skeleton and
+    // silently render the month grid under a toolbar claiming something else.
+    const startView = this.mget("startView");
+    this._view = VIEW_KEYS.includes(startView) ? startView : "month";
+    this._cursor = ymd(Dayjs());
+    // Not persisted, by spec: the filter resets to All every session.
+    this._filter = "all";
+    this._items = [];
+    this._form = null;
+    this._viewMenuOpen = false;
+    this._newMenuOpen = false;
+    // The range label is a control rather than a caption: it opens a month
+    // jump list for the cursor's year. It shows no caret of its own (Lexis,
+    // 2026-09-08) — the label itself is the affordance.
+    this._rangeMenuOpen = false;
+    this._loading = false;
+    // One in-flight write per open modal — see _submitTask.
+    this._submitting = false;
+
+    // Personal scope for every write this screen originates.
+    this._personalHub = Visitor.id;
+    this._personalNid = Visitor.get(_a.home_id);
+
+    // Live sync (requirement §3). Deliberately unfiltered by hub_id: the tasks
+    // board filters workspace pushes out as noise, but for an aggregated
+    // calendar a peer's edit in ANY workspace is exactly the signal we want.
+    this.bindEvent(_a.live);
+  }
+
+  onBeforeDestroy() {
+    this.unbindEvent(_a.live);
+    // The dropdown dismisser lives on `document`, so it outlives this widget
+    // unless it is taken down here.
+    this._unbindMenuDismiss();
+    if (this._reloadTimer) {
+      clearTimeout(this._reloadTimer);
+      this._reloadTimer = null;
+    }
+  }
+
+  /**
+   * Paint first, load second.
+   *
+   * This used to await _loadItems() before the first feed(), which meant the
+   * whole screen hung on one network round-trip — and rendered NOTHING AT ALL
+   * whenever that request did not resolve cleanly, which is the normal case
+   * while calendar.list is still unimplemented. Every sibling screen in this
+   * slot (help_main, settings_main) renders synchronously and fills in after;
+   * an aggregated read view has even less excuse to block on its data.
+   */
+  onDomRefresh() {
+    this._render();
+    this._loadItems().then(() => {
+      if (this.isDestroyed && this.isDestroyed()) return;
+      this._render();
+      // First window painted — events, the empty grid, or "Try again" after a
+      // failed calendar.list (_loadItems resolves either way). A reload's
+      // screen restore waits on this (libs/items-ready).
+      markItemsReady(this);
+    });
+  }
+
+  /**
+   * The desk keeps this screen mounted when the user navigates away and
+   * reveals it again on the next Calendar press (desk/index.js
+   * _slotKeepsChild), so coming back is instant. What was on screen is then
+   * the last window this instance loaded: live pushes kept it current while
+   * hidden, and this re-read closes any gap they left. Same shape as
+   * onDomRefresh minus the first paint, which is already up.
+   */
+  onPanelShown() {
+    this._parked = false;
+    // Only when something happened while parked (a push was deferred) or the
+    // window on screen is old enough that a missed push is plausible.
+    const stale = Date.now() - (this._loadedAt || 0) > PARKED_REFRESH_MS;
+    if (!this._dirty && !stale) return;
+    this._dirty = false;
+    this._loadItems().then(() => {
+      if (this.isDestroyed && this.isDestroyed()) return;
+      this._render();
+    });
+  }
+
+  /**
+   * Parked by the desk. The live subscription stays bound (it is what makes
+   * the reveal cheap), but a push must not fetch and rebuild a display:none
+   * page — note it and let onPanelShown do one reload.
+   */
+  onPanelHidden() {
+    this._parked = true;
+  }
+
+  /**
+   * Point the screen at `view`, on TODAY — for an entry point that names one
+   * rather than taking the screen as the user left it. The Daily Reminder
+   * card's [My calendar] is the only such caller today: its whole subject is
+   * this day, so it opens the day view on this day.
+   *
+   * A FRESH mount reads the same thing from its `startView` option, and that
+   * is the path that matters most, because the kind may still be lazy-loading
+   * when the desk's togglePanel promise settles — nothing can be called on it
+   * then. This method is the other half: the desk keeps this screen alive
+   * (KEEP_ALIVE_MAIN_KINDS), so an instance that is merely REVEALED, or is
+   * already on screen where an open-only togglePanel is a deliberate no-op,
+   * never sees launch options and would otherwise keep the view it was left on.
+   *
+   * No-op when the screen is already exactly there, so the fresh-mount path —
+   * which just read the same view from its options — does not pay for a second
+   * fetch of the window it is already loading.
+   */
+  focusView(view) {
+    if (!VIEW_KEYS.includes(view)) return;
+    const today = ymd(Dayjs());
+    if (this._view === view && this._cursor === today) return;
+    this._view = view;
+    this._cursor = today;
+    // Same pairing every cursor/view change in onUiEvent uses: a toolbar
+    // dropdown left open would hang over a grid it no longer describes.
+    this._closeMenus();
+    // The fetch window is derived from view + cursor, so this is a refetch,
+    // not a repaint — exactly what `cal-set-view` and `cal-day-more` do.
+    return this._reload();
+  }
+
+  // ── state readers used by the skeletons ────────────────────────────────────
+
+  getView() {
+    return this._view;
+  }
+
+  getCursor() {
+    return this._cursor;
+  }
+
+  /**
+   * The All / Task / Meeting toolbar state.
+   *
+   * NOT named getFilter(). Marionette's CollectionView — which LetcBox extends
+   * — already owns that name: `_getFilter()` calls `this.getFilter()` and, when
+   * the result is a STRING, builds a predicate that keeps only child views
+   * whose model has a truthy attribute of that name:
+   *
+   *     if (_.isString(viewFilter))
+   *       return view => view.model && view.model.get(viewFilter);
+   *
+   * Overriding it to return "all" therefore filtered every child of this widget
+   * on `model.get("all")`, which no skeleton node has. The fed tree landed in
+   * the collection and was then filtered straight back out, leaving
+   * `children` empty — so the view reported itself empty and rendered its
+   * emptyView (LetcBlank) instead. The whole screen came up blank, with a
+   * populated collection and no error anywhere.
+   */
+  getActiveFilter() {
+    return this._filter;
+  }
+
+  getForm() {
+    return this._form;
+  }
+
+  isViewMenuOpen() {
+    return !!this._viewMenuOpen;
+  }
+
+  isNewMenuOpen() {
+    return !!this._newMenuOpen;
+  }
+
+  isRangeMenuOpen() {
+    return !!this._rangeMenuOpen;
+  }
+
+  /**
+   * The month the range popup's mini calendar is SHOWING, which is not the
+   * calendar's cursor: browsing to next March inside the popup must leave the
+   * grid behind it where it is until a day is actually picked. Null until the
+   * user steps it — the popup then opens on the cursor's own month.
+   */
+  getPickerCursor() {
+    return this._pickerCursor || null;
+  }
+
+  /** Is the calendar empty because nothing is scheduled, or because the read failed? */
+  hasLoadFailed() {
+    return !!this._loadFailed;
+  }
+
+  isLoading() {
+    return !!this._loading;
+  }
+
+  /**
+   * The rows the current view should draw: recurrence expanded into the visible
+   * window, then the All / Task / Meeting filter applied.
+   *
+   * Expansion is client-side by the server's own stated contract (room.js: "the
+   * calendar expands occurrences client-side").
+   */
+  getVisibleItems() {
+    const { from, to } = viewRange(this._view, this._cursor);
+    const out = [];
+    this._items.forEach((row) => {
+      if (!passesFilter(row, this._filter)) return;
+      expandRecurrence(row, from, to).forEach((r) => {
+        // Only rows the grids can actually place. Two shapes reach here that
+        // cannot be drawn anywhere, and both used to be counted as "visible":
+        //
+        //   • a task with no due_date — rowStart() is null, so no cell owns it
+        //     (the helpers state a task with no due date never appears)
+        //   • a series whose occurrences all fall outside the window —
+        //     expandRecurrence falls back to `[row]`, putting the ORIGIN's own
+        //     date back in play even though it is out of range
+        //
+        // The grids drop both at render, so they were invisible either way —
+        // but they made getVisibleItems() non-empty, which suppressed
+        // "Nothing scheduled" and left the screen blank with no explanation.
+        const s = rowStart(r);
+        if (!s || s.isBefore(from, "day") || s.isAfter(to, "day")) return;
+        out.push(r);
+      });
+    });
+    return out;
+  }
+
+  // ── data ───────────────────────────────────────────────────────────────────
+
+  /**
+   * One read per visible window.
+   *
+   * fetchService never rejects — doRequest swallows failures via
+   * onServerComplain and resolves undefined — so a non-list IS the error path.
+   * Keep the rows already on screen rather than blanking a loaded calendar over
+   * a transient failure, exactly as the tasks board does.
+   */
+  async _loadItems() {
+    const { from, to } = viewRange(this._view, this._cursor);
+    this._loading = true;
+
+    const service =
+      (SERVICE.calendar && SERVICE.calendar.list) || "calendar.list";
+    let rows;
+    try {
+      rows = await this.fetchService({
+        service,
+        // calendar.list is declared scope:"hub", so it needs a hub context even
+        // though it reads across every workspace. Visitor.id is the caller's own
+        // entity — the same pair activity.list_task_assignments passes for a
+        // user-scoped read.
+        hub_id: Visitor.id,
+        from: ymd(from),
+        to: ymd(to),
+        // `kinds` is deliberately NOT sent: the server defaults to both, and an
+        // array in a GET query string is a serialization risk for no gain —
+        // the All / Task / Meeting filter is applied client-side over the
+        // fetched window anyway (see getVisibleItems).
+      });
+    } catch (e) {
+      this.warn && this.warn("[calendar] calendar.list failed", e);
+      rows = null;
+    }
+    this._loading = false;
+    this._loadedAt = Date.now();
+
+    // Single-row collapse: a result set holding exactly one row answers `{...}`
+    // where every other count answers `[...]`. This has already emptied a
+    // calendar once in this product (room.list), so normalise every shape.
+    //
+    // Tested on id OR nid, and with `!= null` rather than truthiness: a raw
+    // meeting row is keyed by `nid` and carries no `id` at all, and an `id` of
+    // 0 is a legitimate key. `rows.id` alone therefore read a perfectly good
+    // single meeting as a failed request and drew "Try again" over an empty
+    // calendar — the exact failure this collapse handling exists to prevent.
+    const isRow = (r) =>
+      r && typeof r === "object" && (r.id != null || r.nid != null);
+    const list = Array.isArray(rows) ? rows : isRow(rows) ? [rows] : null;
+    if (!list) {
+      this._loadFailed = 1;
+      // DEV ONLY: ?calfixture=1 renders sample rows so the grids, chips,
+      // filters and forms can be reviewed while calendar.list is still
+      // unimplemented (it currently answers MODULE_NOT_FOUND). Required lazily
+      // so a normal session never loads it. Remove the flag and ./fixture.js
+      // together once the service lands.
+      if (this._useFixture()) {
+        this._items = require("./fixture")()
+          .map((r) => normalizeRow(r))
+          .filter(Boolean);
+        this._loadFailed = 0;
+      }
+      return;
+    }
+    this._loadFailed = 0;
+    this._items = list.map((r) => normalizeRow(r)).filter(Boolean);
+  }
+
+  /** DEV ONLY — see _loadItems. */
+  _useFixture() {
+    try {
+      return !!Visitor.parseModuleArgs().calfixture;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * True once a first load has completed (either way). Until then the grid is
+   * drawn but deliberately says nothing about being empty — an empty month and
+   * an unfetched month look identical, and claiming "Nothing scheduled" before
+   * the answer arrives is the wrong claim to make.
+   */
+  hasLoaded() {
+    return this._loadFailed != null;
+  }
+
+  _render() {
+    // Which range the next paint draws. The scroll rules below key on it: the
+    // same range re-fed is a repaint, a different one is a new screen.
+    const key = `${this._view}:${this._cursor}`;
+    const grid = this._gridEl();
+    const keep = grid && key === this._gridKey ? grid.scrollTop : null;
+    this._gridKey = key;
+    this.feed(require("./skeleton")(this));
+    // The children are not laid out inside feed(), so the scroller has no
+    // height to set scrollTop against until the frame settles.
+    _.defer(() => {
+      if (this.isDestroyed && this.isDestroyed()) return;
+      this._placeHoursScroll(keep);
+    });
+  }
+
+  /** The screen's scroller — the grid root, whatever view drew it. */
+  _gridEl() {
+    return (this.el && this.el.querySelector(`.${this.fig.family}__grid`)) || null;
+  }
+
+  /**
+   * The hour canvas draws all 24 hours (skeleton/hours.js — the frame the
+   * workspace Meet tab's schedule uses), so an unscrolled week/day grid opens
+   * on empty night hours. Two different jobs, and conflating them is how a
+   * grid either fights the user or strands them at midnight:
+   *
+   *   range CHANGED (view switch, next/prev, a day picked) → land on the
+   *     earliest timed item in view with one row of context above it, or on the
+   *     working hours when nothing is scheduled. Same rule, and the same
+   *     default hour, as window/folder/index.js _scrollScheduleIntoView.
+   *   range the SAME, page merely re-fed (a live push, a filter repaint, a
+   *     modal opening) → put the user back where they were. _render rebuilds
+   *     the whole page, so without this every push threw the grid to midnight.
+   *
+   * Month doesn't scroll by hour and is left alone in the first case.
+   */
+  _placeHoursScroll(keep) {
+    const grid = this._gridEl();
+    if (!grid) return;
+    if (keep != null) {
+      grid.scrollTop = keep;
+      return;
+    }
+    if (grid.getAttribute("data-view") === "month") return;
+
+    const hours = this.getVisibleItems()
+      .filter((row) => row.kind === "meeting" && row.stime)
+      .map((row) => fromEpoch(row.stime))
+      .filter(Boolean)
+      .map((d) => d.hour());
+    const hour = hours.length ? Math.min(...hours) : DAY_START_HOUR;
+
+    // Measured, not assumed: the row height is a token (--cal-hour-height) and
+    // the responsive block is free to change it.
+    const rule = grid.querySelector(`.${this.fig.family}__hour-rule`);
+    const rowH = (rule && rule.getBoundingClientRect().height) || 0;
+    if (!rowH) return;
+    // One row of context above the first item, clamped to the top. The header
+    // is sticky but in flow, so its height cancels out of the arithmetic.
+    grid.scrollTop = Math.max(0, (hour - 1) * rowH);
+  }
+
+  /**
+   * Repaint ONLY the toolbar row.
+   *
+   * Opening a dropdown used to call _render(), which re-feeds the whole page —
+   * header, toolbar AND the entire month grid with every chip in it — to show
+   * a two-item menu. Rebuilding the grid reflows the row above it, so the
+   * button visibly jumped as its own menu opened, and a 40-cell month paid for
+   * a click that changed nothing below the toolbar.
+   *
+   * Only state the toolbar draws (which menu is open) may use this. Anything
+   * the GRID reads — the view, the cursor, the filter — still needs _render().
+   */
+  _renderToolbar() {
+    // Every open and close of a dropdown comes through here, so this is the one
+    // place that has to keep the outside-click dismisser in step.
+    this._syncMenuDismiss();
+
+    // SYNCHRONOUS, and it falls back rather than failing.
+    //
+    // The first cut used ensurePart(...).then(...).catch(() => {}). ensurePart
+    // returns a PROMISE that only resolves once the part exists — and if it
+    // never resolves, or the feed throws, the catch ate it and the click did
+    // nothing at all. A dropdown that silently refuses to open is exactly the
+    // failure mode the blank-Calendar bug had, and it is not worth the repaint
+    // it was buying.
+    //
+    // getPart is a plain lookup in _branches. If the part is missing for any
+    // reason, fall back to the full render: slower and it reflows the grid,
+    // but it always works.
+    const part = _.isFunction(this.getPart) ? this.getPart("toolbar") : null;
+    if (!part || (part.isDestroyed && part.isDestroyed()) || !part.el) {
+      return this._render();
+    }
+    part.feed(require("./skeleton/toolbar")(this));
+  }
+
+  async _reload() {
+    await this._loadItems();
+    this._render();
+  }
+
+  /**
+   * Coalesce a burst of websocket pushes into one reload.
+   *
+   * A single folder edit can emit task.update AND task.update_status; a booking
+   * emits room.scheduled per invitee socket. Reloading per frame would refetch
+   * the window several times for one user action.
+   */
+  _scheduleReload() {
+    if (this._parked) {
+      this._dirty = true;
+      return;
+    }
+    if (this._reloadTimer) return;
+    this._reloadTimer = setTimeout(() => {
+      this._reloadTimer = null;
+      if (this.isDestroyed && this.isDestroyed()) return;
+      this._reload();
+    }, 250);
+  }
+
+  onWsMessage(svc, data, options = {}) {
+    // Server pushes built with payload(data, {service}) arrive as a
+    // `live.update` envelope whose FIRST arg is that envelope name — the real
+    // service travels in options.service. Switching on the first arg alone
+    // matches nothing (the tasks board documents this at length).
+    const service = (options && options.service) || svc;
+    switch (service) {
+      case (SERVICE.task && SERVICE.task.create) || "task.create":
+      case (SERVICE.task && SERVICE.task.update) || "task.update":
+      case (SERVICE.task && SERVICE.task.update_status) || "task.update_status":
+      case (SERVICE.task && SERVICE.task.update_assignee) || "task.update_assignee":
+      case (SERVICE.task && SERVICE.task.delete) || "task.delete":
+      // Meetings push on room.scheduled (room.js _notify_invitees). Note it
+      // targets INVITEES, so a hub meeting the viewer is not invited to still
+      // only appears on the next view change.
+      case "room.scheduled":
+        this._scheduleReload();
+        return;
+      default:
+        if (super.onWsMessage) super.onWsMessage(svc, data, options);
+    }
+  }
+
+  // ── navigation ─────────────────────────────────────────────────────────────
+
+  _step(direction) {
+    const unit = this._view === "day" ? "day" : this._view === "week" ? "week" : "month";
+    const anchor = day(this._cursor) || Dayjs();
+    this._cursor = ymd(anchor.add(direction, unit));
+    this._closeMenus();
+    this._reload();
+  }
+
+  _closeMenus() {
+    this._viewMenuOpen = false;
+    this._newMenuOpen = false;
+    this._rangeMenuOpen = false;
+    this._unbindMenuDismiss();
+  }
+
+  // ── outside-click dismissal for the toolbar dropdowns ──────────────────────
+  //
+  // A dropdown used to close ONLY by clicking its own trigger a second time
+  // (Lexis, 2026-09-08, about the [month, year] picker). Any click that lands
+  // outside the toolbar row closes it now.
+  //
+  // 🔑 The guard is the WHOLE toolbar row, not "the menu plus its trigger", and
+  // that is deliberate. This runs in the CAPTURE phase, so closing repaints the
+  // toolbar BEFORE the click reaches whatever it was aimed at — and a repaint
+  // destroys the toolbar's children. With a narrower guard, clicking ‹ Today ›,
+  // a filter chip or another picker while a menu was open would have destroyed
+  // that button mid-click and the click would have done nothing. Every control
+  // in the row already calls _closeMenus() in its own handler, so leaving the
+  // row alone loses nothing.
+  //
+  // Capture phase and a `document` listener both follow the folder window's
+  // thread menu (window/folder/index.js _bindThreadMenuOutside). Listening on
+  // `document` rather than on the menu element is what lets it survive
+  // _renderToolbar() rebuilding that element on every open and close.
+  //
+  // Repaint via _renderToolbar(), NEVER _render(): a full render rebuilds the
+  // month grid, i.e. the very element the click is still travelling to.
+  _syncMenuDismiss() {
+    if (this._viewMenuOpen || this._newMenuOpen || this._rangeMenuOpen) {
+      this._bindMenuDismiss();
+    } else {
+      this._unbindMenuDismiss();
+    }
+  }
+
+  _bindMenuDismiss() {
+    if (this._menuDismiss) return;
+    const toolbar = `.${this.fig.family}__toolbar`;
+    this._menuDismiss = (ev) => {
+      const t = ev && ev.target;
+      // No `closest` means no element to reason about (a text node, a click
+      // synthesised on the document itself) — leave the menu alone rather than
+      // guess.
+      if (!t || !t.closest) return;
+      if (t.closest(toolbar)) return;
+      if (this.isDestroyed && this.isDestroyed()) return this._unbindMenuDismiss();
+      this._closeMenus();
+      this._renderToolbar();
+    };
+    document.addEventListener("click", this._menuDismiss, true);
+  }
+
+  _unbindMenuDismiss() {
+    if (!this._menuDismiss) return;
+    document.removeEventListener("click", this._menuDismiss, true);
+    this._menuDismiss = null;
+  }
+
+  // ── forms ──────────────────────────────────────────────────────────────────
+
+  _openTaskForm(row) {
+    this._closeMenus();
+    if (row) {
+      this._form = {
+        kind: "task",
+        mode: "edit",
+        row,
+        draft: {
+          title: row.title || "",
+          description: row.description || "",
+          due_date: row.due_date || "",
+          status: row.status || "todo",
+          priority: row.priority || "medium",
+        },
+      };
+    } else {
+      this._form = {
+        kind: "task",
+        mode: "create",
+        draft: {
+          title: "",
+          description: "",
+          due_date: this._pendingDay || "",
+          status: "todo",
+          priority: "medium",
+        },
+      };
+    }
+    this._pendingDay = null;
+    this._render();
+  }
+
+  _openMeetingForm() {
+    this._closeMenus();
+    const base = day(this._pendingDay) || day(this._cursor) || Dayjs();
+    this._form = {
+      kind: "meeting",
+      mode: "create",
+      draft: {
+        title: "",
+        date: ymd(base),
+        start: { hour: 11, minute: "00", meridiem: "AM" },
+        end: { hour: 12, minute: "00", meridiem: "PM" },
+        require_email: false,
+        restrict: false,
+        recipients: [],
+        password_on: false,
+      },
+    };
+    this._pendingDay = null;
+    this._render();
+  }
+
+  _closeForm() {
+    this._form = null;
+    this._render();
+  }
+
+  /**
+   * Re-paint after a click that changed the draft while the modal is open.
+   *
+   * MUST be used instead of _render() by every in-form handler. _render()
+   * re-feeds the whole page from `draft`, and the free-text fields (title,
+   * description, the four time boxes, the password) only live in the DOM until
+   * _absorbFormText runs — so picking a status pill, flipping AM/PM or ticking
+   * a switch used to silently wipe whatever the user had typed above it.
+   * Absorbing first makes the re-render lossless.
+   */
+  _renderForm() {
+    this._absorbFormText();
+    this._render();
+  }
+
+  /**
+   * Merge every formItem-bound input into the draft before a commit.
+   *
+   * The pill rows and the AM/PM toggle already write to the draft on click, but
+   * the free-text fields only live in the DOM until this runs — including the
+   * four time boxes. Absorbing those matters: without it a typed hour would be
+   * silently dropped and every meeting would book at the draft's default time.
+   */
+  _absorbFormText() {
+    if (!this._form) return {};
+    let data = {};
+    try {
+      data = this.getData() || {};
+    } catch {
+      data = {};
+    }
+    const draft = this._form.draft || {};
+
+    ["title", "description", "password"].forEach((k) => {
+      if (data[k] != null) draft[k] = data[k];
+    });
+
+    // start_hour / start_minute / end_hour / end_minute → draft.start / .end,
+    // leaving the meridiem the toggle already set.
+    ["start", "end"].forEach((which) => {
+      const part = draft[which] || {};
+      const hour = data[`${which}_hour`];
+      const minute = data[`${which}_minute`];
+      if (hour != null && `${hour}`.trim() !== "") part.hour = `${hour}`.trim();
+      if (minute != null && `${minute}`.trim() !== "") {
+        part.minute = `${minute}`.trim();
+      }
+      draft[which] = part;
+    });
+
+    this._form.draft = draft;
+    return draft;
+  }
+
+  /**
+   * 12-hour form parts → UNIX-epoch seconds.
+   *
+   * Epoch is the server's canonical meeting time (room.js names stime/etime the
+   * source of truth for range queries); the human `date` string it also stores
+   * is display-only and must never be parsed back.
+   */
+  _epochFor(dateStr, part) {
+    const base = day(dateStr);
+    if (!base || !part) return 0;
+    let hour = parseInt(part.hour, 10);
+    if (!isFinite(hour)) return 0;
+    hour = Math.max(1, Math.min(12, hour)) % 12;
+    if (part.meridiem === "PM") hour += 12;
+    let minute = parseInt(part.minute, 10);
+    if (!isFinite(minute)) minute = 0;
+    minute = Math.max(0, Math.min(59, minute));
+    return base.startOf("day").add(hour, "hour").add(minute, "minute").unix();
+  }
+
+  // ── writes ─────────────────────────────────────────────────────────────────
+
+  async _submitTask() {
+    const draft = this._absorbFormText();
+    const title = String(draft.title || "").trim();
+    if (!title) return;
+
+    // The form is only cleared once the write comes back, so every trigger
+    // that lands while the request is in flight would post again — a second
+    // Enter (the Entry resets its own `_done` guard on each keyup), a
+    // double-clicked Create button, Enter followed by a click. One in-flight
+    // write per modal.
+    if (this._submitting) return;
+    this._submitting = true;
+    try {
+      await this._writeTask(draft, title);
+    } finally {
+      this._submitting = false;
+    }
+  }
+
+  async _writeTask(draft, title) {
+    const form = this._form;
+    const editing = form.mode === "edit";
+    const svcCreate = (SERVICE.task && SERVICE.task.create) || "task.create";
+    const svcUpdate = (SERVICE.task && SERVICE.task.update) || "task.update";
+    const svcStatus =
+      (SERVICE.task && SERVICE.task.update_status) || "task.update_status";
+
+    if (!editing) {
+      // Personal task: personal-hub scope, and no assignee_uids at all —
+      // requirement §4 wants assignment refused, not hidden, and the server
+      // rejects it for a personal hub. Sending an empty array would still be
+      // sending the field.
+      await this.postService({
+        service: svcCreate,
+        hub_id: this._personalHub,
+        nid: this._personalNid,
+        title,
+        description: draft.description || null,
+        status: draft.status || "todo",
+        priority: draft.priority || "medium",
+        due_date: draft.due_date || null,
+      });
+    } else {
+      const row = form.row || {};
+      // Addressed with the ROW's hub — never the personal hub. This is the
+      // line that keeps ACL and audit consistent with the folder view.
+      const hub_id = row.hub_id || this._personalHub;
+      await this.postService({
+        service: svcUpdate,
+        hub_id,
+        id: row.id,
+        title,
+        description: draft.description || null,
+        priority: draft.priority || "medium",
+        due_date: draft.due_date || null,
+      });
+      if ((draft.status || "todo") !== (row.status || "todo")) {
+        await this.postService({
+          service: svcStatus,
+          hub_id,
+          id: row.id,
+          status: draft.status || "todo",
+        });
+      }
+    }
+
+    this._form = null;
+    await this._reload();
+  }
+
+  async _deleteTask() {
+    const row = (this._form && this._form.row) || null;
+    if (!row) return;
+    if (this._submitting) return;
+    this._submitting = true;
+    try {
+      await this._writeDelete(row);
+    } finally {
+      this._submitting = false;
+    }
+  }
+
+  async _writeDelete(row) {
+    const svc = (SERVICE.task && SERVICE.task.delete) || "task.delete";
+    await this.postService({
+      service: svc,
+      hub_id: row.hub_id || this._personalHub,
+      id: row.id,
+    });
+    this._form = null;
+    await this._reload();
+  }
+
+  async _submitMeeting() {
+    const draft = this._absorbFormText();
+    const title = String(draft.title || "").trim();
+    if (!title || !draft.date) return;
+
+    // Same in-flight guard as _submitTask: room.book runs two round trips
+    // before the modal is replaced, and a second trigger in that window
+    // would book the room twice.
+    if (this._submitting) return;
+    this._submitting = true;
+    try {
+      await this._writeMeeting(draft, title);
+    } finally {
+      this._submitting = false;
+    }
+  }
+
+  async _writeMeeting(draft, title) {
+    const stime = this._epochFor(draft.date, draft.start);
+    const etime = this._epochFor(draft.date, draft.end);
+    if (!stime) return;
+
+    // The end the meeting will actually be booked with, resolved BEFORE the
+    // plan check rather than inline in the payload: an end that is missing or
+    // not after the start falls back to half an hour, and the cap has to be
+    // measured against the duration that is really going to be stored.
+    const end = etime > stime ? etime : stime + 30 * 60;
+
+    // Plan cap on meeting length. This calendar books into the viewer's own
+    // personal hub (`_personalHub = Visitor.id`), so the room will run on the
+    // viewer's own plan and their entitlement is the right one to read — no
+    // ownership test needed here, unlike the workspace calendar in
+    // window/folder where the hub may belong to somebody else.
+    //
+    // Refused rather than trimmed: silently shortening someone's 90-minute
+    // meeting to 45 would be a decision made on their behalf, and they would
+    // find out from the calendar afterwards rather than from us now.
+    const capMins = overMeetingCap(end - stime);
+    if (capMins) {
+      // Required here, not at module scope: the card pulls its own skin in,
+      // and a folder window / calendar that never hits the cap should not be
+      // paying for the upsell's CSS. Same reason Wm.openFeatureLock defers it.
+      const { promptFeatureLock } = require("builtins/widget/feature-lock");
+      promptFeatureLock("meeting_schedule", [capMins]);
+      return;
+    }
+
+    const bookSvc = (SERVICE.room && SERVICE.room.book) || "room.book";
+    const linkSvc =
+      (SERVICE.room && SERVICE.room.public_link) || "room.public_link";
+
+    const base = day(draft.date);
+    const payload = {
+      hub_id: this._personalHub,
+      title,
+      message: draft.description || "",
+      // Human display string the server stores alongside the epochs for
+      // back-compat with player/schedule. The epochs are the real value.
+      date: base ? base.format("LLLL") : "",
+      stime,
+      etime: end,
+    };
+
+    // Invitees. The server ALREADY implements per-email invitation — a
+    // 'no_traversal' dmz grant plus real mail from the butler/external-meeting
+    // template (room.js _commit_invitation) — but that method currently has no
+    // caller, so `recipients` is inert until room.book (or a room.invite) is
+    // wired to it. Sent regardless: when the server side lands, this form needs
+    // no change, and until then the meeting is still created and still gets a
+    // shareable link.
+    if (draft.require_email && draft.restrict && draft.recipients.length) {
+      payload.recipients = draft.recipients.map((email) => ({ email, name: email }));
+    }
+
+    const node = await this.postService({ service: bookSvc, ...payload });
+    const nid = node && (node.id || node.nid);
+    if (!nid) {
+      Wm.alert(LOCALE.ERROR_NETWORK);
+      return;
+    }
+
+    // Link + optional password. public_link accepts `password` today.
+    const linkPayload = { service: linkSvc, hub_id: this._personalHub, nid };
+    if (draft.password_on && draft.password) linkPayload.password = draft.password;
+    const answer = await this.postService(linkPayload);
+    const link = answer && answer.link;
+
+    if (link) copyToClipboard(link);
+    this._form = { kind: "invite-link", link: link || "" };
+    await this._loadItems();
+    this._render();
+  }
+
+  async _removeItem(cmd) {
+    const kind = cmd.mget("itemKind");
+    const id = cmd.mget("itemId");
+    const hub_id = cmd.mget("itemHub") || this._personalHub;
+    if (id == null) return;
+
+    if (kind === "meeting") {
+      const svc = (SERVICE.room && SERVICE.room.remove) || "room.remove";
+      await this.postService({ service: svc, hub_id, nid: cmd.mget("itemNid") || id });
+    } else {
+      const svc = (SERVICE.task && SERVICE.task.delete) || "task.delete";
+      await this.postService({ service: svc, hub_id, id });
+    }
+    await this._reload();
+  }
+
+  /**
+   * Clicking an item.
+   *
+   * A PERSONAL task is this screen's own record and opens the editable modal
+   * right here — there is no workspace to go to.
+   *
+   * A WORKSPACE task or meeting is owned by its folder, and the Calendar is
+   * only a renderer of it (see the note at the top of this file). So the click
+   * hands the user over to the surface that DOES own it: switch to that
+   * workspace, open its Task / Meeting tab, open that record's own panel. Which
+   * also settles the read-only question the earlier C-10 note left open — the
+   * item is fully editable, under its own ACL, in its own window, instead of
+   * half-editable in a preview card here.
+   */
+  _openItem(cmd) {
+    const id = cmd.mget("itemId");
+    const kind = cmd.mget("itemKind");
+    // A generated occurrence is not its own record — it carries the SERIES'
+    // id, so the lookup below lands on the series either way.
+    //
+    // It used to `return` here, and that made a whole class of chip a DEAD
+    // CLICK: expandRecurrence leaves only the instance that falls on the
+    // series' own start date unflagged, so a recurring meeting is made
+    // entirely of occurrences in every month except the one it started in.
+    // Nothing on screen said so — the chip looked exactly like any other.
+    // Taking the user to the series is what the chip promises ("a chip takes
+    // you to the item"); refusing to EDIT one instance from here is a
+    // narrower rule, and it is kept below, where the editable modal is.
+    const occurrence = !!Number(cmd.mget("itemOccurrence"));
+    const row = this._items.find(
+      (r) => `${r.id}` === `${id}` && r.kind === kind,
+    );
+    if (!row) {
+      // The window was reloaded (or filtered) between paint and click. Said
+      // out loud because a silent return here is indistinguishable from a
+      // chip that is simply not wired up.
+      this.warn("calendar: clicked item is no longer in the loaded window", {
+        id,
+        kind,
+      });
+      return;
+    }
+    if (row.scope === "personal" && row.can_write && row.kind === "task") {
+      // Editing ONE instance of a series is a separate feature: opening the
+      // editable modal on the series from an occurrence would let a user
+      // rewrite every instance while believing they were changing this one.
+      if (occurrence) {
+        this.warn("calendar: an occurrence of a recurring item is not editable", id);
+        return;
+      }
+      this._openTaskForm(row);
+      return;
+    }
+    // The occurrence's OWN start, so the workspace's Meeting tab anchors on
+    // the date the user clicked rather than on the series origin.
+    const stime = Number(cmd.mget("itemStime")) || 0;
+    return this._openInWorkspace(row, { stime });
+  }
+
+  /**
+   * Hand a workspace-owned row over to its own workspace: dock that workspace,
+   * open the tab that owns the record, open the record.
+   *
+   * ONE ENTRY POINT, deliberately — Wm.openNotificationLocation. It is the
+   * DOCKED opener (`#/desk/wm/reveal/`), and every step this needs already
+   * lives there: mount-or-reuse the pane, wait for its folder view, release the
+   * section screen this Calendar is, navigate, switch tab, open the detail,
+   * light the rail. Building a second opener here would duplicate all of it and
+   * drift from it.
+   *
+   * NOT Wm.launch / openFileLocation, and not because they are merely
+   * different: a launch-time `activeTab` of "meeting" makes window_folder
+   * START A CALL (its onDomRefresh), so a meeting chip would place a video
+   * call instead of showing the meeting. Only the docked route sets the tab
+   * after the pane is mounted.
+   *
+   * PERSONAL rows never come here. A personal item lives in the user's own hub
+   * (hub_id = Visitor.id), which is not a workspace you switch to — its
+   * children ARE the desk's home grid — so there is nowhere to send the user.
+   * A personal task is handled by the caller; a personal meeting keeps today's
+   * behaviour of opening nothing.
+   */
+  _openInWorkspace(row, opt = {}) {
+    if (!row) return;
+    // Every refusal below is a click that does NOTHING, on a chip that looks
+    // identical to one that works. Each one says why, because "the calendar's
+    // chips are not clickable" is the report they all arrive as, and the three
+    // causes need three different fixes.
+    if (row.scope === "personal") {
+      this.warn(
+        "calendar: personal items have no workspace to open — the personal hub is not a dockable pane",
+        { id: row.id, kind: row.kind },
+      );
+      return;
+    }
+    if (!row.hub_id) {
+      // calendar.list states hub_id as REQUIRED (skeleton/helpers.js). A row
+      // without one came from a server that predates that contract, or from a
+      // workspace fan-out that could not resolve the hub.
+      this.warn("calendar: row carries no hub_id — cannot open it in its workspace", row);
+      return;
+    }
+    if (!window.Wm || !_.isFunction(Wm.openNotificationLocation)) {
+      this.warn("calendar: Wm.openNotificationLocation is unavailable");
+      return;
+    }
+
+    const args = {
+      hub_id: row.hub_id,
+      // filetype is stated rather than left out. openNotificationLocation
+      // decides whether the target IS the folder to show or a file to show
+      // INSIDE its parent from this key, and a calendar.list row carries no
+      // filetype of its own — so an omitted one would ride on that method's
+      // fallback instead of on what we actually mean.
+      filetype: _a.folder,
+      pid: 0,
+    };
+
+    if (row.kind === "meeting") {
+      // The workspace ROOT (nid 0), never row.nid. For a meeting row nid IS
+      // the meeting node — a `schedule` node, not a container — and navigating
+      // to it would resolve a file where a folder is expected. Meetings are
+      // hub-scoped anyway (room.* takes hub_id; one room per workspace), so the
+      // root is the right and only place to land. Same reason the activity
+      // panel's meeting_notice sends `meeting_pid` rather than the node.
+      args.nid = 0;
+      args.open_meeting_nid = row.id;
+      // Saves the window a lookup: it anchors its schedule on this so the
+      // meeting is inside the range room.list is asked for. 0 for an all-day
+      // row, which openMeetingDeepLink falls back from.
+      //
+      // The CLICKED occurrence's start wins over the series origin: anchoring
+      // on the origin would open the Meeting tab on a month the user never
+      // asked for (and, for a series that started long ago, on one that no
+      // longer holds the meeting at all).
+      args.open_meeting_stime = Number(opt.stime) || row.stime || 0;
+    } else {
+      // The folder the task was filed in, so the pane lands where the task
+      // lives and a task created from the board afterwards is filed there too.
+      // Falsy → 0, the server's "this hub's root" shortcut.
+      args.nid = row.nid || 0;
+      args.open_task_id = row.id;
+    }
+
+    return Wm.openNotificationLocation(args);
+  }
+
+
+  // ── events ─────────────────────────────────────────────────────────────────
+
+  async onUiEvent(cmd, args = {}) {
+    const service = args.service || cmd.get(_a.service);
+    switch (service) {
+      case "cal-prev":
+        return this._step(-1);
+      case "cal-next":
+        return this._step(1);
+      // Menu open/close is toolbar-only state — never repaint the grid for it.
+      case "cal-toggle-view-menu":
+        this._viewMenuOpen = !this._viewMenuOpen;
+        this._newMenuOpen = false;
+        this._rangeMenuOpen = false;
+        return this._renderToolbar();
+
+      case "cal-toggle-range-menu":
+        this._rangeMenuOpen = !this._rangeMenuOpen;
+        this._viewMenuOpen = false;
+        this._newMenuOpen = false;
+        // Each open starts on the month the calendar is actually showing —
+        // otherwise the popup reopens wherever the user last browsed to and
+        // stopped, which is not where the grid behind it is.
+        this._pickerCursor = null;
+        return this._renderToolbar();
+
+      // ‹ › either side of the popup's month. Moves the POPUP only, so this is
+      // a toolbar repaint and not a refetch — the grid behind it has not moved.
+      // Stays open: stepping is how the user browses to the month they want.
+      case "cal-picker-step": {
+        const delta = Number(cmd.mget("calStep"));
+        if (delta !== 1 && delta !== -1) return;
+        const shown = day(this._pickerCursor) || day(this._cursor) || Dayjs();
+        this._pickerCursor = ymd(shown.add(delta, "month"));
+        return this._renderToolbar();
+      }
+
+      // A day picked in the popup. Anchors the calendar on it in whatever view
+      // is current — the day view lands on that day, week on its week, month on
+      // its month — which is what the Meet tab's `sched-pick-day` does.
+      case "cal-pick-day": {
+        const picked = day(cmd.mget("calDay"));
+        if (picked) this._cursor = ymd(picked);
+        this._closeMenus();
+        // The fetch window moves with the cursor, so this is a refetch.
+        return this._reload();
+      }
+
+      case "cal-set-view": {
+        const next = cmd.mget("calView");
+        if (VIEW_KEYS.includes(next)) this._view = next;
+        this._closeMenus();
+        // The window changes with the view, so this needs a refetch, not just
+        // a re-render.
+        return this._reload();
+      }
+
+      case "cal-set-filter": {
+        const next = cmd.mget("calFilter");
+        if (FILTER_KEYS.includes(next)) this._filter = next;
+        this._closeMenus();
+        // Filtering is client-side over an already-fetched window — no refetch.
+        return this._render();
+      }
+
+      case "cal-toggle-new-menu":
+        this._newMenuOpen = !this._newMenuOpen;
+        this._viewMenuOpen = false;
+        return this._renderToolbar();
+
+      case "cal-new-task":
+        return this._openTaskForm(null);
+      case "cal-new-meeting":
+        return this._openMeetingForm();
+
+      case "cal-day-add":
+        this._pendingDay = cmd.mget("calDay");
+        return this._openTaskForm(null);
+
+      // A square on the week/day canvas → the create-TASK popup, due that
+      // day. It used to open the meeting form at that hour, which is what the
+      // Meet tab's cells do — but this calendar is where a user plans their
+      // own day, and a task is the thing they add most. The hour clicked is
+      // deliberately not used: a task's due_date is a calendar DATE with no
+      // time (see skeleton/hours.js), so the task lands in that day's all-day
+      // strip, which is where every task on this canvas lives. A meeting is
+      // still one click away in "+ New".
+      case "cal-slot-add":
+        this._pendingDay = cmd.mget("calDay");
+        return this._openTaskForm(null);
+
+      case "cal-day-more": {
+        const target = cmd.mget("calDay");
+        if (target) {
+          this._cursor = target;
+          this._view = "day";
+        }
+        this._closeMenus();
+        return this._reload();
+      }
+
+      case "cal-open-item":
+        return this._openItem(cmd);
+      case "cal-remove-item":
+        return this._removeItem(cmd);
+
+      case "cal-close-form":
+        return this._closeForm();
+
+      case "cal-form-date": {
+        if (!this._form) return;
+        // The value arrives on ARGS, not on the command — and flatpickr's
+        // altInput is nameless, so a date picker reports through the trigger
+        // model instead. Both paths, in that order (the board's
+        // _onTaskInputChanged documents why).
+        let value = args && args.value != null ? String(args.value) : null;
+        if (value == null) {
+          const v = cmd.mget(_a.value);
+          value = v != null ? String(v) : "";
+        }
+        const key = this._form.kind === "meeting" ? "date" : "due_date";
+        this._form.draft[key] = value;
+        return;
+      }
+
+      case "cal-form-status":
+        if (!this._form) return;
+        this._form.draft.status = cmd.mget("calStatus") || "todo";
+        return this._renderForm();
+
+      case "cal-form-priority":
+        if (!this._form) return;
+        this._form.draft.priority = cmd.mget("calPriority") || "medium";
+        return this._renderForm();
+
+      case "cal-form-time":
+        // Absorbed at commit from getData(); nothing to do per keystroke.
+        return;
+
+      case "cal-form-meridiem": {
+        if (!this._form) return;
+        const which = cmd.mget("calWhich") === "end" ? "end" : "start";
+        const part = this._form.draft[which] || {};
+        part.meridiem = cmd.mget("calMeridiem") === "PM" ? "PM" : "AM";
+        this._form.draft[which] = part;
+        return this._renderForm();
+      }
+
+      case "cal-toggle-require-email": {
+        if (!this._form) return;
+        const d = this._form.draft;
+        d.require_email = !d.require_email;
+        // Turning the requirement off makes the restriction meaningless.
+        if (!d.require_email) {
+          d.restrict = false;
+        }
+        return this._renderForm();
+      }
+
+      case "cal-toggle-restrict":
+        if (!this._form) return;
+        this._form.draft.restrict = !this._form.draft.restrict;
+        return this._renderForm();
+
+      case "cal-toggle-password":
+        if (!this._form) return;
+        this._form.draft.password_on = !this._form.draft.password_on;
+        return this._renderForm();
+
+      case "cal-add-recipient": {
+        if (!this._form) return;
+        const part = await this.ensurePart("form-recipient");
+        const input = part && part.el && part.el.querySelector("input");
+        const value = input ? String(input.value || "").trim() : "";
+        if (!value) return;
+        const list = this._form.draft.recipients || [];
+        if (!list.includes(value)) list.push(value);
+        this._form.draft.recipients = list;
+        if (input) input.value = "";
+        return this._renderForm();
+      }
+
+      case "cal-remove-recipient": {
+        if (!this._form) return;
+        const email = cmd.mget("calEmail");
+        this._form.draft.recipients = (this._form.draft.recipients || []).filter(
+          (e) => e !== email,
+        );
+        return this._renderForm();
+      }
+
+      // The title Entry carries `service: "cal-submit-task"` so Enter commits.
+      // The base Entry reports through that same service on other statuses too
+      // — "interactive" on every printable keyup when interactive:1 is set,
+      // "cancel" on Escape — and a status that is not a commit must never
+      // reach task.create. Typing the title used to create one task per
+      // letter that way ("a", "ab", "abc"). The Entry no longer asks for
+      // interactive, and this keeps any status but an explicit commit out of
+      // the write regardless. A click on the Create button carries no
+      // __inputStatus at all, so it passes. Same guard as invite-popup.
+      case "cal-submit-task":
+        if (args && args.__inputStatus && args.__inputStatus !== _a.commit) {
+          return;
+        }
+        return this._submitTask();
+      case "cal-delete-task":
+        return this._deleteTask();
+      case "cal-submit-meeting":
+        if (args && args.__inputStatus && args.__inputStatus !== _a.commit) {
+          return;
+        }
+        return this._submitMeeting();
+
+      case "cal-copy-link": {
+        const link = this._form && this._form.link;
+        if (link) {
+          copyToClipboard(link);
+          Wm.acknowledge && Wm.acknowledge(LOCALE.URL_COPIED);
+        }
+        return;
+      }
+
+      default:
+        if (super.onUiEvent) return super.onUiEvent(cmd, args);
+    }
+  }
+
+  // Wrapper.Y derives its part name from `name` as `wrapper-{name}`, so the
+  // modal slot arrives as "wrapper-cal-modal". Nothing needs wiring on arrival —
+  // the wrapper's kids are declared by the skeleton — so this only exists to
+  // keep unhandled parts flowing to the base class.
+  onPartReady(child, pn) {
+    if (super.onPartReady) super.onPartReady(child, pn);
+  }
+}
+
+module.exports = __calendar_main;

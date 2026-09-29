@@ -358,6 +358,66 @@
     }
   }
 
+  // ── Text field, for a confirm that ASKS for something ───────────────────
+  //
+  // Wm.confirm's body accepts skeletons as its `message`, so a dialog can
+  // collect a value instead of only stating one — the workspace Rename does.
+  // Deliberately the SAME shape as the create-workspace form's field
+  // (media/form/skin __field-label / __input): a 44px pill with a 10px radius
+  // on the elevated surface, brand border on focus. Two dialogs asking for a
+  // name should not look like two different products.
+  //
+  // font-weight is set OUTSIDE drumee.typo on purpose — the mixin does not
+  // emit one — which is exactly what the form's own label does.
+  &__field-label {
+    width: 100%;
+    text-align: left;
+    @include drumee.typo($size: 14px, $line: 1.3, $color: var(--normal-fg));
+    font-weight: 600;
+  }
+
+  &__field {
+    width: 100%;
+    box-sizing: border-box;
+    min-height: 44px;
+    padding: 0 14px;
+    border-radius: 10px;
+    border: 1px solid var(--border-default);
+    background: var(--normal-bg-elevated);
+    transition: border-color 0.15s;
+
+    // The widget puts the class on a WRAPPER and the control inside it
+    // (media/row/skin does the same: `&__input textarea`), so the box is
+    // painted here and the control is stripped back to inherit it.
+    textarea,
+    input {
+      width: 100%;
+      min-height: 42px;
+      background: transparent;
+      border: 0;
+      outline: none;
+      resize: none;
+      overflow: hidden;
+      // Vertically centred by line-height rather than padding: the control is
+      // one row, and padding here would fight the 44px box above.
+      line-height: 42px;
+      font: inherit;
+      color: inherit;
+      @include drumee.typo($size: 14px, $line: 1.3, $color: var(--normal-fg));
+
+      &::placeholder {
+        color: var(--placeholder-fg);
+      }
+    }
+
+    // border-color, never `outline`: an outline is drawn outside the box and
+    // overlaps the row beneath at this radius — the same reason the create
+    // form gives for its own focus rule.
+    &:focus-within {
+      border-color: var(--primary-purple-40);
+    }
+  }
+
   &__buttons {
     align-items: center;
     flex-shrink: 0;
@@ -545,37 +605,9 @@ html[data-theme="dark"] .window-confirm__title {
   color: var(--normal-fg-800, #ffffff);
 }
 
-// "Delete this message" confirm — chat select-mode Delete (Figma 2308-115578).
-// Scoped to the chat-delete-confirm modifier so ONLY this popup gets the larger
-// prompt + full-width buttons + a borderless grey Cancel; every other
-// window-confirm keeps its defaults. The card surface, danger red (#d74e49) and
-// dark theming all come from the shared window-confirm rules above.
-.chat-delete-confirm__title {
-  width: 100%;
-  text-align: left;
-  // Figma Body/Sub Title (20/600). --normal-fg-10 flips dark→light per theme.
-  @include drumee.typo($size: 20px, $line: 1.1, $weight: 600, $color: var(--normal-fg-10, #0b0a21));
-}
-
-.window-confirm__buttons.chat-delete-confirm {
-  gap: 16px;
-  justify-content: stretch;
-
-  .button {
-    border-radius: 4px;
-    flex: 1 1 0;
-    height: 48px;
-    min-width: 0;
-    @include drumee.typo($size: 16px, $line: 24px, $weight: 600); // Figma Buttons/Medium
-  }
-
-  // Cancel — borderless, grey text (Figma Grey/70 #84848c, legible in both themes).
-  .window-confirm__button-secondary {
-    border: none;
-    color: var(--normal-fg-50, #84848c);
-
-    &:hover {
-      background-color: var(--grid-card-bg, rgba(0, 0, 0, 0.05));
-    }
-  }
-}
+// The chat delete confirm used to override this file with its own larger
+// prompt, full-width 48px buttons and a borderless grey Cancel
+// (`.chat-delete-confirm`, Figma 2308-115578). It now renders as a plain
+// Wm.confirm and inherits everything above, like every other dialog — see
+// widget/chat/index.js confirmDeleteForAll. Nothing replaced it on purpose:
+// the whole point was to stop it being a special case.

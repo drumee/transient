@@ -10,6 +10,25 @@ const UPLOADER = "media_uploader";
 const SEEDING = "seeding";
 const IGNORED_FILES = /Thumbs.db|.DS_Store|__MACOSX|.thumbnails|\~+/;
 const MAX_BLOB_SIZE = 100000000;
+/**
+ * filecap.category for EVERY archive extension — zip/rar/7z/tar/gz/tgz/bz2/xz
+ * all land on this one value, which is what `media.filetype` carries. Not the
+ * extension: the server gates media.unzip on the same category, so the two
+ * ends agree by construction.
+ */
+const ARCHIVE_FILETYPE = "zip";
+/**
+ * Archives the server can read but not extract, so the row is not offered.
+ *
+ * MIRRORS UNEXTRACTABLE_EXTENSIONS in server-team service/lib/archive.js — see
+ * the reasoning there. Short version: RAR's decoder is a separate non-free
+ * codec and it is absent from both deployed 7z builds, so a real (compressed)
+ * rar fails at extraction time. Duplicated rather than fetched because the
+ * kebab has to decide before any server call; if the two ever drift, the
+ * server still refuses with ARCHIVE_FORMAT_UNSUPPORTED and the user gets a
+ * real message instead of a dead row.
+ */
+const UNEXTRACTABLE_EXTENSIONS = ["rar", "r00"];
 // Office formats that get content posters (thumb.png) via the SEO index worker.
 const DOC_EDITABLE = require('player/document/editable');
 
@@ -109,10 +128,12 @@ class __media_core extends DrumeeMFS {
    */
   onBeforeDestroy() {
     // this.unbindEvent(_a.live);
-    RADIO_BROADCAST.off(
-      "notification:details",
-      this.updateNotificationCount.bind(this)
-    );
+    // Same reference as bindActivityHandlerEvent's `on` — a fresh .bind()
+    // here matched nothing, so every hub tile ever rendered stayed subscribed.
+    if (this._onNotificationDetails) {
+      RADIO_BROADCAST.off("notification:details", this._onNotificationDetails);
+      this._onNotificationDetails = null;
+    }
     //RADIO_BROADCAST.off("moved:away", this._onPeerMovedAway.bind(this));
     if (this._setIconType) {
       return RADIO_MEDIA.off(SET_ICON_TYPE, this._setIconType);
@@ -147,12 +168,24 @@ class __media_core extends DrumeeMFS {
     }
 
     const fileType = this.mget(_a.filetype);
+    // `share_qrcode` predates the sectioned menus (added unconditionally
+    // 2025-12-04 `37a6681d`, gated by area 2026-06-09 `1f984155`) and is
+    // appended out here, AFTER the per-type builder has already grouped and
+    // flattened its sections — so it lands below "Move to trash" with no
+    // separator of its own. The file-menu Figma (node 1646-106518) has no such
+    // row, so files opt out; folder / workspace-tile / schedule menus keep it
+    // verbatim until their own frames land. Nothing is lost either way: the QR
+    // is still on the workspace settings panel next to the share links
+    // (widget/settings/hub skeleton/footer.js + skeleton/links.js).
+    let qrcodeOffered = true;
     switch (fileType) {
       case _a.hub:
         items = this.contextmenuItemsForHub();
         break;
       case _a.folder:
         items = this.contextmenuItemsForFolder();
+        // External workspace (area `share`): no "Show QR code" on folders.
+        if (this.mget(_a.area) === _a.share) qrcodeOffered = false;
         break;
 
       case _a.schedule:
@@ -161,9 +194,12 @@ class __media_core extends DrumeeMFS {
 
       default:
         items = this.contextmenuItemsForFiles();
+        qrcodeOffered = false;
     }
 
-    if ([_a.public, _a.share, _a.dmz].includes(this.mget(_a.area)) && this.canShare()) items.push('share_qrcode');
+    // canShare() (ui-core letc/mfs.js) is already false outside dmz/share, so
+    // the _a.public arm here has never fired — left as-is, not this pass.
+    if (qrcodeOffered && [_a.public, _a.share, _a.dmz].includes(this.mget(_a.area)) && this.canShare()) items.push('share_qrcode');
 
     /** Children of window_search */
     if (this.mget(_a.role) == _a.search) {
@@ -202,6 +238,58 @@ class __media_core extends DrumeeMFS {
     return this.mget(_a.privilege) & _K.permission.admin;
   }
 
+  /**
+   * Is this node a WORKSPACE, as opposed to a folder or a file?
+   *
+   * `filetype`, NOT `isHub`: media/grid initContainer() raises `isHub` on any
+   * node whose `hubs` attribute is non-empty, which for a FOLDER means "there
+   * are hubs somewhere inside me" (see the note in media/interact.js move(),
+   * and the hubs_inside branch of libs/media-selection bucketFor). Everything
+   * that offers to LEAVE something keys on this, so the distinction is worth
+   * one named method rather than the same comparison in four places.
+   */
+  _isWorkspace() {
+    return this.mget(_a.filetype) === _a.hub;
+  }
+
+  /**
+   * The WAY OUT of a workspace, as a contextmenu item key: `trash` (delete the
+   * workspace) or `leaveWorkspace` (drop my own membership).
+   *
+   * ONE ROW, TWO ACTIONS — and until now one label for both. `_a.trash` renders
+   * "Move to trash" and posts `_e.remove`, which ends at
+   * Wm.removeMediaSelection → libs/media-selection bucketFor. That function
+   * decides, per item, whether a hub is DELETED (hub.delete_hub, an
+   * irreversible DROP DATABASE) or merely LEFT (desk.leave_hub) — and for a
+   * member without the admin bit it has always been the latter. So the row said
+   * "Move to trash" and the dialog that followed said "Leave". Lexis reported
+   * the confusion on 2026-09-21.
+   *
+   * This reads the SAME bit bucketFor reads, so the label and the action cannot
+   * disagree: admin (and therefore owner) sees the destructive row, everyone
+   * else sees the row that describes what will actually happen to them.
+   *
+   * A file or a folder has no membership to leave, so it keeps "Move to trash"
+   * — see _isWorkspace above for why that test is on `filetype`.
+   *
+   * Fails to `trash` — the row every caller has always rendered — when the
+   * privilege cannot be read at all, matching the fail-open rule the folder
+   * settings panel's own gate follows (window/folder allowedActions). A
+   * privilege that reads 0 is an ANSWER, not a failure, and gives
+   * `leaveWorkspace`.
+   *
+   * @returns {String} a key of builtins/contextmenu/skeleton/items
+   */
+  _workspaceExitKey() {
+    if (!this._isWorkspace()) return _a.trash;
+    try {
+      if (!_.isFunction(this.isGranted)) return _a.trash;
+      return this.isGranted(_K.permission.admin) ? _a.trash : "leaveWorkspace";
+    } catch (e) {
+      return _a.trash;
+    }
+  }
+
   contextmenuItemsForHub() {
     let fileItems = [];
     // Over-limit: upload + invite are paused — omit them from the kebab so
@@ -214,11 +302,35 @@ class __media_core extends DrumeeMFS {
       if (!locked && this._canInviteToHub()) {
         fileItems.push(_a.share)
       }
-      fileItems.push(_a.separator, _a.trash)
+      fileItems.push(_a.separator, this._workspaceExitKey())
     } else if (this.canDownload()) {
       fileItems = ['openInWindow', _a.separator, _a.download, _a.separator, _a.info];
       if (!locked && this._canInviteToHub()) fileItems.push(_a.share);
-      if (this.canRemove()) fileItems.push(_a.trash);
+      // NO LONGER GATED ON canRemove() — see the note on the branch below.
+      // Every row above this one is something the member does INSIDE the
+      // workspace; this one is about their membership of it, and canRemove()
+      // is the write bit, which a Chat member does not hold.
+      fileItems.push(_a.separator, this._workspaceExitKey());
+    } else {
+      // A VIEW MEMBER, whose menu was COMPLETELY EMPTY until now.
+      //
+      // Both branches above ask for a capability inside the workspace —
+      // canOrganize/isMediaOwner, then canDownload — and View holds neither, so
+      // the builder returned `[]` and the kebab opened on nothing. That is not
+      // a tidy menu, it is a member with no way out: the workspace sits on
+      // their desk and the only other door, the Access panel's red button,
+      // is one they have to know to look for. Lexis asked for this row on
+      // 2026-09-22 (via Duy).
+      //
+      // Leaving is not a capability the workspace grants — it is the member
+      // revoking their own grant — so it is deliberately gated on NOTHING
+      // except being a workspace. `desk.leave_hub` is `src: anonymous` and
+      // refuses only the caller's own entity, which a hub never is.
+      //
+      // A FILE OR FOLDER NEVER REACHES HERE: contextmenuItems() routes on
+      // `filetype`, and this builder is the `hub` arm. The empty menu for a
+      // View member of a file is untouched.
+      fileItems = [this._workspaceExitKey()];
     }
     // for media files in trash
     if (this.mget(_a.status) == _a.deleted) {
@@ -253,15 +365,31 @@ class __media_core extends DrumeeMFS {
       sections.push([_a.info]);
       /** 5 — outside-world share link (share area only) */
       if (this.mget(_a.area) === _a.share) sections.push(['secureShare']);
-      /** 6 — trash last */
-      sections.push([_a.trash]);
+      /** 6 — trash last. On a WORKSPACE this row may be "Leave workspace"
+       *  instead: the desk switcher's ⋯ menu is built from this same builder
+       *  (modules/desk/index.js _resolveWorkspaceActions), so the workspace
+       *  menu goes through _workspaceExitKey exactly as the grid tile does. */
+      sections.push([this._workspaceExitKey()]);
     } else if (this.canDownload()) {
       // Restricted/shared recipient — Download only per Figma 2.2
       sections.push([_a.download]);
       // Invite (_a.share) hidden on subfolders per Lexis 2026-06-14 (parent-folder/hub only).
       // if (this.canShare()) sections.push([_a.share]);
       sections.push([_a.info]);
-      if (this.canRemove()) sections.push([_a.trash]);
+      // `_isWorkspace()` FIRST, and it is what makes this safe: on a WORKSPACE
+      // the row is "Leave workspace" and a Chat member must have it (their
+      // canRemove() is false — it is the write bit). On a real folder or
+      // subfolder nothing changes: the row stays `trash`, still gated on
+      // canRemove, because there is no membership to give up on a folder.
+      if (this._isWorkspace() || this.canRemove()) {
+        sections.push([this._workspaceExitKey()]);
+      }
+    } else if (this._isWorkspace()) {
+      // A View member of a WORKSPACE — the ⋯ menu's half of the empty-kebab
+      // case documented in contextmenuItemsForHub. One row, and it is the way
+      // out. A View member of a FOLDER still gets no menu, which is correct:
+      // there is nothing there for them to do and nothing to leave.
+      sections.push([this._workspaceExitKey()]);
     }
 
     const fileItems = [];
@@ -275,26 +403,54 @@ class __media_core extends DrumeeMFS {
   /**
    *
    */
+  /**
+   * Whether this node can be extracted here and now.
+   *
+   * Extracting CREATES files, so it needs the same standing as uploading them
+   * — `canOrganize() || isMediaOwner()` is the `editable` test the duplicate
+   * and rename rows use. It also needs the SERVER to publish both halves of
+   * the flow: SERVICE is the ACL list sent through yp.get_env, ui and server
+   * ship separately, and a missing name would POST to `<svc>undefined`, an
+   * error onServerComplain swallows. One definition, because the kebab row and
+   * the click path must never disagree about whether unzip is on offer.
+   */
+  canUnzip() {
+    if (this.mget(_a.filetype) !== ARCHIVE_FILETYPE) return false;
+    if (UNEXTRACTABLE_EXTENSIONS.includes(this._fileExt())) return false;
+    if (!SERVICE.media || !SERVICE.media.unzip || !SERVICE.media.archive_info) {
+      return false;
+    }
+    return !!(this.canOrganize() || this.isMediaOwner());
+  }
+
   contextmenuItemsForFiles() {
     const fileType = this.mget(_a.filetype);
     const editable = this.canOrganize() || this.isMediaOwner();
     if (!editable && !this.canDownload()) return [];
 
-    // Sectioned File menu (spec 2026-06-10): each inner array renders as one
-    // separator-delimited section; trash always closes the menu.
+    // Sectioned File menu — Figma "File menu action" 2026-09-16
+    // (node 1646-106518), which supersedes the 2026-06-10 spec:
+    //   1. Make a copy · Download
+    //   2. Organize
+    //   3. Rename · See chat threads
+    //   4. (area links + per-type extras — the frame draws a plain file, so
+    //      it shows no such row; they keep their own section above the close)
+    //   5. Share (external workspace only) · Get info · Prohibit any change · Move to trash
+    // Each inner array renders as one separator-delimited section.
     const sections = [];
 
-    /** 1 — clipboard copy + same-folder duplicate + download */
-    const fileActions = [_a.copy];
-    if (editable) fileActions.push(_a.duplicate);
+    /** 1 — same-folder duplicate ("Make a copy") + download. The clipboard
+     * `copy` row is gone from the frame; copy/paste stays reachable from the
+     * player topbars and the folder-window background menu (which is where
+     * `paste` is offered), so the pair is not broken. */
+    const fileActions = [];
+    if (editable) fileActions.push('makeACopy');
     fileActions.push(_a.download);
     sections.push(fileActions);
 
-    /** 2 — organize (Move submenu). Invite (_a.share) hidden on files per Lexis
-     * 2026-06-14 (parent-folder/hub only); item def + handler + hub menu keep it. */
+    /** 2 — organize (Move submenu). */
     const organize = [];
     if (editable) organize.push('organize');
-    // if (this.canShare()) organize.push(_a.share);
     if (organize.length) sections.push(organize);
 
     /** 3 — rename + chat threads (inside a folder window only) */
@@ -305,17 +461,11 @@ class __media_core extends DrumeeMFS {
     }
     if (naming.length) sections.push(naming);
 
-    /** 4 — details */
-    sections.push([_a.info]);
-
-    /** 5 — area links + type extras. "edit" removed: opening an editable
+    /** 4 — area links + type extras. "edit" removed: opening an editable
      * document auto-enters edit mode when permitted, no menu item needed. */
     const extra = [];
     if (editable) {
       switch (this.isRegularFile() && this.mget(_a.area)) {
-        case _a.share:
-          extra.push('secureShare'); /** Share link for access from the outside world */
-          break;
         case _a.private:
           extra.push('designationLink'); /** Open a file from the link with the user environment */
           break;
@@ -335,19 +485,34 @@ class __media_core extends DrumeeMFS {
       case _a.web:
         extra.push("setAsHomepage");
         break;
+      case ARCHIVE_FILETYPE:
+        // Archives (zip/rar/7z/tar/gz…) all carry filecap category `zip`.
+        if (this.canUnzip()) extra.push("unzip");
+        break;
       case _a.script:
         if (Visitor.profile().devel) {
           extra.push("execute");
         }
         break;
     }
-    if (editable) {
-      extra.push(this.mget(_a.status) === _a.locked ? _e.unlock : _e.lock);
-    }
     if (extra.length) sections.push(extra);
 
-    /** 6 — trash last */
-    if (editable || this.canRemove()) sections.push([_a.trash]);
+    /** 5 — the design's closing block: details, lock, trash — one section, in
+     * that order. `lock` used to sit at the tail of the extras above. */
+    const closing = [];
+    /** External workspace (area `share`): the outside-world share link sits
+     * directly above Get info. "Share" is `secureShare` (LOCALE.SHARE, icon
+     * ctxmenu-share), NOT `_a.share` (LOCALE.INVITE), which stays hidden on
+     * files per Lexis 2026-06-14 (parent-folder/hub only). */
+    if (editable && this.isRegularFile() && this.mget(_a.area) === _a.share) {
+      closing.push('secureShare');
+    }
+    closing.push(_a.info);
+    if (editable) {
+      closing.push(this.mget(_a.status) === _a.locked ? _e.unlock : _e.lock);
+    }
+    if (editable || this.canRemove()) closing.push(_a.trash);
+    sections.push(closing);
 
     const fileItems = [];
     sections.forEach((s, i) => {
@@ -361,10 +526,11 @@ class __media_core extends DrumeeMFS {
    *
    */
   bindActivityHandlerEvent() {
-    RADIO_BROADCAST.on(
-      "notification:details",
-      this.updateNotificationCount.bind(this)
-    );
+    if (this._onNotificationDetails) {
+      RADIO_BROADCAST.off("notification:details", this._onNotificationDetails);
+    }
+    this._onNotificationDetails = this.updateNotificationCount.bind(this);
+    RADIO_BROADCAST.on("notification:details", this._onNotificationDetails);
   }
 
   /**
@@ -1692,14 +1858,14 @@ class __media_core extends DrumeeMFS {
   }
 
   /**
-   * 
-   * @param {*} single_node 
-   * @param {*} trashbin 
-   * @returns 
+   *
+   * @param {Object} opts `{ confirm: 1 }` asks before trashing a single item
+   *   (see Wm.removeMediaSelection)
+   * @returns
    */
-  delete() {
+  delete(opts = {}) {
     if (window.Wm && _.isFunction(Wm.removeMediaSelection)) {
-      return Wm.removeMediaSelection(this);
+      return Wm.removeMediaSelection(this, opts);
     }
     this.triggerHandlers({
       service: "remove-selection", media: this
@@ -1717,7 +1883,9 @@ class __media_core extends DrumeeMFS {
       return;
     }
     if (single_node) {
-      this.postService(this.makeTrashOptions());
+      // Returned so a caller can tell a refused trash from a done one (Wm
+      // _trashNow puts a hidden tile back). Existing callers ignore it.
+      return this.postService(this.makeTrashOptions());
     }
   }
 
@@ -2117,31 +2285,54 @@ class __media_core extends DrumeeMFS {
         window.prevElem.dataset.service = "rename";
       }
     } catch (e) { }
-    let data;
     const value = this.checkSanity();
     this._renaming = 0;
     if (_.isEmpty(value)) {
       return;
     }
+    return this._commitRename(value);
+  }
 
+  /**
+   * Send the rename, whatever collected the name.
+   *
+   * Split out of requestRename so a caller that did NOT type into this
+   * widget's own inline entry can still rename it. checkSanity() reads
+   * `this.entry` — the textarea _createInput appends INTO this tile — so the
+   * value has to be handed in by anyone who collected it elsewhere. The
+   * workspace ... menu is exactly that caller: it is built from the home-grid
+   * tile, and that grid is display:none while a workspace is open, so the
+   * inline editor it used to open was created, pre-filled and invisible.
+   *
+   * Behaviour is unchanged for the inline path: this is the same body, moved.
+   *
+   * @param {String} value the new name, already sanity-checked
+   */
+  _commitRename(value) {
+    if (_.isEmpty(value)) {
+      return;
+    }
     if (value === this.mget(_a.filename)) {
       try {
         this.entry.softDestroy();
       } catch (error) { }
       return;
     }
-    data = {
+    const data = {
       filename: value,
       nid: this.mget(_a.nodeId),
       service: SERVICE.media.rename,
       hub_id: this.mget(_a.hub_id),
       echoId: this.mget(ECHO_ID)
     };
+    // A hub node lives on the CALLER'S DESK, not inside the workspace it names
+    // — the same holder scope makeTrashOptions() uses, and the reason Trash
+    // works where the untouched move() answered 403.
     if (this.isHub) {
       data.hub_id = Visitor.id;
     }
 
-    this.postService(SERVICE.media.rename, data).then(this.afterRename.bind(this));
+    return this.postService(SERVICE.media.rename, data).then(this.afterRename.bind(this));
   }
 
   /**
@@ -2328,6 +2519,59 @@ class __media_core extends DrumeeMFS {
   }
 
   /**
+   * Draw an unzip's progress on this tile.
+   *
+   * Deliberately the same surface as handleDownload below — the `progress`
+   * widget appended to the tile itself — because it is the same situation: a
+   * job running on the SERVER, reporting percentages over the socket, about a
+   * file that already has a tile on screen. (The upload progress is a floating
+   * window instead, for the opposite reason: an upload has no tile yet.)
+   *
+   * Created lazily on the first message rather than at click time, so a small
+   * archive that finishes before any progress arrives never flashes a bar, and
+   * so a stray message for a tile that is not extracting cannot leave one
+   * behind.
+   */
+  handleUnzip(data = {}) {
+    const failed = data.phase === "failed";
+    const done = failed || data.phase === "completed";
+
+    if (done) {
+      if (this._unzipProgress && !this._unzipProgress.isDestroyed()) {
+        this._unzipProgress.suppress();
+      }
+      this._unzipProgress = null;
+      // The tile's open latch is held from the click that started a big
+      // extraction; a small one never took it and wait(0) is a no-op.
+      this.wait(0);
+      // A FAILURE HAS TO SAY SO. The worker reports one for a corrupt
+      // archive, a full disk, a format 7z opened but could not decode — and
+      // for a small archive there is no progress bar to remove, so without
+      // this the whole thing is indistinguishable from nothing happening.
+      // That was the original zip complaint, and it would have come straight
+      // back in a new shape.
+      if (failed && _.isFunction(this._unzipFailed)) {
+        this._unzipFailed(data.error);
+      }
+      return;
+    }
+
+    if (!this._unzipProgress || this._unzipProgress.isDestroyed()) {
+      let mode = "grid";
+      if (this.getLogicalParent) {
+        try { mode = this.getLogicalParent().getViewMode(); } catch (e) { /* default */ }
+      }
+      this.append({
+        kind: "progress",
+        mode,
+        filename: this.mget(_a.filename),
+      });
+      this._unzipProgress = this.children.last();
+    }
+    this._unzipProgress.update(data.progress || 0);
+  }
+
+  /**
    *
    */
   handleDownload(data) {
@@ -2467,6 +2711,9 @@ class __media_core extends DrumeeMFS {
    */
   onServerComplain(res) {
     this.warn("onServerComplain[2109]", res)
+    // A tile posts its own copy / move / trash / rename, so its 403 lands here
+    // rather than on the window. Same popup as window core's.
+    if (require("libs/permission-denied").notifyServerDenied(this, res)) return;
     if (res.error == "limit_exceeded") {
       // Was Wm.alert(LOCALE.QUOTA_EXCEEDED): a bare "Your quota has been
       // exceeded" with an OK button and nowhere to go. The card names the
@@ -2553,9 +2800,15 @@ class __media_core extends DrumeeMFS {
         break;
       case SERVICE.media.make_dir:
       case SERVICE.media.get_node_attr:
+      case SERVICE.media.archive_info:
+      case SERVICE.media.unzip:
         // Consumed via the postService() return value (folder creation during
         // make_dir-first folder upload / node refresh) — no REST-dispatch action
         // needed. Explicit no-op avoids the "unexpected service" console noise.
+        //
+        // archive_info / unzip are the same shape: openArchive awaits the
+        // fetchService/postService promise itself, and the real outcome of an
+        // unzip arrives later over the socket, not in this reply.
         return;
       case null:
       case undefined:

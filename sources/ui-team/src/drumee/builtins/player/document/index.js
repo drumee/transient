@@ -1,6 +1,6 @@
 
 const { filesize, fitBoxes } = require("@drumee/ui-essentials")
-const { TweenMax, Expo } = require("@drumee/ui-core/vendor");
+const { TweenMax } = require("@drumee/ui-core/vendor");
 const PlayerInteract = require('player/interact');
 const snap = require('builtins/window/snap');
 const details = require('builtins/player/widget/details');
@@ -959,6 +959,7 @@ class __player_document extends PlayerInteract {
     const iframe = this.el && this.el.querySelector('iframe');
     if (!iframe || !iframe.src) return;
     try {
+      // eslint-disable-next-line no-self-assign -- reassigning src (even unchanged) forces the iframe to reload
       iframe.src = iframe.src;
     } catch (e) {
       if (this.warn) this.warn('[document] read-only reload failed', e && e.message);
@@ -1111,8 +1112,11 @@ class __player_document extends PlayerInteract {
     let maxHeight = 900;
     const max_height = window.innerHeight - o.offsetY - 2 * o.marginY;
     const max_width = window.innerWidth - 2 * o.marginX;
-    if (this.mget(_a.mode) == _a.edit) {
-      // Open the editor maximized to the workspace (header and sidebar stay
+    // The editor has always opened maximized; the PDF preview now does too —
+    // every file opens full-frame (Lexis, 2026-09-23). `_opensFullFrame`
+    // (player/interact) leaves mobile on its own sizing below.
+    if (this.mget(_a.mode) == _a.edit || this._opensFullFrame()) {
+      // Open maximized to the workspace (header and sidebar stay
       // visible) — same bounds the zoom button uses.
       const ws = this._workspaceRect();
       const base = this._workspaceTarget();
@@ -1130,7 +1134,9 @@ class __player_document extends PlayerInteract {
       // at the correct size, then keep it fitted as the workspace resizes.
       this._applyWorkspaceBounds(false);
       this._observeWorkspace();
-      TweenMax.fromTo(this.$el, 0.35, { opacity: 0 }, { opacity: 1, ease: Expo.easeOut });
+      this._followViewport();
+      // Shown at once — no fade-in (Lexis, 2026-09-23).
+      TweenMax.set(this.$el, { opacity: 1 });
       return
     }
     this.size = this.max_size();
@@ -1195,15 +1201,8 @@ class __player_document extends PlayerInteract {
     }
     if (pos.left < 0) pos.left = 50
     if (pos.top < 0) pos.top = 50
-    TweenMax.fromTo(this.$el, 1.5,
-      { scale: 0.15, opacity: 0 },
-      {
-        scale: 1,
-        opacity: 1,
-        ease: Expo.easeInOut,
-        ...pos,
-      }
-    );
+    // Shown at once — no grow-in tween (Lexis, 2026-09-23).
+    TweenMax.set(this.$el, { scale: 1, opacity: 1, ...pos });
   }
 
   /**
@@ -1285,7 +1284,9 @@ class __player_document extends PlayerInteract {
 
       case 'download-pdf':
         if (this._dmzGateDownload()) return;
-        url = `${bootstrap().serviceUrl}${SERVICE.media.pdf}?nid=${nid}&hub_id=${hub_id}`;
+        // Relative svc path: serviceUrl is pinned to main_domain, which is a
+        // cross-origin fetch (blocked) when the page runs on an org vhost.
+        url = `${bootstrap().svc}${SERVICE.media.pdf}?nid=${nid}&hub_id=${hub_id}`;
         let f = filename.split('.')
         f.pop()
         filename = f.join() + '.pdf'
@@ -1312,7 +1313,7 @@ class __player_document extends PlayerInteract {
             }
           });
         })
-        url = `${bootstrap().serviceUrl}${SERVICE.media.pdf}?nid=${nid}&hub_id=${hub_id}`
+        url = `${bootstrap().svc}${SERVICE.media.pdf}?nid=${nid}&hub_id=${hub_id}`
         this.fetchFile({ url })
         break;
 
@@ -1334,8 +1335,7 @@ class __player_document extends PlayerInteract {
       case 'direct-rename':
         return renameInline(this);
 
-      // Share: only an external workspace can share a file out; from an
-      // internal one the user is shown what to do instead.
+      // Share opens the secure-share panel, in every area (widget/share).
       case 'secure-share':
         return share.click(this, cmd);
 

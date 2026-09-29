@@ -1,5 +1,10 @@
 const __room = require("builtins/webrtc/room/jitsi");
+const { planShareStrip } = require("builtins/webrtc/share-strip");
 const { canUpgradePlan } = require("libs/billing");
+const {
+  mediaDeviceLabel,
+  isMediaPermissionError,
+} = require("builtins/webrtc/media-error");
 
 // Join/leave toasts stop once this many remote participants are already in the
 // room — past a handful, individual arrivals are noise.
@@ -15,12 +20,8 @@ const MEETING_LIMIT_WARN_MS = 5 * 60 * 1000;
 // and switches to full-bleed overlay mode when opened by hand
 // (data-panel-overlay in webrtc/skin/meeting-shell.scss).
 const CHAT_AUTO_CLOSE_W = 950;
-// Corner-tile geometry used when the desk navigates away from a live call
-// (see setCallTile). Big enough to still read a face, small enough to leave
-// the screen behind it usable.
-const CALL_TILE_W = 300;
-const CALL_TILE_H = 180;
-const CALL_TILE_MARGIN = 20;
+// Corner-tile geometry, drag slop, insets and the stored-position key all moved
+// to builtins/webrtc/call-parking with the code that uses them.
 
 class __window_meeting extends __room {
   /**
@@ -76,25 +77,7 @@ class __window_meeting extends __room {
     // (video stage, tiles, analyzers), and doing that synchronously inside the
     // navigation click made the section the user asked for paint late. The
     // screen renders first, the call steps aside right after.
-    this._onCallMinimize = () => {
-      if (this._callParkFrame) cancelAnimationFrame(this._callParkFrame);
-      this._callParkFrame = requestAnimationFrame(() => {
-        this._callParkFrame = 0;
-        this.setCallTile(1);
-      });
-    };
-    this._onCallRestore = () => this.setCallTile(0);
-    RADIO_BROADCAST.on("call:minimize", this._onCallMinimize);
-    RADIO_BROADCAST.on("call:restore", this._onCallRestore);
-
-    if (this.mget("_meeting_standalone") && typeof this._setSize === "function") {
-      this._setSize({
-        width: this.mget("width") || 960,
-        height: this.mget("height") || 600,
-        minWidth: 480,
-        minHeight: 360,
-      });
-    }
+    this._installCallParking();
 
     // `on`, not `once` — this fired for the FIRST departure only, so after one
     // person had left the "back to waiting" restore never ran again.
@@ -135,11 +118,67 @@ class __window_meeting extends __room {
     if (this.responsive) this.responsive(mode);
   }
 
-  // Drive small-size layout off the WINDOW width. The meeting is a resizable
-  // Wm window that can be small even on a large viewport, so @media (viewport)
-  // breakpoints don't fire when the user shrinks it — we flip data-narrow /
-  // data-compact on the root and let the skin adapt (panel → overlay, tighter
-  // controls), Google-Meet style.
+  /**
+   * Is this meeting the full-frame desk screen (as opposed to one embedded in a
+   * host container, where the container owns the box)?
+   * @returns {Boolean}
+   */
+  _isFullFrame() {
+    return !!(this.el && this.el.dataset.standalone === "1");
+  }
+
+  /**
+   * THE MEETING IS A SCREEN, NOT A WINDOW.
+   *
+   * It used to launch as a 960x600 centered popup with the whole window
+   * vocabulary attached — a drag handle on the top bar, jQuery-UI resize
+   * handles on all eight edges, a size/close control cluster, and a
+   * Full-screen / Tile / Reframe menu. A call is not a document you arrange
+   * next to other documents; it is the thing you are doing, so it now fills the
+   * desk canvas exactly like Settings or the Calendar do.
+   *
+   * CSS owns the box (window/meeting/skin `[data-standalone="1"]` fills the
+   * full-size call layer), which is what makes it follow the canvas for free:
+   * collapsing the sidebar rail, hiding the desk top bar or resizing the
+   * browser reflows it with no geometry bookkeeping at all. So this drops every
+   * inline dimension the launch wrote, disables drag + resize, and sets
+   * `_frameTracking` — the flag `Wm.clampWindows` already honours — so the
+   * window manager stops trying to fit a window it no longer positions.
+   */
+  _lockGeometry() {
+    if (!this.el || !this.$el || !this._isFullFrame()) return;
+    this._frameTracking = 1;
+    // Written by Wm.launch's `style` and by the base window's own resize
+    // bookkeeping. An inline dimension beats the stylesheet, so the fill only
+    // takes effect once these are gone.
+    for (const k of ["top", "left", "width", "height", "minWidth", "minHeight"]) {
+      this.el.style[k] = "";
+    }
+    try {
+      this.$el.draggable(_a.option, "disabled", true);
+    } catch (e) { /* not draggable yet — setupInteract calls back through here */ }
+    try {
+      this.$el.resizable(_a.option, "disabled", true);
+    } catch (e) { /* likewise */ }
+  }
+
+  /**
+   * The base class installs draggable + resizable here, and `Wm._clampWindow`
+   * re-runs it on every work-area change — so re-locking is not belt and
+   * braces, it is the only way the lock survives a sidebar collapse.
+   */
+  setupInteract() {
+    if (super.setupInteract) super.setupInteract();
+    this._lockGeometry();
+  }
+
+  // Drive small-size layout off the MEETING's own width, not the viewport's.
+  // The canvas a full-frame call fills is narrower than the window — the
+  // sidebar rail (64px pinned, 231px expanded) and a desk slide-out both take
+  // from it — and an embedded meeting is whatever its host pane gives it, so
+  // @media (viewport) breakpoints fire at the wrong moments in both cases. Flip
+  // data-narrow / data-compact on the root instead and let the skin adapt
+  // (panel → overlay, tighter controls), Google-Meet style.
   responsive(m, ui) {
     // Parked as a corner tile: the skin hides the whole control cluster and the
     // side panel, so re-deriving narrow/compact from a 300px width would only
@@ -150,9 +189,9 @@ class __window_meeting extends __room {
     if (!this.el || !this.$el) return;
     const w = this.$el.width() || this.el.offsetWidth || 0;
     if (!w) return;
-    // The ResizeObserver, _resize, fitScreenSize, change_size and
-    // _applyWindowGeometry all funnel here, often for the same size — skip the
-    // redundant dataset writes. _applyChatAutoClose still runs every time: it
+    // The ResizeObserver, _resize, fitScreenSize and change_size all funnel
+    // here, often for the same size — skip the redundant dataset writes.
+    // _applyChatAutoClose still runs every time: it
     // is edge-triggered on its own state, and the panel does not exist yet on
     // the first call of the mount sequence (responsive() runs once before the
     // skeleton is fed and again straight after, at the same width), so gating
@@ -166,6 +205,7 @@ class __window_meeting extends __room {
       // sliver. Superset of data-narrow, which keeps its own job (dropping the
       // secondary topbar controls).
       this.el.dataset.panelOverlay = w < CHAT_AUTO_CLOSE_W ? "1" : "0";
+      if (this._floatDocked()) this._layoutShareStrip();
     }
     this._applyChatAutoClose(w);
   }
@@ -239,9 +279,17 @@ class __window_meeting extends __room {
     this.raise();
     this._initIdleControls();
     this._bindResizeObserver();
-    // Standalone (Wm pool) calls must float via the base window's absolute
-    // positioning; embedded meetings (folder tab) stay relative/fill-parent.
+    // "standalone" now means "this is the desk's full-frame call screen" —
+    // it fills the call layer (window/meeting/skin `[data-standalone="1"]`). An
+    // embedded meeting (DMZ lobby, folder tab) stays relative/fill-parent and
+    // is sized by whatever hosts it.
     if (this.el) this.el.dataset.standalone = this.mget("standalone") ? "1" : "0";
+    // A standalone meeting is a SCREEN, not a floating popup: it fills the desk
+    // canvas and the stylesheet owns its box (window/meeting/skin
+    // `[data-standalone="1"]` + the full-size call layer in wm/skin). Drop
+    // the launch geometry and the drag/resize affordances the window base class
+    // installs, here and again from setupInteract below.
+    this._lockGeometry();
     if (this.el) this.el.dataset.ready = "0";
     // Lock the in-topbar controls for the whole pre-join phase: while the
     // startup state messages ("Connection in progress", "Waiting for camera &
@@ -328,6 +376,62 @@ class __window_meeting extends __room {
   // → the meeting override empties the container). Unlock the in-topbar controls
   // that onDomRefresh locked for the startup phase. On a failed startup this
   // never fires, so the controls stay locked (leave stays clickable via CSS).
+  /**
+   * "Retry" on the blocked-media overlay: re-run the startup in place, so a
+   * user who has just allowed the device continues into the meeting instead of
+   * leaving and re-entering it.
+   *
+   * onDomRefresh is safe to re-enter — every step it takes before the join is
+   * guarded (_initIdleControls by _idleBound, _bindResizeObserver by
+   * _resizeObserver, _lockGeometry only clears inline styles) — so the retry
+   * is the startup itself rather than a second, divergent copy of it.
+   */
+  async _retryJoinMeeting(cmd) {
+    // Retrying while still blocked would fail identically and flash the
+    // overlay. Which devices to test comes from the failure itself; where the
+    // permission is not queryable (Firefox) this yields null and we simply
+    // try, which is the old behaviour.
+    const kinds =
+      (this._mediaError && this._mediaError.gum && this._mediaError.gum.devices)
+      || [_a.audio, _a.video];
+    // Re-joining is the slowest thing either Retry does (permission read, then
+    // a whole connection + conference bind), so the button shows progress for
+    // the entire attempt — it is cleared only on the paths that leave it on
+    // screen; a successful join re-feeds the window and discards it.
+    if (cmd && cmd.el) cmd.el.dataset.loading = 1;
+    for (const kind of kinds) {
+      if ((await this._mediaPermissionState(kind)) === "denied") {
+        // Say so on the button rather than doing nothing, which reads as a
+        // dead click (same treatment as the device picker's Retry).
+        if (cmd && cmd.el) {
+          cmd.el.dataset.loading = 0;
+          cmd.el.dataset.error = 1;
+        }
+        return;
+      }
+    }
+    // Clear the denial before re-joining. _mediaDenied especially: it is
+    // replayed onto the controls by initCommadPanel (_applyMediaDeniedUi), so
+    // leaving it set would badge the pills of a meeting that just succeeded.
+    this._mediaError = null;
+    this._mediaDenied = null;
+    if (this.el) this.el.dataset.denied = "0";
+    const c = this.getPart("message-container");
+    if (c) c.clear();
+    // The failed attempt left a live XMPP connection and a _startupMediaFailed
+    // flag behind; either one makes the re-join resolve without ever creating
+    // the conference, which is what left the retry sitting on "waiting for
+    // permission". See resetStartupState.
+    this.resetStartupState();
+    try {
+      return await this.onDomRefresh();
+    } finally {
+      // A failed re-join re-renders the overlay with a fresh button, but a
+      // partial failure can leave this one in place — never strand it spinning.
+      if (cmd && cmd.el) cmd.el.dataset.loading = 0;
+    }
+  }
+
   async onLocalUserJoined(...args) {
     await super.onLocalUserJoined(...args);
     if (this.el) this.el.dataset.startingUp = "0";
@@ -379,15 +483,8 @@ class __window_meeting extends __room {
 
   onBeforeDestroy() {
     clearTimeout(this._idleTimer);
-    if (this._callParkFrame) cancelAnimationFrame(this._callParkFrame);
-    RADIO_BROADCAST.off("call:minimize", this._onCallMinimize);
-    RADIO_BROADCAST.off("call:restore", this._onCallRestore);
-    // Tells the desk to drop its "Return to call" pill — the call it pointed at
-    // is gone. Fired from teardown so it covers every way out: Leave, End, the
-    // host ending it remotely, a duration cap, a tab close.
-    try {
-      RADIO_BROADCAST.trigger("call:ended");
-    } catch (e) { /* non-fatal */ }
+    this._unwatchShareStrip();
+    this._teardownCallParking();
     // Duration-cap timers. Left armed they would fire against a destroyed
     // window minutes after the meeting was over — and the cutoff one would
     // raise the upsell card at someone who has already left.
@@ -805,7 +902,7 @@ class __window_meeting extends __room {
           // is what owns the billing page. Same guard the desk puts on its own
           // `upgrade-plan` case.
           if (!canUpgradePlan()) return;
-          RADIO_BROADCAST.trigger("desk:open-billing-page");
+          RADIO_BROADCAST.trigger("desk:open-billing-page", { intent: "upgrade" });
         })
         // Dismissed — confirm rejects, and an unhandled rejection on a modal
         // the user simply closed is console noise.
@@ -880,6 +977,13 @@ class __window_meeting extends __room {
   //
   // Routed through the normal onUserLeft path so tile teardown, hand-raise,
   // presenting and spotlight cleanup all behave exactly as a normal leave.
+  //
+  // A dropped Drumee socket is not always a departure, though. A few seconds
+  // of bad network kill the websocket while the peer's Jitsi call carries on,
+  // and the websocket reconnects on its own. Tearing the tile down then also
+  // silenced the peer (its audio plays through the tile) for the rest of the
+  // meeting. So while the peer's call is still alive, keep the tile and only
+  // drop it once the call goes quiet (see _watchDroppedPeer).
   onPeerSocketDropped(data = {}) {
     const uid = data.uid != null ? data.uid : data.drumate_id;
     if (uid == null || !this.endpoints) return;
@@ -888,11 +992,12 @@ class __window_meeting extends __room {
       const ep = this.endpoints[pid];
       if (!ep || (typeof ep.isDestroyed === "function" && ep.isDestroyed())) continue;
       if (String(ep.mget && ep.mget(_a.uid)) !== key) continue;
-      this.onUserLeft(pid);
-      // Drop the map entry so a late Jitsi USER_LEFT for the same participant
-      // hits onUserLeft's `if (!endpoint) return` instead of calling goodbye()
-      // on an already-destroyed tile.
-      delete this.endpoints[pid];
+      const drop = () => this._dropSocketPeer(pid);
+      if (this._peerStillLive(pid)) {
+        this._watchDroppedPeer(pid, drop);
+      } else {
+        drop();
+      }
       return;
     }
     // No tile for them (joined without media, or already torn down) — the
@@ -903,6 +1008,29 @@ class __window_meeting extends __room {
       if (this._memberPresenting) this._memberPresenting.delete(key);
       if (this._clearHandTimer) this._clearHandTimer(key);
       this._refreshMember(uid);
+    }
+  }
+
+  // The tile of a peer dropped on a socket blip was rebuilt (jitsi
+  // _onPeerHello): onUserLeft had cleared its roster entry, so mark it joined
+  // again, or the dashboard card keeps offering to call someone in the call.
+  onPeerRestored(pid) {
+    const uid = this._uidForParticipant(pid);
+    if (uid != null) this._markMemberJoined(uid);
+  }
+
+  _dropSocketPeer(pid) {
+    const ep = this.endpoints && this.endpoints[pid];
+    if (!ep || (typeof ep.isDestroyed === "function" && ep.isDestroyed())) return;
+    this.onUserLeft(pid);
+    // Drop the map entry so a late Jitsi USER_LEFT for the same participant
+    // hits onUserLeft's `if (!endpoint) return` instead of calling goodbye()
+    // on an already-destroyed tile.
+    delete this.endpoints[pid];
+    // Still in the call as far as Jitsi knows: remember it, so a HELLO from
+    // its reconnected socket brings the tile back (jitsi _onPeerHello).
+    if (this.room && this.room.getParticipantById(pid)) {
+      this._socketDroppedPeers.add(pid);
     }
   }
 
@@ -942,9 +1070,11 @@ class __window_meeting extends __room {
     let service = args.service || cmd.get(_a.service);
     if (!service) return;
     switch (service) {
-      // Window X (and a guest's Leave pill). Answering yes is a plain LEAVE —
-      // _endForAll stays 0, so closing the window never ends a host's meeting
-      // for the room. Ending it for all is the explicit menu item below.
+      // A guest's Leave pill (webrtc/skeleton/topbar leaveBtn), and the DMZ
+      // room's window X — the desk meeting has no window chrome any more.
+      // Answering yes is a plain LEAVE: _endForAll stays 0, so leaving never
+      // ends a host's meeting for the room. Ending it for all is the explicit
+      // menu item below.
       case _a.close:
         this.warning(require("./skeleton/confirm")(this, null));
         break;
@@ -953,8 +1083,8 @@ class __window_meeting extends __room {
         this.toggleMeetingChat();
         break;
 
-      case "close-chat":
-        this.closeMeetingChat();
+      case "retry-join-meeting":
+        this._retryJoinMeeting(cmd);
         break;
 
       case _a.invite:
@@ -1066,24 +1196,6 @@ class __window_meeting extends __room {
         this._toggleScreenShareFullscreen();
         break;
 
-      case "toggle-fullscreen":
-        // Resize menu → Full screen: the whole meeting window fills the
-        // screen (native fullscreen on the window root).
-        this._toggleWindowFullscreen();
-        break;
-
-      case "tile-window-left":
-        this._tileWindow("left");
-        break;
-
-      case "tile-window-right":
-        this._tileWindow("right");
-        break;
-
-      case "reframe-window":
-        this._reframeWindow();
-        break;
-
       case "react":
         // A quick-reaction emoji from the topbar bar was clicked. Read the
         // glyph off the button (model attr first, DOM text as fallback) and
@@ -1114,64 +1226,6 @@ class __window_meeting extends __room {
    * badge. The panel embeds widget_chat bound to the team's hub channel, so
    * it's the same persisted conversation as the team window.
    */
-  // Topbar expand button: toggle native fullscreen on the meeting window root
-  // so the whole call (stage + side panel) fills the screen — via the shared
-  // `_toggleWindowFullscreen` in builtins/webrtc/window-fullscreen (assigned at
-  // the bottom of this file), which also restores the window's own geometry on
-  // exit. Exits if already fullscreen. Errors (gesture/permission) are
-  // swallowed — non-fatal.
-
-  // Resize menu → Tile left/right: snap the standalone floating window to the
-  // corresponding half of the window-manager content area (free windows are
-  // absolute inside the WM layer, so its own size is the coordinate space).
-  // No-op for embedded (fill-parent) meetings — they have no free geometry.
-  _tileWindow(side) {
-    this._exitNativeFullscreen();
-    const el = this.el;
-    if (!el || el.dataset.standalone !== "1") return;
-    const availW = (Wm.$el && Wm.$el.width()) || window.innerWidth;
-    const availH = (Wm.$el && Wm.$el.height()) || window.innerHeight;
-    const half = Math.floor(availW / 2);
-    this._applyWindowGeometry(
-      side === "right"
-        ? { top: 0, left: availW - half, width: half, height: availH }
-        : { top: 0, left: 0, width: half, height: availH },
-    );
-  }
-
-  // Resize menu → Reframe: back to the default centered popup geometry.
-  _reframeWindow() {
-    this._exitNativeFullscreen();
-    const el = this.el;
-    if (!el || el.dataset.standalone !== "1") return;
-    this._applyWindowGeometry(Wm.centeredPopupGeometry());
-  }
-
-  _exitNativeFullscreen() {
-    // Both callers (Tile left/right, Reframe) hand the window a NEW geometry
-    // right after this, so drop any restore queued by _toggleWindowFullscreen —
-    // otherwise it would animate the window back to its pre-fullscreen box a
-    // moment later and undo the size the user just picked.
-    if (typeof this._cancelWindowFullscreenRestore === "function") {
-      this._cancelWindowFullscreenRestore();
-    }
-    const doc = document;
-    if (doc.fullscreenElement || doc.webkitFullscreenElement) {
-      (doc.exitFullscreen || doc.webkitExitFullscreen || function () {}).call(doc);
-    }
-  }
-
-  _applyWindowGeometry({ top, left, width, height }) {
-    const el = this.el;
-    if (!el) return;
-    el.style.top = `${Math.round(top)}px`;
-    el.style.left = `${Math.round(left)}px`;
-    el.style.width = `${Math.round(width)}px`;
-    el.style.height = `${Math.round(height)}px`;
-    // Re-run the size-driven layout (tile grid, data-narrow/compact flags).
-    this.responsive((el.dataset && el.dataset.mode) || "normal");
-  }
-
   _chatPanelEl() {
     return this.el && this.el.querySelector(`.${this.fig.family}__chat-panel`);
   }
@@ -1185,6 +1239,8 @@ class __window_meeting extends __room {
     if (!panel) return;
     if (!opts.auto) this._chatAutoClosed = 0;
     panel.dataset.open = open ? "1" : "0";
+    // The share strip turns from a right-hand column into a bottom row.
+    if (this._floatDocked()) this._layoutShareStrip();
     // Opening the panel only clears the pane you actually land on — a chat
     // message shouldn't be marked seen because you opened Participants.
     if (open) this._clearUnreadForTab(panel.dataset.tab);
@@ -1240,10 +1296,6 @@ class __window_meeting extends __room {
   // it's already open on Chat (so the one button toggles).
   toggleMeetingChat() {
     this._toggleSidePanel("chat");
-  }
-
-  closeMeetingChat() {
-    this._setChatOpen(false);
   }
 
   _toggleSidePanel(tab) {
@@ -1454,6 +1506,7 @@ class __window_meeting extends __room {
   // Priority: raised hand > dominant speaker > local self-view.
   _updateFloatFocus() {
     if (!this._floatDocked()) return;
+    this._layoutShareStrip();
     const raisedUid = this._activeRaisedUid();
     if (raisedUid != null) return this._focusByUid(raisedUid);
     // While a REMOTE peer is presenting, spotlight THEIR camera tile — the float
@@ -1510,15 +1563,122 @@ class __window_meeting extends __room {
       .querySelectorAll('[data-focused="1"]')
       .forEach((n) => { n.dataset.focused = "0"; });
     el.dataset.focused = "1";
+    // The spotlighted tile takes the strip's first slot.
+    this._layoutShareStrip();
   }
 
   _clearFloatFocus() {
     if (!this.el) return;
+    // Undocked: the tiles go back to the grid, so the strip goes too.
+    this._clearShareStrip();
     const float = this.el.querySelector(`.${this.fig.family}__float-tiles`);
     if (!float) return;
     float
       .querySelectorAll('[data-focused="1"]')
       .forEach((n) => { n.dataset.focused = "0"; });
+  }
+
+  // ── Screen-share strip (Figma "Meeting — Avatar on Share", 775:152829) ──
+  // While a screen is shared, the docked tiles stop being a single floating
+  // thumbnail and become a strip of up to four tiles beside the shared screen:
+  // a column on the right, or a row under it when the side panel is open (or
+  // the window is narrow). More than four people → three tiles plus a "+N"
+  // tile, so at least three faces always stay visible. The parked call tile
+  // keeps the old single-thumbnail look (Figma "minimize"); the skin keys
+  // that off data-call-tile, so nothing here needs to know about parking.
+  //
+  // Everything is attributes on the live elements — tiles keep their tracks.
+  _stripTiles(mgr) {
+    return Array.from(mgr.children).filter(
+      (c) => c.dataset && /^webrtc_(local|remote)_user$/.test(c.dataset.kind || ""),
+    );
+  }
+
+  _layoutShareStrip() {
+    if (!this.el) return;
+    const participants = this.__participants;
+    const mgr = participants && !participants.isDestroyed() && participants.el;
+    if (!mgr || !this._floatDocked()) return this._clearShareStrip();
+    const panel = this._chatPanelEl();
+    const panelBeside =
+      !!panel && panel.dataset.open === "1" && this.el.dataset.panelOverlay !== "1";
+    const mode = panelBeside || this.el.dataset.narrow === "1" ? "row" : "column";
+    if (this.el.dataset.shareStrip !== mode) this.el.dataset.shareStrip = mode;
+    const tiles = this._stripTiles(mgr);
+    const plan = planShareStrip(tiles.map((el) => ({ focused: el.dataset.focused === "1" })));
+    // Runs on every speaker change: write only what moved, so a steady strip
+    // costs no style recalc.
+    tiles.forEach((el, i) => {
+      const order = String(plan.rank[i]);
+      const hidden = plan.visible[i] ? "0" : "1";
+      if (el.style.order !== order) el.style.order = order;
+      if (el.dataset.stripHidden !== hidden) el.dataset.stripHidden = hidden;
+    });
+    // The "+N" tile is the manager's ::after (skin); empty = no such tile.
+    const more = plan.more ? `+${plan.more}` : "";
+    if (mgr.dataset.more !== more) mgr.dataset.more = more;
+    this._watchShareStrip(mgr);
+  }
+
+  _clearShareStrip() {
+    if (!this.el) return;
+    delete this.el.dataset.shareStrip;
+    const mgr = this._stripWatched;
+    this._unwatchShareStrip();
+    if (!mgr) return;
+    delete mgr.dataset.more;
+    this._stripTiles(mgr).forEach((el) => {
+      el.style.order = "";
+      delete el.dataset.stripHidden;
+    });
+  }
+
+  // Someone joins or leaves mid-share: re-plan the slots. Only childList is
+  // observed, so the attributes written above cannot re-trigger it.
+  _watchShareStrip(mgr) {
+    if (this._stripWatched === mgr) return;
+    this._unwatchShareStrip();
+    this._stripWatched = mgr;
+    if (typeof MutationObserver === "function") {
+      this._stripObserver = new MutationObserver(() => {
+        if (this._stripRaf) return;
+        this._stripRaf = requestAnimationFrame(() => {
+          this._stripRaf = 0;
+          if (!this.isDestroyed()) this._layoutShareStrip();
+        });
+      });
+      this._stripObserver.observe(mgr, { childList: true });
+    }
+    // The "+N" tile opens the full list. It is a pseudo-element, so the click
+    // lands on the manager itself, never on a tile.
+    this._onStripMoreClick = (e) => {
+      if (e.target !== mgr || !mgr.dataset.more) return;
+      // Only past the last visible tile, where the "+N" sits — not in the
+      // gaps between tiles, which also land on the manager.
+      const row = this.el.dataset.shareStrip === "row";
+      const edge = this._stripTiles(mgr)
+        .filter((t) => t.dataset.stripHidden !== "1")
+        .reduce((m, t) => {
+          const r = t.getBoundingClientRect();
+          return Math.max(m, row ? r.right : r.bottom);
+        }, -Infinity);
+      if ((row ? e.clientX : e.clientY) <= edge) return;
+      e.stopPropagation();
+      this._switchPanelTab("participants");
+    };
+    mgr.addEventListener("click", this._onStripMoreClick, true);
+  }
+
+  _unwatchShareStrip() {
+    if (this._stripObserver) this._stripObserver.disconnect();
+    this._stripObserver = null;
+    if (this._stripRaf) cancelAnimationFrame(this._stripRaf);
+    this._stripRaf = 0;
+    if (this._stripWatched && this._onStripMoreClick) {
+      this._stripWatched.removeEventListener("click", this._onStripMoreClick, true);
+    }
+    this._stripWatched = null;
+    this._onStripMoreClick = null;
   }
 
   // ── Control-pill loading state ───────────────────────────────────────────
@@ -1773,10 +1933,17 @@ class __window_meeting extends __room {
   // the admin console (which cannot be closed by re-clicking its sidebar entry)
   // and then clicking Home to get back silently dropped the user out of the
   // meeting. The call now lives in its own layer (manager.js getCallPool) and
-  // survives all three. What is left is not to sit as a 960x600 popup over
-  // whatever the user navigated to, so it parks itself in the bottom-right
-  // corner with a "Return to call" cover and one click brings it back — Teams
-  // behaviour: the call follows you, small, until you come back to it.
+  // survives all three. What is left is not to sit full-canvas over whatever the
+  // user navigated to, so it parks itself in the bottom-right corner with a
+  // "Return to call" cover and one click brings it back — Teams behaviour: the
+  // call follows you, small, until you come back to it.
+  //
+  // EVERY navigation away parks it, not just the desk's own screens: opening a
+  // different workspace (wm/index.js loadWorkspace) and switching tab inside the
+  // open one (window/folder showFolderTab) broadcast "call:minimize" too. They
+  // have to, now that the call fills the canvas — before, a floating popup at
+  // least left the pane visible around it; a full-frame call hides the screen
+  // the user just asked for completely.
   //
   // On a desk screen that covers the whole window manager (Settings, Billing,
   // Admin Console…) the tile is not reachable at all: `isolation: isolate` on
@@ -1784,173 +1951,26 @@ class __window_meeting extends __room {
   // context. The way back from there is the desk's own pill (desk/skeleton
   // call-dock), which broadcasts "call:restore" to un-park this window.
 
+  // The parked-call tile itself — dock/undock, click-to-return and drag —
+  // lives in builtins/webrtc/call-parking, shared with the 1:1 call window.
+  // Only the two seams it asks for are below.
+
   /**
-   * The layer this window belongs to when it is NOT docked. Used to put it back
-   * when the parent it was taken from is gone (the desk can rebuild while a
-   * call is parked), which would otherwise re-attach the window to a detached
-   * node — the call would keep running with nothing on screen.
-   * @returns {Element|null}
+   * The full-frame desk screen only: an embedded meeting is sized by its host
+   * container (position: relative — see meeting-shell `&__ui`), so moving it
+   * into the dock would take it away from the pane that owns it.
    */
-  _callLayerEl() {
-    try {
-      const layer = window.Wm && Wm.callLayer;
-      return (layer && layer.el) || null;
-    } catch (e) {
-      return null;
-    }
+  _canParkCall() {
+    return this._isFullFrame();
   }
 
   /**
-   * The desk's dock element, or null when there is no desk (DMZ / share
-   * session, where the fallback below parks the window in place instead).
-   * @returns {Element|null}
+   * Back in its own layer the stylesheet fills the canvas again
+   * (window/meeting/skin `[data-standalone="1"]`), so all this has to undo is
+   * any geometry the no-dock corner-park wrote.
    */
-  _callDockEl() {
-    try {
-      const dock = window.Desk && _.isFunction(Desk.getPart) && Desk.getPart("call-dock");
-      return (dock && dock.el) || null;
-    } catch (e) {
-      return null;
-    }
-  }
-
-  /**
-   * The WM work area, in viewport coords — the coordinate space the window's
-   * inline top/left are written in. Only used by the no-dock fallback.
-   */
-  _callTileArea() {
-    try {
-      const host = window.Wm && Wm.el && (Wm.el.parentElement || Wm.el);
-      if (host) {
-        const r = host.getBoundingClientRect();
-        if (r.width && r.height) return r;
-      }
-    } catch (e) { /* fall through to the viewport */ }
-    return { width: window.innerWidth, height: window.innerHeight };
-  }
-
-  /**
-   * `.window__ui` carries a 600x320 floor in window/skin/window.scss, and a CSS
-   * minimum WINS over a smaller inline width — the same trap window/frame.js
-   * documents for docked viewers. Pin the inline minimum (and the resizable
-   * option, so a drag right after doesn't snap it back up) to whatever size we
-   * are applying.
-   */
-  _pinCallTileMinimums(w, h) {
-    this.$el.css({ minWidth: w, minHeight: h });
-    try {
-      this.$el.resizable(_a.option, "minWidth", w);
-      this.$el.resizable(_a.option, "minHeight", h);
-    } catch (e) { /* not resizable (embedded / mobile) */ }
-  }
-
-  /**
-   * Park the call as a corner tile (`on`), or bring it back to the geometry it
-   * had before (`!on`). Idempotent, and a no-op while the browser owns the
-   * geometry in fullscreen.
-   * @param {Boolean|Number} on
-   */
-  setCallTile(on) {
-    if (!this.el || !this.$el || (this.isDestroyed && this.isDestroyed())) return;
-    // Free-floating windows only: an embedded meeting is sized by its host
-    // container (position: relative — see meeting-shell `&__ui`), so inline
-    // top/left/width would fight it rather than park it. Same guard the tile /
-    // reframe presets use.
-    if (this.el.dataset.standalone !== "1") return;
-    if (document.fullscreenElement) return;
-    const tiled = this.el.dataset.callTile === "1";
-    if (!!on === tiled) return;
-    if (on) return this._enterCallTile();
-    return this._leaveCallTile();
-  }
-
-  _enterCallTile() {
-    const s = this.el.style;
-    this._callTileRestore = {
-      top: s.top,
-      left: s.left,
-      width: s.width,
-      height: s.height,
-      minWidth: s.minWidth,
-      minHeight: s.minHeight,
-      parent: this.el.parentNode,
-    };
-    this.el.dataset.callTile = "1";
-    // Wm must stop re-fitting this window while the dock owns its box. Same
-    // flag window/frame.js sets for a viewer docked into a folder frame, and
-    // clampWindows already honours it.
-    this._frameTracking = 1;
-
-    const dock = this._callDockEl();
-    if (dock) {
-      // MOVE the live element (appendChild on an attached node is a move, not a
-      // remove + insert), so the WebRTC video elements keep their srcObject and
-      // never stop playing. This is the whole trick: docked in the desk shell,
-      // the call clears every desk screen, which it cannot do from inside the
-      // window manager's isolated stacking context.
-      dock.appendChild(this.el);
-      // Safari can pause a moved <video>; a no-op elsewhere.
-      this._resumeCallVideos();
-      return;
-    }
-    // No desk (DMZ / share): park it in place, in the corner of its own layer.
-    const area = this._callTileArea();
-    const left = Math.max(0, (area.width || 0) - CALL_TILE_W - CALL_TILE_MARGIN);
-    const top = Math.max(0, (area.height || 0) - CALL_TILE_H - CALL_TILE_MARGIN);
-    this.$el.css({ top, left, width: CALL_TILE_W, height: CALL_TILE_H });
-    this._pinCallTileMinimums(CALL_TILE_W, CALL_TILE_H);
-  }
-
-  _leaveCallTile() {
-    const r = this._callTileRestore || {};
-    this._callTileRestore = null;
-    this.el.dataset.callTile = "0";
-    this._frameTracking = 0;
-    // Back into the layer it came from, before the geometry is re-applied: the
-    // inline top/left mean nothing until the element is a child of the layer
-    // they were measured in.
-    const home =
-      r.parent && r.parent.isConnected ? r.parent : this._callLayerEl();
-    if (home && home !== this.el.parentNode && home.appendChild) {
-      home.appendChild(this.el);
-      this._resumeCallVideos();
-    }
-    this.$el.css({
-      top: r.top || "",
-      left: r.left || "",
-      width: r.width || "",
-      height: r.height || "",
-    });
-    // Restore the floor the window had before it was parked; falling back to
-    // the launch minimums (folder/index.js _launchMeetingStandalone) when it
-    // never carried an inline one.
-    this._pinCallTileMinimums(
-      parseFloat(r.minWidth) || 480,
-      parseFloat(r.minHeight) || 420,
-    );
-    if (_.isFunction(this.raise)) this.raise();
-    this.responsive();
-    // The screen that pushed the call into the dock is still up, and the
-    // full-size window lives back inside the window manager where that screen
-    // covers it — so ask the desk to take the screen down.
-    try {
-      RADIO_BROADCAST.trigger("call:returned");
-    } catch (e) { /* non-fatal */ }
-  }
-
-  /**
-   * Re-issue play() on the window's media elements after a DOM move. Moving an
-   * attached node keeps playback in Chrome and Firefox; Safari has historically
-   * paused it, and a paused self-view in a docked call looks like a dead call.
-   */
-  _resumeCallVideos() {
-    if (!this.el) return;
-    for (const v of this.el.querySelectorAll("video, audio")) {
-      if (v.paused && (v.srcObject || v.src)) {
-        const r = v.play();
-        if (r && r.catch) r.catch(() => { });
-      }
-    }
+  _onCallTileLeft() {
+    this._lockGeometry();
   }
 
   /**
@@ -2073,14 +2093,22 @@ class __window_meeting extends __room {
       // message-container to fill the body (avatar centered, denial text
       // beneath) instead of the small floating tooltip used by other states.
       if (this.el) this.el.dataset.denied = "1";
+      // Blocked by the browser or the OS — not just refused once. Tell the
+      // user HOW to allow it, with the same browser + OS steps the device
+      // picker shows (webrtc/skeleton/media-blocked), naming whichever
+      // device(s) the failed request actually covered. No heading (the text
+      // above already says what is wrong) and no Retry: this state is
+      // terminal, the message tells them to start the meeting again.
+      const blocked = s === "mediaDenied" && isMediaPermissionError(this._mediaError);
+      const guidance = blocked
+        ? [require("builtins/webrtc/skeleton/media-blocked")(this, _a.audio, {
+            device: mediaDeviceLabel(this._mediaError),
+            heading: false,
+            retry: false,
+          })]
+        : [];
       this.ensurePart("message-container").then((c) => {
         c.feed([
-          Skeletons.Button.Svg({
-            ico: "cross",
-            className: "message-close-x",
-            service: "leave-meeting",
-            uiHandler: [this],
-          }),
           Skeletons.UserProfile({
             className: "message-avatar",
             id: Visitor.id,
@@ -2090,6 +2118,20 @@ class __window_meeting extends __room {
           }),
           Skeletons.Note({ className: "message-name", content: fullname }),
           Skeletons.Note({ className: "message-text", content: message }),
+          ...guidance,
+          // Once the user has allowed access, this re-runs the join instead of
+          // making them leave and re-enter the meeting. Only offered for a
+          // blocked device: a server privilege refusal is not fixed by
+          // retrying.
+          ...(blocked
+            ? [Skeletons.Note({
+                className: "message-retry clickable",
+                content: LOCALE.RETRY,
+                service: "retry-join-meeting",
+                uiHandler: [this],
+                dataset: { error: 0 },
+              })]
+            : []),
         ]);
       });
       return;
@@ -2115,6 +2157,13 @@ class __window_meeting extends __room {
   }
 }
 
+// Live-call dock parking (also used by window_connect): "call:minimize" parks
+// this window as a tile in the desk's call-dock, a click brings it back. The
+// two seams it calls back into — _canParkCall / _onCallTileLeft — are defined
+// on the class above, so they must NOT be listed in the mixin (Object.assign
+// would overwrite them).
+Object.assign(__window_meeting.prototype, require("builtins/webrtc/call-parking"));
+
 // Shared in-call reactions behavior (also used by window_connect).
 Object.assign(__window_meeting.prototype, require("builtins/webrtc/reactions"));
 // Shared in-call screen-share behavior (also used by window_connect). Its
@@ -2122,11 +2171,6 @@ Object.assign(__window_meeting.prototype, require("builtins/webrtc/reactions"));
 // _clearFloatFocus / _uidForParticipant) stay defined below and are called
 // through optional guards, so meeting behavior is unchanged.
 Object.assign(__window_meeting.prototype, require("builtins/webrtc/screenshare"));
-// Shared window-level fullscreen (also used by window_connect): snapshots the
-// window geometry on the way in and restores it on the way out, which a bare
-// requestFullscreen() cannot do — see the module header. _exitNativeFullscreen
-// cancels that restore for the Tile/Reframe paths.
-Object.assign(__window_meeting.prototype, require("builtins/webrtc/window-fullscreen"));
 
 //__window_meeting.initClass();
 

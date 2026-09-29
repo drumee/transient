@@ -6,7 +6,24 @@ const _icons_list = function (ui) {
     innerClass: `${ui.fig.family}__icons-scroll ${ui.fig.group}__icons-scroll`,
     sys_pn: _a.list,
     flow: _a.none,
-    timer: 1000,
+    // NO `timer:` HERE, DELIBERATELY — same reason as the file surfaces in
+    // window/skeleton (see the note at gridFilesBrowser). `timer: N` arms
+    // ui-core's tick() loop (letc/widgets/list/index.js:194), which re-arms
+    // itself from renderData() after every page and only stops at
+    // `_end_of_data`, so the list silently walks the ENTIRE listing while the
+    // tab sits idle.
+    //
+    // It was dormant on small accounts, which is why it survived the first
+    // pass: desk.home answers short on page 1 for anyone with fewer than 45
+    // root-level home items, the list calls _eod() and the loop stops. An
+    // account that fills a page did not get that reprieve — it walked
+    // desk.home once per SECOND, and desk.home measured 442ms avg / 1,967ms
+    // max on production.
+    //
+    // Paging is unaffected: _onScroll (list/index.js:517) is bound for every
+    // List.Smart independently of `timer` and fetches the next page on
+    // reaching the bottom, with useMouseWheel() covering the not-yet-
+    // scrollable case.
     spinnerWait: 1000,
     spinner: true,
     vendorOpt: Preset.List.Orange_e,
@@ -87,6 +104,19 @@ const ___window_manager = function (ui) {
         sortWithCollection: false,
       }),
 
+      // Meeting popup ("starting now" / invitation card, wm/push.js). Its own
+      // layer for the same reason upload-progress has one, and it is NOT
+      // optional: the card used to be appended to windowsLayer, and whenever a
+      // workspace pane was open the headless layer took the active-window lift
+      // (50001) and painted straight over it. The card's own z-index (100000,
+      // skin/meeting-toast.scss) could not save it — a z-index cannot cross a
+      // sibling stacking context, which is exactly what the two layers are.
+      Skeletons.Wrapper.Y({
+        sys_pn: "meeting-toast-layer",
+        className: `${ui.fig.family}__layer ${ui.fig.group}__layer meeting-toast-layer`,
+        sortWithCollection: false,
+      }),
+
       // Live audio/video calls (window_meeting / window_connect) get a layer of
       // their own, for the same reason upload-progress has one: it must survive
       // everything the desk does to the other layers. headlessLayer — where a
@@ -108,6 +138,15 @@ const ___window_manager = function (ui) {
       Skeletons.Box.Y({
         sys_pn: "file-created-layer",
         className: `${ui.fig.family}__file-created-layer`,
+      }),
+
+      // "Link copied" toast (acknowledge → _acknowledgeHost). Not positioned,
+      // so the toast still places itself against wm-container, exactly where
+      // it sat when it was appended to the Wm.
+      Skeletons.Box.Y({
+        sys_pn: "ack-layer",
+        className: `${ui.fig.family}__ack-layer`,
+        sortWithCollection: false,
       }),
 
       Skeletons.Wrapper.Y({

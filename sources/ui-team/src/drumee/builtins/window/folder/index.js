@@ -1,19 +1,32 @@
 const mfsInteract = require("../interact");
+const { EVENT: SPLIT_BODY_EVENT } = require("libs/split-body-signal");
 const {
   VIEW_STATES,
-  isGrouped,
+  isSectioned,
   setGrouped,
   clearGrouped,
   groupViewState,
   nextGroupViewState,
 } = require("../skeleton/toolkit/file-group");
 
-const { overMeetingCap } = require("libs/billing");
+const {
+  overMeetingCap,
+  isSeatLimitReply,
+  showSeatLimitReached,
+} = require("libs/billing");
+const readCache = require("libs/read-cache");
+const { ACCESS_TAB, ACCESS_CLOSE, showAccessColumn, closeAccessColumn, showsFileGrid } = require("./access-column");
+const {
+  SECURE_SHARE_TAB,
+  SECURE_SHARE_CLOSE,
+  SECURE_SHARE_VIEW_EVENT,
+  showSecureShareColumn,
+  toggleSecureShareView,
+  closeSecureShareView,
+} = require("./secure-share-column");
+
 
 const {
-
-  
-  folderFilesView,
   fileTypeFilterBar,
   gridFilesBrowser,
   chatHeaderBar,
@@ -30,6 +43,16 @@ require("./skin");
 // `@container window-folder-w (max-width: 700px)` blocks — the folder skin's
 // own compact threshold, and the one meeting-schedule.scss already uses.
 const SCHED_NARROW_PX = 700;
+
+// Workspace file search: one short page of hits, which is all a dropdown over
+// the file grid can show.
+const WS_SEARCH_LIMIT = 20;
+// What to ASK for when the hits still have to pass a subtree fence on this side
+// (a personal workspace — see _wsSearchScope): the service applies its limit
+// before that fence, so asking for exactly 20 could hand back 20 rows from a
+// sibling workspace and leave the dropdown empty. 100 is the service's own cap.
+const WS_SEARCH_FETCH_MAX = 100;
+
 
 class __window_folder extends mfsInteract {
   constructor(...args) {
@@ -134,10 +157,14 @@ class __window_folder extends mfsInteract {
   }
 
   /**
-   * A zoomed window owns the whole desk body, header included — the same deal
-   * a headless workspace pane gets from the sidebar. Desk listens on Wm.$el and
+   * A zoomed window owns the whole desk body, header included, because it is
+   * still a real window with its own titlebar. Desk listens on Wm.$el and
    * re-runs _syncWorkspaceTopbar, which reads `_zoomed` back off every open
-   * folder window. Headless panes already hide the header via workspace:open.
+   * folder window.
+   *
+   * A headless workspace pane no longer does this: it has no chrome of its
+   * own, so the desk topbar is its header and must stay up (see
+   * _syncWorkspaceTopbar).
    */
   _syncDeskChrome() {
     if (this.mget(_a.headless)) return;
@@ -148,16 +175,22 @@ class __window_folder extends mfsInteract {
   }
 
   /**
-   * The header can come back while this window is still zoomed — a second
-   * window flips the bar into strip-only mode — which shrinks the container
-   * under inline-pixel geometry. Skipped during _syncDeskChrome: toggleZoom
-   * applies the new bounds itself right after.
+   * The work area changed under inline-pixel geometry — re-fit.
+   *
+   * Fired by the WM (`reflowWorkArea`) for every change of the container's box:
+   * the desk header coming back while this window is zoomed (a second window
+   * flips the bar into strip-only mode), the sidebar rail being pinned or
+   * collapsed (64px ↔ 231px reserved column, so the container both moves and
+   * shrinks), a slide-out panel, a browser resize. Skipped during
+   * _syncDeskChrome: toggleZoom applies the new bounds itself right after.
    */
   _onDeskChrome() {
     if (this._zoomSyncing) return;
-    if (!this._zoomed || this.mget(_a.minimize)) return;
+    if (this.mget(_a.minimize)) return;
     if (this.isDestroyed && this.isDestroyed()) return;
-    const target = this._zoomTarget();
+    if (this._isResizing) return;
+    const target = this._refitTarget();
+    if (!target) return;
     const cur = this._snapshotBounds();
     if (
       cur.left === target.left &&
@@ -167,7 +200,54 @@ class __window_folder extends mfsInteract {
     ) {
       return;
     }
-    this._applyBoundsAfterFs(target);
+    this._applyBoundsAfterFs(target, target.minWidth ? { minWidth: target.minWidth } : undefined);
+  }
+
+  /**
+   * Where this window belongs in the CURRENT work area, or null when it is
+   * already fine where it is.
+   *
+   * A window that owns a Move & Resize preset RECOMPUTES it, so it tracks the
+   * work area in both directions — a maximised window re-fills after the
+   * sidebar is pinned, and fills the reclaimed 167px again once it is
+   * collapsed. Clamping alone can only ever shrink, which is what used to
+   * leave a window stuck narrow (and shifted) after the rail was toggled.
+   *
+   * A free-floating window is left exactly where the user put it unless it no
+   * longer fits, in which case it is pulled back inside — its right edge
+   * otherwise sits past the viewport border, clipped by
+   * `.desk-module__body { overflow: hidden }` and unreachable.
+   */
+  _refitTarget(from) {
+    const ws = this._workspaceRect();
+    if (!ws.width || !ws.height) return null;
+    if (this._zoomed || this._snapMode === "full") {
+      return { left: 0, top: 0, width: ws.width, height: ws.height };
+    }
+    if (this._snapMode === "left" || this._snapMode === "right") {
+      // Same split as tileToSide: left takes the floored half, right the
+      // remainder, so an odd width leaves neither a gap nor an overlap.
+      const halfW = Math.floor(ws.width / 2);
+      const leftW = halfW;
+      const rightW = ws.width - halfW;
+      return this._snapMode === "right"
+        ? { left: halfW, top: 0, width: rightW, height: ws.height, minWidth: rightW }
+        : { left: 0, top: 0, width: leftW, height: ws.height, minWidth: leftW };
+    }
+    const cur = from || this._snapshotBounds();
+    const width = Math.min(cur.width, ws.width);
+    const height = Math.min(cur.height, ws.height);
+    const left = Math.max(0, Math.min(cur.left, ws.width - width));
+    const top = Math.max(0, Math.min(cur.top, ws.height - height));
+    if (
+      width === cur.width &&
+      height === cur.height &&
+      left === cur.left &&
+      top === cur.top
+    ) {
+      return null;
+    }
+    return { left, top, width, height };
   }
 
   // Override the inherited utils.js minimize/wake. The inherited version
@@ -216,9 +296,23 @@ class __window_folder extends mfsInteract {
     const b = this._zoomed ? this._zoomTarget() : this._minimizedBounds;
     this._minimizedBounds = null;
     if (b) {
-      this.size = { ...this.size, width: b.width, height: b.height };
-      this.style.set(b);
-      this.$el.css(b);
+      // The bounds were captured on minimize and the work area may have
+      // changed since (the sidebar rail pinned/collapsed while the window sat
+      // in the tab strip — _onDeskChrome deliberately skips minimized
+      // windows). Restoring them verbatim puts a maximised window's right side
+      // past the viewport border, clipped and unreachable. Re-fit instead:
+      // a preset window re-fills the CURRENT area, a free-floating one is
+      // clamped back inside it.
+      const fit = this._refitTarget(b) || b;
+      this.size = { ...this.size, width: fit.width, height: fit.height };
+      this.style.set(fit);
+      this.$el.css(fit);
+      if (fit.minWidth) {
+        this.$el.css({ minWidth: fit.minWidth });
+        try {
+          this.$el.resizable(_a.option, "minWidth", fit.minWidth);
+        } catch (e) {}
+      }
       if (this.syncBounds) this.syncBounds(true);
     }
     this.$el.stop(true, false).css({ opacity: 0 }).animate(
@@ -446,6 +540,9 @@ class __window_folder extends mfsInteract {
     }
     setGrouped(this, true);
     this.setViewMode(_a.icon, false);
+    // Team-chat unread count for the chat card header (see _paintChatUnread).
+    this._onWorkspaceUnread = () => this._paintChatUnread();
+    RADIO_BROADCAST.on("workspace-unread", this._onWorkspaceUnread);
     // `data-visible` is derived from privilege. Keep it in sync even when a
     // caller updates the model outside the explicit navigation/live-role paths.
     this.listenTo(
@@ -470,10 +567,37 @@ class __window_folder extends mfsInteract {
       value: _a.normal,
     });
 
+    // A window in someone else's hub is a HUB window — but only its ROOT is
+    // `filetype: hub`. Every reader of that value (refreshBreadcrumbsUI, the
+    // desk breadcrumb's _onBrowse / _restoreCurrentPath, the import and share
+    // targets) takes `filetype === hub && actual_home_id` to mean "I am on the
+    // workspace root" and swaps the nid for actual_home_id.
+    //
+    // Stamping it unconditionally was harmless while panes only ever MOUNTED on
+    // a root and reached subfolders by navigating (which copies the
+    // destination's real filetype back). Reload restore mounts the pane
+    // directly on the saved subfolder (desk _restoreWorkspace), so the stamp
+    // turned `testing / Clients / zy` into `testing`: the pane listed zy while
+    // loadWorkspace's deferred refreshBreadcrumbsUI asked get_path for the
+    // root and repainted the bar with it.
+    //
+    // So keep a real subfolder's filetype; isHub still follows the hub.
     if (this.model.get(_a.hub_id) !== Visitor.id) {
-      this.model.set({
-        filetype: _a.hub,
-      });
+      const nid = this.model.get(_a.nid);
+      const rootId = this.model.get(_a.actual_home_id);
+      // Same root test as _taskScopeArgs: the root node, 0, or the hub id itself.
+      const onSubfolder =
+        this.model.get(_a.filetype) === _a.folder &&
+        nid && rootId &&
+        `${nid}` !== "0" &&
+        `${nid}` !== `${rootId}` &&
+        `${nid}` !== `${this.model.get(_a.hub_id)}`;
+      if (!onSubfolder) {
+        this.model.set({
+          filetype: _a.hub,
+        });
+      }
+      this.isHub = 1;
     }
     if (this.model.get(_a.filetype) === _a.hub) {
       this.isHub = 1;
@@ -534,8 +658,104 @@ class __window_folder extends mfsInteract {
     }
   }
 
+  // These three sit here, next to the onBeforeDestroy that tears the overlay
+  // down, rather than beside _openChatExportModal where the analogous
+  // wrapper-overlay methods live — the tour's teardown is reached from
+  // onBeforeDestroy as well as from the tour's own destroy, so keeping both
+  // ends of that handshake close together matters more here than grouping by
+  // "another appended overlay".
+  /**
+   * Run a tour over this window.
+   *
+   * The tour is drawn by `window_tutorial` (builtins/window/tutorial), which
+   * renders the same step widgets the desk tour does but lays them ON this
+   * window instead of replacing the desk with a picture of one.
+   *
+   * THE ORDER OF THE TWO GUARDS IS LOAD-BEARING. `Tours.claim` takes the
+   * account-wide single-flight latch and holds it until the mounted tour is
+   * destroyed and `release()` runs. Claim first and then refuse to mount, and
+   * nothing is ever destroyed, `release()` is never reached, and every later
+   * tour on this account is dropped in silence for the rest of the session (the
+   * 30s guard timer eventually covers it, which is thirty seconds of swallowed
+   * triggers). So the already-mounted check comes first, and only a run that is
+   * definitely going to mount takes the claim.
+   *
+   * A preview skips the claim outright: an explicitly requested tour is never
+   * gated on the seen-set, the kill switch or single-flight — the same rule the
+   * desk's `?tutorial=` follows, and the only way QA can reach a tour twice.
+   *
+   * The overlay is appended rather than declared in ./skeleton because that
+   * skeleton returns a single node (`__main`) which becomes this window's
+   * `content` part; a sibling of it cannot be declared there. Same idiom as
+   * _openChatExportModal.
+   *
+   * @param {String} tour a tour id from modules/desk/tutorial/tours
+   * @param {Object} [opt] extra model attributes for the tour widget
+   * @returns {Boolean|Promise<Boolean>} false when refused
+   */
+  showTutorial(tour, opt = {}) {
+    const Tours = require("libs/tutorial-tours");
+    if (!opt.preview && !Tours.claim(tour, this)) return false;
+    // BROADCAST, do not append.
+    //
+    // This used to `this.append()` a wrapper and feed the tour into it. That put
+    // the overlay in THIS window's Marionette collection, and `Box.feed()` is
+    // `collection.set()` — so any feed on this window dropped it. A pane is fed
+    // repeatedly while it builds, so a tour raised on a freshly opened workspace
+    // was racing a rebuild, and lost: the node left the DOM with the window
+    // still alive and nothing destroyed, so no handler ever fired.
+    //
+    // The desk owns the mount now, in its own `overlay` slot — the one
+    // `desk_tutorial` has always used, which nothing else re-feeds. The tour
+    // lays itself over this window and follows it (see window/tutorial,
+    // _syncToWindow), so it still reads as an overlay on this window.
+    //
+    // Announced rather than called: this window has no handle on the desk
+    // module, and the desk already listens on this bus for tour traffic.
+    try {
+      RADIO_BROADCAST.trigger("window-tutorial:mount", { window: this, tour, opt });
+    } catch (e) {
+      if (!opt.preview) Tours.release(tour);
+      return false;
+    }
+    return true;
+  }
+
+  /**
+   * Where a Google Drive import started from this window lands.
+   *
+   * The directory the user is LOOKING AT, by the breadcrumb's current-node
+   * rule (refreshBreadcrumbsUI): the model nid follows in-window navigation,
+   * and a hub/workspace ROOT window's active directory is its actual_home_id.
+   * The title tracks navigation the same way, so the name comes from it.
+   *
+   * Two callers: this window's own "+ New → Migrate from Google Drive", and
+   * the migrate tour's live dialog (builtins/window/tutorial, _goLive), which
+   * must land an import in exactly the place that row would.
+   *
+   * @returns {{hub_id, nid, name, area, filetype}}
+   */
+  gdriveDestination() {
+    let nid = this.mget(_a.nid);
+    if (this.mget(_a.filetype) === _a.hub && this.mget(_a.actual_home_id)) {
+      nid = this.mget(_a.actual_home_id);
+    }
+    return {
+      hub_id: this.mget(_a.hub_id) || Visitor.id,
+      nid: nid || Visitor.get(_a.home_id),
+      name: this.mget(_a.hub_name) || this.mget(_a.filename) || "",
+      area: this.mget(_a.area) || undefined,
+      // A hub ROOT is a workspace and gets its area badge; anything the user
+      // has navigated into is a plain folder.
+      filetype: nid === this.mget(_a.actual_home_id) ? _a.hub : _a.folder,
+    };
+  }
+
+
+
   onBeforeDestroy(opt) {
     clearGrouped(this);
+    RADIO_BROADCAST.off("workspace-unread", this._onWorkspaceUnread);
     if (this._folderGridSortTimer) {
       clearTimeout(this._folderGridSortTimer);
       this._folderGridSortTimer = null;
@@ -544,6 +764,8 @@ class __window_folder extends mfsInteract {
       clearTimeout(this._chatSearchTimer);
       this._chatSearchTimer = null;
     }
+    // Drops the search dropdown's timer and document-level dismisser.
+    this._teardownWorkspaceSearch();
     if (this._mmInviteeBlurTimer) {
       clearTimeout(this._mmInviteeBlurTimer);
       this._mmInviteeBlurTimer = null;
@@ -551,6 +773,10 @@ class __window_folder extends mfsInteract {
     this._stopAwaitMeetingReady();
     this._ftTeardown();
     this._unbindThreadMenuOutside();
+    this._unbindSchedMenuDismiss();
+    // A tour is holding the account-wide single-flight latch. Closing the
+    // window it is drawn on must hand that back, or no tour runs again this
+    // session.
     this._unbindViewportReframe();
     this._unbindDeskChrome();
     if (!this.mget(_a.headless) && window.Wm && Wm.$el) {
@@ -559,6 +785,58 @@ class __window_folder extends mfsInteract {
       Wm.$el.trigger("workspace:close", this);
     }
     if (super.onBeforeDestroy) return super.onBeforeDestroy(opt);
+  }
+
+  /**
+   * Show how many team-chat messages of this workspace are unread: the count
+   * beside "Team Chat" and a raised card (data-unread on the chat panel), so a
+   * conversation sitting in the Files side column is visibly waiting — until
+   * it is read (widget_chat markConversationRead → workspace-chat-read).
+   *
+   * Source: panel_activity's per-workspace counts (hub-counts.js), the same
+   * numbers the rail's Chat pill shows, so the two cannot disagree. Workspace
+   * team chat only — a window opened from a share (token) reads a folder
+   * conversation that the workspace count does not describe.
+   */
+  _paintChatUnread() {
+    if (this.isDestroyed && this.isDestroyed()) return;
+    const pill = this.__chatUnread;
+    const shared = !!this.mget(_a.token);
+    const hub = this.mget(_a.actual_hub_id) || this.mget(_a.hub_id);
+    const all = (window.ActivityHandler && window.ActivityHandler._hubCounts) || {};
+    const c = (!shared && hub != null && all[hub]) || {};
+    const n = parseInt(c.chat, 10) || 0;
+    const content = n > 99 ? "99+" : String(n);
+    if (pill && pill.el && !(pill.isDestroyed && pill.isDestroyed())) {
+      pill.el.innerText = n === 0 ? "" : content;
+      pill.el.dataset.count = content;
+    }
+    const panel = this.getPart && this.getPart("chat-panel");
+    if (panel && panel.el) {
+      if (n > 0) panel.el.dataset.unread = "1";
+      else delete panel.el.dataset.unread;
+    }
+  }
+
+  /**
+   * Tell panel_activity the Task / Meet / Files tab of this workspace is on
+   * screen, so the rail pill for it clears (hub-counts.js "seen" marks).
+   * No tab yet means Files — a fresh window_folder starts with `activeTab`
+   * unset and every reader treats that as Files.
+   * @param {String} tab folder-window tab
+   */
+  _announceTabSeen(tab) {
+    const kind = tab === _a.task
+      ? "task"
+      : tab === "meeting"
+        ? "meeting"
+        : !tab || tab === "files"
+          ? "files"
+          : null;
+    if (!kind || this.mget(_a.token)) return;
+    const hub = this.mget(_a.actual_hub_id) || this.mget(_a.hub_id);
+    if (hub == null || typeof RADIO_BROADCAST === "undefined") return;
+    RADIO_BROADCAST.trigger("workspace-tab-seen", { hub_id: hub, tab: kind });
   }
 
   // Apply filename — or hub_name for an empty-filename root — to the title.
@@ -608,7 +886,7 @@ class __window_folder extends mfsInteract {
     // renamed tile in its old group until the next mode switch. Partitioning
     // alone re-reads the models and never installs a comparator, so the saved
     // ranks stay intact.
-    if (isGrouped(this) && this._partitionFoldersAndFiles && this.iconsList) {
+    if (isSectioned(this) && this._partitionFoldersAndFiles && this.iconsList) {
       this._partitionFoldersAndFiles(this.iconsList);
     }
     this._scheduleAlphabeticalGridSort();
@@ -641,11 +919,84 @@ class __window_folder extends mfsInteract {
     // "Join Meeting" to members while a host is in the call (chat meeting.start/
     // meeting.end sentinels — realtime + an initial history scan).
     this._initMeetingPresence();
+    // Warm the tasks panel while the window that hosts it is on screen.
+    //
+    // `tasks_panel` is a lazy kind (seeds.js) and was the one tab widget the
+    // app never warmed — tutorial_migrate, desk_tutorial, reward_flow,
+    // promo_launch30 and over_limit_popup all are. So the first press of Task,
+    // from this window's tab bar or from the rail, WAS the moment its chunk was
+    // first requested: Kind.get() hands back the lazy-loader placeholder, which
+    // mounts empty, waits on the network and respawns itself once the module
+    // lands (ui-core letc/kind/loader.js). The user pays a round trip and a
+    // mount-and-rebuild at the moment they asked to see their tasks.
+    //
+    // It is the largest lazy chunk in the build — 612 KB — so that round trip
+    // is not a formality. Measured against stage: 2.9s, because the endpoint
+    // serves it uncompressed (gzip would be 133 KB).
+    //
+    // Fire and forget, and deliberately NOT awaited: a warm-up that fails costs
+    // nothing, because the kind still loads on demand exactly as it did. Not
+    // awaited for a second reason too — the Files tab must not wait on a
+    // prefetch for a tab the user may never open.
+    //
+    // `window_tutorial` rides along, and it is the more urgent of the two. It
+    // is the HOST every in-window tour mounts into — the rail's Files, Chat,
+    // Task and Meet all raise one — and nothing warmed it anywhere, so the
+    // first rail press paid a chunk fetch before anything could appear. That is
+    // what turned "the tour arrives a moment after the tab" into a wait long
+    // enough to watch: the tab is switched synchronously, and the tour was
+    // several async hops AND a network round trip behind it.
+    //
+    // The step kinds come too. tutorial_migrate is warmed by the topbar's
+    // + New menu and tutorial_task/tutorial_share by their own surfaces, but
+    // tutorial_chat and tutorial_meeting were warmed by nothing at all — and
+    // all four are one rail press away from here.
+    if (typeof Kind !== "undefined" && _.isFunction(Kind.waitFor)) {
+      for (const kind of [
+        "tasks_panel",
+        // Access, the fourth rail view. Cold, pressing it spent a round trip
+        // downloading this chunk before the panel existed to ask the server
+        // anything — and the column has nothing to show meanwhile, not even
+        // the panel's loading skeleton, which lives on an element this chunk
+        // is what creates.
+        "permission_restricted",
+        "window_tutorial",
+        "tutorial_migrate",
+        "tutorial_chat",
+        "tutorial_task",
+        "tutorial_meeting",
+      ]) {
+        Promise.resolve(Kind.waitFor(kind)).catch(() => {});
+      }
+    }
     const initialTab = this.mget("activeTab");
+    // THE TAB THE USER WAS STANDING ON IN THE WORKSPACE THEY JUST LEFT.
+    //
+    // Switching workspace mounts a BRAND NEW pane (Wm.loadWorkspace re-feeds
+    // headlessLayer), so a fresh window used to start with no tab at all —
+    // which showFolderTab, the `data-view` stamp and syncNewCtrlVisibility all
+    // read as Files. Someone working in the tracker or in a thread was dropped
+    // back on the file grid on every switch. `restore_tab` is Wm handing the
+    // outgoing pane's tab over (see wm/index.js paneTabToCarry).
+    //
+    // A SEPARATE KEY FROM `activeTab`, and it must stay separate: a launch-time
+    // `activeTab` of "meeting" means START/JOIN THE CALL (the branch below),
+    // while carrying a Meet tab across a switch may only ever show the new
+    // workspace's CALENDAR. Everything here goes through showFolderTab, which
+    // cannot start a call.
+    //
+    // An explicit request wins — a deep link, a notification landing or a
+    // meeting join asked for a specific tab, the carry-over is only the
+    // fallback for a plain switch. Consumed either way, so nothing re-applies
+    // it later.
+    const carriedTab = this.mget("restore_tab");
+    if (carriedTab) this.mset("restore_tab", null);
     if (initialTab === "meeting" || this.mget(_a.start_meeting)) {
       this._launchMeetingStandalone();
     } else if (initialTab && initialTab !== "files") {
       this.ensurePart("folder-view").then(() => this.showFolderTab(initialTab));
+    } else if (!initialTab && carriedTab && carriedTab !== "files") {
+      this.ensurePart("folder-view").then(() => this.showFolderTab(carriedTab));
     }
     // Launched by "Link to task tracker" from outside a folder window. Consumed
     // once, so a later remount doesn't reopen the draft out of the blue.
@@ -688,6 +1039,7 @@ class __window_folder extends mfsInteract {
       this.el.dataset.headless = "1";
     }
   }
+
 
   // A folder window opens FULL-FRAME — the whole desk body, the same frame a
   // workspace pane gets from the sidebar — instead of the inset popup box it
@@ -872,6 +1224,24 @@ class __window_folder extends mfsInteract {
       this._taskPanel.attachExistingNodes(files);
       if (typeof this.resetShift === "function") this.resetShift();
       return;
+    }
+    // Same rule for the Chat tab: a file dropped on the composer belongs to the
+    // message being written, not to the folder body. The composer's droppable
+    // has usually staged it already by the time this runs, so falling through
+    // would insert a SECOND copy into the folder — the duplication the task
+    // branch above exists to prevent.
+    if (this.activeTab === _a.chat) {
+      const chat = this.getItemsByKind("widget_chat")[0];
+      if (
+        chat &&
+        !(chat.isDestroyed && chat.isDestroyed()) &&
+        typeof chat.canAttachExisting === "function" &&
+        chat.canAttachExisting()
+      ) {
+        chat.attachExistingNodes(files);
+        if (typeof this.resetShift === "function") this.resetShift();
+        return;
+      }
     }
     return super.insertMedia(files, position);
   }
@@ -1068,8 +1438,8 @@ class __window_folder extends mfsInteract {
     };
     handle.addEventListener("pointerdown", (e) => {
       const view = this.__folderView;
-      // Only active on the Files tab (the only view that reads --files-w).
-      if (!view || !view.el || view.el.dataset.view !== "files") return;
+      // Active on Files and Access (both read --files-w; see showsFileGrid).
+      if (!view || !view.el || !showsFileGrid(view.el.dataset.view)) return;
       dragging = true;
       handle.dataset.dragging = "1";
       try { handle.setPointerCapture(e.pointerId); } catch (_) {}
@@ -1093,10 +1463,18 @@ class __window_folder extends mfsInteract {
       this.__zoomPresets = child;
       this._syncSnapPresets();
     }
+    if (pn === "chat-header-unread") {
+      // Re-fed with the header on every scope switch (chatHeaderBar), so it
+      // is repainted from the last counts each time it mounts.
+      this.__chatUnread = child;
+      this._paintChatUnread();
+    }
     if (pn === "folder-view") {
       this.__folderView = child;
       // Restore the user's persisted Files-tab split ratio (default 2:1).
       this._applyFilesSplit();
+      // First paint of the split body enters like every later view switch.
+      this._playViewEntrance(child);
       return;
     }
     if (pn === "files-splitter") {
@@ -1143,25 +1521,25 @@ class __window_folder extends mfsInteract {
       this.syncNewCtrlVisibility();
       return;
     }
-    // Second entry point for the migrate tour, alongside the desk topbar's
-    // + New (desk/index.js, case "addmenu"). Both are the same gesture — "I
-    // want to bring something in" — so they share the `migrate` flag: whichever
-    // is pressed first runs the tour, and the other then finds it seen. This is
-    // the shape the share tour already uses across its own two entry points.
+    // NOTHING IN THIS WINDOW OPENS THE MIGRATE TOUR ANY MORE.
     //
-    // `open` is the signal rather than a click on the wrapper: it fires only on
-    // opening, never on closing, so re-opening the menu cannot re-trigger, and
-    // a click that lands on the control's padding is not mistaken for the
-    // gesture. Nothing is remembered here — every gate lives in
-    // libs/tutorial-tours — so a topbar rebuild can neither lose nor duplicate
-    // the trigger.
+    // Two surfaces here used to. The menu's `open` event fired it, so the first
+    // press of + New in a folder window put a full-screen tour over whatever
+    // the user was doing; that went first. Then the gdrive row itself
+    // ("launch-gdrive-migration"), which was the wrong place for a different
+    // reason — a user who has already found + New -> Migrate from Google Drive
+    // does not need to be shown where it is.
+    //
+    // The tour is now raised by the rail's Files button (modules/desk/index.js,
+    // case "rail-files"), which is where a new account starts and what its
+    // first screen actually draws. The desk topbar's own + New still fires on
+    // open (desk/index.js, case "addmenu") and is untouched by this.
+    //
+    // The chunk warm stays. It is not tied to this window firing the tour: the
+    // rail can raise it at any moment, and a tour that has to fetch its chunk
+    // mounts empty and respawns (ui-core letc/kind/loader.js). Warming it while
+    // a create menu is open costs one idle fetch and removes that.
     if (pn === "new-menu") {
-      const Tours = require("libs/tutorial-tours");
-      if (_.isFunction(child.on)) {
-        child.on(_e.open, () => Tours.fire("migrate", this));
-      }
-      // Warm the chunk while the surface that triggers it is on screen, so
-      // pressing the button renders from memory rather than from the network.
       if (typeof Kind !== "undefined" && _.isFunction(Kind.waitFor)) {
         Promise.resolve(Kind.waitFor("tutorial_migrate")).catch(() => {});
       }
@@ -1188,6 +1566,27 @@ class __window_folder extends mfsInteract {
     }
     if (pn === "search-results") {
       this._searchResultsPart = child;
+      return;
+    }
+    // ── Workspace file search (toolbar "Search…") ──
+    // The window owns these parts; before this they were the DESK's
+    // ("search-container" / "search-box" / "search-suggestions"), which is why
+    // the field ran a global, cross-workspace search — and why two open
+    // workspaces fought over the desk's single set of refs.
+    if (pn === "ws-search-container") {
+      this._wsSearchContainer = child;
+      return;
+    }
+    if (pn === "ws-search-box") {
+      this._wsSearchBox = child;
+      return;
+    }
+    if (pn === "ws-search-suggestions") {
+      this._wsSearchPanel = child;
+      return;
+    }
+    if (pn === "ws-search-results") {
+      this._wsSearchResults = child;
       return;
     }
     if (pn === "chat-search-input") {
@@ -1252,11 +1651,14 @@ class __window_folder extends mfsInteract {
     this._titleResolving = 1;
     // Wm.loadWorkspace is very likely asking for this same path right now —
     // share its request rather than adding a second one (libs/path-request).
-    require("libs/path-request").getPath(this, { nid, hub_id })
-      .then((data) => {
-        if (this.isDestroyed && this.isDestroyed()) return;
-        if (!_.isEmpty(data)) this.refreshBreadcrumbsUI(data);
-      })
+    // This resolver runs once per window, so it must also take the
+    // revalidated answer: a cached path may name a since-renamed workspace.
+    const paint = (data) => {
+      if (this.isDestroyed && this.isDestroyed()) return;
+      if (!_.isEmpty(data)) this.refreshBreadcrumbsUI(data);
+    };
+    require("libs/path-request").getPath(this, { nid, hub_id }, paint)
+      .then(paint)
       .catch((e) => {
         if (this.warn) this.warn("_resolveMissingTitle: get_path failed", e);
       });
@@ -1395,6 +1797,54 @@ class __window_folder extends mfsInteract {
         .map((s) => Object.assign({}, ctx, s));
     }
     const depth = this._navStack.length;
+
+    // Mirror the ACTIVE workspace pane's navigation into the visible desk
+    // topbar breadcrumb (desk_breadcrumb). refreshBreadcrumbsUI is the single
+    // chokepoint for every in-place navigation (workspace switch, sidebar
+    // folder open, and in-grid forward/backward), so driving it here keeps the
+    // topbar in sync for all of them — not just section toggles.
+    //
+    // THIS MUST STAY ABOVE THE HEADLESS BAIL BELOW. It used to sit at the end
+    // of this method, after `if (headless) return` — and its own condition
+    // requires `headless`, so it could never run at all: opening a subfolder
+    // inside a workspace left the desk breadcrumb showing the workspace root,
+    // with no crumbs to click back through. The window's own updateTopbar
+    // broadcast does not cover it either: that one passes `this` as the source,
+    // and desk_breadcrumb accepts only broadcasts whose source IS Wm (folder
+    // WINDOW navigation is private to that window and must not retitle the
+    // bar). Hence the explicit window.Wm below.
+    //
+    // Still gated on focused (`state == 1`): headlessLayer can hold more than
+    // one workspace pane, and a background one must not retitle the bar.
+    if (
+      window.Wm &&
+      this.mget(_a.headless) &&
+      this.mget(_a.state) == 1 &&
+      _.isFunction(this.updateBreadcrumb)
+    ) {
+      let curNid = this.mget(_a.nid);
+      if (this.mget(_a.filetype) === _a.hub && this.mget(_a.actual_home_id)) {
+        curNid = this.mget(_a.actual_home_id);
+      }
+      this.updateBreadcrumb(
+        {
+          nid: curNid,
+          hub_id: this.mget(_a.hub_id),
+          actual_home_id: this.mget(_a.actual_home_id),
+          filetype: this.mget(_a.filetype),
+          service: "change-workspace",
+        },
+        window.Wm,
+      );
+    }
+
+    // The in-window crumb strip lives in the window topbar, which a headless
+    // workspace pane no longer renders — the DESK topbar carries the path
+    // instead (the mirror above). Bail before the ensurePart: it never settles
+    // for a part that will not mount, so the continuation below would be dead
+    // weight held for the pane's lifetime. _navStack is still built above,
+    // which is what in-pane back navigation (_navigateToStackIndex) reads.
+    if (this.mget(_a.headless)) return;
     this.ensurePart("folder-breadcrumb-path").then((box) => {
       if (!box || (box.isDestroyed && box.isDestroyed())) return;
       box.el.dataset.state = depth ? 1 : 0;
@@ -1434,36 +1884,6 @@ class __window_folder extends mfsInteract {
       box.feed(crumbs);
     });
 
-    // Mirror the ACTIVE workspace window's navigation into the visible desk
-    // topbar breadcrumb (desk_breadcrumb). refreshBreadcrumbsUI is the single
-    // chokepoint for every in-place navigation (workspace switch, sidebar
-    // folder open, and in-grid forward/backward), so driving it here keeps the
-    // topbar breadcrumb in sync for all of them — not just section toggles.
-    // Gate on headless + focused so standalone/background folder windows never
-    // retitle the topbar. desk_breadcrumb._updateContent only accepts
-    // broadcasts whose source IS Wm, so pass Wm explicitly; it resolves the
-    // full Home › Workspace › … path itself via get_path.
-    if (
-      window.Wm &&
-      this.mget(_a.headless) &&
-      this.mget(_a.state) == 1 &&
-      _.isFunction(this.updateBreadcrumb)
-    ) {
-      let curNid = this.mget(_a.nid);
-      if (this.mget(_a.filetype) === _a.hub && this.mget(_a.actual_home_id)) {
-        curNid = this.mget(_a.actual_home_id);
-      }
-      this.updateBreadcrumb(
-        {
-          nid: curNid,
-          hub_id: this.mget(_a.hub_id),
-          actual_home_id: this.mget(_a.actual_home_id),
-          filetype: this.mget(_a.filetype),
-          service: "change-workspace",
-        },
-        window.Wm,
-      );
-    }
   }
 
   toggleFilesLayout(cmd) {
@@ -1506,7 +1926,10 @@ class __window_folder extends mfsInteract {
         ]);
         return;
       }
-      content.feed([fileTypeFilterBar(this), gridFilesBrowser(this)]);
+      content.feed([
+        fileTypeFilterBar(this),
+        gridFilesBrowser(this),
+      ]);
     });
   }
 
@@ -1567,17 +1990,7 @@ class __window_folder extends mfsInteract {
       (cmd && cmd.getParentByKind?.(KIND.menu.topic)) ||
       (this.getPart && this.getPart("new-menu"));
     if (!menu) return;
-    const group = menu.el?.querySelector(
-      ".window-button__dropdown-menu__item--create-group",
-    );
-    if (group) group.dataset.submenu = _a.closed;
     if (menu.changeState) menu.changeState(0);
-  }
-
-  toggleNewCreateMenu(cmd) {
-    if (!cmd || !cmd.el) return;
-    cmd.el.dataset.submenu =
-      cmd.el.dataset.submenu === _a.open ? _a.closed : _a.open;
   }
 
   onUiEvent(cmd, args = {}) {
@@ -1620,46 +2033,61 @@ class __window_folder extends mfsInteract {
       case "tab-bar-page":
         return this._showTabCarouselPage(cmd);
 
-      case "toggle-new-create-menu":
-        return this.toggleNewCreateMenu(cmd);
-
       // Tap on the mobile dim layer behind the centred "+ New" card. Same
       // close a leaf row runs, so the card and its backdrop leave together.
       case "close-new-menu":
         return this.closeNewMenu(cmd);
 
       case "launch-gdrive-migration": {
+        // NO TOUR FROM THIS ROW.
+        //
+        // It used to be a trigger surface for the migrate tour, on the grounds
+        // that the row ASKS FOR the import dialog and the tour is what teaches
+        // it. That was backwards: a user who has already found "+ New ->
+        // Migrate from Google Drive" does not need to be taught where it is,
+        // and firing here meant the one tour about importing ran only for
+        // people who had solved the discovery problem themselves. The tour is
+        // now raised by the rail's Files button, which is where a new account
+        // actually starts (modules/desk/index.js, case "rail-files").
+        //
+        // Tours.whenDone below STAYS, and is not vestigial: it is what keeps
+        // this dialog from opening underneath a full-screen tour that some
+        // other surface started. With no migrate tour in flight it runs
+        // `launch` synchronously, which is every click on this row today.
+        const Tours = require("libs/tutorial-tours");
         // "Migrate from Google Drive" row of the merged "+ New" menu. Opens the
         // full migration popup; the widget + google_drive.* backend already
         // exist. singleton + wm_unique_id (per the multi-folder-windows fix)
         // prevents a duplicate popup on re-click.
         //
-        // Destination = the directory the user is LOOKING AT, mirroring the
-        // breadcrumb's current-node rule (refreshBreadcrumbsUI): the model nid
-        // follows in-window navigation, and a hub/workspace ROOT window's
-        // active directory is its actual_home_id. The previous order —
-        // actual_home_id first — sent every import to the workspace root even
-        // when the user had navigated into a sub-folder and clicked "+ New"
-        // right there. `direct: 1` tells the importer to land the content in
-        // this folder itself, not in a GoogleDriveMigration wrapper: the user
-        // picked the destination by standing in it.
+        // Destination = the directory the user is LOOKING AT; see
+        // gdriveDestination. The previous order — actual_home_id first — sent
+        // every import to the workspace root even when the user had navigated
+        // into a sub-folder and clicked "+ New" right there. `direct: 1` tells
+        // the importer to land the content in this folder itself, not in a
+        // GoogleDriveMigration wrapper: the user picked the destination by
+        // standing in it.
         this.closeNewMenu(cmd);
-        let destNid = this.mget(_a.nid);
-        if (this.mget(_a.filetype) === _a.hub && this.mget(_a.actual_home_id)) {
-          destNid = this.mget(_a.actual_home_id);
-        }
-        // The window title tracks navigation the same way the nid does
-        // (refreshBreadcrumbsUI msets hub_name to the current node's name).
-        const destName = this.mget(_a.hub_name) || this.mget(_a.filename) || "";
-        const destHub = this.mget(_a.hub_id) || Visitor.id;
-        const destNidFinal = destNid || Visitor.get(_a.home_id);
-        return Kind.waitFor("migrate_gdrive_popup").then(() => {
-          Wm.launch(
+        const dest = this.gdriveDestination();
+        // Warmed NOW even when the launch waits for the tour, so the dialog is
+        // rendered from memory the instant the tour comes down rather than
+        // starting a chunk fetch at the moment it is finally wanted.
+        const ready = Kind.waitFor("migrate_gdrive_popup");
+        const launch = () => {
+          // The window can be gone by the time a tour comes down — the popup's
+          // destination was read off it, so there is nothing to import into.
+          if (this.isDestroyed && this.isDestroyed()) return;
+          if (typeof Wm === "undefined" || !_.isFunction(Wm.launch)) return;
+          return ready.then(() => Wm.launch(
             {
               kind: "migrate_gdrive_popup",
-              hub_id: destHub,
-              nid: destNidFinal,
-              destinationName: destName || undefined,
+              hub_id: dest.hub_id,
+              nid: dest.nid,
+              destinationName: dest.name || undefined,
+              // What the destination LOOKS like, so the popup's card draws
+              // this folder's own shape rather than a generic one.
+              destArea: dest.area,
+              destFiletype: dest.filetype,
               direct: 1,
               // Destination-scoped id (same scheme as window_folder-<hub>-<nid>).
               // A plain shared id made singleton raise() a popup opened from
@@ -1668,11 +2096,28 @@ class __window_folder extends mfsInteract {
               // import into the wrong place. Per-destination ids keep the
               // no-duplicate guarantee per folder while giving each launch
               // context its own popup.
-              wm_unique_id: `migrate_gdrive_popup-${destHub}-${destNidFinal}`,
+              wm_unique_id: `migrate_gdrive_popup-${dest.hub_id}-${dest.nid}`,
             },
             { explicit: 1, singleton: 1 },
-          );
-        });
+          ));
+        };
+        // The dialog waits for the tour, when there is one.
+        //
+        // It used to launch immediately and rely on stacking: the tour mounts in
+        // the desk's `overlay` (z 10010) and the popup lands in Wm's window layer
+        // beneath it, so the real dialog could open unseen, spend the whole
+        // walkthrough behind a full-screen mock of itself, and have to still be
+        // there — in its starting state — when the tour finally came down. So
+        // the destination is captured HERE (the folder the user was standing
+        // in) and the launch is handed to Tours.whenDone, which runs it the
+        // moment the migrate tour is gone.
+        //
+        // This row no longer FIRES that tour (see the top of the case), so the
+        // wait is now insurance rather than the common path: it covers a tour
+        // raised elsewhere — the rail's Files button — that is still on screen.
+        // With none in flight, whenDone runs `launch` synchronously, exactly
+        // where a bare call would sit, which is every click on this row today.
+        return Tours.whenDone("migrate", launch);
       }
 
       case "new-document":
@@ -1685,9 +2130,25 @@ class __window_folder extends mfsInteract {
       case "create-folder-submit":
         return this.createFolderFromDialog(cmd);
 
-      case "close-folder-dialog":
+      case "close-folder-dialog": {
         this.isShowSettings = false;
-        return this.dialogWrapper.clear();
+        // Marked, then cleared on a timer, so the card's exit animation gets
+        // frames. Clearing on the spot destroys the element before one is
+        // painted, which left the create dialog with an entrance and no exit.
+        // Same idiom and the same 160ms as media/form's close; a timer rather
+        // than `animationend`, because reduced-motion disables the animation
+        // and that event would then never fire.
+        const wrapper = this.dialogWrapper;
+        const card = wrapper && wrapper.el
+          && wrapper.el.querySelector(".window-folder__create-folder-dialog");
+        if (!card || !card.dataset) return wrapper.clear();
+        card.dataset.closing = "1";
+        setTimeout(() => {
+          if (this.isDestroyed && this.isDestroyed()) return;
+          wrapper.clear();
+        }, 160);
+        return;
+      }
 
       case "close-export":
         this._closeChatExportOverlay();
@@ -1696,32 +2157,145 @@ class __window_folder extends mfsInteract {
       case "open-advanced-settings":
         return this.openAdvancedSettings(cmd);
 
-      case "folder-manage-access":
-        // Belt for the two hidden entry points (topbar icon + overflow menu):
-        // the panel mints secure-share links that can grant can_edit, and
-        // secure_share.create now refuses without the write bit. Refuse here so
-        // a stale DOM or a deep link cannot open a panel that can only fail.
-        if (this.canUpload && !this.canUpload()) {
-          if (window.Butler && Butler.say) Butler.say(LOCALE.WEAK_PRIVILEGE);
-          return;
+      // Both the belt and the tour below are about SECURE-SHARE LINKS, so both
+      // are scoped to the branch that opens the link panel. An internal
+      // workspace opens the members panel instead (see _manageAccessIsInternal
+      // and openManageAccess) and neither applies to it.
+      // The Access column's ✕ (./access-column): back to Files, rail included.
+      case ACCESS_CLOSE:
+        return closeAccessColumn(this);
+
+      // The secure-share column's ✕ (./secure-share-column).
+      case SECURE_SHARE_CLOSE:
+        return closeSecureShareView(this);
+
+      case "folder-manage-access": {
+        // `args.members` is the rail's Access asking for the members matrix on
+        // an EXTERNAL workspace too (desk/index.js _railAccess). It has to gate
+        // the belt and the tour as well as the panel: both below are about the
+        // secure-share LINK builder, and neither applies once this click is
+        // going to open the matrix instead.
+        const membersOnly =
+          !!(args && args.members) || this._manageAccessIsInternal();
+        // Set by the tour branch below; read after it to decide whether the
+        // panel opens now or once the tour is done.
+        let raised = false;
+        if (!membersOnly) {
+          // Belt for the two hidden entry points (topbar icon + overflow menu):
+          // the panel mints secure-share links that can grant can_edit, and
+          // secure_share.create now refuses without the write bit. Refuse here so
+          // a stale DOM or a deep link cannot open a panel that can only fail.
+          //
+          // NOT applied to the internal branch: nothing there mints a link, and
+          // the members matrix it opens is the one folder Settings already shows
+          // to every member. Gating it would make the rail's Access a dead
+          // control for a view-only member of their own team workspace.
+          if (this.canUpload && !this.canUpload()) {
+            if (window.Butler && Butler.say) {
+              Butler.say(require("libs/permission-denied").weakPrivilegeMessage(
+                LOCALE.PERMISSION_ACTION_SHARE, this.mget(_a.privilege), _K.permission.write,
+              ));
+            }
+            return;
+          }
+          // Contextual tour, raised BEFORE openManageAccess because that call
+          // TOGGLES: with a drawer already open it clears it and returns, so the
+          // flag read after the call means the opposite of what it means here.
+          // `activeTab !== SECURE_SHARE_TAB` is precisely "this click is going
+          // to OPEN the panel" — a click that toggles the view back off is
+          // correctly not treated as reaching Manage access for the first time.
+          //
+          // Placed in the handler rather than at either call site on purpose:
+          // the topbar icon and the overflow menu both raise this service with
+          // uiHandler: [ui] (folder/skeleton/topbar.js:96, window/skeleton/
+          // toolkit/index.js:1666), so one line covers both without going near
+          // their duplicated visibility gate.
+          //
+          // Internal is excluded because the tour teaches secure sharing —
+          // six screens of link options (modules/desk/tutorial/share,
+          // LOCALE.SECURE_SHARE) — over a panel that has no links in it.
+          // Whether the tour actually went up. showTutorial answers false for
+          // every gate — already completed, mobile, the kill switch, another
+          // tour in flight — and that answer is what decides the ORDER below.
+          // The panel is a view now: "this click OPENS it" is "the view is not
+          // up", which toggleSecureShareView reads the same way.
+          if (this.activeTab !== SECURE_SHARE_TAB) {
+            // What this panel is about, told to the tour because the tour
+            // cannot work it out: openManageAccess() opens a WORKSPACE's
+            // access, never a single file's, from every one of the three
+            // surfaces that still reach this line — the folder topbar icon,
+            // the overflow menu and the desk topbar's workspace head. So the
+            // mock panel shows a workspace in its header (180:51964) rather
+            // than the file the first frames drew.
+            //
+            // Absent for the `full` tour and for ?tutorial=share, which have no
+            // trigger and no subject; those keep the file header.
+            //
+            // `subject_data` names the workspace, so the header reads as the
+            // one the user is standing in rather than as the frame's
+            // "Workspace-name" (180:52963). Raw fields, formatted by the panel
+            // — the same contract the media trigger uses
+            // (builtins/media/interact.js). No `filesize`: a workspace has no
+            // meaningful byte count, and the panel drops the size for this
+            // subject anyway.
+            //
+            // `hub_name` is the name that tracks in-window navigation, which is
+            // what the topbar shows; `filename` is the fallback for a window
+            // that has not set one.
+            // In-window, not on the desk. fire() broadcasts, and the desk's
+            // listener would answer it by replacing the whole screen with a
+            // mock of itself — while the panel this tour is about is right
+            // here. showTutorial takes the same claim fire() would have taken,
+            // so every gate still applies exactly once.
+            raised = this.showTutorial("share", {
+              subject: "workspace",
+              subject_data: {
+                name: this.mget(_a.hub_name) || this.mget(_a.filename),
+                filetype: _a.hub,
+                ctime: this.mget(_a.ctime),
+                mtime: this.mget(_a.mtime),
+                area: this.mget(_a.area),
+              },
+            });
+          }
         }
-        // Contextual tour, raised BEFORE openManageAccess because that call
-        // TOGGLES: with a drawer already open it clears it and returns, so the
-        // flag read after the call means the opposite of what it means here.
-        // `!isShowSettings` is precisely "this click is going to OPEN the
-        // panel" — a closing click, and a click that dismisses the folder
-        // settings drawer (which shares the flag), are both correctly not
-        // treated as reaching Manage access for the first time.
+        // THE PANEL WAITS FOR THE TOUR. It used to open underneath it: this
+        // tour teaches the secure-share panel, so it is drawn over the very
+        // window that panel slides into, and the user met a walkthrough with
+        // the real thing already open and invisible behind it.
         //
-        // Placed in the handler rather than at either call site on purpose:
-        // the topbar icon and the overflow menu both raise this service with
-        // uiHandler: [ui] (folder/skeleton/topbar.js:96, window/skeleton/
-        // toolkit/index.js:1666), so one line covers both without going near
-        // their duplicated visibility gate.
-        if (!this.isShowSettings) {
-          require("libs/tutorial-tours").fire("share", this);
+        // So the two are sequenced. Not done with the tour → it plays, and the
+        // panel opens as it comes down. Done with it → `raised` is false and
+        // the panel opens now, exactly as before, which is every click after
+        // the first walkthrough.
+        //
+        // whenDone runs its callback synchronously when nothing is in flight,
+        // so the second case costs a microtask and no branch of its own.
+        if (raised) {
+          const Tours = require("libs/tutorial-tours");
+          return Tours.whenDone("share", () => {
+            if (this.isDestroyed && this.isDestroyed()) return;
+          // THE PANEL IS THE REWARD FOR FINISHING, so a tour the user walked
+          // out of does not get one. Three outcomes, and they are not
+          // interchangeable:
+          //
+          //   completed   isSeen — this tour is `mark_on: "success"`, so its
+          //               flag is written only when the last screen is reached.
+          //               Open the panel.
+          //   abandoned   it appeared and the user closed it. They answered;
+          //               opening the panel anyway is what this rule exists to
+          //               stop.
+          //   never ran   claimed and released without reaching the screen — a
+          //               window it could not be drawn on, a chunk that failed.
+          //               Nothing was taught and nothing was declined, so the
+          //               click must still do what it was for; swallowing it
+          //               would make Share a dead control.
+            if (!Tours.isSeen("share", this) && Tours.appeared("share")) return;
+            this.openManageAccess({ members: membersOnly });
+          });
         }
-        return this.openManageAccess();
+        return this.openManageAccess({ members: membersOnly });
+      }
 
       case "folder-rename":
         return this.openFolderRenameDialog();
@@ -1808,6 +2382,15 @@ class __window_folder extends mfsInteract {
         });
       }
 
+      // ── Workspace file search (toolbar "Search…") ──
+      // Fired by the search Entry's `watch` on every keystroke (args.value).
+      case "ws-search-typed":
+        return this._runWorkspaceSearch((args && args.value) || "");
+
+      // A result row → open that file/folder of THIS workspace.
+      case "ws-search-hit":
+        return this._openWorkspaceSearchHit(cmd);
+
       // ── Team-chat header message search ──
       // Magnifying glass → swap the header for a search bar; back arrow restores
       // it. Both target the single `chat-header-bar` part, which always sits
@@ -1831,7 +2414,8 @@ class __window_folder extends mfsInteract {
         return this._toggleThreadMenu();
 
       case "thread-menu-general":
-        // "# General" → folder-wide chat, scoped IN PLACE (no tab switch).
+        // "# General" → leave the file thread for the team chat, IN PLACE
+        // (no tab switch).
         this._closeThreadMenu();
         this.scopeChatToFile(null);
         return this.scopeChatToFolder(this.mget(_a.nid));
@@ -1877,6 +2461,40 @@ class __window_folder extends mfsInteract {
         // not where a first-time user goes looking for it.
         return this.showFolderTab(_a.task);
 
+      case "add-task": {
+        // Open the panel's New task form, from outside the panel.
+        //
+        // WHO ASKS: the task tour's "Create your first task" CTA, through the
+        // in-window host (window/tutorial, _actOnWindow), which dispatches
+        // here because a tour knows the WINDOW it is drawn on and not the
+        // widgets inside it. `add-task` is the tasks panel's own service — the
+        // same one its viewbar "+ New" button raises — so this forwards rather
+        // than reimplementing the form.
+        //
+        // DEFERRED PAST THE TOUR, and that is the load-bearing part. The create
+        // modal opens INSIDE the panel, which is inside this window, which the
+        // tour is covering — `isolation: isolate` on the window manager's root
+        // means no z-index in here can lift it over a desk-level screen (the
+        // same wall the migrate tour's dialog hit). So it waits for the tour to
+        // come down. With none in flight, whenDone runs the callback
+        // synchronously, exactly where a bare call would sit.
+        const open = () => {
+          if (this.isDestroyed && this.isDestroyed()) return;
+          const p = this._taskPanel;
+          if (!p || (p.isDestroyed && p.isDestroyed())) return;
+          if (!_.isFunction(p.onUiEvent)) return;
+          // The panel reads `taskColumn` off the trigger to pick a starting
+          // column and falls back to its default status without one, which is
+          // what a tour wants: a task in the first column, like the viewbar
+          // button makes.
+          p.onUiEvent(cmd || this, { service: "add-task" });
+        };
+        // The task tab has to be showing, or the panel is not mounted at all.
+        this.showFolderTab(_a.task);
+        require("libs/tutorial-tours").whenDone("folder_task", open);
+        return;
+      }
+
       case "toggle-task-filter":
         // Tab-bar filter button → open/close the task panel's member dropdown.
         if (this._taskPanel && _.isFunction(this._taskPanel.toggleFilter)) {
@@ -1920,17 +2538,17 @@ class __window_folder extends mfsInteract {
         return this._refreshSchedule();
       }
 
-      case "sched-toggle-view": {
+      // ── Month / Week / Day dropdown on the toolbar ────────────────────
+      // Replaced the two-position Weekly/Monthly switch, which could not
+      // express "daily" at all — that view was reachable only by picking a
+      // day out of the mini-calendar.
+      case "sched-toggle-view-menu": {
         const st = require("./skeleton/meeting-schedule").schedState(this);
-        // Explicit pick: from here on this view is the user's, so widening the
-        // panel must not revert it (see _applyScheduleBreakpoint).
-        st.autoDaily = false;
-        // NOTE: from "daily" this lands on "monthly", not "weekly" — the knob
-        // has only two positions and daily is a drill-down of weekly. Existing
-        // behaviour, left as-is; it is simply reachable more often now that a
-        // narrow panel starts in daily.
-        st.view = st.view === "monthly" ? "weekly" : "monthly";
-        return this._refreshSchedule();
+        const open = !st.viewMenuOpen;
+        this._closeSchedMenus();
+        st.viewMenuOpen = open;
+        this._syncSchedMenuDismiss();
+        return this._renderSchedToolbar();
       }
 
       case "sched-set-view": {
@@ -1938,24 +2556,32 @@ class __window_folder extends mfsInteract {
         const v =
           (cmd.mget && (cmd.mget("schedView") || cmd.mget("view"))) ||
           (cmd.el && cmd.el.dataset.view);
-        // Cleared even when the view does not change: tapping "Weekly" while
+        // Cleared even when the view does not change: tapping "Week" while
         // already weekly is still the user claiming the choice, and it should
         // survive the next resize.
         if (v) st.autoDaily = false;
+        this._closeSchedMenus();
         if (v && v !== st.view) {
           st.view = v;
           return this._refreshSchedule();
         }
-        return;
+        // Same view re-picked: the menu still has to shut, and that is a
+        // toolbar repaint — not a 170-cell grid rebuild.
+        return this._renderSchedToolbar();
       }
 
-      // ── Mini-calendar dropdown on the range label's caret ──────────────
+      // ── Mini-calendar dropdown, opened from the range label itself ─────
       case "sched-toggle-picker": {
         const st = require("./skeleton/meeting-schedule").schedState(this);
-        st.pickerOpen = !st.pickerOpen;
+        const open = !st.pickerOpen;
+        this._closeSchedMenus();
+        st.pickerOpen = open;
         // Re-open on the month currently in view, not where it was left.
-        if (st.pickerOpen) st.pickerCursor = st.anchor;
-        return this._refreshSchedule();
+        if (open) st.pickerCursor = st.anchor;
+        this._syncSchedMenuDismiss();
+        // Toolbar only: nothing below the bar changed, and re-feeding the
+        // panel here would rebuild the grid on every open and close.
+        return this._renderSchedToolbar();
       }
 
       case "sched-picker-prev":
@@ -1965,12 +2591,12 @@ class __window_folder extends mfsInteract {
           service === "sched-picker-next" ? 1 : -1,
           "month",
         );
-        return this._refreshSchedule();
+        return this._renderSchedToolbar();
       }
 
       case "sched-pick-day": {
         // Picking a day drills into the single-day hourly view of that day
-        // (Google-Calendar style); the Weekly/Monthly toggle exits it.
+        // (Google-Calendar style); the view dropdown exits it.
         const st = require("./skeleton/meeting-schedule").schedState(this);
         const d =
           (cmd.mget && cmd.mget("schedDay")) || (cmd.el && cmd.el.dataset.day);
@@ -1980,16 +2606,32 @@ class __window_folder extends mfsInteract {
           // Drilling into a day is an explicit choice too — widening the panel
           // afterwards should leave the user on that day, not snap to weekly.
           st.autoDaily = false;
-          st.pickerOpen = false;
+          this._closeSchedMenus();
           return this._refreshSchedule();
         }
         return;
       }
 
       // ── Meeting scheduling modal (skeleton/meeting-modal.js) ───────────
-      case "open-schedule":
+      case "open-schedule": {
         // Calendar "Schedule" CTA → create a new meeting.
-        return this.openMeetingModal();
+        //
+        // DEFERRED PAST THE MEETING TOUR, which ends by raising this same
+        // service (desk/tutorial/meeting, _openTheRealThing). The modal opens
+        // INSIDE this window, which the tour is covering, and
+        // `isolation: isolate` on the window manager's root means no z-index
+        // in here can lift it over a desk-level screen — the same wall the
+        // migrate tour's dialog and the task tour's form both hit.
+        //
+        // With no tour in flight, whenDone runs the callback synchronously,
+        // exactly where the bare call used to sit — which is every press of
+        // the Schedule button itself.
+        const Tours = require("libs/tutorial-tours");
+        return Tours.whenDone("meeting", () => {
+          if (this.isDestroyed && this.isDestroyed()) return;
+          this.openMeetingModal();
+        });
+      }
 
       case "sched-new-at": {
         // Click an empty weekly half-slot → create a meeting prefilled at that
@@ -2411,6 +3053,20 @@ class __window_folder extends mfsInteract {
     return this._launchMeetingStandalone();
   }
 
+  /**
+   * Ask a live call to step aside into the desk's bottom-right dock.
+   *
+   * Delegates to Wm.parkLiveCall (desk/wm/index.js), which owns both the "is
+   * there actually a call?" test and the broadcast — this window deliberately
+   * keeps no reference to the call window, the same way the desk does not.
+   * No-op with no call up, and on a Wm without that method (DMZ / share).
+   */
+  _parkLiveCall() {
+    try {
+      if (window.Wm && _.isFunction(Wm.parkLiveCall)) Wm.parkLiveCall();
+    } catch (e) { /* non-fatal */ }
+  }
+
   // ── Meeting schedule: responsive view breakpoint ─────────────────────────
   // A 7-day hourly grid does not fit a phone. Rather than build a third
   // rendering path, this switches the panel to the DAILY view that already
@@ -2492,6 +3148,9 @@ class __window_folder extends mfsInteract {
     }
     if (next === st.view) return;
     st.view = next;
+    // The picker's active row just changed under the user's cursor without
+    // them touching it — shut the dropdowns rather than repaint them.
+    this._closeSchedMenus();
     this._refreshSchedule();
   }
 
@@ -2499,16 +3158,144 @@ class __window_folder extends mfsInteract {
   // (state lives in this._sched — see skeleton/meeting-schedule.js). Refetches
   // the hub's meetings for the (possibly changed) visible range first, so the
   // grid always reflects the current window.
-  _refreshSchedule() {
+  //
+  // @param {Object} [opt]
+  // @param {Boolean} [opt.quiet]  the grid on screen already shows `_meetings`
+  //   for this range (a reopened tab): skip the pre-fetch paint and repaint
+  //   only if the fetch changes something.
+  _refreshSchedule(opt = {}) {
+    // The Meeting tab stays mounted when another tab is up (showFolderTab).
+    // Don't fetch or rebuild a 24×7 grid nobody can see — remember that its
+    // state moved on so the next open redraws instead of trusting the DOM.
+    if (this._meetingPanelMounted && this.activeTab !== "meeting") {
+      this._schedStale = 1;
+      return Promise.resolve();
+    }
     // Render immediately from view state (so nav/toggle work even if the fetch
-    // fails), then re-render when the fetch resolves.
+    // fails), then re-render when the fetch resolves — but only if it changed
+    // anything. Weekly is ~170 cells, each a widget; the second build used to
+    // run unconditionally.
     const feed = () => {
       const part = this.getPart && this.getPart("meeting-panel");
       if (!part || !part.el) return;
+      this._schedPaintedDay = Dayjs().format("YYYY-MM-DD");
+      // The skin fades the grid in (`[data-painted="1"] > *`), and feed()
+      // recreates those children, so every refresh replayed the fade — the
+      // whole calendar blinking after a meeting was saved or removed, and a
+      // second time when a fetch changed the range just painted. Fade only
+      // for the reveal and for new content (another view or range); a
+      // repaint of what is on screen just appears. Stamped BEFORE the feed so
+      // the new children never pick the animation up.
+      const st = require("./skeleton/meeting-schedule").schedState(this);
+      const { stime, etime } = this._meetingRange();
+      const day = st.view === "daily" ? st.anchor.format("YYYY-MM-DD") : "";
+      const key = `${st.view}:${day}:${stime}:${etime}`;
+      const arriving =
+        key !== this._schedFadeKey || part.el.dataset.painted !== "1";
+      this._schedFadeKey = key;
+      part.el.dataset.schedFade = arriving ? "1" : "0";
       part.feed(require("./skeleton/meeting-schedule")(this).kids);
     };
-    feed();
-    return this._fetchMeetings().then(feed, feed);
+    // Nothing known yet for this window: start from the last answer the
+    // session saw for this range, so a reopened workspace's calendar is never
+    // blank while the fetch runs. In-memory rows win when present — they may
+    // carry a local optimistic edit (_upsertLocalMeeting).
+    if (this._meetings == null) {
+      const known = readCache.peek(this._meetingsCacheKey());
+      // A copy: _upsertLocalMeeting edits this array in place, and the
+      // cached one is shared with every other window on this hub.
+      if (Array.isArray(known)) this._meetings = known.slice();
+    }
+    // `quiet` trusts the grid on screen — but the "today" stamps in it were
+    // computed when it was built, so a reopen on a later day must redraw.
+    const today = Dayjs().format("YYYY-MM-DD");
+    const quiet = !!opt.quiet && this._schedPaintedDay === today;
+    // Painted means "this grid reflects an answer": rows we already had, or a
+    // settled fetch. Until then the skin draws a skeleton over the panel
+    // instead of an empty week (window-folder__meeting-schedule). _fetchMeetings
+    // swallows its own failures, so the settled path below covers a lost
+    // request too — nothing can leave the panel pulsing forever.
+    const paint = () => {
+      const part = this.getPart && this.getPart("meeting-panel");
+      if (part && part.el && part.el.dataset) part.el.dataset.painted = "1";
+    };
+    const before = readCache.signature(this._meetings);
+    if (!quiet) feed();
+    // A quiet pass trusts the grid on screen, and known rows are real content
+    // the moment they are fed; only a first load with nothing cached waits.
+    if (quiet || (Array.isArray(this._meetings) && this._meetings.length)) paint();
+    return this._fetchMeetings().then(() => {
+      if (this.isDestroyed && this.isDestroyed()) return;
+      if (readCache.signature(this._meetings) !== before) feed();
+      paint();
+    });
+  }
+
+  // Repaint ONLY the schedule toolbar row (sys_pn "sched-toolbar"). Opening or
+  // closing one of its dropdowns changes nothing below the bar, and re-feeding
+  // the whole panel here would be actively wrong: the outside-click dismisser
+  // runs in the CAPTURE phase, so a full re-feed destroys the grid — including
+  // the card or slot the click is still travelling to — before it lands. Same
+  // rule the Personal Calendar's toolbar states (panel/calendar/index.js).
+  _renderSchedToolbar() {
+    const part = this.getPart && this.getPart("sched-toolbar");
+    if (!part || !part.el) return;
+    if (part.isDestroyed && part.isDestroyed()) return;
+    part.feed(require("./skeleton/meeting-schedule").toolbarKids(this));
+  }
+
+  // Both toolbar dropdowns (view picker, mini-calendar) are mutually
+  // exclusive and share one dismisser.
+  _closeSchedMenus() {
+    const st = require("./skeleton/meeting-schedule").schedState(this);
+    st.viewMenuOpen = false;
+    st.pickerOpen = false;
+    this._unbindSchedMenuDismiss();
+  }
+
+  _syncSchedMenuDismiss() {
+    const st = require("./skeleton/meeting-schedule").schedState(this);
+    if (st.viewMenuOpen || st.pickerOpen) this._bindSchedMenuDismiss();
+    else this._unbindSchedMenuDismiss();
+  }
+
+  // Any click outside the toolbar row closes the open dropdown. The guard is
+  // the WHOLE row, not "the menu plus its trigger": every control in the bar
+  // closes the menus in its own handler anyway, and a narrower guard would
+  // repaint the row mid-click and swallow the press that was aimed at it.
+  //
+  // And the row has to be THIS WINDOW's. The class is shared by every open
+  // workspace, so a bare selector match would let a click on a second
+  // workspace's meeting toolbar count as "inside" here and leave this
+  // window's dropdown hanging open.
+  _bindSchedMenuDismiss() {
+    if (this._schedMenuDismiss) return;
+    const toolbar = `.${this.fig.family}__meeting-sched-toolbar`;
+    this._schedMenuDismiss = (ev) => {
+      const t = ev && ev.target;
+      // No `closest` means no element to reason about (a text node, a click
+      // synthesised on the document): leave the menu alone rather than guess.
+      if (!t || !t.closest) return;
+      if (this.isDestroyed && this.isDestroyed())
+        return this._unbindSchedMenuDismiss();
+      const bar = t.closest(toolbar);
+      if (bar && this.el && this.el.contains(bar)) return;
+      this._closeSchedMenus();
+      this._renderSchedToolbar();
+    };
+    document.addEventListener("click", this._schedMenuDismiss, true);
+  }
+
+  _unbindSchedMenuDismiss() {
+    if (!this._schedMenuDismiss) return;
+    document.removeEventListener("click", this._schedMenuDismiss, true);
+    this._schedMenuDismiss = null;
+  }
+
+  _meetingsCacheKey() {
+    const { stime, etime } = this._meetingRange();
+    const { hub_id } = this._meetingScope();
+    return `room.list:${hub_id || ""}:${stime}:${etime}`;
   }
 
   // Week/day grids render all 24 hours, so an unscrolled grid opens on empty
@@ -2580,10 +3367,14 @@ class __window_folder extends mfsInteract {
     // the plain service name so this never throws synchronously.
     const svc = (SERVICE.room && SERVICE.room.list) || "room.list";
     const { stime, etime } = this._meetingRange();
+    // Keyed at request time: the range can move while the answer is in flight.
+    const cacheKey = this._meetingsCacheKey();
     return Promise.resolve()
       .then(() => this.fetchService(svc, { stime, etime, ...this._meetingScope() }))
       .then((rows) => {
         this._meetings = this._asMeetingRows(rows);
+        // A copy, not the live array — see _refreshSchedule.
+        readCache.set(cacheKey, this._meetings.slice());
       })
       .catch(() => {
         this._meetings = this._meetings || [];
@@ -3341,10 +4132,12 @@ class __window_folder extends mfsInteract {
   }
 
   /**
-   * Open the folder/workspace meeting as its own top-level window (Wm pool),
-   * centered and resizable — never embedded in the folder body. Mirrors the
-   * team window's startTeamCall. Singleton-guarded so a second click refocuses
-   * the running call instead of launching a duplicate.
+   * Open the folder/workspace meeting as a FULL-FRAME desk screen in the call
+   * layer — never embedded in the folder body, and no longer a centered popup:
+   * the call fills the desk canvas like Settings or the Calendar, and the
+   * stylesheet owns its box (window/meeting/skin `[data-standalone="1"]`).
+   * Mirrors the team window's startTeamCall. Singleton-guarded so a second
+   * click refocuses the running call instead of launching a duplicate.
    */
   _launchMeetingStandalone() {
     if (this._launchingMeeting) return;
@@ -3364,9 +4157,6 @@ class __window_folder extends mfsInteract {
       if (switchcall && !switchcall.isDestroyed()) switchcall.goodbye();
 
       const room_id = this.mget(_a.actual_home_id) || this.mget(_a.nid);
-      // Center within the WM content area (right of the sidebar), not the raw
-      // viewport — see Wm.centeredPopupGeometry.
-      const { top, left, width, height } = Wm.centeredPopupGeometry();
 
       // Immediate click feedback: spin the Start button until the meeting
       // window is live (or we time out) — see _awaitMeetingReady.
@@ -3396,7 +4186,13 @@ class __window_folder extends mfsInteract {
           video: 1,
           standalone: 1,
           wm_unique_id: `window_meeting-${this.mget(_a.hub_id)}`,
-          style: { top, left, width, height, minWidth: 480, minHeight: 420, margin: 0 },
+          // NO GEOMETRY ON PURPOSE. A full-frame call is positioned by CSS
+          // (window/meeting/skin fills the full-size call layer), and an inline
+          // dimension beats the stylesheet — passing a size here is what would
+          // make the call open as a box in the corner of the canvas and then
+          // snap out to fill it. window_meeting._lockGeometry strips any that
+          // the base window writes later.
+          style: { margin: 0 },
         },
         { explicit: 1, singleton: 1 },
       );
@@ -3517,7 +4313,24 @@ class __window_folder extends mfsInteract {
     // endpoint. All it decides is whether the schedule button reads "Start"
     // or "Join meeting" — realtime sentinels keep it correct either way, so
     // it can wait a tick and let the grid request go first.
-    _.defer(() => this._refreshMeetingActiveState());
+    //
+    // Idle, not just deferred: a `_.defer` still lands inside the switch's
+    // burst, next to show_node_by, the chat's own channel.messages and the
+    // task loads — this is a second channel.messages on the same endpoint.
+    // Pulled forward the moment the Meet tab is shown (showFolderTab), which is
+    // where the button it decides lives.
+    const run = () => {
+      if (this._meetingScanDone) return;
+      this._meetingScanDone = 1;
+      if (this.isDestroyed && this.isDestroyed()) return;
+      this._refreshMeetingActiveState();
+    };
+    this._runMeetingScan = run;
+    if (typeof window.requestIdleCallback === "function") {
+      window.requestIdleCallback(run, { timeout: 2500 });
+    } else {
+      setTimeout(run, 1200);
+    }
   }
 
   // Best-effort initial scan: fetch this room's recent messages (newest first)
@@ -3606,29 +4419,36 @@ class __window_folder extends mfsInteract {
   // the window never appears. Same-document lookup — Wm windows share the page.
   _awaitMeetingReady(btnEl) {
     this._stopAwaitMeetingReady();
-    let sawWindow = false;
+    this._meetingLiveWindow = null;
     this._meetingReadyPoll = setInterval(() => {
-      if (this._meetingWindowLive()) {
-        if (!sawWindow) {
-          // Window mounted → the user is joining. Drop the spinner and lock the
-          // button into its "Joined" state.
-          sawWindow = true;
-          this._setMeetingStartLoading(false, btnEl);
-          this._setMeetingJoined(true);
-        }
-        return;
-      }
-      if (sawWindow) {
+      const w = Wm.getItemByKind("window_meeting");
+      if (!w || (w.isDestroyed && w.isDestroyed())) return;
+      // Window mounted → the user is joining. Drop the spinner, lock the
+      // button into its "Joined" state, and STOP POLLING: the window itself
+      // says when it goes. This used to keep a 200ms DOM query running for
+      // the whole length of every meeting just to notice the close.
+      this._stopAwaitMeetingReady();
+      this._setMeetingStartLoading(false, btnEl);
+      this._setMeetingJoined(true);
+      this._meetingLiveWindow = w;
+      // Marionette's own teardown event (View.destroy → triggerMethod
+      // "destroy"), the same one Wm listens to on a workspace pane. Bound
+      // with listenToOnce so this window's own destroy (stopListening)
+      // releases it — a meeting outlives a workspace switch, and a plain
+      // once() would keep the dead folder view reachable for the whole call.
+      this.listenToOnce(w, "destroy", () => {
+        if (this._meetingLiveWindow !== w) return;
+        this._meetingLiveWindow = null;
+        if (this.isDestroyed && this.isDestroyed()) return;
         // The meeting window we were tracking has closed → restore the button.
-        this._stopAwaitMeetingReady();
         this._setMeetingJoined(false);
-      }
+      });
     }, 200);
     // Safety cap — if the window never mounts, clear the spinner so it can't
-    // stick. Once joined, the poll keeps running to watch for the close.
+    // stick.
     this._meetingReadyCap = setTimeout(() => {
       this._meetingReadyCap = null;
-      if (!sawWindow) {
+      if (!this._meetingLiveWindow) {
         this._stopAwaitMeetingReady();
         this._setMeetingStartLoading(false, btnEl);
       }
@@ -3639,6 +4459,10 @@ class __window_folder extends mfsInteract {
     if (this._meetingReadyPoll) {
       clearInterval(this._meetingReadyPoll);
       this._meetingReadyPoll = null;
+    }
+    if (this._meetingLiveWindow) {
+      this.stopListening(this._meetingLiveWindow, "destroy");
+      this._meetingLiveWindow = null;
     }
     if (this._meetingReadyCap) {
       clearTimeout(this._meetingReadyCap);
@@ -3655,8 +4479,20 @@ class __window_folder extends mfsInteract {
     // is anchored on the window root (.window-folder__ui = this.el), NOT the
     // narrower split-body — measuring the split-body left a boundary band where
     // CSS showed the 2-column layout but JS took the compact branch (empty rail).
+    // Memoised for the duration of the current task. `offsetWidth` is a forced
+    // layout read, and this is called several times down one switchView /
+    // _enterChatTabLayout path — each call after a DOM write pays another
+    // whole-document flush (measured in a 2,554ms click). The window cannot
+    // change width without a resize or a frame boundary, so a value read once
+    // per task is the same value every later call in that task would have got.
+    // Cleared on the microtask queue, so the next task measures afresh.
+    if (this._compactChatMemo !== undefined) return this._compactChatMemo;
     const w = (this.el && this.el.offsetWidth) || 9999;
-    return w <= 700;
+    this._compactChatMemo = w <= 700;
+    Promise.resolve().then(() => {
+      this._compactChatMemo = undefined;
+    });
+    return this._compactChatMemo;
   }
 
   scopeChatToFile(fileNid, fileLabel, opts = {}) {
@@ -3718,6 +4554,263 @@ class __window_folder extends mfsInteract {
         }),
       );
       if (fileNid) this._hydrateChatHeaderFile(bar, `${fileNid}`);
+    });
+  }
+
+  // ── Workspace file search (toolbar "Search…", Figma 43:23955) ──────────
+  // The field is built by window/skeleton/toolkit workspaceSearchBox and is
+  // answered HERE, which is the whole point: it sits above one workspace's
+  // files, so it searches that workspace and nothing else.
+  //
+  // `media.search_all` is a scope=hub service — it resolves its DB from the
+  // request hub_id and matches filenames, extensions and indexed content under
+  // that hub only. Before this the same field was the desk's global box: it
+  // asked `desk.search` (every hub the user owns + chat messages across all of
+  // them) and listed the user's WORKSPACES for an empty query.
+  //
+  // hub_id is required and must be the same one the rest of the window uses —
+  // a scope=hub service falls back to the HOST hub when it is missing, which
+  // reads the wrong database and answers nothing (see _runChatSearch).
+  _wsSearchHubId() {
+    return this.mget(_a.actual_hub_id) || this.mget(_a.hub_id);
+  }
+
+  // Hub scope is not always workspace scope. A collaborative workspace IS a hub,
+  // so `media.search_all` already fences it exactly — but a PERSONAL workspace
+  // is a folder at the personal hub's root, and that one hub holds every one of
+  // them (see the home-grid listing in wm/index.js). Hub-scoped alone, a search
+  // in one personal workspace would answer with files from its siblings.
+  //
+  // So for those, fence the hits to the workspace's own subtree by path. The
+  // scope is the WORKSPACE, not the folder currently on screen: a search from
+  // three levels deep must still find the workspace's other files. The window
+  // opens AT its workspace and pushes the state it leaves on every forward
+  // navigation (updateTopbar), so the bottom of the nav stack is that root —
+  // and walking back to it empties the stack again, leaving the model as the
+  // root. A window opened straight onto a subfolder (a deep link) scopes to
+  // that subfolder, which is the root it was given.
+  //
+  // Returns "" when there is nothing to fence on, which degrades to the hub —
+  // never to anything wider than it.
+  _wsSearchScope() {
+    const root = (this._navStack && this._navStack[0]) || {
+      filetype: this.mget(_a.filetype),
+      ownpath: this.mget(_a.ownpath),
+    };
+    if (root.filetype === _a.hub) return "";
+    const p = this._wsNormalizePath(root.ownpath);
+    return p && p !== "/" ? p : "";
+  }
+
+  // media.file_path is a name path from the hub root ("/Docs/report.pdf"), and
+  // the procs that expose it as `ownpath` do not all collapse repeated slashes.
+  _wsNormalizePath(v) {
+    return `${v || ""}`.replace(/\/+/g, "/").replace(/\/$/, "");
+  }
+
+  // Ctrl/Cmd+Shift+F lands here (desk _focusSearch → _focusWorkspaceSearch):
+  // on desktop this field IS the file search, the desk owns no box of its own.
+  // The Entry builds its <input> asynchronously, so a press arriving before the
+  // field is ready simply does nothing rather than throwing.
+  focusWorkspaceSearch() {
+    const box = this._wsSearchBox;
+    if (!box || (box.isDestroyed && box.isDestroyed()) || !box.el) return false;
+    const input = box.el.querySelector("input");
+    if (!input) return false;
+    input.focus();
+    return true;
+  }
+
+  // Every keystroke (Entry `watch`). Debounced, and a monotonic token drops
+  // stale answers so a slower earlier query cannot overwrite a newer one.
+  _runWorkspaceSearch(text) {
+    const q = `${text || ""}`.trim().replace(/\s+/g, " ");
+    if (this._wsSearchTimer) clearTimeout(this._wsSearchTimer);
+    // seo_search_unified drops terms shorter than 2 chars and answers an empty
+    // list, so close the dropdown instead of asking. An empty field is NOT a
+    // request for "everything" — that is exactly what used to list every
+    // workspace here.
+    if (q.length < 2) {
+      this._wsSearchToken = (this._wsSearchToken || 0) + 1; // cancel in-flight
+      return this._hideWorkspaceSearch();
+    }
+    // The row widget is a lazily imported kind; warm it while the query is in
+    // flight so the first hits render as rows rather than as placeholders that
+    // fill in a hop later. Fire-and-forget — the rows resolve either way.
+    if (Kind && _.isFunction(Kind.waitFor)) {
+      Kind.waitFor("workspace_item").catch(() => {});
+    }
+    this._wsSearchTimer = setTimeout(() => {
+      this._wsSearchTimer = null;
+      const hub_id = this._wsSearchHubId();
+      if (!hub_id) return;
+      const token = (this._wsSearchToken = (this._wsSearchToken || 0) + 1);
+      const scope = this._wsSearchScope();
+      this.fetchService(
+        {
+          service:
+            (SERVICE.media && SERVICE.media.search_all) || "media.search_all",
+          hub_id,
+          string: q,
+          page: 1,
+          limit: scope ? WS_SEARCH_FETCH_MAX : WS_SEARCH_LIMIT,
+        },
+        { async: 1 },
+      )
+        .then((res) => {
+          if (token !== this._wsSearchToken) return;
+          this._showWorkspaceSearch(this._wsSearchRows(res, hub_id, scope));
+        })
+        .catch(() => {
+          if (token !== this._wsSearchToken) return;
+          this._showWorkspaceSearch([]);
+        });
+    }, 250);
+  }
+
+  // Normalize the response and fence it to this workspace.
+  //  - a single hit comes back as a bare object, not a one-element array;
+  //  - hub_id is re-checked even though the service is hub-scoped, so a row
+  //    from anywhere else can never be rendered as a hit of this workspace;
+  //  - `scope` fences a personal workspace to its own subtree (_wsSearchScope);
+  //  - the proc computes each row's privilege (user_permission) but does not
+  //    filter on it, so drop rows that explicitly report no read right. Rows
+  //    with no privilege field at all are kept: the viewer has this workspace
+  //    open, so "unknown" means the proc told us nothing, not "denied".
+  _wsSearchRows(res, hub_id, scope) {
+    let rows = res;
+    if (!_.isArray(rows)) {
+      rows = (res && (res.data || res.rows)) || (res && res.nid ? [res] : []);
+    }
+    if (!_.isArray(rows)) rows = [];
+    const READ = _K.permission.read;
+    return rows
+      .filter((r) => r && (r.nid || r.id))
+      .filter((r) => r.hub_id == null || `${r.hub_id}` === `${hub_id}`)
+      .filter((r) => {
+        if (!scope) return true;
+        // Fail CLOSED: a row whose path cannot be read cannot be shown to be
+        // inside this workspace, and "this workspace only" is the promise the
+        // field makes. `ownpath` alone — `file_path` carries the hub's own name
+        // as a prefix, so it does not compare against a within-hub scope.
+        const path = this._wsNormalizePath(r.ownpath);
+        if (!path) return false;
+        return path === scope || path.indexOf(`${scope}/`) === 0;
+      })
+      .filter((r) => {
+        if (r.privilege == null) return true;
+        const p = Number(r.privilege);
+        return !Number.isFinite(p) || (p & READ) === READ;
+      })
+      .slice(0, WS_SEARCH_LIMIT);
+  }
+
+  _showWorkspaceSearch(rows) {
+    const pfx = `${this.fig.family}-topbar`;
+    // `result_type` is what makes workspace_item render a RESULT row (icon +
+    // name) instead of a sidebar workspace row with a folder-tree chevron.
+    const items = rows.map((r) => ({
+      ...r,
+      kind: "workspace_item",
+      nid: r.nid || r.id,
+      hub_id: r.hub_id || this._wsSearchHubId(),
+      result_type: "file",
+      nodeRole: "result",
+      service: "ws-search-hit",
+      uiHandler: [this],
+    }));
+    return this.ensurePart("ws-search-results").then((p) => {
+      if (!p || (p.isDestroyed && p.isDestroyed())) return;
+      p.feed(
+        items.length
+          ? items
+          : [
+              Skeletons.Note({
+                className: `${pfx}__search-empty`,
+                content: LOCALE.NO_RESULTS,
+              }),
+            ],
+      );
+      this._openWorkspaceSearchPanel();
+    });
+  }
+
+  _openWorkspaceSearchPanel() {
+    const panel = this._wsSearchPanel;
+    if (!panel || (panel.isDestroyed && panel.isDestroyed())) return;
+    if (panel.el && panel.el.dataset.state !== "1") panel.setState(1);
+    if (this._wsSearchDismiss) return;
+    // Click anywhere outside the field + dropdown closes it. mousedown, so the
+    // dropdown is gone before the click lands on whatever is underneath.
+    this._wsSearchDismiss = (e) => {
+      const box = this._wsSearchContainer;
+      if (box && box.el && box.el.contains(e.target)) return;
+      this._hideWorkspaceSearch();
+    };
+    document.addEventListener("mousedown", this._wsSearchDismiss);
+    // Escape closes it too, and only while it is open. Nothing is
+    // preventDefault-ed: the desk's own Escape hotkey ignores keys pressed
+    // inside a text entry, so this is the only handler that can answer here,
+    // but a press from elsewhere must still reach whatever else wants it.
+    this._wsSearchEsc = (e) => {
+      if (e.key === "Escape") this._hideWorkspaceSearch();
+    };
+    document.addEventListener("keydown", this._wsSearchEsc);
+  }
+
+  // Timer + the document-level listener only. Split out so teardown can drop
+  // them without touching parts that are already being destroyed.
+  _teardownWorkspaceSearch() {
+    if (this._wsSearchTimer) {
+      clearTimeout(this._wsSearchTimer);
+      this._wsSearchTimer = null;
+    }
+    this._wsSearchToken = (this._wsSearchToken || 0) + 1; // cancel in-flight
+    if (this._wsSearchDismiss) {
+      document.removeEventListener("mousedown", this._wsSearchDismiss);
+      this._wsSearchDismiss = null;
+    }
+    if (this._wsSearchEsc) {
+      document.removeEventListener("keydown", this._wsSearchEsc);
+      this._wsSearchEsc = null;
+    }
+  }
+
+  _hideWorkspaceSearch() {
+    this._teardownWorkspaceSearch();
+    const panel = this._wsSearchPanel;
+    if (panel && !(panel.isDestroyed && panel.isDestroyed())) {
+      panel.setState(0);
+      const results = this._wsSearchResults;
+      if (results && !(results.isDestroyed && results.isDestroyed())) {
+        results.feed([]);
+      }
+    }
+  }
+
+  // A result row was clicked: open the hit. openFileLocation resolves what that
+  // means — a file whose tile is already on screen opens through the tile, an
+  // unrendered one opens in its viewer, and a folder opens as a folder window
+  // (its own tile navigates this window in place, as a double-click does). Same
+  // path the notification deep links and the desk's own search hits use, so
+  // there is one answer to "open this node" in the product.
+  _openWorkspaceSearchHit(cmd) {
+    const hit = cmd && cmd.model ? cmd.model.toJSON() : {};
+    const nid = hit.nid || hit.id;
+    if (!nid) return;
+    this._hideWorkspaceSearch();
+    const box = this._wsSearchBox;
+    if (box && box._input && _.isFunction(box.setValue)) box.setValue("");
+    // Only the node fields, never the row's own widget options: `kind`
+    // ("workspace_item"), uiHandler and service ride on the model too, and two
+    // of application()'s branches spread the caller's object OVER their own
+    // kind — which would try to launch a sidebar row as a window.
+    return this.openFileLocation({
+      nid,
+      hub_id: hit.hub_id || this._wsSearchHubId(),
+      pid: hit.pid || hit.parent_id || 0,
+      filetype: hit.filetype || hit.ftype || hit.category,
+      area: hit.area || this.mget(_a.area),
     });
   }
 
@@ -4147,6 +5240,13 @@ class __window_folder extends mfsInteract {
     this._updateChatHeader(null, "", false);
   }
 
+  // Tell the team chat which folder we moved into.
+  //
+  // The name is historical: in a workspace this no longer switches
+  // conversations — there is one team chat per workspace — it only re-points
+  // where a post's uploads land. On a DMZ share, where the folder is an access
+  // boundary, it still selects the conversation. Either way the chat widget
+  // decides; see setScopedFolderNid there.
   scopeChatToFolder(folderNid) {
     return this.ensurePart("folder-chat").then((chat) => {
       if (chat && _.isFunction(chat.setScopedFolderNid))
@@ -4226,14 +5326,23 @@ class __window_folder extends mfsInteract {
     const svc =
       (SERVICE.channel && SERVICE.channel.file_thread_list_by_folder) ||
       "channel.file_thread_list_by_folder";
+    // Keyed at request time: the folder can change while this is in flight.
+    const cacheKey = this._threadListCacheKey();
     return this.fetchService(
       { service: svc, folder_nid, hub_id, page: 1 },
       { async: 1 },
     )
-      .then((res) =>
-        _.isArray(res) ? res : (res && (res.data || res.rows)) || [],
-      )
+      .then((res) => {
+        const items = _.isArray(res) ? res : (res && (res.data || res.rows)) || [];
+        readCache.set(cacheKey, items);
+        return items;
+      })
       .catch(() => []);
+  }
+
+  _threadListCacheKey() {
+    const hub_id = this.mget(_a.actual_hub_id) || this.mget(_a.hub_id);
+    return `channel.threads:${hub_id || ""}:${this.mget(_a.nid)}`;
   }
 
   // ── Full Chat-tab thread rail (Figma 2328-115485) ─────────────────────
@@ -4257,13 +5366,15 @@ class __window_folder extends mfsInteract {
       this._threadRailPart = rail;
       return this.ensurePart("folder-chat").then((chat) => {
         const scopedNid = chat && chat.scopedFileNid ? chat.scopedFileNid : "";
-        return this._fetchThreadList().then((items) => {
-          if (this.isDestroyed && this.isDestroyed()) return;
-          if (!rail.el || (rail.isDestroyed && rail.isDestroyed())) return;
-          // Folder changed mid-fetch → discard this stale response.
-          if (`${this.mget(_a.nid)}` !== folderNid) return;
-          if (generation !== this._ftThreadRequestGeneration()) return;
+        const paint = (items) => {
           this._threadRailItems = items;
+          this._threadRailFolder = folderNid;
+          this._threadRailGeneration = generation;
+          // Every Chat-tab press lands here, and the rail is usually already
+          // showing exactly these rows: a feed() would destroy and rebuild
+          // every thread row (~4 views each) for nothing. Signed per rail
+          // instance, so a remounted rail always paints.
+          if (this._sameThreadRailPaint(rail, items, scopedNid)) return;
           rail.feed(
             require("./skeleton/thread-menu")(this, {
               items,
@@ -4271,6 +5382,35 @@ class __window_folder extends mfsInteract {
               variant: "rail",
             }),
           );
+        };
+        // Paint what is already known for THIS folder first — the rows this
+        // window last rendered (same folder, same access generation), else the
+        // session's last answer for it — so reopening the Chat tab shows the
+        // rail at once instead of a blank column for the round trip. The fetch
+        // below then repaints only if the list actually changed. Gated on chat
+        // access exactly like the fetch: no filenames for a member who may
+        // not see them.
+        let painted = null;
+        if (this._privilegeGrantsChat(this.mget(_a.privilege))) {
+          const known =
+            this._threadRailFolder === folderNid &&
+            this._threadRailGeneration === generation &&
+            _.isArray(this._threadRailItems)
+              ? this._threadRailItems
+              : readCache.peek(this._threadListCacheKey());
+          if (_.isArray(known)) {
+            paint(known);
+            painted = readCache.signature(known);
+          }
+        }
+        return this._fetchThreadList().then((items) => {
+          if (this.isDestroyed && this.isDestroyed()) return;
+          if (!rail.el || (rail.isDestroyed && rail.isDestroyed())) return;
+          // Folder changed mid-fetch → discard this stale response.
+          if (`${this.mget(_a.nid)}` !== folderNid) return;
+          if (generation !== this._ftThreadRequestGeneration()) return;
+          if (painted !== null && painted === readCache.signature(items)) return;
+          paint(items);
         });
       });
     });
@@ -4283,6 +5423,7 @@ class __window_folder extends mfsInteract {
     const rail = this._threadRailPart;
     if (!rail || !rail.el || (rail.isDestroyed && rail.isDestroyed())) return;
     if (!_.isArray(this._threadRailItems)) return;
+    if (this._sameThreadRailPaint(rail, this._threadRailItems, scopedNid || "")) return;
     rail.feed(
       require("./skeleton/thread-menu")(this, {
         items: this._threadRailItems,
@@ -4290,6 +5431,16 @@ class __window_folder extends mfsInteract {
         variant: "rail",
       }),
     );
+  }
+
+  // True when `rail` already shows exactly (items, scopedNid) — the caller can
+  // skip its feed. Otherwise records the new signature and answers false.
+  _sameThreadRailPaint(rail, items, scopedNid) {
+    const sig = readCache.signature({ items, scopedNid: scopedNid || "" });
+    const hasRows = !!(rail.children && rail.children.length);
+    if (hasRows && rail._threadRailSig === sig) return true;
+    rail._threadRailSig = sig;
+    return false;
   }
 
   _closeThreadMenu() {
@@ -4321,11 +5472,14 @@ class __window_folder extends mfsInteract {
     }
   }
 
-  // Canonical task-scoping args for the *current* folder. A hub/workspace ROOT
-  // window's active dir is actual_home_id (hub-wide, so `actual_home_id || nid`
-  // would wrongly collapse every subfolder onto the root); a subfolder window
-  // uses its own nid. `isRoot` also lets the panel surface legacy (nid-less)
-  // tasks at the root only. Mirrors the breadcrumb's curNid resolution.
+  // Which folder a NEW task is filed under — not what the board lists. The
+  // board is workspace-wide now (tasks/index.js), so these args only travel
+  // with a create.
+  //
+  // A hub/workspace ROOT window's active dir is actual_home_id (hub-wide, so
+  // `actual_home_id || nid` would wrongly collapse every subfolder onto the
+  // root); a subfolder window uses its own nid. Mirrors the breadcrumb's curNid
+  // resolution.
   _taskScopeArgs() {
     const nid = this.mget(_a.nid);
     const homeId = this.mget(_a.actual_home_id);
@@ -4351,8 +5505,9 @@ class __window_folder extends mfsInteract {
     };
   }
 
-  // Keep the embedded task panel scoped to the navigated folder, mirroring
-  // scopeChatToFolder. No-op until the Task tab has been opened once.
+  // Tell the embedded task panel which folder we moved into, mirroring
+  // scopeChatToFolder — the destination for new tasks, not a board filter.
+  // No-op until the Task tab has been opened once.
   scopeTasksToFolder() {
     if (!this._taskPanelMounted) return;
     const apply = (p) => {
@@ -4413,10 +5568,103 @@ class __window_folder extends mfsInteract {
       if (p && !(p.isDestroyed && p.isDestroyed()) && _.isFunction(p.openTaskById)) {
         p.openTaskById(task_id);
       }
-      // Consumed: a later remount of the panel (the Meeting view resets it)
-      // must not reopen this task out of the blue.
+      // Consumed: a later remount of the panel (a workspace switch rebuilds
+      // the window) must not reopen this task out of the blue.
       if (!mounted) this.mset("open_task_id", null);
     });
+  }
+
+  /**
+   * The meeting twin of openTaskDeepLink: show the Meeting tab and open that
+   * meeting's Information modal. Used by the Personal Calendar, whose chips
+   * name a meeting in a workspace the user may not even have open.
+   *
+   * NOT a launch-time option, and it must never become one. window_folder's
+   * onDomRefresh reads a launch-time `activeTab` of "meeting" as
+   * `_launchMeetingStandalone()` — i.e. START/JOIN THE CALL, not show the tab
+   * — so a meeting deep link is only safe on a window that is already mounted.
+   * That is the docked route (Wm.openNotificationLocation), which mounts the
+   * pane with no activeTab and calls this afterwards.
+   *
+   * @param {String} nid    the meeting node
+   * @param {Number} [stime] its start, epoch SECONDS — the calendar row
+   *   already carries it, so the grid can be anchored without a lookup
+   */
+  async openMeetingDeepLink(nid, stime) {
+    if (!nid) return;
+    const sched = require("./skeleton/meeting-schedule");
+    const at = Number(stime) ? Dayjs.unix(Number(stime)) : null;
+    // ANCHORED BEFORE THE TAB IS SHOWN, and that order is the whole point.
+    // `_meetingRange()` derives room.list's [stime, etime] from this anchor,
+    // which starts at TODAY — so a meeting three weeks out is simply not in
+    // the range the tab fetches on open, `_meetings` never holds it, and
+    // `_prefillMeeting(undefined)` returns null. openMeetingModal then falls
+    // back to CREATE mode: an empty "New meeting" form where the user asked to
+    // see an existing one, one submit away from booking a duplicate.
+    //
+    // Setting it here means the ONE fetch showFolderTab makes is already the
+    // right range, rather than today's followed by a corrective second read.
+    if (at && at.isValid()) {
+      sched.schedState(this).anchor = at;
+      // The picker is anchor-relative; leaving it open would reopen it on a
+      // month the user never navigated to.
+      sched.schedState(this).pickerOpen = false;
+    }
+    // A grid already on screen was painted for the OLD anchor, so the reopen
+    // branch of showFolderTab must redraw rather than trust the DOM.
+    this._schedStale = 1;
+    const wasOpen = this.activeTab === "meeting";
+    await Promise.resolve(this.showFolderTab("meeting"));
+    if (this.isDestroyed && this.isDestroyed()) return;
+    // Wait on the range read. showFolderTab does not: it parks the fetch on
+    // `_schedRefresh` and returns. And when the Meeting tab was ALREADY the
+    // active one it early-returns without fetching at all, so the moved anchor
+    // has to be applied by hand here.
+    if (wasOpen) {
+      this._schedStale = 0;
+      await this._refreshSchedule();
+    } else {
+      await Promise.resolve(this._schedRefresh);
+    }
+    if (this.isDestroyed && this.isDestroyed()) return;
+
+    let meeting = (this._meetings || []).find((m) => `${m.id}` === `${nid}`);
+    // Not in the anchored range: a timeless row (the calendar sends stime 0
+    // for an all-day meeting), or a stored stime the caller's copy disagrees
+    // with. One rangeless read settles it — see _fetchMeetingById.
+    if (!meeting) meeting = await this._fetchMeetingById(nid);
+    if (this.isDestroyed && this.isDestroyed()) return;
+    // REFUSED, not opened blank. See the anchor note above: with no row the
+    // modal is a create form, and the user is looking at what they believe is
+    // their meeting. The tab is still switched, so they land on the calendar.
+    if (!meeting) return Wm.alert(LOCALE.MEETING_NOT_FOUND);
+    return this.openMeetingModal({ meeting });
+  }
+
+  /**
+   * One meeting by nid, ignoring the visible range.
+   *
+   * `room_list_scheduled` treats a MISSING bound as "no bound"
+   * (`_stime IS NULL OR _etime IS NULL` → every scheduled node), and
+   * `room.list` reads both with `input.use(..., null)` — so the bounds are
+   * OMITTED here rather than sent empty. fetchService writes a plain scalar
+   * straight into the query string, so an undefined one would arrive as the
+   * four-character string "undefined" and cast to 0, matching nothing.
+   *
+   * Resolves null rather than rejecting: a failed lookup is answered with
+   * MEETING_NOT_FOUND by the caller, which is the honest outcome either way.
+   *
+   * @param {String} nid
+   * @returns {Promise<Object|null>} a raw room.list row, or null
+   */
+  async _fetchMeetingById(nid) {
+    const svc = (SERVICE.room && SERVICE.room.list) || "room.list";
+    const rows = await Promise.resolve()
+      .then(() => this.fetchService(svc, { ...this._meetingScope() }))
+      .catch(() => null);
+    return (
+      this._asMeetingRows(rows).find((m) => `${m.id}` === `${nid}`) || null
+    );
   }
 
   // Keep folder-chat scope in sync with the navigated folder so the right-side
@@ -4464,17 +5712,147 @@ class __window_folder extends mfsInteract {
     this.syncNewCtrlVisibility();
   }
 
+  // The scrollers the tab switch has to preserve, by panel. Each resolver
+  // answers the live element or null; a panel that is not mounted (task board
+  // before its first open, meeting grid likewise) simply has nothing to keep.
+  // The chat keeps its DISTANCE FROM THE BOTTOM, not its offset: messages that
+  // arrive while it is hidden must not push it away from the tail it was on.
+  _panelScrollers() {
+    const fig = this.fig.family;
+    return {
+      files: () => (this.iconsList && this.iconsList.__container) || null,
+      chat: () => (this.el && this.getChatScrollElement()) || null,
+      meeting: () =>
+        (this.el && this.el.querySelector(`.${fig}__meeting-sched-body`)) || null,
+    };
+  }
+
+  // display:none (how the skin hides a tab) resets a scroller to 0 when it is
+  // shown again. Note every VISIBLE scroller before the data-view stamp…
+  _stashPanelScroll() {
+    if (!this._panelScroll) this._panelScroll = {};
+    const scrollers = this._panelScrollers();
+    for (const name of Object.keys(scrollers)) {
+      const el = scrollers[name]();
+      // getClientRects() is empty for display:none — a hidden panel reads 0
+      // and must not overwrite the value we kept for it.
+      if (!el || !el.getClientRects().length) continue;
+      this._panelScroll[name] =
+        name === "chat"
+          ? { bottom: el.scrollHeight - el.clientHeight - el.scrollTop }
+          : { top: el.scrollTop, left: el.scrollLeft };
+    }
+    // The board keeps its own (per column, per view) — hand it the same cue.
+    const board = this._taskPanel;
+    if (
+      board &&
+      !(board.isDestroyed && board.isDestroyed()) &&
+      board.el &&
+      board.el.getClientRects().length &&
+      _.isFunction(board._captureViewScroll)
+    ) {
+      this._panelScroll.task = board._captureViewScroll();
+    }
+  }
+
+  // …and put it back on the ones that just became visible. Twice: once now,
+  // for the common case, and once next frame for a panel whose full
+  // scrollHeight only exists after layout (images, late-mounting children).
+  _restorePanelScroll() {
+    const saved = this._panelScroll;
+    if (!saved) return;
+    const restore = () => {
+      if (this.isDestroyed && this.isDestroyed()) return;
+      const scrollers = this._panelScrollers();
+      for (const name of Object.keys(scrollers)) {
+        const s = saved[name];
+        if (!s) continue;
+        const el = scrollers[name]();
+        if (!el || !el.getClientRects().length) continue;
+        if (name === "chat") {
+          el.scrollTop = Math.max(0, el.scrollHeight - el.clientHeight - s.bottom);
+        } else {
+          if (s.top && el.scrollTop !== s.top) el.scrollTop = s.top;
+          if (s.left && el.scrollLeft !== s.left) el.scrollLeft = s.left;
+        }
+      }
+      const board = this._taskPanel;
+      if (
+        saved.task &&
+        board &&
+        !(board.isDestroyed && board.isDestroyed()) &&
+        board.el &&
+        board.el.getClientRects().length &&
+        _.isFunction(board._restoreViewScroll)
+      ) {
+        board._restoreViewScroll(saved.task);
+      }
+    };
+    // Next frame ONLY. Restoring synchronously here forced the whole newly
+    // revealed pane (a display:none subtree has no style or layout — for the
+    // file grid, thousands of elements) to restyle and lay out INSIDE the
+    // click handler, on top of the frame that has to do it anyway. rAF runs
+    // before that frame paints, so the offset is still in place on first
+    // paint — nothing flashes at the top — and the layout is paid once.
+    if (typeof requestAnimationFrame === "function") {
+      requestAnimationFrame(restore);
+    } else {
+      restore();
+    }
+  }
+
   showFolderTab(tab) {
     if (this.activeTab === tab) {
       this.syncNewCtrlVisibility();
       return;
     }
+    // Note the outgoing panel's scroll offset FIRST, before this method writes
+    // anything (tab-bar state, chat layout, visibility stamps). Read here the
+    // layout is still clean from the last frame, so it costs nothing; read
+    // after those writes — where it used to be, inside switchView — it forced
+    // a synchronous style+layout flush of the window on every rail click.
+    this._stashPanelScroll();
     const prevTab = this.activeTab;
     this.activeTab = tab;
-    this.$el.find(".window-folder__tab-bar-item").attr("data-state", 0);
-    this.$el
-      .find(`.window-folder__tab-bar-item[data-tab='${tab}']`)
-      .attr("data-state", 1);
+    // Opening Task, Meet or Files clears that rail pill (panel_activity marks what is
+    // there now as seen; anything newer counts again). Every way onto a tab
+    // passes here — the rail, a notification deep link, a switch that keeps
+    // the tab. Not for a window opened from a share (token): the pill
+    // describes the workspace the user belongs to.
+    this._announceTabSeen(tab);
+    // The Start / Join button is on the Meet tab: its idle-deferred scan
+    // (_initMeetingPresence) must not be waited on once it is on screen.
+    if (tab === "meeting" && _.isFunction(this._runMeetingScan)) {
+      this._runMeetingScan();
+    }
+    // The desk's switcher header lights its link chip while the secure-share
+    // view is up (it is a toggle for it). Announced here, where every way in
+    // and out ends — the opener, the panel's ✕, a rail press — so the chip
+    // follows the view itself rather than the click that asked for it.
+    if (prevTab === SECURE_SHARE_TAB || tab === SECURE_SHARE_TAB) {
+      if (window.Wm && Wm.$el) {
+        Wm.$el.trigger(SECURE_SHARE_VIEW_EVENT, [this, tab === SECURE_SHARE_TAB]);
+      }
+    }
+    // A live call fills the desk canvas (window/meeting _lockGeometry), so it
+    // covers this pane entirely — switching tab under it would change a screen
+    // nobody can see. Park it in the desk's corner dock, exactly as opening a
+    // section screen or another workspace does.
+    //
+    // Not conditional on which tab: leaving the Meeting tab is the obvious
+    // case, but the call is launched from the Meeting tab and then stays up
+    // whatever tab you are on, so Files → Chat has to park it too.
+    this._parkLiveCall();
+    // Native queries, not $el.find: this runs on every rail click, and the
+    // window subtree holds the whole file grid, the team chat and the board.
+    if (this.el) {
+      this.el
+        .querySelectorAll(".window-folder__tab-bar-item")
+        .forEach((item) => item.setAttribute("data-state", 0));
+      this.el
+        .querySelectorAll(`.window-folder__tab-bar-item[data-tab='${tab}']`)
+        .forEach((item) => item.setAttribute("data-state", 1));
+    }
     // Full Chat-tab layout: entering sets up [rail | #General | side panel] and
     // forces the middle chat to General; leaving restores the Files-tab header
     // and closes the side panel.
@@ -4487,34 +5865,83 @@ class __window_folder extends mfsInteract {
     // The list/grid view toggle lives in the Files filter row.
     const viewCtrl = this.getPart("view-ctrl");
     if (viewCtrl && viewCtrl.el) {
-      viewCtrl.el.dataset.visible = tab === "files" ? "1" : "0";
+      // Access keeps the file grid on screen (./access-column), so its toggle too.
+      viewCtrl.el.dataset.visible = showsFileGrid(tab) ? "1" : "0";
     }
     // The merged "+ New" button also lives in that row and only operates on
-    // Files (upload / create / gdrive-import) — hide it off the Files tab so it
-    // can't be mistaken for a Chat/Task/Meeting action.
+    // the file grid (upload / create / gdrive-import) — hide it off Files and
+    // Access so it can't be mistaken for a Chat/Task/Meeting action.
     this.syncNewCtrlVisibility();
 
     const switchView = (view) => {
-      if (this._meetingViewActive && tab !== "meeting") {
-        view.feed(folderFilesView(this));
-        this._meetingViewActive = 0;
-        this._taskPanelMounted = 0;
-      }
+      // Every tab is a SIBLING inside the split body, shown and hidden by the
+      // `data-view` stamp the skin keys on (skin/index.scss &__split-body).
+      // Nothing here feeds the view: a feed() destroys the file grid, the team
+      // chat and the task board together, and coming back then pays all their
+      // mounts again — media.show_node_by alone is ~800ms of server time
+      // (skeleton/toolkit gridFilesBrowser), which was the lag on Meeting →
+      // Files, and the task board re-ran its six loads on Meeting → Task. The
+      // Meeting tab was the one tab that did this; it now appends once, like
+      // the Task tab below, and is revealed by CSS.
+      //
+      // display:none drops a scroller's position, so the panels going out of
+      // view are noted before the stamp and the ones coming in are put back
+      // after it — a user who scrolled deep into a folder and glanced at the
+      // board should land where they were. (Noted at the top of
+      // showFolderTab, before any write — see there.)
+      // Where the column is switching FROM, for the skin's Team Chat <->
+      // Who has access switch animation (skin/index.scss). Empty on first show.
+      view.el.dataset.fromView = prevTab || "";
       view.el.dataset.view = tab;
+      this._playViewEntrance(view);
+      this._restorePanelScroll();
       switch (tab) {
         case _a.chat:
           // Rail + side-panel layout is set up by _enterChatTabLayout (called
           // from showFolderTab); the chat panel itself is already mounted.
+          //
+          // Opening Team Chat is reading it — the one tab switch that marks
+          // the conversation read (widget_chat read_on_interaction). Measured
+          // a frame later, once the data-view stamp has laid it out.
+          requestAnimationFrame(() => {
+            const chat = this.getPart && this.getPart("folder-chat");
+            if (chat && _.isFunction(chat.readIfInView)) chat.readIfInView();
+          });
           return;
         case "files":
           return;
         case "meeting":
-          this._meetingViewActive = 1;
-          this._taskPanelMounted = 0;
-          view.feed(require("./skeleton/meeting-panel")(this));
-          // Then fetch the hub's meetings for the visible range and re-feed the
-          // grid with schedule cards.
-          this._refreshSchedule();
+          if (!this._meetingPanelMounted) {
+            this._meetingPanelMounted = 1;
+            view.append(require("./skeleton/meeting-panel")(this));
+            // First open: paint the grid at once (from any rows the session
+            // cache already holds for this range), then fetch the hub's
+            // meetings and repaint with the cards if they changed.
+            //
+            // Kept on the window rather than discarded so a caller that needs
+            // the ROWS — openMeetingDeepLink, which has to find one in
+            // `_meetings` before it can open its modal — can wait on this
+            // fetch instead of issuing a second one. Nothing else reads it,
+            // and showing the tab still does not wait on it.
+            this._schedRefresh = this._refreshSchedule();
+            return;
+          }
+          // Reopened: the grid is still there, showing the rows it was last
+          // fed. Revalidate quietly — repaint only on a change — unless the
+          // view state moved while it was hidden (_applyScheduleBreakpoint
+          // flags that), in which case it must be redrawn now.
+          this._schedRefresh = this._refreshSchedule({ quiet: !this._schedStale });
+          this._schedStale = 0;
+          return;
+        case ACCESS_TAB:
+          // The rail's Access: the file grid and its gutter stay, and the
+          // members panel takes the chat panel's column (./access-column).
+          showAccessColumn(this, view);
+          return;
+        case SECURE_SHARE_TAB:
+          // "Manage access" on a share-area workspace: the same column, with
+          // the secure-share panel in it (./secure-share-column).
+          showSecureShareColumn(this, view);
           return;
         case _a.task:
           if (!this._taskPanelMounted) {
@@ -4532,7 +5959,8 @@ class __window_folder extends mfsInteract {
               // Upload/destination nid: for a hub-level window the working nid
               // is actual_home_id, not the hub_id itself (else media.upload 403).
               nid: destNid,
-              // Folder-scope identity for the task list/create.
+              // Which folder a new task is filed under. Not a list filter —
+              // the board shows the whole workspace (see _taskScopeArgs).
               scope_nid: scopeNid,
               scope_is_root: isRoot,
               // Deep-link from a task mention/assignment notification: the tasks
@@ -4575,8 +6003,147 @@ class __window_folder extends mfsInteract {
     });
   }
 
+  /**
+   * Replay the split body's view entrance (skin: &__split-body[data-view-entering="1"]).
+   *
+   * Every press of Files / Chat / Task / Meet — and the split body's first
+   * paint — slides that view's panels in, the same motion as the Team Chat <->
+   * Who has access switch. A panel on screen in both views (the chat panel in
+   * Files and in Chat) does not replay a CSS animation just because data-view
+   * changed, so the stamp is REMOVED, a reflow is forced, and it is set again:
+   * the rule stops matching for one style pass and the animation restarts.
+   *
+   * NOT cleared on a timer, and that is the point: the panels that need it
+   * most appear late. The task board is a lazy kind — a placeholder until its
+   * chunk loads, often well past any short timeout after a page refresh — and
+   * the Meet schedule's first build is one long task, after which a timed
+   * clear can run before the first paint. Either way the panel showed with no
+   * animation. The stamp now stays until the next switch restarts it, so a
+   * panel that arrives late still enters.
+   *
+   * @param {Object} view  the split body (part "folder-view")
+   */
+  _playViewEntrance(view) {
+    const el = view && view.el;
+    if (!el || !el.dataset) return;
+    delete el.dataset.viewEntering;
+    // NO `void el.offsetWidth` HERE. That was a deliberate synchronous reflow,
+    // the standard trick for restarting a CSS animation: drop the attribute,
+    // force the engine to notice, put it back. It is only cheap on a small
+    // document.
+    //
+    // switchView has just written `dataset.fromView` and `dataset.view` on this
+    // element, so style is dirty for the whole tree when the read lands, and the
+    // read has to flush all of it. Production trace 2026-09-15: the
+    // _playViewEntrance frame sat behind forced recalcs inside a 2,554ms click,
+    // where a single flush restyles ~8,000 elements at ~13us each.
+    //
+    // A frame does the same job. The attribute is absent for one frame either
+    // way, which is all the restart needs; the browser recalculates style
+    // between frames on its own schedule instead of being forced mid-handler.
+    // Cost is one frame (~16ms) of delay before the entrance starts, against
+    // tens to hundreds of ms of blocking.
+    if (this._entranceRaf && typeof cancelAnimationFrame === "function") {
+      cancelAnimationFrame(this._entranceRaf);
+    }
+    this._entranceRaf = requestAnimationFrame(() => {
+      this._entranceRaf = 0;
+      if (this.isDestroyed && this.isDestroyed()) return;
+      if (el.dataset) el.dataset.viewEntering = "1";
+      this._announceSplitBodyShown();
+    });
+  }
+
+  /**
+   * Tell the desk this workspace's split body is on screen — once per pane.
+   *
+   * Here, in _playViewEntrance's frame, because it is the one path BOTH ways
+   * of showing the split body go through: its first paint (onPartReady
+   * "folder-view", which on the default Files tab never calls switchView) and
+   * every later tab switch. Inside the frame, so it has actually been drawn.
+   *
+   * A reload's screen restore waits on this (libs/split-body-signal, desk
+   * _restoreScreen) so the saved screen lands over a painted workspace, not
+   * before it. The flag is what a restore that starts late reads instead.
+   *
+   * Headless panes only: a floating folder window's split body is not the
+   * desk's.
+   */
+  _announceSplitBodyShown() {
+    if (this._splitBodyShown || !this.mget(_a.headless)) return;
+    this._splitBodyShown = 1;
+    RADIO_BROADCAST.trigger(SPLIT_BODY_EVENT, this);
+  }
+
   getFolderActionTarget() {
     return this.mget(_a.trigger) || this.mget(_a.media) || this;
+  }
+
+  /**
+   * The media view to TRASH when this window's workspace is deleted.
+   *
+   * WHY THIS IS NOT getFolderActionTarget(). That one ends in `|| this`, and a
+   * window is not a media view: `trash()` and `delete()` are defined on
+   * builtins/media/core, and nothing in this window's chain (folder → interact
+   * → core → utils → ui-core DrumeeMFS) has either. So on `|| this`,
+   * confirmFolderDelete's `if (target?.trash)` / `if (target?.delete)` both
+   * missed and the whole action became a silent no-op — the user confirmed the
+   * dialog and nothing happened, with no request and no error.
+   *
+   * It only ever worked by accident of HOW the workspace was opened. `media`
+   * and `trigger` are set on exactly one launch path — opening a node from its
+   * grid tile (desk/wm passes `media` and `trigger: media`) — while
+   * Wm.loadWorkspace, which is the switcher row, the sidebar row and the boot
+   * default, sets neither. Delete worked from a Home tile and silently failed
+   * from the switcher.
+   *
+   * So find the workspace's OWN tile in Wm's tree and trash that. It is the
+   * same media view the Home grid would have handed over, so the audited path
+   * runs unchanged — canRemove(), makeTrashOptions() and its `isHub` branch
+   * that swaps in `holder_id`. Rebuilding that request shape here instead would
+   * be a second copy of it, and it would get the node wrong: this window's
+   * `nid` is the workspace ROOT node inside the hub, not the hub placeholder
+   * that desk.home lists and that trashing a workspace must target.
+   *
+   * WHICH ID TO LOOK UP DIFFERS BY TYPE, and getting it wrong is not harmless:
+   *
+   *   hub workspace   the tile's nid IS the hub id (desk.home lists the hub
+   *                   placeholder, where nid === hub_id).
+   *   personal        a home-root FOLDER. Its tile nid is the folder's own nid,
+   *                   and its `hub_id` is the USER's id — so looking that up
+   *                   would match some other node entirely, or nothing.
+   *
+   * @returns {Object|null} a media view with trash(), or null
+   */
+  _workspaceTrashTarget() {
+    // An explicitly passed media view still wins — that is the Home-tile path,
+    // and it is already the right object.
+    const explicit = this.mget(_a.trigger) || this.mget(_a.media);
+    if (explicit && _.isFunction(explicit.trash)) return explicit;
+
+    if (typeof Wm === "undefined" || !_.isFunction(Wm.getItemsByAttr)) {
+      return null;
+    }
+    const hubId = this.mget(_a.hub_id);
+    const personal = !hubId || `${hubId}` === `${Visitor.id}`;
+    const id = personal ? this.mget(_a.nid) : hubId;
+    if (id == null || id === "") return null;
+
+    let found;
+    try {
+      // Via the same string/number-tolerant lookup the notification deep link
+      // uses: getItemsByAttr compares with ===, and ids reach the client as
+      // strings from some payloads and numbers from others.
+      found = this._findMediaByNid(id);
+    } catch (e) {
+      if (this.warn) this.warn("[workspace-delete] tile lookup failed", e);
+      return null;
+    }
+    if (!found || !_.isFunction(found.trash)) return null;
+    // Confirm it is the workspace and not a same-id coincidence deeper in the
+    // tree. A hub workspace's tile is a hub; a personal one is a folder.
+    if (personal ? !found.isFolder : !found.isHub) return null;
+    return found;
   }
 
   closeFolderSettings() {
@@ -4693,26 +6260,155 @@ class __window_folder extends mfsInteract {
       });
   }
 
+  /**
+   * May this viewer delete the workspace this window is in?
+   *
+   * ADMIN AND OWNER ONLY (Lexis, 2026-09-16). Deleting is not a write-tier
+   * action: it destroys the whole workspace for every member, so it belongs
+   * with managing members rather than with editing files. `canAdmin()` is the
+   * admin bit, which admin (0b0011111) and owner (0b0111111) both carry and
+   * edit (0b0001111) does not.
+   *
+   * Reading the WINDOW's privilege is correct even three subfolders deep:
+   * user_permission() resolves a non-hub node from the member's hub-wide grant
+   * (`resource_id='*'`) before any per-node row, so the value is the viewer's
+   * workspace role wherever the pane has browsed.
+   *
+   * Fails OPEN when the method is missing or throws — the same rule the panel's
+   * own row filter follows (skeleton/settings-action-panel allowedActions), so
+   * an unreadable privilege can never lock an owner out of their workspace.
+   * A privilege that reads as 0 is not unreadable; that is a refusal.
+   */
+  _mayDeleteWorkspace() {
+    try {
+      if (typeof this.canAdmin !== "function") return true;
+      return !!this.canAdmin();
+    } catch (e) {
+      return true;
+    }
+  }
+
   confirmFolderDelete() {
-    const target = this.getFolderActionTarget();
-    const filename =
-      target?.mget?.(_a.filename) || this.mget(_a.filename) || "";
-    this.dialogWrapper.feed({
-      kind: "window_confirm",
-      title: LOCALE.DELETE,
-      message: `${LOCALE.CONFIRM_DELETE} ${filename}?`,
-      confirm: LOCALE.DELETE,
-      confirm_type: "danger",
-    });
-    return this.dialogWrapper.children
-      .last()
-      .ask()
-      .then(() => {
-        this.closeFolderSettings();
-        if (target?.trash) return target.trash();
-        if (target?.delete) return target.delete();
-      })
-      .catch(() => {});
+    // ADMIN-ONLY, CHECKED HERE TOO. The panel already omits the row for anyone
+    // below admin, but that is a render-time decision and this is the action:
+    // `folder-delete` is a plain service string, so a stale skeleton or any
+    // future surface that raises it must meet the same rule. Cheap, and it
+    // keeps the rule readable next to what it guards.
+    if (!this._mayDeleteWorkspace()) {
+      if (this.warn) {
+        this.warn(
+          "[workspace-delete] refused: viewer lacks the admin bit",
+          { hub_id: this.mget(_a.hub_id), privilege: this.mget(_a.privilege) },
+        );
+      }
+      this.closeFolderSettings();
+      return Wm.alert(LOCALE.FORBIDEN_DELETE);
+    }
+
+    // WHICH WORKSPACE, not which tile. That is the whole correction here.
+    //
+    // This used to resolve a media VIEW and refuse when it could not find one,
+    // which put "Could not delete the workspace" in front of a workspace that
+    // was perfectly deletable. The switcher's ⋯ menu acts on the workspace the
+    // user has OPEN, and while one is open the home grid that owns the tiles is
+    // `display: none` (wm _syncHomeGrid), so a tile is simply not something
+    // this path can count on.
+    //
+    // The window itself knows which workspace it is in, and that is all a
+    // delete needs: the hub's id for a hub (Wm.confirmRemoveWorkspace), the
+    // folder's node for a personal one (Wm.confirmRemovePersonalWorkspace).
+    const hubId = this.mget(_a.hub_id);
+    const filename = this.mget(_a.filename) || this.mget("hub_name") || "";
+    // A tile, if one happens to be around, only buys the trash animation.
+    const tile = this._workspaceTrashTarget();
+
+    // A PERSONAL workspace is a home-root FOLDER, not a hub: it has no
+    // delete_hub to run, so it is removed with media.trash on its own node.
+    const isHubWorkspace = !!hubId && `${hubId}` !== `${Visitor.id}`;
+
+    this.closeFolderSettings();
+
+    if (isHubWorkspace) {
+      // Nothing is deleted out of the current selection — this acts on one
+      // named hub and never reads getGlobalSelection.
+      return Wm.confirmRemoveWorkspace(hubId, filename, tile);
+    }
+
+    // AND IT NO LONGER NEEDS A TILE EITHER.
+    //
+    // Personal was the one branch still routed through the home grid's tile
+    // (`tile.trash()`), and it refused with "Could not delete the workspace"
+    // when it could not find one — which is what was reported. There are two
+    // ways there is no tile at exactly the moment this runs, and both are
+    // normal: the grid is `display: none` for the whole time a workspace is
+    // open (_syncHomeGrid), and a reload that restores straight into a
+    // workspace may never have fetched it at all. That is the same reason the
+    // hub branch above stopped depending on one.
+    //
+    // Worse than the refusal was the case where the lookup SUCCEEDED. It keyed
+    // on `this.mget(_a.nid)`, and openNode() (window/core.js) rewrites that
+    // field to whatever folder the pane is browsing — so from inside a
+    // subfolder this trashed the SUBFOLDER and called it the workspace.
+    // _personalWorkspaceNode() reads the workspace, not the pane's cursor.
+    const node = this._personalWorkspaceNode();
+    if (!node) {
+      if (this.warn) {
+        this.warn(
+          `[workspace-delete] no node for the personal workspace in`
+            + ` hub=${hubId}; refusing rather than no-op`,
+        );
+      }
+      Wm.alert(LOCALE.DELETE_WORKSPACE_FAILED);
+      return;
+    }
+    if (_.isFunction(Wm.unselect)) Wm.unselect();
+    return Wm.confirmRemovePersonalWorkspace(node, tile);
+  }
+
+  /**
+   * The personal workspace this window is inside, as a node for media.trash.
+   *
+   * `Wm._curWorkspace` FIRST, and the window's own model only as the fallback:
+   * loadWorkspace pins the workspace's root there and nothing but another
+   * switch moves it, while the window's `nid` follows the user into every
+   * subfolder they open. Deleting "the workspace" from three folders deep has
+   * to mean the workspace.
+   *
+   * `filepath` rides along for the removal echo — removeContent closes a hub's
+   * window on hub_id alone, but a folder's on its path, and a personal
+   * workspace is a folder. Wm's own model carries the workspace's attributes
+   * (loadWorkspace does `this.mset(data)` with them); the pane's are the
+   * browsed folder's, which is still UNDER the workspace path, so either
+   * closes the pane and the workspace's own is the one that also closes any
+   * popup window opened elsewhere inside it.
+   */
+  _personalWorkspaceNode() {
+    const cur = (typeof Wm !== "undefined" && Wm._curWorkspace) || null;
+    const fromWm = (k) => {
+      try {
+        return Wm.mget(k);
+      } catch (e) {
+        return undefined;
+      }
+    };
+    const inWorkspace = !!(cur && `${cur.hub_id}` === `${Visitor.id}`);
+    const nid = (inWorkspace && cur.nid) || this.mget(_a.nid);
+    if (nid == null || nid === "") return null;
+    const filepath =
+      (inWorkspace && fromWm(_a.filepath)) ||
+      this.mget(_a.filepath) ||
+      this.mget(_a.ownpath) ||
+      "";
+    return {
+      nid,
+      hub_id: Visitor.id,
+      filename:
+        (inWorkspace && fromWm(_a.filename)) ||
+        this.mget(_a.filename) ||
+        this.mget("hub_name") ||
+        "",
+      filepath,
+    };
   }
 
   getFolderSettingPart() {
@@ -4853,6 +6549,10 @@ class __window_folder extends mfsInteract {
         cancel: LOCALE.CANCEL || "Cancel",
         cancel_type: "secondary",
         mode: "hbf",
+        // No backdrop: the member row this names is in the matrix behind the
+        // prompt, and dimming it hides what the user would check before
+        // confirming. Same as the "Who has access" panel's role prompt.
+        overlay: "none",
       });
     } catch (_) {
       this._folderConfirmInFlight = false;
@@ -4922,7 +6622,12 @@ class __window_folder extends mfsInteract {
     // once there is. Refetch instead of leaving the admin looking at a member
     // list missing the person they just invited. _refreshFolderMembers
     // self-guards on the panel being open, so this is a no-op when closed.
-    else if (svc === "hub.member_joined") {
+    //
+    // hub.members_changed is the same refetch for rows that already exist —
+    // another admin set a role or removed members (server-team
+    // notifyMembersChanged). It carries no `uid`, so _onMemberJoined's echo
+    // guard lets it through for everyone, the acting admin included.
+    else if (svc === "hub.member_joined" || svc === "hub.members_changed") {
       this._onMemberJoined(data || {});
     }
     return super.handleWsEvent(args);
@@ -4968,10 +6673,18 @@ class __window_folder extends mfsInteract {
     // admin did, elsewhere — and stealing focus would bury whatever they have
     // open on top of this workspace, e.g. a document they are editing. Suppress
     // the raise for the duration of the re-feed instead.
-    this._suppressRaise = 1;
-    this.feedPart("folder-header", require("./skeleton/topbar")(this))
-      .catch(() => { })
-      .then(() => { this._suppressRaise = 0; });
+    // A headless workspace pane renders NO folder-header (skeleton/index.js:
+    // the desk topbar is its header), so there is nothing to re-feed. Guarded
+    // because feedPart resolves through ensurePart, which never settles for a
+    // part that will not mount — the .then below would not run and
+    // _suppressRaise would stay latched at 1 for the life of the pane,
+    // silently swallowing every later raise.
+    if (!this.mget(_a.headless)) {
+      this._suppressRaise = 1;
+      this.feedPart("folder-header", require("./skeleton/topbar")(this))
+        .catch(() => { })
+        .then(() => { this._suppressRaise = 0; });
+    }
     this.refreshBreadcrumbsUI();
     this._syncChatGate();
     // Losing chat access with a thread already open leaves its conversation
@@ -5035,12 +6748,14 @@ class __window_folder extends mfsInteract {
   //   - walk in          → updateTopbar (a subfolder may grant other rights)
   //   - walk back        → _restoreNavState (so may an ancestor)
   //
-  // Off the Files tab it hides regardless of permission: the actions only apply
-  // to files, so showing it on Chat/Task/Meeting would misrepresent what it does.
+  // Off Files and Access it hides regardless of permission: the actions only
+  // apply to the file grid, so showing it on Chat/Task/Meeting would
+  // misrepresent what it does.
   syncNewCtrlVisibility() {
     const newCtrl = this.getPart && this.getPart("new-ctrl");
     if (!newCtrl || !newCtrl.el) return;
-    const onFiles = (this.activeTab || "files") === "files";
+    // Access keeps the file grid on screen, and "+ New" operates on that grid.
+    const onFiles = showsFileGrid(this.activeTab);
     // canUpload() returns the masked bitmask (truthy number), not a boolean.
     // Over-limit read-only trumps the node privilege: creating adds bytes,
     // and the REST clamp refuses it regardless of what this node allows.
@@ -5153,6 +6868,10 @@ class __window_folder extends mfsInteract {
         if (res && (res.error || res.error_code)) {
           return Wm.alert(res.reason || res.error || LOCALE.TRY_AGAIN);
         }
+        // Refused for want of seats: no `results`, which the check below read
+        // as sent. Nothing was granted, so no member refresh and no toast —
+        // the seat card instead (this window is not in the wrapper-modal).
+        if (isSeatLimitReply(res)) return showSeatLimitReached();
         const r = (res && res.results && res.results[0]) || {};
         if (r.status === "failed") {
           return Wm.alert(r.reason || LOCALE.TRY_AGAIN);
@@ -5299,7 +7018,7 @@ class __window_folder extends mfsInteract {
   // once(_e.destroy) handler and flip isShowSettings off — detach it first,
   // then re-attach an identical handler to the freshly mounted child.
   _refeedFolderMembersPanel() {
-    if (!this.dialogWrapper) return;
+    if (!this._folderSettingsPanelIsOpen()) return;
     const oldChild = this.dialogWrapper.children?.last?.();
     if (oldChild) oldChild.off(_e.destroy);
     this.dialogWrapper.feed(
@@ -5316,24 +7035,68 @@ class __window_folder extends mfsInteract {
   }
 
   async _refreshFolderMembers() {
-    if (!this.isShowSettings || !this.dialogWrapper) return;
+    if (!this._folderSettingsPanelIsOpen()) return;
     const { hub_id } = this.actualNode();
     if (!hub_id) return;
+    // Back-to-back pushes (hub.member_joined, hub.members_changed) can answer
+    // out of order — only the newest refresh may repaint.
+    const seq = (this._folderMembersSeq = (this._folderMembersSeq || 0) + 1);
     try {
       const rows = await this.fetchService(SERVICE.hub.get_members_by_type, {
         hub_id,
         type: "all",
+        // Cache-buster: this GET can be served from the browser HTTP cache
+        // (fetchService uses `cache: "default"`), and a refresh after a role
+        // change or removal could otherwise repaint the rows from before it.
+        _ts: Date.now(),
       });
-      this._folderMembers = Array.isArray(rows) ? rows : [];
+      if (seq === this._folderMembersSeq) {
+        this._folderMembers = Array.isArray(rows) ? rows : [];
+      }
     } catch (e) {
       if (this.warn) this.warn("Failed to refresh folder members", e);
     } finally {
-      if (this.isShowSettings && this.dialogWrapper) {
+      // Re-checked, not assumed: the fetch above is a round-trip, and the user
+      // can have closed the drawer or opened a different one meanwhile.
+      if (seq === this._folderMembersSeq && this._folderSettingsPanelIsOpen()) {
         this.dialogWrapper.feed(
           require("./skeleton/settings-action-panel")(this),
         );
       }
     }
+  }
+
+  /**
+   * Is the drawer showing THIS window's Folder Settings panel right now?
+   *
+   * 🚨 `dialogWrapper` AND `isShowSettings` ARE SHARED BY THREE PANELS.
+   * switchShowFolderSettings feeds the Folder Settings panel, and
+   * openManageAccess feeds either `permission_restricted` ("Who has access")
+   * or `window_secure_share` into the SAME wrapper, each setting the SAME
+   * `isShowSettings` flag. So the flag means "some drawer is open", never
+   * "the Folder Settings panel is open".
+   *
+   * The member refreshers below re-feed the Folder Settings skeleton, and
+   * reading the flag alone made them do that on top of whichever drawer was
+   * actually open. The visible bug: invite somebody from "Who has access" and
+   * the server's `hub.member_joined` push (added FOR this panel — see
+   * server-team/service/lib/notify-member-joined.js) turned the drawer into the
+   * Folder Settings panel mid-flight, Download / Rename / Organize / Duplicate
+   * / Delete rows and all, under a "Folder Setting" title. Reported 2026-09-08
+   * with a screenshot.
+   *
+   * Tested by looking for the panel's own root class in the mounted DOM rather
+   * than by listing the kinds that are NOT it. That fails CLOSED — rename the
+   * class and the matrix merely stops auto-refreshing — where a deny-list
+   * fails OPEN and goes back to replacing a panel it does not own.
+   *
+   * @returns {Boolean}
+   */
+  _folderSettingsPanelIsOpen() {
+    if (!this.isShowSettings || !this.dialogWrapper) return false;
+    const root = this.dialogWrapper.el;
+    if (!root || !root.querySelector) return false;
+    return !!root.querySelector(`.${this.fig.family}__settings-action-panel`);
   }
 
   openAdvancedSettings(cmd) {
@@ -5436,42 +7199,53 @@ class __window_folder extends mfsInteract {
   }
 
   /**
-   * Open the "Manage Access" (permission_shared) panel — triggered by the
-   * topbar share icon, which the skeleton renders only for share-area
-   * folders. Separate from Folder Settings (the gear icon).
+   * Is this an INTERNAL (team) workspace rather than an external one?
+   *
+   * `area` is how the stack has always spelled that distinction — "private"
+   * for internal/team, "share" (and its dmz variant) for external — and it is
+   * the same switch window/hub.js openSettings makes to pick between these two
+   * very panels. Only "private" is internal: public areas, the user's own
+   * space and a token/sharebox window all keep the secure-share panel, which is
+   * what they have today.
    */
-  openManageAccess() {
+  _manageAccessIsInternal() {
+    return this.mget(_a.area) === _a.private;
+  }
+
+  /**
+   * Open the "Manage access" drawer — WHICH drawer depends on the workspace.
+   *
+   * An external workspace is reached through links, so it gets the secure-share
+   * panel — as a view of the split body (./secure-share-column), toggled. An
+   * internal one is reached by being a member, so it gets the members panel
+   * (permission_restricted) — the invite row plus the permissions matrix.
+   * Asking to manage access to a team workspace and being handed a link builder
+   * is the mismatch this branch exists to fix.
+   *
+   * Three callers, but only one can reach the internal branch: the topbar share
+   * icon and the overflow entry are both gated on `area === _a.share` in their
+   * own skeletons (folder/skeleton/topbar.js, window/skeleton/toolkit/index.js),
+   * while the desk rail's Access item is global — it is shown for whatever
+   * workspace is open (desk/index.js _railAccess). Separate from Folder Settings
+   * (the gear icon), which keeps its own panel.
+   */
+  openManageAccess(opt) {
+    // `opt`, not a destructured parameter: tests/rail-access-panel.js slices
+    // this method out of the source by finding the first `{` after the name,
+    // and a `{ members }` in the signature would hand it the parameter's brace
+    // instead of the body's.
+    const members = !!(opt && opt.members);
+    // EXTERNAL: the secure-share panel is a view of the split body now, not a
+    // drawer (./secure-share-column), and the opener toggles it.
+    if (!members && !this._manageAccessIsInternal()) {
+      return toggleSecureShareView(this);
+    }
     if (this.isShowSettings) {
       this.isShowSettings = false;
       return this.dialogWrapper.clear();
     }
     this.isShowSettings = true;
-    // Converge the workspace "Manage access" onto secure-share v2 — the SAME panel
-    // files/subfolders use (window_secure_share) — so the workspace link gets
-    // editable permissions + logged-in-recipient recognition. The old external-room
-    // panel (permission_shared) supported neither (permission was hard-clamped to
-    // view; recipients were always guest-bound). Share the workspace ROOT node: for
-    // a hub/workspace-root window the real node id is actual_home_id (nid is the
-    // hub/0) — mirrors this window's own curNid logic; a share-area subfolder shares
-    // its own node. Rendered embedded in the same dialog drawer, matching the media
-    // 'secure-share' launch.
-    let shareNid = this.mget(_a.nid);
-    if (this.mget(_a.filetype) === _a.hub && this.mget(_a.actual_home_id)) {
-      shareNid = this.mget(_a.actual_home_id);
-    }
-    this.dialogWrapper.feed({
-      kind     : "window_secure_share",
-      embedded : 1,
-      dataset  : { embedded: "yes" },
-      nid      : shareNid,
-      hub_id   : this.mget(_a.hub_id),
-      filetype : _a.folder,
-      // Title this panel "Manage access" (workspace-root entry), not the default
-      // "Folder Secure Share" used for file/subfolder shares. Scoped: only this
-      // launch sets the flag, so subfolder/file share panels keep their title.
-      manage_access: 1,
-      uiHandler: [this],
-    });
+    this.dialogWrapper.feed(this._internalAccessPanel());
     const c = this.dialogWrapper.children.last();
     if (c) {
       c.once(_e.destroy, () => {
@@ -5479,6 +7253,41 @@ class __window_folder extends mfsInteract {
         return this.unselect();
       });
     }
+  }
+
+  /**
+   * INTERNAL branch — the workspace-members panel (invite row + permissions
+   * matrix), the same widget window/hub.js openSettings feeds for a private
+   * area and the same one the activate-workspace guide ends its team branch on.
+   *
+   * `media` mirrors that call site: the window's bound media is what the panel
+   * copies its node properties from, and `hub_id` is what it actually fetches
+   * members with (hub.get_members_by_type). The panel is a 360px right dock
+   * that slides itself in once that fetch settles, so it needs no `embedded`
+   * flag — unlike the secure-share window below, it was never a floating
+   * window to begin with.
+   *
+   * hub.js also passes `label` and `source`; neither is trimmed here by
+   * oversight — the widget and its skeleton read neither (it draws its own
+   * "Who has access" header), so they are left out rather than copied forward.
+   * `className: ""` IS kept, because that one clears a default the base would
+   * otherwise put on the dock's root.
+   */
+  _internalAccessPanel() {
+    return {
+      kind      : "permission_restricted",
+      className : "",
+      media     : this.mget(_a.media) || this.media,
+      hub_id    : this.mget(_a.hub_id),
+      // The name, off this window's own model — `media` above is undefined for
+      // a workspace window. See access-column.js accessPanelSpec, which carries
+      // the same two fields for the same reason and spells out why; the drawer
+      // and the column are the same panel and must head themselves alike.
+      [_a.filename]:
+        this.mget(_a.filename) || this.mget("hub_name") || this.mget(_a.name),
+      [_a.area]  : this.mget(_a.area),
+      uiHandler : [this],
+    };
   }
 
   showInfo() {

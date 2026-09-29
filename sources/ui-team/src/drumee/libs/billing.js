@@ -169,6 +169,37 @@ function planLabel(plan) {
   );
 }
 
+/**
+ * Where a plan sits on the ladder. The ONLY ordering of the tiers in the
+ * client: the billing cards read it to decide which column carries the single
+ * primary CTA, and _confirmReplacePlan reads it to tell an upgrade from a
+ * downgrade. Two copies of this map would eventually disagree about which
+ * direction a plan change goes, which is the one thing neither caller may get
+ * wrong.
+ *
+ * Unknown names rank as free — same rule planKey() applies, for the same
+ * reason: an unrecognised name must never imply a higher tier.
+ */
+const PLAN_RANK = { free: 0, pro: 1, team: 2, business: 3, sovereign: 4 };
+
+function planRank(plan) {
+  return PLAN_RANK[planKey(plan)] || 0;
+}
+
+/**
+ * The tier directly above `plan`, or null at the top of the ladder.
+ *
+ * Drives the billing page's single blue CTA: exactly one column — the next
+ * step up from what the caller holds — is primary, every other column is
+ * dark (product rule 2026-09-06). Derived from PLAN_RANK rather than written
+ * out as its own free→pro→team→… map, so inserting a tier cannot leave the
+ * two halves pointing at different columns.
+ */
+function nextPlan(plan) {
+  const next = planRank(plan) + 1;
+  return Object.keys(PLAN_RANK).find((k) => PLAN_RANK[k] === next) || null;
+}
+
 /** Does this plan sit on a paid tier? */
 function isPaidPlan(plan) {
   return planKey(plan) !== "free";
@@ -268,8 +299,9 @@ async function _orgSeatsUsed(view) {
  * Team (finite) org-member seat cap reached?
  *
  * Use ONLY before Admin org-member create (`loadCreateMember` / member_form).
- * Do NOT call from desk / media / hub invite_popup — those use hub.invite and
- * are outside the org seat budget.
+ * Do NOT pre-check from desk / media / hub invite_popup: hub.invite is capped
+ * by the server itself, which answers SEAT_LIMIT_REACHED. Its callers react to
+ * that reply instead (isSeatLimitReply / showSeatLimitReached below).
  *
  * Product:
  *  - Free → false here. Free still must not create org members; callers use
@@ -366,6 +398,62 @@ function canShowSeatLimitPopup() {
     _K.permission &&
     Visitor.domainCan(_K.permission.owner)
   );
+}
+
+/**
+ * Did a hub.invite call refuse for want of seats?
+ *
+ * The server answers `{ status: "SEAT_LIMIT_REACHED", seat, used, free,
+ * requested }` and nothing else: no `error`, no `results`. Every caller used
+ * to read that shape as "zero invitees failed" and announce the invitation as
+ * sent, so an owner on a full plan saw a success toast and waited for mail
+ * that was never written. Seen live: an org with one member and twelve stale
+ * pending invitations on a five-seat plan.
+ *
+ * @param {*} res a resolved hub.invite reply
+ * @returns {boolean}
+ */
+function isSeatLimitReply(res) {
+  return !!(res && res.status === "SEAT_LIMIT_REACHED");
+}
+
+/**
+ * One sentence for an inline notice, for panels that cannot show the card
+ * (they live in the shared wrapper-modal the card is fed into, so it would
+ * replace them). Carries the numbers the server sent, so the reader can see
+ * how full the plan is, and ends the way the card does: with the upgrade
+ * sentence for someone who can buy, "ask your owner" for someone who cannot.
+ *
+ * @param {Object} [res] the SEAT_LIMIT_REACHED reply
+ * @returns {string}
+ */
+function seatLimitMessage(res = {}) {
+  const title = LOCALE.QX_SEAT_TITLE || "Member limit reached";
+  const seat = ~~res.seat;
+  const used = ~~res.used;
+  const count = seat > 0 ? ` (${used}/${seat})` : "";
+  const next = canUpgradePlan()
+    ? (LOCALE.QX_SEAT_BODY
+      || "You can not invite more members because you have reached limit of team plan. Upgrade to a higher plan now to invite more members.")
+    : (LOCALE.QX_ASK_OWNER
+      || "Ask your workspace owner to review the organisation's plan.");
+  return `${title}${count}. ${next}`;
+}
+
+/**
+ * Show the seat card for a refused hub.invite: the same card the Admin
+ * members page raises for member_add, so a full plan reads the same from every
+ * door. The card adapts to the viewer on its own (Upgrade for the owner,
+ * "Ask your workspace owner…" for a member), so there is no owner gate here.
+ *
+ * Not for panels hosted in the shared wrapper-modal — see seatLimitMessage.
+ *
+ * @returns {*} whatever Wm.openQuotaExceeded returns, or undefined
+ */
+function showSeatLimitReached() {
+  if (typeof Wm === "undefined" || !Wm) return;
+  if (Wm.openQuotaExceeded) return Wm.openQuotaExceeded({ limit: "seat" });
+  if (Wm.alert) return Wm.alert(seatLimitMessage());
 }
 
 /**
@@ -507,6 +595,77 @@ function overMeetingCap(seconds) {
   return cap;
 }
 
+// ── September 2026 campaign: 50% off the yearly plans ───────────────────────
+// MKT request (Lexis, 2026-09-10); Figma "Drumee 2.0" nodes 692-128029 (the
+// Billing page) and 696-141463 (the modal).
+//
+// These live here, not in settings_billing, because the Billing page and the
+// promo_yearly modal both count the same campaign down and must never show
+// two different numbers for it.
+
+// The campaign ends at the end of September IN THE VIEWER'S OWN TIMEZONE.
+//
+// A single fixed instant cannot be right for everyone: whichever one you pick
+// is already October for every zone east of it. The first cut used 2026-09-30
+// 23:59:59 at UTC-12 — generous, nobody cut short — but it left the banner
+// counting down through the afternoon of October 1st in Vietnam, which reads
+// as a bug (Duy, 2026-09-11). Local midnight at the start of October 1st is
+// the last moment the viewer's own calendar still says September.
+//
+// Built with the local-parts Date constructor on purpose — it resolves the
+// browser's own zone and DST rules, which no fixed offset can.
+const PROMO_YEARLY_LOCAL_END = () =>
+  Math.floor(new Date(2026, 9, 1, 0, 0, 0, 0).getTime() / 1000);
+
+// Backstop: the instant September has ended EVERYWHERE (2026-09-30 23:59:59 at
+// UTC-12). A device clock set to a wrong or distant zone cannot hold the offer
+// open past this. It only ever binds at UTC-12 and further west, which is
+// uninhabited. The discount itself cannot be extended by a clock in any case:
+// the price lives in Stripe and the catalog gate re-checks it.
+const PROMO_YEARLY_HARD_END = 1790855999;
+
+// The saving the copy and the artwork CLAIM. A floor, not a label: the banner
+// and the modal only render once the catalog's REAL yearly discount is at
+// least this large, so the page can never advertise a cut Stripe is not
+// giving. See settings_billing._promoYearlyActive().
+const PROMO_YEARLY_PCT = 50;
+
+/**
+ * When the campaign stops FOR THIS VIEWER: the end of September on their own
+ * calendar, capped at the moment September has ended everywhere.
+ * @returns {number} unix seconds
+ */
+function promoYearlyEndsAt() {
+  return Math.min(PROMO_YEARLY_LOCAL_END(), PROMO_YEARLY_HARD_END);
+}
+
+/**
+ * Whole seconds left in the campaign for this viewer, floored at 0.
+ * @returns {number}
+ */
+function promoYearlySecondsLeft() {
+  return Math.max(0, promoYearlyEndsAt() - Math.floor(Date.now() / 1000));
+}
+
+/**
+ * The countdown text — "21 DAYS 06:48:00" (Figma 692-128029 / 696-141463).
+ * Drops the day count on the last day rather than printing "0 DAYS", which
+ * reads as an offer that has already expired.
+ * @returns {string}
+ */
+function promoYearlyCountdown() {
+  const total = promoYearlySecondsLeft();
+  const days = Math.floor(total / 86400);
+  const rest = total % 86400;
+  const pad = (n) => String(n).padStart(2, "0");
+  const clock = `${pad(Math.floor(rest / 3600))}:${pad(Math.floor((rest % 3600) / 60))}:${pad(rest % 60)}`;
+  if (days <= 0) return clock;
+  return (days === 1
+    ? (LOCALE.PROMO_COUNTDOWN_DAY || "{0} DAY {1}")
+    : (LOCALE.PROMO_COUNTDOWN_DAYS || "{0} DAYS {1}")
+  ).format(days, clock);
+}
+
 module.exports = {
   billingAvailable,
   canUpgradePlan,
@@ -519,10 +678,19 @@ module.exports = {
   needsAdminConsoleUpgrade,
   planKey,
   planLabel,
+  planRank,
+  nextPlan,
   isPaidPlan,
   isFreeSoloPlan,
   isOrgSeatLimitReached,
   checkOrgSeatLimit,
   canShowSeatLimitPopup,
   showFreeSoloLimit,
+  isSeatLimitReply,
+  seatLimitMessage,
+  showSeatLimitReached,
+  PROMO_YEARLY_PCT,
+  promoYearlyEndsAt,
+  promoYearlySecondsLeft,
+  promoYearlyCountdown,
 };

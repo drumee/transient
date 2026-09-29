@@ -200,9 +200,6 @@ class ___widget_chatItem extends LetcBox {
   buildContent(child) {
     let id = `content-${this.mget(_a.widgetId)}`;
     child.escapeContextmenu = true;
-    child.onAddKid = () => {
-      child.el.dataset.preattachment = "0";
-    };
     // Defer body appends so we can control order:
     //   1) Reply quote (if any)   — prepend
     //   2) Media attachment (if any)
@@ -235,6 +232,18 @@ class ___widget_chatItem extends LetcBox {
               hasMessageText ? "" : " no-text"
             }`,
             kids: [
+              // Placeholder rows, removed the moment the first real card
+              // lands (onPartReady) or the safety ceiling fires. Built here
+              // rather than by the list itself because the list cannot render
+              // anything until its fetch resolves, and for a just-sent message
+              // that fetch has not even been issued yet.
+              Skeletons.Element({
+                className: `${fig}__attachment-skeleton`,
+                content: require("./template/attachment-skeleton")({
+                  fig,
+                  count: this._attachmentCount(),
+                }),
+              }),
               Skeletons.List.Smart({
                 sys_pn: _a.list,
                 flow: _a.none,
@@ -246,6 +255,10 @@ class ___widget_chatItem extends LetcBox {
                 itemsOpt: {
                   kind: "media_grid",
                   isAttachment: 1,
+                  // Images and videos render IN the message (a picture, a
+                  // playable video) instead of as a 44px file card. Opt-in
+                  // here, so every other media_grid is untouched.
+                  inlineMedia: 1,
                   origin: _a.chat,
                   uiHandler: Wm,
                   logicalParent: Wm,
@@ -256,6 +269,15 @@ class ___widget_chatItem extends LetcBox {
             ],
           }),
         );
+        this._armAttachmentSkeletonCeiling();
+        // Tiles that turn into inline pictures / videos announce it (media
+        // grid INLINE_MEDIA_READY) — lay the message out around them.
+        if (!this._inlineLayoutBound && this.el) {
+          this._inlineLayoutBound = true;
+          this.el.addEventListener("drumee:inline-media-ready", () =>
+            this._stampInlineLayout(),
+          );
+        }
       }
 
       if (showBubble) {
@@ -317,6 +339,8 @@ class ___widget_chatItem extends LetcBox {
           if (bubble && card && card.parentNode !== bubble) {
             bubble.appendChild(card);
           }
+          // Tiles may have rendered before the card moved into the bubble.
+          this._stampInlineLayout();
           // "Show in folder" → reveal the file in the folder window's Files tab.
           // Capture phase so it beats the card's open-on-click + Wm anchor click.
           if (!this._revealBound) {
@@ -360,6 +384,134 @@ class ___widget_chatItem extends LetcBox {
   }
 
   /**
+   * Lay a message out around its inline pictures / videos (media_grid
+   * inlineMedia). Two stamps, both read by skin/attachment.scss:
+   *
+   *  - bubble `data-media-only="1"`: no text, no reply quote, and EVERY
+   *    attachment is inline media — the picture is the message, so the
+   *    coloured bubble frame (padding, fill, shadow) goes.
+   *  - attachment wrapper `data-album="1"`: two or more pictures, all images —
+   *    tiled as a grid of square thumbnails instead of a tall stack.
+   *
+   * Recomputed whenever a tile reports in, since they render one by one; a
+   * tile that fell back to the file card reports too, and undoes both.
+   */
+  _stampInlineLayout() {
+    const fig = this.fig.family;
+    const el = this.el;
+    if (!el) return;
+    const bubble = el.querySelector(`.${fig}__conversation-content`);
+    const wrapper = el.querySelector(`.${fig}__attachment-wrapper`);
+    const list = el.querySelector(`.${fig}__attachment-wrapper-list`);
+    if (!wrapper || !list) return;
+    const tiles = list.querySelectorAll(".media-grid__content");
+    const inline = list.querySelectorAll(".media-grid__content.inline-media");
+    const images = list.querySelectorAll(".media-grid__content.inline-media.image");
+    const allInline = tiles.length > 0 && inline.length === tiles.length;
+    const hasText = !_.isEmpty((this.mget("message") || "").trim());
+    const hasQuote = !!(bubble && bubble.querySelector(`.${fig}-reply__main`));
+    wrapper.dataset.album =
+      allInline && images.length > 1 && images.length === tiles.length ? "1" : "0";
+    if (bubble) {
+      bubble.dataset.mediaOnly = allInline && !hasText && !hasQuote ? "1" : "0";
+    }
+  }
+
+  /**
+   * How many attachment placeholder rows this message needs.
+   *
+   * The field arrives in two shapes, and both have to count: a locally-posted
+   * row carries the bare nid array the composer sent (chat/index.js
+   * getAttachmentIds), while a row from channel.messages carries the stored
+   * JSON column, which MariaDB may hand back as a string of `{nid, hub_id}`
+   * objects. Anything else — notably `is_attachment: 1` with no array at all —
+   * means the message has attachments but has not said how many, so draw one
+   * row: a single placeholder that grows into two cards is a smaller lie than
+   * no placeholder at all.
+   * @returns {Number} row count, at least 1
+   */
+  _attachmentCount() {
+    let a = this.mget("attachment");
+    if (_.isString(a)) {
+      try {
+        a = JSON.parse(a);
+      } catch (e) {
+        a = null;
+      }
+    }
+    const n = _.isArray(a) ? a.length : 0;
+    return n > 0 ? n : 1;
+  }
+
+  /**
+   * True when every stored attachment entry names a node the optimistic
+   * preview already renders (same nid and hub_id).
+   */
+  _previewMatchesAttachment() {
+    const preview = this._attachmentPreview();
+    if (!preview) return false;
+    let stored = this.mget("attachment");
+    if (_.isString(stored)) {
+      try {
+        stored = JSON.parse(stored);
+      } catch (e) {
+        return false;
+      }
+    }
+    if (!_.isArray(stored) || stored.length !== preview.length) return false;
+    const shown = new Set(preview.map((n) => `${n.hub_id}:${n.nid}`));
+    return stored.every(
+      (e) => e && _.isObject(e) && shown.has(`${e.hub_id}:${e.nid}`),
+    );
+  }
+
+  /**
+   * Remove the placeholder rows and disarm their ceiling.
+   *
+   * Safe to call more than once — both triggers (a card landing, the ceiling
+   * firing) race by design and whichever gets there first wins.
+   */
+  _clearAttachmentSkeleton() {
+    if (this._attachmentSkeletonTimer) {
+      clearTimeout(this._attachmentSkeletonTimer);
+      this._attachmentSkeletonTimer = null;
+    }
+    if (!this.el || !this.el.querySelectorAll) return;
+    // All of them, not the first: buildContent runs from onPartReady, which a
+    // re-feed can fire more than once, and a leftover second skeleton would
+    // pulse under the real cards forever with nothing left to clear it.
+    for (const skel of this.el.querySelectorAll(
+      `.${this.fig.family}__attachment-skeleton`,
+    )) {
+      skel.remove();
+    }
+  }
+
+  /**
+   * Stop the placeholder outliving what it stands for.
+   *
+   * `onAddKid` is the normal exit and fires as soon as a card renders. It does
+   * NOT fire when the fetch comes back empty or fails — the list simply calls
+   * _eod() and goes quiet — and a skeleton that pulses forever claims files are
+   * coming that never will. Fall back to the pre-existing behaviour (an empty
+   * bubble) rather than to a permanent lie.
+   */
+  _armAttachmentSkeletonCeiling() {
+    // Cards were fed from the composer's staged nodes during the build; the
+    // wrapper is in the DOM now, so the placeholder can go at once.
+    if (this._previewFed) {
+      this._clearAttachmentSkeleton();
+      return;
+    }
+    if (this._attachmentSkeletonTimer) return;
+    this._attachmentSkeletonTimer = setTimeout(() => {
+      this._attachmentSkeletonTimer = null;
+      if (this.isDestroyed && this.isDestroyed()) return;
+      this._clearAttachmentSkeleton();
+    }, 10000);
+  }
+
+  /**
    *
    * @param {*} child
    * @param {*} pn
@@ -379,8 +531,23 @@ class ___widget_chatItem extends LetcBox {
         // auto-scrolls on its OWN collection updates, never on an attachment
         // growing inside an existing row.
         child.onAddKid = () => {
+          // The real card is in the DOM — the placeholder has done its job.
+          this._clearAttachmentSkeleton();
           this.triggerHandlers({ service: "attachment-grown" });
         };
+        // A just-sent message draws its cards from the staged nodes right
+        // away; the list's own fetch is disabled until the echo (see
+        // getAttachments / _onDataChanged).
+        if (this._showsPreview() && _.isFunction(child.feed)) {
+          child.feed(this._attachmentPreview());
+          // feed() adds through the collection, not through the fetch path
+          // that calls onAddKid. This part-ready fires while the wrapper is
+          // still being built, before it hangs off this.el, so the
+          // placeholder cannot be found yet — flag it for the ceiling call
+          // that runs right after the append.
+          this._previewFed = true;
+          this.triggerHandlers({ service: "attachment-grown" });
+        }
         break;
     }
   }
@@ -397,6 +564,39 @@ class ___widget_chatItem extends LetcBox {
       if (readstatus) {
         if (is_readed != null) readstatus.dataset.is_readed = is_readed;
         if (is_seen != null) readstatus.dataset.is_seen = is_seen;
+      }
+    }
+    // The real message_id has just arrived on an optimistic bubble.
+    //
+    // A locally-posted row is appended before the server has minted its id
+    // (chat/index.js postMessageAPI -> __list.append, channel.post mints it),
+    // but the attachment cards are NOT rendered from the model: the list
+    // FETCHES them keyed on message_id (getAttachments below). ui-core's
+    // _initApi evaluates that descriptor exactly once at construction, so the
+    // request went out as message_id=undefined, matched no row, and the empty
+    // response ran _eod() — which sets _end_of_data and blocks every later
+    // fetch. The bubble stayed empty until a reload, where rows arrive from
+    // channel.messages with a real id already on them.
+    //
+    // The echo (handleReceivedMsg -> mset) is the first moment the id exists.
+    // restart() is the fix rather than fetch(): it re-runs _initApi — the only
+    // thing that re-reads message_id — and clears _end_of_data, without which
+    // the sealed list would refuse to fetch at all.
+    if (changed.message_id && this.__list && _.isFunction(this.__list.restart)) {
+      // Cards drawn from the staged nodes stay valid when the server kept
+      // those very nodes (a move inside one hub keeps nid and hub_id); only a
+      // message whose attachments were re-created elsewhere (personal desk →
+      // sbox hub) needs the fetch. Skipping it also spares the flicker of
+      // replacing cards that already show the right files.
+      if (!this._previewMatchesAttachment()) {
+        if (this._attachmentPreview() && _.isFunction(this.__list.start)) {
+          // Cards are on screen; start(0) re-reads the descriptor and fetches
+          // without resetting first, so the preview cards stand until the
+          // stored rows replace them in one set() instead of a blank gap.
+          this.__list.start(0);
+        } else {
+          this.__list.restart();
+        }
       }
     }
     // Re-render reaction chips whenever metadata changes (reactions live inside it).
@@ -596,17 +796,19 @@ class ___widget_chatItem extends LetcBox {
     }
     const cb = require("./template/checkbox")(m);
     this.el.innerHTML = `${html}${cb}`;
-    let preattachment = 0;
-    if (this.mget("is_attachment")) preattachment = 1;
+    // `data-preattachment` used to reserve a blank 103px strip here while the
+    // attachment loaded. It could never work: the flag read `is_attachment`,
+    // which a just-sent row does not carry, and __main's onAddKid cleared it on
+    // the FIRST kid appended — the bubble, in the same tick. Its geometry was
+    // stale too, sized for a vertical thumbnail and reserved outside the bubble,
+    // while the card is now a horizontal row inside it. Replaced by the
+    // skeleton rows in buildContent, which sit where the cards actually land.
     this.feed(
       Skeletons.Box.Z({
         className: `${this.fig.family}__main ${author} ${area}`,
         sys_pn: _a.main,
         flow: _a.none,
         escapeContextmenu: true,
-        dataset: {
-          preattachment,
-        },
       }),
     );
     // Hover handlers are bound to the message bubble (conversation content) in
@@ -958,6 +1160,10 @@ class ___widget_chatItem extends LetcBox {
       this._pickerOutsideHandler = null;
     }
     this._closeThreadPicker();
+    if (this._attachmentSkeletonTimer) {
+      clearTimeout(this._attachmentSkeletonTimer);
+      this._attachmentSkeletonTimer = null;
+    }
     if (super.onBeforeDestroy) super.onBeforeDestroy();
   }
 
@@ -1691,7 +1897,27 @@ class ___widget_chatItem extends LetcBox {
    *
    * @returns
    */
+  /**
+   * Staged node rows the composer handed to this optimistic bubble, or null.
+   */
+  _attachmentPreview() {
+    const preview = this.mget("attachment_preview");
+    return _.isArray(preview) && preview.length ? preview : null;
+  }
+
+  /**
+   * True while the bubble is drawn from the composer's staged nodes and the
+   * server has not answered yet: no message id to fetch by, and nothing to
+   * gain from fetching — the cards are already on screen.
+   */
+  _showsPreview() {
+    return !this.mget("message_id") && !!this._attachmentPreview();
+  }
+
   getAttachments() {
+    // No service → the list neither fetches nor seals itself (_eod). The
+    // real descriptor is re-read by restart() once the echo brings the id.
+    if (this._showsPreview()) return {};
     let { hubId, peerId } = this.mget(_a.uiHandler);
     if (this.mget("message_type") === _a.ticket && this.mget("hub_id")) {
       hubId = this.mget("hub_id");
@@ -1862,24 +2088,19 @@ class ___widget_chatItem extends LetcBox {
   }
 
   /**
-   * Add/remove a reader uid in this message's local _seen_ map without
-   * re-rendering — used by the parent chat widget to apply a read cursor
-   * across the whole list before re-rendering all rows in one pass.
+   * Add a reader uid to this message's local _seen_ map without re-rendering —
+   * used by the parent chat widget to apply a read cursor across the whole
+   * list before re-rendering all rows in one pass. Add-only: a read receipt is
+   * never withdrawn, matching the server's accumulating _seen_.
    * @param {String} uid
-   * @param {Boolean} seen whether uid has read this message
    */
-  updateReaderSeen(uid, seen) {
+  markReaderSeen(uid) {
     if (!uid) return;
     const md = this._metadataObject();
     md._seen_ = md._seen_ || {};
-    const has = md._seen_[uid] != null;
-    if (seen && !has) {
-      md._seen_[uid] = Math.floor(Date.now() / 1000);
-      this.mset(_a.metadata, JSON.stringify(md));
-    } else if (!seen && has) {
-      delete md._seen_[uid];
-      this.mset(_a.metadata, JSON.stringify(md));
-    }
+    if (md._seen_[uid] != null) return;
+    md._seen_[uid] = Math.floor(Date.now() / 1000);
+    this.mset(_a.metadata, JSON.stringify(md));
   }
 
   /**

@@ -1,7 +1,17 @@
 const { uploadFile } = require("@drumee/ui-essentials");
 const { isTaskViewAllowed, canUpgradePlan } = require("libs/billing");
 const { keepListThroughClick } = require("libs/pick-guard");
+const readCache = require("libs/read-cache");
 const { resolveZone } = require("./drop-zones");
+const { rowOf, ownedPatch, applyLabelOps, longestList, peerPatch } = require("./live-sync");
+const {
+  snapshotTask,
+  planDetailCommit,
+  advanceBase,
+  settlePendingFiles,
+} = require("./detail-commit");
+const { restoreScroll } = require("./scroll-restore");
+const { stamp, reconcile } = require("./reconcile");
 const {
   markerRe,
   contentTokenRe,
@@ -12,11 +22,37 @@ const {
   uidsFromText,
 } = require("./mention-markers");
 
+// How long an overlay is held on screen after its close is clicked, so its
+// exit animation can play. MUST MATCH the 0.14s the skin gives
+// tasks-panel-fade-out / -pop-out: too short and the node is torn out
+// mid-animation, too long and the card sits there finished, which is the
+// "click close → delay → popup finally disappears" this panel was already
+// bitten by once. See _dismissOverlay.
+const OVERLAY_EXIT_MS = 140;
+
+// A deleted card's fade-out before its row is pruned. MUST MATCH the 0.14s the
+// skin gives `[data-leaving="1"]` on __task-card / __list-row.
+const TASK_EXIT_MS = 140;
+
+// Upper bound on a repaint's card glide / fade-in (0.2s / 0.18s) before its
+// inline styles are cleared regardless — see _flipRepaint.
+const FLIP_SETTLE_MS = 320;
+
 // Mention-editor scopes where a bare Enter posts, and the method it calls. The
 // description editors (create / detail) are deliberately absent: they have no
 // submit action of their own — a description is saved by its panel — so Enter
 // keeps inserting a newline there. Each target re-checks its own draft, so
 // Enter on an empty box is a no-op.
+// How many task cards a column builds before the user has scrolled it.
+//
+// A card is ~19 skeleton nodes, and `_loadTasks` fetches the WHOLE workspace in
+// one unpaginated request, so without a cap a busy board mounts thousands of
+// Marionette views in a single burst. 60 comfortably overflows the tallest
+// column, which is what keeps the scroll affordance — and therefore the path to
+// the rest — discoverable.
+const CARD_WINDOW = 60;
+const CARD_WINDOW_STEP = 60;
+
 const COMMENT_SUBMIT_BY_SCOPE = {
   comment: "_submitComment",
   "comment-edit": "_saveCommentEdit",
@@ -58,6 +94,16 @@ const ROW_BUSY_SERVICES = [
 // resolveZone produces for a drop there, so picking and dropping in that row
 // land identically and both attach to THAT comment rather than a new one.
 const ROW_SCOPE = /^comment-row:(.+)$/;
+
+// Default width of an image dropped or pasted into an editor (resizable up via
+// the handle afterwards). Matches __inline-img-pending's CSS width.
+const INLINE_IMG_W = 220;
+
+// The width an inline image lands at: the default, capped at the image's
+// natural width so a small one isn't upscaled. 0 when the width is unknown.
+function inlineImageWidth(naturalWidth) {
+  return naturalWidth ? Math.min(INLINE_IMG_W, naturalWidth) : 0;
+}
 
 // 10-swatch column palette (Figma 2040-106090). Dot/accent color per theme;
 // the skin derives the column tint from the accent (--col-accent) and pill
@@ -134,6 +180,15 @@ const PEER_NOTICE_MS = 10000;
 // mousemove within a frame or two; anything older is an idle mouse, not a drag.
 const POINTER_TTL = 2000;
 
+// How long a peer-driven reload stays open to absorb the events that follow it.
+//
+// Every task push used to run its own whole-workspace task.list plus a full
+// panel rebuild, with nothing between them: a peer dragging five cards, or a
+// bulk edit, cost five of each. The first event still runs immediately (a lone
+// change must not wait), and everything arriving inside this window is folded
+// into one trailing reload.
+const WS_REFRESH_WINDOW = 400;
+
 // Signal palette (Figma): Success / Info / Warning / Error — must match the
 // skin's [data-priority] pill colors so dots and pills agree everywhere.
 const PRIORITIES = [
@@ -154,10 +209,23 @@ class __tasks_panel extends LetcBox {
     // Upload destination — must be a real folder/home node, not the hub_id.
     // The folder window passes `actual_home_id || nid` when launching us.
     this._destNid = this.mget(_a.actual_home_id) || this.mget(_a.nid) || 0;
-    // Folder scope for the task list/create. `scope_nid` is the canonical
-    // current-directory node (root window → actual_home_id, subfolder → own
-    // nid); `scope_is_root` makes the root view also show legacy nid-less
-    // tasks. Falls back to _destNid for safety if not supplied.
+    // Where attachments actually land — see _attachmentNid(). NOT _destNid:
+    // an attachment belongs to the task, not to the folder body.
+    this._attachNid = null;
+    this._attachNidJob = null;
+    // Set once the server has ANSWERED without a task folder (pre-patch
+    // schema). A stable fact, unlike a failed request, so it is cached — else
+    // every upload would re-ask media.home for it.
+    this._noTaskFolder = 0;
+    // The board is WORKSPACE-level: it lists every task in the workspace no
+    // matter which folder each was created in (Figma 43:23955 — Task is a
+    // workspace rail item, not a per-folder tab), and there is one set of
+    // columns per workspace.
+    //
+    // `scope_nid` therefore no longer selects what is LISTED. It survives as
+    // the folder a NEW task records as its origin — `scope_is_root` alongside
+    // it — so navigating into a subfolder still files new tasks under it and
+    // the Personal Calendar can still say where a task came from.
     this._scopeNid = this.mget("scope_nid") || this._destNid || null;
     this._scopeIsRoot = this.mget("scope_is_root") ? 1 : 0;
     // Deep-link target from a task mention/assignment notification (forwarded by
@@ -168,8 +236,40 @@ class __tasks_panel extends LetcBox {
     this._labels = [];
     this._creating = false;
     this._createDefaults = null;
+    // Which overlays have already been PAINTED in their current opening.
+    //
+    // Every overlay in this panel has an entrance — the create card pops in,
+    // its backdrop fades, and so do the detail panel and the board modal — and
+    // _render() rebuilds the whole subtree through feed(). A newly created
+    // element runs its animation again, so while an overlay was open ANY later
+    // render played its entrance afresh: a second card popping in over the
+    // first, and again, and again. That is what "it renders a lot of cards at
+    // the same time" was.
+    //
+    // The elements cannot remember it — they are new elements every time — so
+    // the panel remembers for them, and it rides out on `data-entered`.
+    //
+    // Recomputed at the END of every render from what is open at that moment
+    // (see _render), which is what makes it self-maintaining: an overlay that
+    // closes clears its own flag, so its next opening animates again without a
+    // single handler having to remember to reset anything.
+    this._painted = {};
+    // Which of the detail card's sections are still in flight.
+    //
+    // The card opens instantly from the board row that was clicked, but its
+    // attachments, comments and change log are three separate fetches. Nothing
+    // could tell "not fetched yet" from "fetched, and there are none":
+    // getComments() answers [] for both, and getDetailAttachments() is
+    // `_attachments[id] || []`. So every one of those sections opened claiming
+    // to be EMPTY and then filled in underneath that claim. These flags are
+    // that missing bit; the skeleton reads them through isLoading().
+    this._loading = {};
+    // Handle of the teardown queued behind an overlay's exit animation, so any
+    // render arriving mid-exit can drop it. See _dismissOverlay.
+    this._closingTimer = null;
     this._detailId = null;
     this._detailDraft = null;
+    this._detailBase = null;
     // Set when a CHILD is opened from its parent's panel: closing the child
     // then returns to the parent instead of dismissing the whole thing. There
     // is only one detail panel, so without this a child replaced the parent and
@@ -184,6 +284,11 @@ class __tasks_panel extends LetcBox {
     // Inline subtask creator in the detail panel. null = the "+ Add subtask"
     // row is showing; an object = the creator is open on that draft.
     this._subtaskDraft = null;
+    // Same creator, but in the create modal: it queues children onto
+    // _createDefaults.subtasks instead of posting them, because the parent has
+    // no id until Create is pressed. Separate field so the two overlays cannot
+    // clobber each other's half-typed row.
+    this._createSubtaskDraft = null;
     this._attachments = {};
     this._pickerOpen = null;
     // Member filter — empty = show all. Uids stored as strings. Shared across
@@ -194,16 +299,24 @@ class __tasks_panel extends LetcBox {
     // priority/status hold arrays (OR within), due/files are single-select,
     // keyword is a title substring.
     this._filters = { keyword: "", priority: [], status: [], due: null, files: null };
-    // Accordion open-state for the List filter popup (dimension key -> bool).
-    this._filterExpanded = {};
+    // Filter popover navigation: null = the root page (search + one row per
+    // dimension), else the dimension whose values are showing. And the member
+    // search typed on the Assignee page (lower-cased).
+    this._filterPage = null;
+    this._filterMemberQuery = "";
     // Active sub-view (board | calendar | list | summary) and the List view's
     // sort state.
     this._view = "board";
     this._sort = null; // { key, dir } — null = natural (status, rank) order
-    // Calendar view: month|week granularity + the anchor date (YYYY-MM-DD) of
-    // the displayed period. null cursor = today.
+    // Calendar view: month|week|day granularity + the anchor date
+    // (YYYY-MM-DD) of the displayed period. null cursor = today. The two
+    // dropdowns (view menu, range mini-calendar) and the month that mini
+    // calendar is SHOWING, which is not the cursor until a day is picked.
     this._calMode = "month";
     this._calCursor = null;
+    this._calViewMenuOpen = false;
+    this._calPickerOpen = false;
+    this._calPickerCursor = null;
     // Gantt view: weeks|months axis granularity + the multi-select set (task
     // ids) backing the checkboxes / "Delete selected".
     this._ganttMode = "weeks";
@@ -265,6 +378,7 @@ class __tasks_panel extends LetcBox {
 
   onBeforeDestroy() {
     this.unbindEvent(_a.live);
+    this._unbindCalMenuDismiss();
     // Parts that never mounted leave their waiter behind (their promise simply
     // never settles, exactly as ensurePart's would) — drop them with the panel.
     for (const cb of this._partWaiters || []) this.off(_e.part.ready, cb);
@@ -275,6 +389,24 @@ class __tasks_panel extends LetcBox {
     if (this._assigneeBlurTimer) clearTimeout(this._assigneeBlurTimer);
     if (this._filterKwTimer) clearTimeout(this._filterKwTimer);
     if (this._submitWatchdog) clearTimeout(this._submitWatchdog);
+    // A panel destroyed mid-exit (the tab switched, the window closed) must not
+    // leave a teardown queued against its wrappers.
+    this._cancelPendingExit();
+    if (this._wsCooldown) clearTimeout(this._wsCooldown);
+    this._wsCooldown = null;
+    this._wsPending = null;
+    // The coalesced peer repaint (_applyPeerTaskChange) — a frame queued
+    // against a panel that is going away would call _refreshViewBody on a
+    // destroyed view. The isDestroyed() guard inside catches it too; cancelling
+    // is the half that does not depend on the callback running at all.
+    if (this._peerPaintRaf && typeof cancelAnimationFrame === "function") {
+      cancelAnimationFrame(this._peerPaintRaf);
+    }
+    this._peerPaintRaf = 0;
+    if (this._visObserver) {
+      this._visObserver.disconnect();
+      this._visObserver = null;
+    }
     if (
       this._mediaDroppableInstalled &&
       typeof $ !== "undefined" &&
@@ -285,6 +417,10 @@ class __tasks_panel extends LetcBox {
       try {
         $(this.el).droppable("destroy");
       } catch (_) {}
+    }
+    if (this._pointerArm && typeof document !== "undefined") {
+      document.removeEventListener("mousedown", this._pointerArm, true);
+      this._pointerArm = null;
     }
     if (this._pointerTracker && typeof document !== "undefined") {
       document.removeEventListener("mousemove", this._pointerTracker, true);
@@ -302,6 +438,15 @@ class __tasks_panel extends LetcBox {
       this.el.removeEventListener("mouseleave", this._pointerExit);
       this._pointerExit = null;
     }
+    // Inline-image placeholders hold an object URL each while they upload.
+    // They live in the editor's DOM rather than on a draft, so the loop below
+    // cannot see them — a panel closed mid-upload would leak one per image.
+    for (const url of this._inlinePreviews || []) {
+      try {
+        URL.revokeObjectURL(url);
+      } catch (_) {}
+    }
+    this._inlinePreviews = null;
     // Release pending-file image-preview blob URLs — the two task forms and
     // the three comment drafts, which carry their own queued files.
     for (const draft of [
@@ -328,7 +473,92 @@ class __tasks_panel extends LetcBox {
   // Toggle the member-filter dropdown (rendered top-right of the board).
   toggleFilter() {
     this._pickerOpen = this._pickerOpen === "filter" ? null : "filter";
+    // Every open starts on the root page with no member query.
+    this._filterPage = null;
+    this._filterMemberQuery = "";
     this._render();
+  }
+
+  // Open the popover straight on one dimension's page (an applied-filter chip).
+  _openFilterPage(dim) {
+    this._pickerOpen = "filter";
+    // The keyword chip opens the root page — the search box lives there.
+    this._filterPage = dim && dim !== "keyword" ? dim : null;
+    this._filterMemberQuery = "";
+    this._render();
+  }
+
+  getFilterPage() {
+    return this._filterPage || null;
+  }
+
+  getFilterMemberQuery() {
+    return this._filterMemberQuery || "";
+  }
+
+  // Reset one dimension (a chip's ×, or "Clear" on that dimension's page).
+  _clearFilterDim(dim) {
+    const f = this._filters;
+    switch (dim) {
+      case "assignee":
+        this._filterUids = [];
+        break;
+      case "keyword":
+        f.keyword = "";
+        break;
+      case "priority":
+      case "status":
+        f[dim] = [];
+        break;
+      case "due":
+      case "files":
+        f[dim] = null;
+        break;
+      default:
+        return;
+    }
+    this._notifyFilterState();
+    this._render();
+  }
+
+  /**
+   * Narrow the Assignee page's member rows to the query, in place — typing must
+   * not repaint (it would rebuild the very input being typed in; see the
+   * filter-keyword case). The skeleton applies the same rule from
+   * getFilterMemberQuery(), so a repaint keeps what is hidden.
+   */
+  _filterMemberRows() {
+    if (!this.el) return;
+    const q = this._filterMemberQuery;
+    let shown = 0;
+    this.el
+      .querySelectorAll(".tasks-panel__filter-body .tasks-panel__filter-row[data-name]")
+      .forEach((row) => {
+        const hide = !!q && !row.dataset.name.includes(q);
+        row.dataset.hidden = hide ? "1" : "0";
+        if (!hide) shown++;
+      });
+    const empty = this.el.querySelector(".tasks-panel__filter-body .tasks-panel__filter-empty");
+    if (empty) empty.dataset.visible = shown ? "0" : "1";
+  }
+
+  /**
+   * Put the popover under the Filter button. The viewbar wraps at narrow
+   * widths, so its height — and the button's place — is not something the skin
+   * can know; measured after every paint instead. Right-aligned to the button,
+   * clamped inside the panel.
+   */
+  _positionFilterPicker() {
+    if (!this.el || this._pickerOpen !== "filter") return;
+    const picker = this.el.querySelector(".tasks-panel__filter-picker");
+    const btn = this.el.querySelector(".tasks-panel__viewbar-filter");
+    const host = picker && picker.offsetParent;
+    if (!picker || !btn || !host) return;
+    const h = host.getBoundingClientRect();
+    const b = btn.getBoundingClientRect();
+    if (!b.width && !b.height) return;
+    picker.style.top = `${Math.max(8, b.bottom - h.top + 6)}px`;
+    picker.style.right = `${Math.max(8, h.right - b.right)}px`;
   }
 
   isFilterActive() {
@@ -370,10 +600,6 @@ class __tasks_panel extends LetcBox {
     return this._filters;
   }
 
-  isFilterCatOpen(dim) {
-    return !!(this._filterExpanded && this._filterExpanded[dim]);
-  }
-
   // Let the host window reflect the active filter on its tab-bar button.
   _notifyFilterState() {
     if (typeof this.triggerHandlers === "function") {
@@ -384,42 +610,34 @@ class __tasks_panel extends LetcBox {
     }
   }
 
-  // Re-point the panel at a different folder when the host window navigates
-  // (breadcrumb / into a child). Mirrors the chat panel's setScopedFolderNid.
+  // Follow the host window as it navigates (breadcrumb / into a child).
+  //
+  // The BOARD does not change: it shows the whole workspace from whichever
+  // folder you are standing in. All this updates is where a new task and its
+  // uploads are filed. So — unlike the folder-scoped version this replaces —
+  // it does NOT drop the loaded rows, close an open draft, or refetch on
+  // navigation; doing that would tear the board down and rebuild it identical
+  // every time the user clicked into a subfolder.
   setScope({ scopeNid = null, isRoot = 0, destNid } = {}) {
-    const nextScope = scopeNid != null ? scopeNid : null;
-    const nextRoot = isRoot ? 1 : 0;
-    const nextDest = destNid != null ? destNid : this._destNid;
-    const sameScope =
-      this._scopeNid === nextScope &&
-      this._scopeIsRoot === nextRoot &&
-      this._destNid === nextDest;
-    // Same scope and the last fetch succeeded: nothing to do. When the last
-    // list fetch failed silently, fall through to refetch — otherwise
-    // reopening the Tasks tab (which re-calls setScope with identical args)
-    // would latch the empty board until page reload.
-    if (sameScope && !this._loadFailed) {
-      return;
-    }
-    this._scopeNid = nextScope;
-    this._scopeIsRoot = nextRoot;
-    this._destNid = nextDest;
-    if (!sameScope) {
-      // The create/detail popups, pending file search AND the loaded rows
-      // belong to the folder we just left — close/drop them so nothing
-      // commits into (or renders on) the new scope. On a failed-load RETRY
-      // of the SAME scope, keep all of it: wiping here would discard the
-      // user's open draft just because the board needed a refetch.
-      this._creating = false;
-      this._createDefaults = null;
-      this._detailId = null;
-      this._detailDraft = null;
-      this._detailReturnTo = null;
-      this._pickerOpen = null;
-      this._tasks = [];
-      if (typeof this._resetFileSearch === "function") this._resetFileSearch();
+    this._scopeNid = scopeNid != null ? scopeNid : null;
+    this._scopeIsRoot = isRoot ? 1 : 0;
+    if (destNid != null && `${destNid}` !== `${this._destNid}`) {
+      this._destNid = destNid;
+      // _destNid is now only the FALLBACK upload destination (see
+      // _attachmentNid) — attachments normally go to the hub-level task
+      // folder, which navigation does not move. The cached filenames still
+      // follow it, because on an unpatched server the fallback is live and
+      // the a → a(1) collision preview reads the folder the user is in.
+      this._folderFilenames = null;
     }
     if (!this.el) return; // not mounted yet — onDomRefresh loads fresh
+    // Reopening the Task tab is where a panel that was hidden comes back, so
+    // it is where peer changes held back while it was hidden are picked up.
+    this._flushDeferredWsRefresh();
+    // The one case that still needs a fetch: the previous load failed
+    // silently, and reopening the Tasks tab re-calls setScope. Without this
+    // the board would latch empty until a page reload.
+    if (!this._loadFailed) return;
     Promise.all([
       this._loadTasks(),
       this._loadColumns(),
@@ -437,17 +655,60 @@ class __tasks_panel extends LetcBox {
     this._trackPointer();
     this._installPasteAttach();
     this._installFileSearchFocus();
+    this._installCardWindow();
     this._installAssigneeSearch();
     this._installSubtaskDateWatch();
-    await Promise.all([
-      this._loadTasks(),
-      this._loadColumns(),
+    this._watchVisibility();
+    // PAINT AS SOON AS THERE IS SOMETHING TO PAINT, then revalidate.
+    //
+    // Two passes of this method met here, and both reasons are kept.
+    //
+    // FROM THE CACHE (this side): every reopen of the Task tab — a workspace
+    // switched back to, a window reopened — used to hold the first paint on
+    // six round trips, task.list for the whole workspace among them, and the
+    // board sat blank for the slowest of them. A board this session has
+    // already seen is drawn at once from the last rows it saw.
+    //
+    // FROM THE FIRST TWO LOADS (upstream): a board this session has NOT seen
+    // has nothing to draw from, and only two of the six loads decide whether
+    // it can be drawn at all — the tasks and the columns. The other three
+    // DECORATE it: watches are a per-column flag, members are assignee
+    // avatars, labels are chips. None of them reads `_tasks` or `_columns`,
+    // and initialize() starts them empty, so the skeleton draws a real board
+    // without them and they must not gate the first paint.
+    //
+    // Activity gates nothing at all: only the Health (summary) view and the
+    // detail panel read it, so it repaints those and nothing else.
+    //
+    // Every repaint after the first is gated on _boardSignature, which covers
+    // all five lists — so an answer that matches what is already on screen
+    // costs no second render. _render captures and restores focus, caret and
+    // scroll around the DOM swap, which is what makes repainting safe at all.
+    const seeded = this._seedFromCache();
+    const core = Promise.all([this._loadTasks(), this._loadColumns()]);
+    const decorations = Promise.all([
       this._loadColumnWatches(),
-      this._loadActivity(),
       this._loadMembers(),
       this._loadLabels(),
     ]);
-    this._render();
+    this._loadActivity().then(() => {
+      if (this.isDestroyed && this.isDestroyed()) return;
+      if (this.getView() === "summary" || this._detailId) this._render();
+    });
+    let painted = null;
+    if (seeded) {
+      this._render();
+      painted = this._boardSignature();
+    }
+    await core;
+    if (this.isDestroyed && this.isDestroyed()) return;
+    if (!seeded || this._boardSignature() !== painted) {
+      this._render();
+      painted = this._boardSignature();
+    }
+    await decorations;
+    if (this.isDestroyed && this.isDestroyed()) return;
+    if (this._boardSignature() !== painted) this._render();
     // Deep-link: a mention/assignment notification asked to open a specific
     // task. Routed through openTaskById so this path also recovers when the
     // task is missing from the load that just finished (it can be newer than
@@ -478,7 +739,11 @@ class __tasks_panel extends LetcBox {
     // this panel last loaded is simply absent — it only appeared after a full
     // page reload, and the deep link below then found nothing to open. Refresh
     // once before concluding the task is not in this folder.
-    if (!Array.isArray(this._tasks) || !this._tasks.some((t) => t.id === id)) {
+    const seek = () =>
+      Array.isArray(this._tasks)
+        ? this._tasks.find((t) => `${t.id}` === `${id}`)
+        : null;
+    if (!seek()) {
       await this._loadTasks();
       // The window can be closed while the refetch is in flight.
       if (!this.el || (this.isDestroyed && this.isDestroyed())) return;
@@ -486,7 +751,21 @@ class __tasks_panel extends LetcBox {
     }
     // Same guard as onDomRefresh — only open a task that really belongs to this
     // folder's list, never an empty detail panel.
-    if (this._tasks.some((t) => t.id === id)) this._openDetail(id);
+    //
+    // Matched loosely, then opened with the BOARD's own id. _openDetail (and
+    // _detailId after it) compare with `===`, so an id that arrived as a
+    // different primitive type — this deep link is called from the Personal
+    // Calendar with a calendar.list id as well as from a notification — would
+    // pass a loose test here and then find no task there, rendering the detail
+    // panel with a null draft.
+    const task = seek();
+    if (task) return this._openDetail(task.id);
+    // The board switched to, the detail never opened, and nothing said why —
+    // which from the Personal Calendar reads as "the chip is not clickable"
+    // rather than "that task is not on this board". It happens when the
+    // calendar row names a task that has since moved workspace or been
+    // deleted; the meeting twin already refuses out loud (MEETING_NOT_FOUND).
+    this.warn("tasks: deep-linked task is not on this board", id);
   }
 
   // Files dragged from the home grid use Drumee's internal jQuery-UI drag, not
@@ -568,7 +847,8 @@ class __tasks_panel extends LetcBox {
       "task.delete", "task.link_file", "task.unlink_file", "task.link_label",
       "task.unlink_label", "task.comment_create", "task.comment_update",
       "task.comment_delete", "task.comment_react", "task.column_create",
-      "task.column_update", "task.column_delete", "task.column_reorder",
+      "task.column_update", "task.column_set_done", "task.column_delete",
+      "task.column_reorder",
       // Both comment-file services were missing from this list while being
       // `src: write` server-side. _zoneFor already refuses a viewer without
       // task rights, but that is UX — this is the boundary, and nothing stops
@@ -599,7 +879,16 @@ class __tasks_panel extends LetcBox {
           this.constructor.TASK_MUTATIONS.includes(`${name}`)
           && !this._mayWriteTasks()
         ) {
-          if (typeof Butler !== "undefined" && Butler.say) Butler.say(LOCALE.WEAK_PRIVILEGE);
+          if (typeof Butler !== "undefined" && Butler.say) {
+            // The panel holds no privilege of its own (see _mayWriteTasks);
+            // read it from the workspace window it is mounted for.
+            const PD = require("libs/permission-denied");
+            Butler.say(PD.weakPrivilegeMessage(
+              LOCALE.PERMISSION_ACTION_EDIT_TASKS,
+              PD.workspacePrivilege(this.mget(_a.hub_id)),
+              _K.permission.write,
+            ));
+          }
           // postService resolves UNDEFINED when a call does not complete, and
           // every caller here already tolerates that — so refusing this way
           // reproduces a shape they handle rather than adding a rejection path.
@@ -607,6 +896,17 @@ class __tasks_panel extends LetcBox {
         }
       } catch (e) {
         /* never let the guard break a legitimate call */
+      }
+      // Lets task._broadcast skip only THIS socket, so the user's other tabs
+      // hear the change. Mutations only; reads stay cacheable and unchanged.
+      const a0 = args[0];
+      if (
+        a0 && typeof a0 === "object" &&
+        this.constructor.TASK_MUTATIONS.includes(`${a0.service}`) &&
+        a0.socket_id == null
+      ) {
+        const sid = typeof Visitor !== "undefined" && Visitor.get && Visitor.get(_a.socket_id);
+        if (sid) args[0] = { ...a0, socket_id: sid };
       }
       return original(...args);
     };
@@ -1037,7 +1337,7 @@ class __tasks_panel extends LetcBox {
     // Fall back to a full render if we can't locate the DOM nodes (defensive).
     if (!card || !targetBody) {
       task.status = status;
-      this._render();
+      this._render({ full: true });
     } else {
       const sourceBody = card.closest(".tasks-panel__column-body");
       card.classList.remove("is-dragging");
@@ -1083,7 +1383,7 @@ class __tasks_panel extends LetcBox {
       console.error("[tasks_panel] update_status (drag) failed:", err);
       task.status = originalStatus;
       await this._loadTasks();
-      this._render();
+      this._render({ full: true });
     }
   }
 
@@ -1238,6 +1538,8 @@ class __tasks_panel extends LetcBox {
     if (count === 0 && !empty) {
       empty = document.createElement("div");
       empty.className = "tasks-panel__column-empty";
+      // Hand-made, outside Marionette — _dedupeEmptyHints keys on this.
+      empty.dataset.raw = "1";
       empty.textContent = LOCALE.DROP_TASKS_HERE || "";
       colBody.appendChild(empty);
     } else if (count > 0 && empty) {
@@ -1285,12 +1587,16 @@ class __tasks_panel extends LetcBox {
           assignees: [],
           labels: [],
           pending_files: [],
+          // Children queued before the parent exists. Posted with
+          // parent_task_id right after the parent is created (_commitTask).
+          subtasks: [],
         };
+        this._createSubtaskDraft = null;
         // Force a fresh fetch on first attachment pick so name-collision
         // preview reflects whatever the folder body holds right now.
         this._folderFilenames = null;
         this._resetFileSearch();
-        return this._render();
+        return this._renderOverlays();
 
       case "commit-task":
         if (this._submitting) return;
@@ -1300,7 +1606,7 @@ class __tasks_panel extends LetcBox {
         return this._commitTask().catch((err) => {
           console.error("[tasks_panel] commit-task failed:", err);
           this._setSubmitting(".tasks-panel__create-submit", false);
-          this._render();
+          this._renderOverlays();
           // Say so: a commit that fails silently is indistinguishable from a
           // dead button, which makes it needlessly hard to diagnose.
           Wm.alert(LOCALE.ERROR_NETWORK);
@@ -1309,10 +1615,14 @@ class __tasks_panel extends LetcBox {
       case "cancel-add":
         this._creating = false;
         this._createDefaults = null;
+        this._createSubtaskDraft = null;
         this._pickerOpen = null;
         this._resetFileSearch();
-        this._dismissOverlayNow("create-backdrop");
-        return this._renderDeferred();
+        // State is already cleared above, so the modal is shut as far as every
+        // handler is concerned; only its DOM waits for the exit to play.
+        return this._dismissOverlay("create-backdrop", () =>
+          this._renderOverlays(),
+        );
 
       case "create-status":
         if (this._createDefaults) {
@@ -1366,6 +1676,23 @@ class __tasks_panel extends LetcBox {
         return this._applyReporterChange(scope);
       }
 
+      // The reporter chip's ✕. Not a clear — a task always reads as reported by
+      // somebody — but an undo: it puts the field back to the task's creator
+      // (the current user in the create modal), which is what the field shows
+      // before anybody reassigns it.
+      case "reset-reporter": {
+        const scope =
+          trigger.mget("assigneeScope") === "create-reporter"
+            ? "create-reporter"
+            : "detail-reporter";
+        const draft = this._pickerDraft(scope);
+        if (!draft) return;
+        const back = this._reporterFallback(scope);
+        if (!back) return;
+        draft.reporter_uid = String(back);
+        return this._applyReporterChange(scope);
+      }
+
       case "toggle-assignee-list": {
         // The caret names its own scope. Pass it through instead of collapsing
         // to create|detail: there are four pickers now (assignee + reporter, in
@@ -1401,19 +1728,25 @@ class __tasks_panel extends LetcBox {
         return this._render();
       }
 
-      case "filter-cat": {
-        // Accordion expand/collapse of a filter dimension — toggle in
-        // place (no re-render), so opening a section doesn't rebuild the list.
-        const dim = trigger.mget("filterDim");
-        if (!dim) return;
-        this._filterExpanded[dim] = !this._filterExpanded[dim];
-        const cat =
-          this.el &&
-          this.el.querySelector(
-            `.tasks-panel__filter-cat[data-dim="${dim}"]`,
-          );
-        if (cat) cat.dataset.open = this._filterExpanded[dim] ? "1" : "0";
-        return;
+      case "filter-page": {
+        // Popover navigation: a dimension row opens its page, "‹ Back" (no
+        // dimension) returns to the root. A patch swaps only the popover body.
+        this._filterPage = trigger.mget("filterDim") || null;
+        this._filterMemberQuery = "";
+        return this._render();
+      }
+
+      case "filter-open-page":
+        return this._openFilterPage(trigger.mget("filterDim"));
+
+      case "filter-dim-clear":
+        return this._clearFilterDim(trigger.mget("filterDim"));
+
+      case "filter-member-search": {
+        this._filterMemberQuery = String((args && args.value) || "")
+          .trim()
+          .toLowerCase();
+        return this._filterMemberRows();
       }
 
       case "filter-set": {
@@ -1454,6 +1787,7 @@ class __tasks_panel extends LetcBox {
           this._filterKwTimer = null;
           this._notifyFilterState();
           this._syncFilterAffordances();
+          this._refreshFilterChips();
           this._refreshViewBody();
         }, 200);
         return;
@@ -1532,6 +1866,47 @@ class __tasks_panel extends LetcBox {
         this._subtaskDraft.menu = null;
         this._refreshSubtaskSection();
         return;
+      }
+
+      // ── Subtasks queued on the create modal ─────────────────────
+      // Same block, same skin, but the parent does not exist yet: these edit
+      // _createDefaults.subtasks, and _commitTask posts them once it has an id.
+      case "add-create-subtask":
+        return this._openCreateSubtaskDraft();
+
+      case "cancel-create-subtask":
+        this._createSubtaskDraft = null;
+        return this._refreshCreateSubtaskSection();
+
+      case "commit-create-subtask":
+        return this._queueCreateSubtask();
+
+      case "remove-create-subtask":
+        return this._removeCreateSubtask(trigger);
+
+      case "toggle-create-subtask-done":
+        return this._toggleCreateSubtaskDone(trigger);
+
+      case "toggle-create-subtask-menu": {
+        if (!this._createSubtaskDraft) return;
+        const kind = trigger.mget("menuKind");
+        this._createSubtaskDraft.menu =
+          this._createSubtaskDraft.menu === kind ? null : kind;
+        return this._refreshCreateSubtaskSection();
+      }
+
+      case "set-create-subtask-priority": {
+        if (!this._createSubtaskDraft) return;
+        this._createSubtaskDraft.priority = trigger.mget("taskPriority");
+        this._createSubtaskDraft.menu = null;
+        return this._refreshCreateSubtaskSection();
+      }
+
+      case "set-create-subtask-status": {
+        if (!this._createSubtaskDraft) return;
+        this._createSubtaskDraft.status = trigger.mget("taskStatus");
+        this._createSubtaskDraft.menu = null;
+        return this._refreshCreateSubtaskSection();
       }
 
       case "commit-description":
@@ -1623,7 +1998,7 @@ class __tasks_panel extends LetcBox {
         return this._commitDetail().catch((err) => {
           console.error("[tasks_panel] commit-detail failed:", err);
           this._setSubmitting(".tasks-panel__detail-submit", false);
-          this._render();
+          this._renderOverlays();
           // Say so: a commit that fails silently is indistinguishable from a
           // dead button, which makes it needlessly hard to diagnose.
           Wm.alert(LOCALE.ERROR_NETWORK);
@@ -1636,13 +2011,19 @@ class __tasks_panel extends LetcBox {
         // closing the child used to take the parent with it. Read the target
         // first: _closeDetailSilently clears it.
         const back = this._detailReturnTo;
-        this._closeDetailSilently();
-        // _openDetail renders on its own — a _renderDeferred() on top of it
-        // would be a second full rebuild of the panel just painted.
+        // Walking back is NAVIGATION, not a dismissal: the parent is drawn
+        // into this same element in the same tick, so an exit here would fade
+        // the child out underneath the parent arriving on top of it. Close it
+        // instantly and let _openDetail play its own entrance.
         if (back && this._tasks.some((t) => t.id === back)) {
+          this._closeDetailSilently();
+          // _openDetail renders on its own — a _renderDeferred() on top of it
+          // would be a second full rebuild of the panel just painted.
           return this._openDetail(back);
         }
-        return this._renderDeferred();
+        // A real dismissal: state is cleared now, the card animates away, and
+        // the wrappers are re-fed once it has gone.
+        return this._closeDetailSilently(() => this._renderOverlays());
       }
 
       case "open-detail":
@@ -1670,13 +2051,56 @@ class __tasks_panel extends LetcBox {
       case "viewbar-page":
         return this._showViewbarPage(trigger);
 
-      case "set-cal-mode": {
-        const m = trigger.mget("calMode") === "week" ? "week" : "month";
-        if (m !== this._calMode) {
+      // ── Calendar toolbar ────────────────────────────────────────────────
+      // Every case below repaints through _repaintCalendar (view body + the
+      // controls row) or _repaintCalControls (the row alone), never _render():
+      // none of them touch the viewbar tabs, the filter bar or the overlays,
+      // and a full render rebuilds the whole panel to move a month.
+      case "cal-toggle-view-menu":
+        this._calViewMenuOpen = !this._calViewMenuOpen;
+        this._calPickerOpen = false;
+        return this._repaintCalControls();
+
+      case "cal-set-view": {
+        const m = trigger.mget("calMode");
+        this._closeCalMenus();
+        if ((m === "month" || m === "week" || m === "day") && m !== this._calMode) {
           this._calMode = m;
-          this._render();
+          return this._repaintCalendar();
         }
-        return;
+        return this._repaintCalControls();
+      }
+
+      case "cal-toggle-picker":
+        this._calPickerOpen = !this._calPickerOpen;
+        this._calViewMenuOpen = false;
+        // Each open starts on the month the grid is showing, not wherever the
+        // user last browsed the popup to and stopped.
+        this._calPickerCursor = null;
+        return this._repaintCalControls();
+
+      // ‹ › inside the popup: moves the POPUP's month only — the grid behind
+      // it has not moved, so this is the row alone. Stays open to browse.
+      case "cal-picker-step": {
+        const delta = Number(trigger.mget("calStep"));
+        if (delta !== 1 && delta !== -1) return;
+        try {
+          const base = Dayjs(this._calPickerCursor || this._calCursor || undefined);
+          this._calPickerCursor = base.add(delta, "month").format("YYYY-MM-DD");
+        } catch (_) {
+          this._calPickerCursor = null;
+        }
+        return this._repaintCalControls();
+      }
+
+      // A day picked in the popup anchors the calendar on it in the current
+      // view — the day view lands on that day, week on its week, month on its
+      // month — as the other two calendars do.
+      case "cal-pick-day": {
+        const day = trigger.mget("calDay");
+        this._closeCalMenus();
+        if (day) this._calCursor = day;
+        return this._repaintCalendar();
       }
 
       case "cal-prev":
@@ -1685,22 +2109,17 @@ class __tasks_panel extends LetcBox {
       case "cal-next":
         return this._calShift(1);
 
-      case "cal-today":
-        if (this._calCursor !== null) {
-          this._calCursor = null;
-          this._render();
-        }
-        return;
-
       case "cal-day-more": {
-        // "+N more" on a packed month cell → jump to that day's week view.
+        // "+N" on a busy month cell → that DAY, where every task is a full
+        // card. It used to open the week, which is the Personal Calendar's
+        // "+N" going somewhere different from this one's.
         const day = trigger.mget("calDay");
+        this._closeCalMenus();
         if (day) {
           this._calCursor = day;
-          this._calMode = "week";
-          this._render();
+          this._calMode = "day";
         }
-        return;
+        return this._repaintCalendar();
       }
 
       case "cal-add": {
@@ -1719,10 +2138,20 @@ class __tasks_panel extends LetcBox {
           assignees: [],
           labels: [],
           pending_files: [],
+          // Children queued before the parent exists. Posted with
+          // parent_task_id right after the parent is created (_commitTask).
+          subtasks: [],
         };
+        this._createSubtaskDraft = null;
         this._folderFilenames = null;
         this._resetFileSearch();
-        return this._render();
+        // The create modal opening and nothing else — the overlays path, the
+        // same one "add-task" takes (it used to rebuild the whole panel).
+        if (this._calViewMenuOpen || this._calPickerOpen) {
+          this._closeCalMenus();
+          this._repaintCalControls();
+        }
+        return this._renderOverlays();
       }
 
       case "set-gantt-mode": {
@@ -1755,12 +2184,12 @@ class __tasks_panel extends LetcBox {
         this._boardDefault = true;
         this._colMenuFor = null;
         this._colRenameDraft = null;
-        return this._render();
+        return this._renderOverlays();
 
       case "board-cancel":
         this._boardModalOpen = false;
         this._boardTitle = "";
-        return this._render();
+        return this._renderOverlays();
 
       case "board-title-changed":
         // Live-persist the typed name so a colour pick / toggle (which update
@@ -1792,13 +2221,18 @@ class __tasks_panel extends LetcBox {
 
       case "col-menu": {
         const key = trigger.mget("taskColumn");
-        const opening = this._colMenuFor !== key;
+        const prev = this._colMenuFor;
+        const opening = prev !== key;
         this._colMenuFor = opening ? key : null;
         // Seed the draft with the current name on open; clear on close.
         this._colRenameDraft = opening
           ? (this._customColumns.find((c) => c.id === key) || {}).name || ""
           : null;
-        return this._render();
+        // Only the popover slot(s) change — feed those, never _render(): a
+        // full re-render rebuilds every column and card (~1.5 s of blocked
+        // main thread on a 150-task board) to show or hide one popover.
+        if (prev != null && prev !== key) this._refreshColMenu(prev);
+        return this._refreshColMenu(key);
       }
 
       case "col-watch-toggle":
@@ -1828,6 +2262,9 @@ class __tasks_panel extends LetcBox {
 
       case "col-theme-set":
         return this._themeColumn(trigger);
+
+      case "col-done-toggle":
+        return this._toggleColumnDone(trigger);
 
       case "col-delete":
         return this._deleteColumn(trigger);
@@ -2154,23 +2591,40 @@ class __tasks_panel extends LetcBox {
   // current open state is preserved — a chip removal must re-feed the rows
   // without popping a list the user had closed.
   _filterAssignees(scope, query, opt = {}) {
+    const single = this._isSinglePicker(scope);
     const rows = require("./skeleton").buildAssigneeSuggestions(
       this,
       query,
       this._assigneeSelection(scope),
       this._assigneeScopeService(scope),
+      // A reporter is one person, so the current one stays listed (ticked)
+      // rather than being hidden — see buildAssigneeSuggestions.
+      { keepSelected: single },
     );
     const list = this._assigneeListEl(scope);
     const open =
       opt.open != null ? !!opt.open : !!(list && list.dataset.open === "1");
+    // No match is an ANSWER, not a reason to swallow the dropdown. Forcing it
+    // shut on an empty result set is what made a picker read as broken: the
+    // caret did nothing, and there was no way to tell "nobody matches that"
+    // from "this control is dead".
+    const content = rows.length
+      ? rows
+      : [
+          Skeletons.Note({
+            className: `${this.fig.family}__assignee-empty`,
+            content: LOCALE.NO_MEMBERS_FOUND,
+            bubble: 0,
+          }),
+        ];
     this._withPart(`${scope}-assignee-suggestions`)
       .then((part) => {
         if (!part || part.isDestroyed?.()) return;
-        part.feed(rows);
+        part.feed(content);
         // A press on a row must not blur the search field, or the 200 ms
         // focusout teardown below fires mid-click and the pick is lost.
         keepListThroughClick(part.el, `.${this.fig.family}__assignee-option`);
-        if (part.el) part.el.dataset.open = open && rows.length ? "1" : "0";
+        if (part.el) part.el.dataset.open = open ? "1" : "0";
       })
       .catch(() => {
         /* not mounted yet */
@@ -2197,11 +2651,77 @@ class __tasks_panel extends LetcBox {
       if (!t || !t.matches || !t.matches(`.${this.fig.family}__subtask-date-input`)) {
         return;
       }
-      if (!this._subtaskDraft) return;
+      // data-scope says which of the two creators this input belongs to (the
+      // create modal's or the detail panel's) — they use the same class.
+      const isCreate = t.getAttribute("data-scope") === "create";
+      const draft = isCreate ? this._createSubtaskDraft : this._subtaskDraft;
+      if (!draft) return;
       // "" when the user clears the field — a child with no due date is valid.
-      this._subtaskDraft.due_date = t.value || "";
-      this._refreshSubtaskSection();
+      draft.due_date = t.value || "";
+      if (isCreate) this._refreshCreateSubtaskSection();
+      else this._refreshSubtaskSection();
     });
+  }
+
+  /**
+   * How many cards a column may build right now.
+   *
+   * Starts at CARD_WINDOW and grows by CARD_WINDOW_STEP each time the user
+   * scrolls that column near its bottom (_installCardWindow). Per column, so a
+   * long "To do" does not force every other column to build its whole list.
+   */
+  cardWindow(key) {
+    if (!this._cardWindow) this._cardWindow = {};
+    return this._cardWindow[key] || CARD_WINDOW;
+  }
+
+  /**
+   * Grow a column's window as it is scrolled.
+   *
+   * `scroll` does not bubble, so this is a CAPTURE listener on the panel root —
+   * the same shape the file-search dropdown uses below. One listener for every
+   * column rather than one per column, and it early-returns on anything that is
+   * not a column body.
+   *
+   * Repaints through `_refreshViewBody()`, never `_render()`: that path feeds
+   * only the view host and puts every scroll offset back (it snapshots
+   * `.tasks-panel__column-body[data-dropcol=…]` by selector), so the column
+   * stays exactly where the user left it and the newly built cards simply
+   * appear below.
+   */
+  _installCardWindow() {
+    if (!this.el || this._cardWindowBound) return;
+    this._cardWindowBound = 1;
+    this.el.addEventListener(
+      "scroll",
+      (e) => {
+        const body = e.target;
+        if (!body || !body.classList) return;
+        // Two windowed views, two scrollers: the board has one per column, the
+        // list is a single flat one. "__list" matches skeleton/list.js.
+        let key, total;
+        if (body.classList.contains("tasks-panel__column-body")) {
+          key = body.dataset && body.dataset.dropcol;
+          if (!key) return;
+          // getState() is the same bucketing the skeleton renders from, so
+          // this asks "are there tasks in this column I have not built yet?".
+          total = (this.getState() || {})[key];
+        } else if (body.classList.contains("tasks-panel__list")) {
+          key = "__list";
+          total = this.getTopLevelTasks();
+        } else {
+          return;
+        }
+        const have = this.cardWindow(key);
+        // Nothing left to build for this column.
+        if (!Array.isArray(total) || total.length <= have) return;
+        if (body.scrollTop + body.clientHeight < body.scrollHeight - 240) return;
+        if (!this._cardWindow) this._cardWindow = {};
+        this._cardWindow[key] = have + CARD_WINDOW_STEP;
+        this._refreshViewBody({ enter: false });
+      },
+      true,
+    );
   }
 
   _installFileSearchFocus() {
@@ -2294,84 +2814,311 @@ class __tasks_panel extends LetcBox {
       return;
     }
     switch (service) {
-      case SERVICE.task.update_assignee:
-        // Assignees changed — the workspace member list may have changed with
-        // them (hub.delete_contributor unassigns the member it removes and
-        // announces it on this service), so re-read it too or the pickers keep
-        // offering somebody who is no longer here.
-        Promise.all([
-          this._loadTasks(),
-          this._loadActivity(),
-          this._loadMembers(),
-        ]).then(() => {
-          this._render();
-          this._refreshOpenTaskHistory();
-        });
-        return;
       case SERVICE.task.delete:
         // Warn BEFORE the reload: once _loadTasks lands, the row this user is
         // editing is gone and there is nothing left to match the id against.
         this._onPeerTaskDeleted(data, options);
-        Promise.all([this._loadTasks(), this._loadActivity()]).then(() =>
-          this._render(),
-        );
+        this._queueWsRefresh({ tasks: 1, activity: 1 });
         return;
       case SERVICE.task.create:
       case SERVICE.task.update:
       case SERVICE.task.update_status:
+      case SERVICE.task.update_assignee:
       case SERVICE.task.link_label:
       case SERVICE.task.unlink_label:
-        Promise.all([this._loadTasks(), this._loadActivity()]).then(() => {
-          this._render();
-          this._refreshOpenTaskHistory();
-        });
-        return;
       case SERVICE.task.link_file:
       case SERVICE.task.unlink_file:
-        if (this._detailId) {
-          this._refreshAttachments(this._detailId).then(() => {
-            this._render();
-            this._refreshOpenTaskHistory();
-          });
-        } else if (this.getView() === "summary") {
-          // Health view's activity feed surfaces file links even with no detail open.
-          this._loadActivity().then(() => this._render());
-        }
+        // One peer changed one task — patch that one row instead of reloading
+        // the workspace. See _applyPeerTaskChange for why this is the whole
+        // idle-lag bug. Falls back to the full refresh whenever the surgical
+        // path cannot be proved correct.
+        if (this._applyPeerTaskChange(service, data)) return;
+        // Unresolvable (e.g. hub.delete_contributor's unassign announcement on
+        // update_assignee, which names a member, not a task): reload. Members
+        // too, since that one means somebody left the workspace.
+        this._queueWsRefresh({
+          tasks: 1,
+          activity: 1,
+          history: 1,
+          members: service === SERVICE.task.update_assignee ? 1 : 0,
+        });
         return;
       case SERVICE.task.column_create:
       case SERVICE.task.column_update:
-        Promise.all([this._loadColumns(), this._loadTasks()]).then(() =>
-          this._render(),
-        );
+      // A peer flipped which column means finished. Completion is read from
+      // is_done all over this window (the subtask badge, the completed
+      // filters, where a new task lands), so a stale flag silently
+      // mis-reports — reload the columns exactly like a rename.
+      // SERVICE.task.column_set_done is defined in lex/services.json, so this
+      // is never `case undefined:` even if the backend map lacks it.
+      case SERVICE.task.column_set_done:
+        this._queueWsRefresh({ columns: 1, tasks: 1 });
         return;
       case SERVICE.task.column_delete:
         // A peer deleted a board. Its tasks are re-homed server-side, so reload
         // both lists first — the notice below needs the surviving columns to
         // tell the user where their open task went.
-        Promise.all([this._loadColumns(), this._loadTasks()]).then(() => {
-          this._onPeerColumnDeleted(data, options);
-          this._render();
+        this._queueWsRefresh({
+          columns: 1,
+          tasks: 1,
+          after: () => this._onPeerColumnDeleted(data, options),
         });
         return;
       case SERVICE.task.comment_create:
       case SERVICE.task.comment_update:
       case SERVICE.task.comment_delete:
-      case SERVICE.task.comment_react:
+      case SERVICE.task.comment_react: {
+        // Our OWN comment comes back on the socket too, and the row it names is
+        // already in the feed (the create response put it there). Re-reading
+        // the whole thread for it costs a second round trip per comment sent
+        // and repaints the feed a beat after the row landed, which reads as a
+        // flicker. A peer's change still refreshes, below.
+        const echoOfOurs =
+          service === SERVICE.task.comment_create &&
+          data &&
+          data.id &&
+          (this._comments || []).some((c) => String(c.id) === String(data.id));
         // A peer changed a comment. Surgically refresh the open task's feed so
         // an in-progress composer/edit isn't disturbed.
-        if (this._detailId) {
+        if (this._detailId && !echoOfOurs) {
           this._loadComments(this._detailId).then(() => {
             if (this._detailId) this._refreshCommentList();
           });
         }
         // Comments also appear in the Health view's activity feed.
         if (this.getView() === "summary") {
-          this._loadActivity().then(() => this._render());
+          this._queueWsRefresh({ activity: 1 });
         }
         return;
+      }
       default:
         if (super.onWsMessage) super.onWsMessage(svc, data, options);
     }
+  }
+
+  /**
+   * Is anybody actually looking at this panel?
+   *
+   * It stays mounted for the life of the folder window (folder/index.js keeps
+   * `_taskPanelMounted` and reveals the tab with `data-view`, rather than
+   * rebuilding it), so a panel on a hidden tab — or in a minimised window —
+   * went on refetching every task in the workspace and rebuilding a board
+   * nobody could see, for as long as a peer kept working.
+   *
+   * Measured on the box rather than on `offsetParent`, which is also null for
+   * a `position: fixed` element that IS visible. A `display: none` ancestor
+   * gives 0 x 0; anything on screen does not.
+   *
+   * @returns {Boolean}
+   */
+  _isPanelHidden() {
+    const el = this.el;
+    if (!el) return true;
+    // `=== false`, not `!el.isConnected`: on an engine that does not implement
+    // isConnected the property reads undefined, and a falsy test would call a
+    // perfectly visible panel hidden — which would defer every peer refresh
+    // for ever. The box measurement below already answers correctly for a
+    // detached node (0 x 0), so this is only a fast path.
+    if (el.isConnected === false) return true;
+    return el.offsetWidth === 0 && el.offsetHeight === 0;
+  }
+
+  /**
+   * Ask for a peer-driven reload. Coalescing entry point for onWsMessage.
+   *
+   * @param {Object} what
+   * @param {Number} [what.tasks]    reload the task list
+   * @param {Number} [what.columns]  reload the columns
+   * @param {Number} [what.activity] reload the activity feed
+   * @param {Number} [what.members]  reload the workspace members
+   * @param {Number} [what.history]  refresh the open task's change log after
+   * @param {Function} [what.after]  run once the loads land, before the render
+   */
+  _queueWsRefresh(what = {}) {
+    const p = (this._wsPending = this._wsPending || { after: [] });
+    for (const k of ["tasks", "columns", "activity", "members", "history"]) {
+      if (what[k]) p[k] = 1;
+    }
+    if (typeof what.after === "function") p.after.push(what.after);
+    // Nobody is watching: hold the request set and run it when the panel comes
+    // back (setScope on tab re-show, or the first interaction with it).
+    if (this._isPanelHidden()) {
+      this._wsDeferred = 1;
+      return;
+    }
+    // A run is already inside its window — this one rides along on its trailing
+    // tick rather than issuing a second reload of its own.
+    if (this._wsCooldown) return;
+    this._startWsCooldown();
+    this._runWsRefresh();
+  }
+
+  // Leading-edge + trailing: the tick runs whatever accumulated during the
+  // window, and opens another window if it ran, so a sustained storm settles at
+  // one reload per WS_REFRESH_WINDOW instead of one per event.
+  _startWsCooldown() {
+    this._wsCooldown = setTimeout(() => {
+      this._wsCooldown = null;
+      if (!this._wsPending) return;
+      if (this._isPanelHidden()) {
+        this._wsDeferred = 1;
+        return;
+      }
+      this._startWsCooldown();
+      this._runWsRefresh();
+    }, WS_REFRESH_WINDOW);
+  }
+
+  /**
+   * Release deferred peer updates the moment the panel is actually shown.
+   *
+   * The panel's own box IS the signal _isPanelHidden measures, so observe it
+   * rather than inferring visibility from something else:
+   *
+   * - Interaction is the wrong trigger. `task-input-changed` is a WATCH
+   *   (skeleton 1301 / 1620 / 3978), so onUiEvent runs on every keystroke in
+   *   the title and description fields — and releasing a deferred refresh
+   *   there ends in a full _render() mid-word, which is precisely the hazard
+   *   _render documents: ui-core seeds <input> values through a 200ms
+   *   waitElement poll, so the field blanks and then overwrites what was
+   *   typed in that window.
+   *
+   * - setScope alone is not enough. Restoring a minimised folder window that
+   *   is already on the Task tab reaches neither setScope nor any click:
+   *   showFolderTab early-returns when the tab is unchanged. The board would
+   *   sit fully visible and silently stale until the user happened to touch
+   *   something.
+   *
+   * A resize is the one event both paths share, and it cannot fire while the
+   * user is typing into a panel with work still deferred — a deferred set only
+   * exists while the panel is hidden, and being revealed is what drains it.
+   */
+  _watchVisibility() {
+    if (this._visObserver || !this.el) return;
+    if (typeof ResizeObserver === "undefined") return; // setScope still covers the tab switch
+    this._visObserver = new ResizeObserver(() => {
+      if (this._isPanelHidden()) return;
+      this._flushDeferredWsRefresh();
+    });
+    this._visObserver.observe(this.el);
+  }
+
+  // The panel is back on screen — run anything that arrived while it was not.
+  _flushDeferredWsRefresh() {
+    if (!this._wsDeferred) return;
+    this._wsDeferred = 0;
+    if (!this._wsPending || this._wsCooldown) return;
+    if (this._isPanelHidden()) {
+      this._wsDeferred = 1;
+      return;
+    }
+    this._startWsCooldown();
+    this._runWsRefresh();
+  }
+
+  /**
+   * Apply ONE peer's change to ONE task, in place.
+   *
+   * THIS IS THE IDLE-LAG BUG. A peer editing a single task used to cost every
+   * other viewer `_loadTasks()` — a refetch of EVERY task in the workspace —
+   * followed by `_render()`, a full teardown and rebuild of the whole panel:
+   * chrome, viewbar, filter bar, every card. Coalesced at WS_REFRESH_WINDOW
+   * (400ms), so a busy team drove up to ~2.5 of those per second into a tab
+   * whose owner was not touching anything.
+   *
+   * It needed BOTH multipliers to hurt, which is why it looked workspace-
+   * specific: many members to generate the events, and many tasks to make each
+   * refetch+rebuild expensive. Drumee Dev Team is the only workspace on the
+   * platform with both (14 members, 476 tasks) — and it is the only one whose
+   * members reported the desk going slow while idle and eventually dying.
+   *
+   * The payload already carries the row, and `_mergeTask` is built to take it:
+   * it spreads over the cached row, so a PARTIAL payload (update_status sends
+   * no linked_files) patches only what it names — see the note on
+   * _normalizeTask. The local-edit path has merged this way all along; only the
+   * peer path reloaded the world.
+   *
+   * Returns true when it handled the change. Every case it cannot PROVE is
+   * correct returns false and takes the old full-refresh route:
+   *
+   *  - no resolvable patch — `peerPatch` could not turn the payload into a
+   *    row patch (no cached row to patch against, or a payload shape it does
+   *    not recognise, e.g. hub.delete_contributor's unassign announcement)
+   *  - panel hidden — _queueWsRefresh already defers correctly, and re-entering
+   *    here would repaint a board nobody can see
+   *
+   * @param {String} service the WS service name (options.service from onWsMessage)
+   * @param {Object} data the WS payload for the changed task
+   * @returns {Boolean} true if applied surgically
+   */
+  _applyPeerTaskChange(service, data) {
+    if (this._isPanelHidden()) return false;
+    const current =
+      data && data.task_id ? this._tasks.find((t) => t.id === data.task_id) : null;
+    const patch = peerPatch(service, data, current);
+    if (!patch) return false;
+
+    // Merge FIRST and unconditionally — the cache must be right even when the
+    // repaint below is skipped or deferred.
+    this._mergeTask(patch);
+    if (patch.parent_task_id) this._syncSubtaskBadges(patch.parent_task_id);
+    const touchedOpen = this._detailId && this._detailId === patch.id;
+
+    if (!this._peerPaintRaf && typeof requestAnimationFrame === "function") {
+      this._peerPaintRaf = requestAnimationFrame(() => {
+        this._peerPaintRaf = 0;
+        if (this.isDestroyed && this.isDestroyed()) return;
+        // Not while a card is in the air — see the note this replaced.
+        if (this._dragTaskId || this._dragColKey) return;
+        if (this._isPanelHidden()) return;
+        // The view host sits UNDER the overlay, so feeding it leaves an open
+        // detail (and its half-typed draft) untouched.
+        this._repaintBoard({ activity: this.getView() === "summary" });
+      });
+    }
+    // The open task itself changed under the user: refresh the read-only
+    // sections that show server state (history, attachments). The draft is
+    // NOT overwritten — the user's unsaved edits win until they press Update.
+    if (touchedOpen) {
+      this._refreshOpenTaskHistory();
+      if (service === "task.link_file" || service === "task.unlink_file") {
+        this._refreshAttachments(patch.id).then(() => this._refreshAttachmentsList());
+      }
+    }
+    return true;
+  }
+
+  _runWsRefresh() {
+    const p = this._wsPending;
+    this._wsPending = null;
+    // Taking the set is what "no longer deferred" means. Every caller has
+    // already checked visibility; clearing it here keeps the flag from
+    // outliving the work it stood for.
+    this._wsDeferred = 0;
+    if (!p) return;
+    const jobs = [];
+    if (p.tasks) jobs.push(this._loadTasks());
+    if (p.columns) jobs.push(this._loadColumns());
+    if (p.activity) jobs.push(this._loadActivity());
+    if (p.members) jobs.push(this._loadMembers());
+    return Promise.all(jobs).then(() => {
+      if (this.isDestroyed && this.isDestroyed()) return;
+      // Ordered exactly as the per-case code was: the notices that read the
+      // freshly-loaded rows run first, then the repaint, then the history.
+      for (const fn of p.after) {
+        try {
+          fn();
+        } catch (err) {
+          console.error("[tasks_panel] ws refresh hook failed:", err);
+        }
+      }
+      // Columns and members feed the chrome (column headers, pickers, filter
+      // chips), so those still take the full render. A task/activity-only
+      // refresh repaints the view body alone.
+      if (p.columns || p.members) this._render();
+      else this._repaintBoard({ activityLoaded: p.activity });
+      if (p.history) this._refreshOpenTaskHistory();
+    });
   }
 
   // Display name of the peer whose change arrived on the socket. Every
@@ -2418,11 +3165,26 @@ class __tasks_panel extends LetcBox {
     Kind.waitFor("window_info").then(show).catch(show);
   }
 
-  // Tear the detail down without the click path's re-render — callers that
-  // close it in reaction to a peer's change are already re-rendering.
-  _closeDetailSilently() {
+  /**
+   * Tear the detail down without the click path's re-render — callers that
+   * close it in reaction to a peer's change are already re-rendering.
+   *
+   * Every field here is cleared SYNCHRONOUSLY, including on the animated path:
+   * from this point the panel is shut as far as any handler is concerned, and
+   * only the DOM lingers for the length of the exit.
+   *
+   * @param {Function} [done] the teardown to defer behind the exit animation.
+   *   Passed by a DISMISSAL (the X, Cancel, a successful Update); omitted by a
+   *   reaction (peer delete, walking back to a parent), which cuts instantly.
+   *   See _dismissOverlay.
+   */
+  _closeDetailSilently(done) {
     this._detailId = null;
     this._detailDraft = null;
+    this._detailBase = null;
+    // Section fetches belong to the task that was open; a flag left standing
+    // would greet the next task with a skeleton it never clears.
+    this._loading = {};
     // A silent close is a real close (peer delete, task switch, commit) — the
     // breadcrumb must not survive it and re-open a panel the user just left.
     this._detailReturnTo = null;
@@ -2440,7 +3202,7 @@ class __tasks_panel extends LetcBox {
     this._setDragAffordance(null);
     this._closeCommentReactionsPicker();
     this._resetFileSearch();
-    this._dismissOverlayNow("detail-backdrop");
+    this._dismissOverlay("detail-backdrop", done);
   }
 
   // A peer deleted the task this user has open. Their edits can no longer be
@@ -2477,6 +3239,12 @@ class __tasks_panel extends LetcBox {
     if (this._detailId && this._detailDraft) drafts.push(this._detailDraft);
     if (this._creating && this._createDefaults)
       drafts.push(this._createDefaults);
+    // The children queued in the create modal carry a status of their own, so
+    // they can be stranded on the dead column independently of their parent.
+    if (this._creating) {
+      drafts.push(...this.getPendingSubtasks());
+      if (this._createSubtaskDraft) drafts.push(this._createSubtaskDraft);
+    }
     const affected = drafts.filter((d) => String(d.status) === String(key));
     if (!affected.length) return;
 
@@ -2505,6 +3273,9 @@ class __tasks_panel extends LetcBox {
     affected.forEach((d) => {
       d.status = target.key;
     });
+    // Repointed rows are drawn from the draft, so the queued list has to be
+    // redrawn for the new column to show on the chips.
+    if (this._creating) this._refreshCreateSubtaskSection();
     const where = this._plainText(target.name || target.key);
     this._notifyPeerChange(
       who
@@ -2513,11 +3284,65 @@ class __tasks_panel extends LetcBox {
     );
   }
 
+  // ── Session cache of this workspace's board (libs/read-cache) ──────────
+  // Written by every _load* below on a good answer, read once at mount by
+  // _seedFromCache. Never a substitute for the fetch: the mount always
+  // revalidates, so the cache is at most one round trip behind.
+  _cacheKey(what) {
+    return `tasks:${this._hubId}:${what}`;
+  }
+
+  // Seed the panel's state from the session cache. Answers whether the BOARD
+  // (tasks) was known — the one thing worth a first paint; the rest is filled
+  // in when present so that paint carries assignees, labels and columns too.
+  _seedFromCache() {
+    const tasks = readCache.peek(this._cacheKey("tasks"));
+    if (!Array.isArray(tasks)) return false;
+    this._tasks = tasks.map(this._normalizeTask);
+    const columns = readCache.peek(this._cacheKey("columns"));
+    if (Array.isArray(columns)) this._customColumns = columns;
+    const watches = readCache.peek(this._cacheKey("column_watches"));
+    if (Array.isArray(watches)) this._columnWatches = new Set(watches.map(String));
+    const members = readCache.peek(this._cacheKey("members"));
+    if (Array.isArray(members) && members.length) {
+      this._members = members;
+      this._membersLoaded = true;
+    }
+    const labels = readCache.peek(this._cacheKey("labels"));
+    if (Array.isArray(labels)) this._labels = labels;
+    return true;
+  }
+
+  // Everything the board paints from, as one string — compared around the
+  // revalidating loads so an unchanged answer costs no second render.
+  _boardSignature() {
+    return readCache.signature([
+      this._tasks,
+      this._customColumns,
+      Array.from(this._columnWatches || []),
+      this._members,
+      this._labels,
+    ]);
+  }
+
+  // The bell toggles optimistically and never re-reads the list, so the cache
+  // has to follow the flip (and the revert) by hand.
+  _syncWatchCache() {
+    readCache.set(this._cacheKey("column_watches"), Array.from(this._columnWatches));
+  }
+
   async _loadTasks() {
     try {
       const rows = await this.fetchService({
         service: SERVICE.task.list,
         hub_id: this._hubId,
+        // Whole workspace, every folder. See _scopeNid in initialize.
+        workspace: 1,
+        // Deliberate redundancy for a staggered deploy. A server that predates
+        // the workspace flag ignores it and reads these instead, so the board
+        // falls back to the old folder-scoped list rather than coming back
+        // EMPTY — which is what "workspace only" would look like there. A
+        // current server ignores them.
         nid: this._scopeNid,
         include_unscoped: this._scopeIsRoot,
       });
@@ -2529,6 +3354,7 @@ class __tasks_panel extends LetcBox {
       if (Array.isArray(rows)) {
         this._tasks = rows.map(this._normalizeTask);
         this._loadFailed = 0;
+        readCache.set(this._cacheKey("tasks"), rows);
       } else {
         this._loadFailed = 1;
         if (!Array.isArray(this._tasks)) this._tasks = [];
@@ -2539,31 +3365,35 @@ class __tasks_panel extends LetcBox {
     }
   }
 
-  // Custom Kanban columns for the current folder scope. Best-effort — a
-  // failure (e.g. server without the task_column procs yet) just leaves the
-  // four built-in columns.
+  // The workspace's Kanban columns — one set per workspace, shared by every
+  // folder in it. Best-effort: a failure (e.g. a server without the
+  // task_column procs yet) just leaves the four built-in columns.
+  //
+  // No nid: the column procs resolve the workspace scope themselves. Sending
+  // one would only suggest it still selects something.
   async _loadColumns() {
     try {
       const rows = await this.fetchService({
         service: SERVICE.task.column_list,
         hub_id: this._hubId,
-        nid: this._scopeNid,
       });
       this._customColumns = Array.isArray(rows) ? rows : [];
+      if (Array.isArray(rows)) readCache.set(this._cacheKey("columns"), rows);
     } catch (err) {
       this._customColumns = [];
     }
   }
 
-  // Load which columns the user has the bell on for, in this folder scope.
+  // Which columns the user has the bell on for. Workspace-wide, like the
+  // columns themselves.
   async _loadColumnWatches() {
     try {
       const rows = await this.fetchService({
         service: SERVICE.task.column_watch_list,
         hub_id: this._hubId,
-        nid: this._scopeNid,
       });
       this._columnWatches = new Set((Array.isArray(rows) ? rows : []).map(String));
+      if (Array.isArray(rows)) this._syncWatchCache();
     } catch (err) {
       this._columnWatches = new Set();
     }
@@ -2582,6 +3412,7 @@ class __tasks_panel extends LetcBox {
     const on = !this._columnWatches.has(k);
     if (on) this._columnWatches.add(k);
     else this._columnWatches.delete(k);
+    this._syncWatchCache();
     if (trigger.el) trigger.el.dataset.active = on ? "1" : "0";
     try {
       await this.postService({
@@ -2589,13 +3420,13 @@ class __tasks_panel extends LetcBox {
           ? SERVICE.task.column_watch_set
           : SERVICE.task.column_watch_unset,
         hub_id: this._hubId,
-        nid: this._scopeNid,
         column_key: k,
       });
     } catch (err) {
       // Revert the optimistic flip on failure.
       if (on) this._columnWatches.delete(k);
       else this._columnWatches.add(k);
+      this._syncWatchCache();
       if (trigger.el) trigger.el.dataset.active = on ? "0" : "1";
     }
   }
@@ -2607,6 +3438,8 @@ class __tasks_panel extends LetcBox {
       const rows = await this.fetchService({
         service: SERVICE.task.activity,
         hub_id: this._hubId,
+        workspace: 1,
+        // Same deploy-skew fallback as _loadTasks.
         nid: this._scopeNid,
         include_unscoped: this._scopeIsRoot,
         limit: 30,
@@ -2714,6 +3547,7 @@ class __tasks_panel extends LetcBox {
       if (Array.isArray(rows) && rows.length) {
         this._members = rows;
         this._membersLoaded = true;
+        readCache.set(this._cacheKey("members"), rows);
       } else if (!this._membersLoaded) {
         this._members = Array.isArray(rows) ? rows : [];
       }
@@ -2729,6 +3563,7 @@ class __tasks_panel extends LetcBox {
         hub_id: this._hubId,
       });
       this._labels = Array.isArray(rows) ? rows : [];
+      if (Array.isArray(rows)) readCache.set(this._cacheKey("labels"), rows);
     } catch (err) {
       this._labels = [];
     }
@@ -2744,13 +3579,27 @@ class __tasks_panel extends LetcBox {
       const list = Array.isArray(files) ? files : [];
       // Linked files live in this hub (cross-hub files are copied in on attach),
       // so the preview is built from file_nid + this hub — no get_node_attr.
-      this._attachments[taskId] = list.map((f) => {
-        const { previewUrl, chartId } = this._attachmentPreview(f);
-        return { ...f, previewUrl, iconChartId: chartId };
-      });
+      this._attachments[taskId] = this._withPreviews(list);
     } catch (err) {
       this._attachments[taskId] = [];
     }
+  }
+
+  /**
+   * Stamp a server file list with what it takes to SHOW each file.
+   *
+   * Both lists that carry files — a task's linked files and a comment's
+   * attachments — arrive in the same shape (task_get_linked_files and
+   * task_comment_list select the same columns), and both are rendered by
+   * surfaces that draw a thumbnail when there is one. Comment rows used to get
+   * no preview at all, which is why an image posted in a comment could only
+   * ever be a filename: the renderer had nothing to paint.
+   */
+  _withPreviews(list) {
+    return (Array.isArray(list) ? list : []).map((f) => {
+      const { previewUrl, chartId } = this._attachmentPreview(f);
+      return { ...f, previewUrl, iconChartId: chartId };
+    });
   }
 
   // Shared preview for dragged + committed files: mirrors media imgCapable()
@@ -2941,6 +3790,14 @@ class __tasks_panel extends LetcBox {
       if (this._subtaskDraft) this._subtaskDraft.title = value;
       return;
     }
+    // Same, for the creator inside the create modal — its draft is a different
+    // field, and the generic tail below would write the child's title onto the
+    // PARENT draft (`_createDefaults.title`), silently renaming the task being
+    // created.
+    if (name === "create-subtask-title") {
+      if (this._createSubtaskDraft) this._createSubtaskDraft.title = value;
+      return;
+    }
 
     const inCreate = this.el.querySelector(".tasks-panel__create-modal");
     const inDetail = this.el.querySelector(".tasks-panel__detail-panel");
@@ -2951,9 +3808,48 @@ class __tasks_panel extends LetcBox {
       this._createDefaults
     ) {
       this._createDefaults[name] = value;
+      if (name === "title" && value.trim()) this._clearTitleMissing("create");
     } else if (this._detailDraft && inDetail && inDetail.contains(scopeEl)) {
       this._detailDraft[name] = value;
+      if (name === "title" && value.trim()) this._clearTitleMissing("detail");
     }
+  }
+
+  _titleScope(scope) {
+    const isCreate = scope === "create";
+    return {
+      draft: isCreate ? this._createDefaults : this._detailDraft,
+      root:
+        this.el &&
+        this.el.querySelector(
+          `.${this.fig.family}__${isCreate ? "create-modal" : "detail-panel"}`,
+        ),
+    };
+  }
+
+  /**
+   * Mark the title as required: red outline + message under the field, caret
+   * back in the box. In place rather than via _render() — a re-feed rebuilds
+   * the description editor and drops whatever else is half-typed. The flag
+   * also rides on the draft so a later re-render (peer WS push) keeps it.
+   */
+  _flagTitleMissing(scope) {
+    const { draft, root } = this._titleScope(scope);
+    if (draft) draft._titleMissing = true;
+    if (!root) return;
+    const field = root.querySelector(`.${this.fig.family}__title-field`);
+    if (field) field.classList.add("is-missing");
+    const input = root.querySelector('[name="title"]');
+    if (input && typeof input.focus === "function") input.focus();
+  }
+
+  _clearTitleMissing(scope) {
+    const { draft, root } = this._titleScope(scope);
+    if (!draft || !draft._titleMissing) return;
+    draft._titleMissing = false;
+    const field =
+      root && root.querySelector(`.${this.fig.family}__title-field`);
+    if (field) field.classList.remove("is-missing");
   }
 
   async _commitTask() {
@@ -2966,13 +3862,23 @@ class __tasks_panel extends LetcBox {
     // Already in marker form (chips serialize to "[@Name](user:uid)").
     const description = String(draft.description || "").trim();
 
-    if (!title) return this._render();
+    if (!title) return this._flagTitleMissing("create");
 
     this._setSubmitting(".tasks-panel__create-submit", true);
 
     const labels = Array.isArray(draft.labels) ? draft.labels.slice() : [];
     const pendingFiles = Array.isArray(draft.pending_files)
       ? draft.pending_files.slice()
+      : [];
+    // A child left half-typed in the creator card counts as one the user meant
+    // to create — fold it in before the snapshot, or pressing Create discards
+    // it without a word.
+    this._flushCreateSubtaskDraft();
+    // Children queued in the modal. Snapshotted before the await, like the
+    // labels and files above, so the teardown below cannot empty the list out
+    // from under the loop that posts them.
+    const queuedSubtasks = Array.isArray(draft.subtasks)
+      ? draft.subtasks.slice()
       : [];
 
     try {
@@ -2994,11 +3900,11 @@ class __tasks_panel extends LetcBox {
           ? draft.mention_uids
           : [],
       });
-      const row = Array.isArray(raw) ? raw[0] : raw;
-      if (row && row.id) {
+      const row = rowOf(raw);
+      if (row) {
         // For each pending entry: search-picked files already have `nid`;
         // newly-picked uploads carry a File object and need to be sent to the
-        // folder body now. Either way, the resolved nid is link_file'd to
+        // task folder now. Either way, the resolved nid is link_file'd to
         // the new task.
         const linkPending = async (pf) => {
           let nid = pf.nid;
@@ -3008,37 +3914,63 @@ class __tasks_panel extends LetcBox {
               nid = result.nid;
             } catch (err) {
               console.error("[tasks_panel] pending file upload failed:", err);
-              return;
+              return null;
             }
           }
-          if (!nid) return;
-          await this.postService({
+          if (!nid) return null;
+          return this.postService({
             service: SERVICE.task.link_file,
             hub_id: this._hubId,
             task_id: row.id,
             file_nid: nid,
           }).catch(() => null);
         };
-        await Promise.all([
-          ...labels.map((labelId) =>
+        const labelResults = await Promise.all(
+          labels.map((labelId) =>
             this.postService({
               service: SERVICE.task.link_label,
               hub_id: this._hubId,
               task_id: row.id,
               label_id: labelId,
-            }).catch(() => null),
+            })
+              .then((r) => ({ op: "link", label_id: labelId, ok: Array.isArray(r) }))
+              .catch(() => ({ op: "link", label_id: labelId, ok: false })),
           ),
-          ...pendingFiles.map(linkPending),
-        ]);
+        );
+        const fileLists = await Promise.all(pendingFiles.map(linkPending));
+        // Children last, and NOT inside the Promise.all above: they are
+        // ordered (the loop is sequential so they land as entered), and unlike
+        // a label or a file link a failure here leaves a task the user meant to
+        // have children without them — worth saying so rather than swallowing.
+        // The parent exists either way, so this can never fail the create.
+        const { failed: subtasksFailed, rows: childRows } = queuedSubtasks.length
+          ? await this._createQueuedSubtasks(row.id, queuedSubtasks)
+          : { failed: 0, rows: [] };
+
+        // Patch the cache from what the server answered — no workspace reload.
+        // The create row predates the label/file links, so those are applied
+        // from their own answers.
+        const patch = {
+          ...row,
+          label_ids: applyLabelOps([], labelResults),
+        };
+        const files = longestList(fileLists);
+        if (files) patch.linked_files = files;
+        this._mergeTask(patch);
+        childRows.forEach((c) => this._mergeTask(c));
+        if (childRows.length) this._syncSubtaskBadges(row.id);
+
         // Tear down the form only after a successful create — postService
         // resolves undefined (or an error payload with no id) on failure, so
         // the teardown must live INSIDE this success branch or a failed
         // create silently closes the modal and discards the user's draft.
         this._creating = false;
         this._createDefaults = null;
+        this._createSubtaskDraft = null;
         this._pickerOpen = null;
         this._resetFileSearch();
-        await this._loadTasks();
+        this._repaintBoard();
+        if (subtasksFailed) Wm.alert(LOCALE.ERROR_NETWORK);
       } else {
         Wm.alert(LOCALE.ERROR_NETWORK);
       }
@@ -3051,7 +3983,9 @@ class __tasks_panel extends LetcBox {
       // true, which permanently disables commit-task / commit-detail.
       this._setSubmitting(".tasks-panel__create-submit", false);
     }
-    this._render();
+    // Failed: the modal stays open with its draft — repaint just the overlay.
+    if (this._creating) return this._renderOverlays();
+    return this._dismissOverlay("create-backdrop", () => this._renderOverlays());
   }
 
   async _removeTask(trigger) {
@@ -3061,6 +3995,11 @@ class __tasks_panel extends LetcBox {
     // done/total, and the badge is rebuilt from the local rows.
     const doomed = this._tasks.find((t) => t.id === id);
     const parentOfDoomed = (doomed && doomed.parent_task_id) || null;
+    // Answer the click at once: the card dims while the delete is in flight,
+    // instead of sitting there untouched for the round-trip and then snapping
+    // out. Undone below if the server refuses.
+    this._markTaskEls(id, "pending", true);
+    let closedDetail = false;
     try {
       const resp = await this.postService({
         service: SERVICE.task.delete,
@@ -3073,9 +4012,13 @@ class __tasks_panel extends LetcBox {
         // NOTE `affected` now counts the task PLUS any cascaded subtasks, so it
         // is legitimately > 1; the `resp.id !== id` arm is what carries the
         // check for a parent with children.
+        this._markTaskEls(id, "pending", false);
         Wm.alert(LOCALE.ERROR_NETWORK);
         return;
       }
+      // Play the card's exit before the rows go, so it fades out in place and
+      // THEN its neighbours slide up into the gap (_flipRepaint).
+      await this._playTaskExit(resp.subtask_ids ? [id, ...resp.subtask_ids] : [id]);
       // Deleting a parent cascades to its subtasks server-side, so drop them
       // locally too — otherwise the children linger as orphans until the next
       // list reload, counted by Project Health and reachable from nowhere.
@@ -3087,14 +4030,17 @@ class __tasks_panel extends LetcBox {
       // an empty child list until the next full reload.
       if (parentOfDoomed) this._syncSubtaskBadges(parentOfDoomed);
       if (gone.has(this._detailId)) {
+        closedDetail = true;
         this._detailId = null;
         this._detailDraft = null;
+        this._detailBase = null;
         this._subtaskDraft = null;
         // The panel it would return to may be one of the rows just pruned.
         this._detailReturnTo = null;
       }
     } catch (err) {
       console.error("[tasks_panel] task.delete failed:", err);
+      this._markTaskEls(id, "pending", false);
     }
     // Deleting a child from the OPEN parent's panel (the child row's ✕) refreshes
     // only the board behind the modal and the child list. A full _render() here
@@ -3106,7 +4052,44 @@ class __tasks_panel extends LetcBox {
       this._refreshViewBody();
       return this._refreshSubtaskSection();
     }
-    this._render();
+    // Only the rows changed — the viewbar, filter popup and overlays did not —
+    // so repaint the view body alone. It patches: the deleted card goes, every
+    // other card keeps its element and glides into place. The one exception is
+    // a delete that took the OPEN task with it: its panel has to come down too.
+    if (closedDetail) this._renderOverlays();
+    this._refreshViewBody();
+  }
+
+  /**
+   * Toggle a transient flag on every card / list row drawn for a task.
+   * @param {String}  id
+   * @param {String}  flag   "pending" (delete in flight) | "leaving" (exit)
+   * @param {Boolean} on
+   */
+  _markTaskEls(id, flag, on) {
+    if (!this.el || id == null) return [];
+    const els = Array.from(
+      this.el.querySelectorAll(
+        `.tasks-panel__task-card[data-tid="${id}"], .tasks-panel__list-row[data-tid="${id}"]`,
+      ),
+    );
+    els.forEach((el) => {
+      if (on) el.dataset[flag] = "1";
+      else delete el.dataset[flag];
+    });
+    return els;
+  }
+
+  /**
+   * Fade the given tasks' cards out, resolving once the exit has played (or at
+   * once, when there is nothing on screen to animate / motion is reduced).
+   * @param {Array} ids
+   * @returns {Promise}
+   */
+  _playTaskExit(ids) {
+    const els = [].concat(...ids.map((i) => this._markTaskEls(i, "leaving", true)));
+    if (!els.length || this._prefersReducedMotion()) return Promise.resolve();
+    return new Promise((resolve) => setTimeout(resolve, TASK_EXIT_MS));
   }
 
   // List-view checkbox — toggle a task between a done and a not-done column.
@@ -3128,7 +4111,7 @@ class __tasks_panel extends LetcBox {
     if (!target || target.key === originalStatus) return;
     const next = target.key;
     task.status = next;
-    this._render();
+    this._refreshViewBody();
     try {
       const updated = await this.postService({
         service: SERVICE.task.update_status,
@@ -3145,18 +4128,18 @@ class __tasks_panel extends LetcBox {
         if (row.parent) {
           this._mergeTask(row.parent);
           this._syncSubtaskBadges(row.parent.id);
-          this._render();
+          this._refreshViewBody();
         }
       } else {
         // Failed silently (postService never rejects): revert the
         // optimistic flip instead of leaving unsaved state on screen.
         task.status = originalStatus;
-        this._render();
+        this._refreshViewBody();
       }
     } catch (err) {
       console.error("[tasks_panel] toggle-complete failed:", err);
       task.status = originalStatus;
-      this._render();
+      this._refreshViewBody();
     }
   }
 
@@ -3167,123 +4150,58 @@ class __tasks_panel extends LetcBox {
     const draft = this._detailDraft;
     const task = this._tasks.find((t) => t.id === id);
     if (!task) return;
+    // planDetailCommit drops an empty title and saves everything else, so a
+    // cleared title used to quietly snap back to the old one. Refuse instead.
+    if (!String(draft.title || "").trim()) return this._flagTitleMissing("detail");
 
     this._setSubmitting(".tasks-panel__detail-submit", true);
 
+    // Three-way merge (see detail-commit.js): send only what the user changed
+    // since the card opened, on top of the cache as it is NOW — peer pushes
+    // patch it in place while the card is open. Diffing the draft against
+    // the cache alone wrote a colleague's change made meanwhile back over it.
+    // A card with no base degrades to that old diff.
+    const fresh = snapshotTask(task, {
+      assignees: this.getKnownAssignees(task),
+      noStatus: this.getDefaultStatus(),
+    });
+    const base = this._detailBase || fresh;
+    const plan = planDetailCommit(base, draft, fresh);
+
     const calls = [];
+    // Each call resolves a descriptor instead of rejecting: postService
+    // resolves undefined (or an error payload) on failure.
+    const rowCall = (service, args, extra = () => ({})) =>
+      this.postService({ service, hub_id: this._hubId, id, ...args })
+        .catch(() => undefined)
+        .then((r) => ({ kind: "row", service, row: rowOf(r), ...extra(r) }));
+    const labelCall = (service, op, lid, okOf) =>
+      this.postService({ service, hub_id: this._hubId, task_id: id, label_id: lid })
+        .catch(() => undefined)
+        .then((r) => ({ kind: "label", op, label_id: lid, ok: okOf(r) }));
 
-    // task.update — covers title, description, priority, due_date.
-    const upd = {};
-    const draftTitle = String(draft.title || "").trim();
-    const taskTitle = String(task.title || "").trim();
-    if (draftTitle && draftTitle !== taskTitle) upd.title = draftTitle;
-    // Both are marker form (the editor serializes chips to markers).
-    if ((draft.description || "") !== (task.description || "")) {
-      upd.description = draft.description || "";
-      // Notify only members tagged in this edit who weren't tagged before.
-      const before = Array.isArray(draft._mentioned_before)
-        ? draft._mentioned_before
-        : [];
-      const now = Array.isArray(draft.mention_uids) ? draft.mention_uids : [];
-      upd.mention_uids = now.filter((u) => !before.includes(u));
-    }
-    if ((draft.priority || "medium") !== (task.priority || "medium"))
-      upd.priority = draft.priority;
-    // Reporter. Compared against the same created_by fallback the draft was
-    // seeded with, so merely opening and saving a pre-reporter task does NOT
-    // count as a reassignment (which would otherwise log a bogus 'reporter'
-    // entry in the activity feed on every Update).
-    const taskReporter = task.reporter_uid || task.created_by || "";
-    if ((draft.reporter_uid || "") !== taskReporter && draft.reporter_uid) {
-      upd.reporter_uid = draft.reporter_uid;
-    }
-    const draftDue = (draft.due_date || "").trim();
-    const taskDue = task.due_date || "";
-    const dueChanged = draftDue !== taskDue;
-    // start_date only when the Duration toggle is on; OFF ("") clears it.
-    const draftStart = draft.duration_on ? (draft.start_date || "").trim() : "";
-    const taskStart = task.start_date || "";
-    const startChanged = draftStart !== taskStart;
-    if (Object.keys(upd).length || dueChanged || startChanged) {
-      // task_update SP overwrites due_date / start_date unconditionally —
-      // always send the current values or another-field update would null them.
-      upd.due_date = draftDue || null;
-      upd.start_date = draftStart || null;
+    // task_update overwrites due_date / start_date unconditionally, so
+    // plan.update always carries both (see planDetailCommit).
+    if (plan.update) calls.push(rowCall(SERVICE.task.update, plan.update));
+    if (plan.status) {
       calls.push(
-        this.postService({
-          service: SERVICE.task.update,
-          hub_id: this._hubId,
-          id,
-          ...upd,
-        }).catch((err) =>
-          console.error("[tasks_panel] task.update failed:", err),
-        ),
+        rowCall(SERVICE.task.update_status, { status: plan.status }, (r) => ({
+          // The response may carry the auto-completed parent row.
+          parent: rowOf(r && r.parent),
+        })),
       );
     }
-
-    const noStatus = this.getDefaultStatus();
-    if ((draft.status || noStatus) !== (task.status || noStatus)) {
+    // The full new set: the peer's current assignees plus/minus mine.
+    if (plan.assignees) {
+      calls.push(rowCall(SERVICE.task.update_assignee, { assignee_uids: plan.assignees }));
+    }
+    for (const lid of plan.link) {
+      calls.push(labelCall(SERVICE.task.link_label, "link", lid, Array.isArray));
+    }
+    for (const lid of plan.unlink) {
       calls.push(
-        this.postService({
-          service: SERVICE.task.update_status,
-          hub_id: this._hubId,
-          id,
-          status: draft.status,
-        }).catch((err) =>
-          console.error("[tasks_panel] task.update_status failed:", err),
-        ),
+        labelCall(SERVICE.task.unlink_label, "unlink", lid, (r) => !!(r && r.task_id)),
       );
-    }
-
-    // Multi-assignee: send the full new set only when it differs (order-
-    // independent) from the task's current assignees.
-    const draftAssignees = Array.isArray(draft.assignees) ? draft.assignees : [];
-    const taskAssignees = Array.isArray(task.assignee_uids)
-      ? task.assignee_uids
-      : task.assignee_uid
-        ? [task.assignee_uid]
-        : [];
-    const sameAssignees =
-      draftAssignees.length === taskAssignees.length &&
-      [...draftAssignees].sort().join(",") === [...taskAssignees].sort().join(",");
-    if (!sameAssignees) {
-      calls.push(
-        this.postService({
-          service: SERVICE.task.update_assignee,
-          hub_id: this._hubId,
-          id,
-          assignee_uids: draftAssignees,
-        }).catch((err) =>
-          console.error("[tasks_panel] task.update_assignee failed:", err),
-        ),
-      );
-    }
-
-    const original = new Set(task.label_ids || []);
-    const next = new Set(draft.labels || []);
-    for (const lid of next) {
-      if (!original.has(lid)) {
-        calls.push(
-          this.postService({
-            service: SERVICE.task.link_label,
-            hub_id: this._hubId,
-            task_id: id,
-            label_id: lid,
-          }).catch(() => null),
-        );
-      }
-    }
-    for (const lid of original) {
-      if (!next.has(lid)) {
-        calls.push(
-          this.postService({
-            service: SERVICE.task.unlink_label,
-            hub_id: this._hubId,
-            task_id: id,
-            label_id: lid,
-          }).catch(() => null),
-        );
-      }
     }
 
     // Pending attachments — same flow as _commitTask: search-picked entries
@@ -3298,43 +4216,119 @@ class __tasks_panel extends LetcBox {
           let nid = pf.nid;
           if (!nid && pf.file) {
             try {
-              const result = await this._uploadPendingFile(pf, pendingFiles);
-              nid = result.nid;
+              nid = (await this._uploadPendingFile(pf, pendingFiles)).nid;
             } catch (err) {
               console.error("[tasks_panel] pending file upload failed:", err);
-              return;
+              return { kind: "file", pf, nid: null, list: null };
             }
           }
-          if (!nid) return;
-          await this.postService({
+          if (!nid) return { kind: "file", pf, nid: null, list: null };
+          const list = await this.postService({
             service: SERVICE.task.link_file,
             hub_id: this._hubId,
             task_id: id,
             file_nid: nid,
           }).catch(() => null);
+          return { kind: "file", pf, nid, list: Array.isArray(list) ? list : null };
         })(),
       );
     }
 
-    if (calls.length) await Promise.all(calls);
+    const results = calls.length ? await Promise.all(calls) : [];
 
-    await this._loadTasks();
-    // Update on a child returns to the parent, exactly as its X does — leaving
-    // Update to dump the user back on the board while Cancel walked up one
-    // level would be the same "it closed everything" surprise, just on the
-    // happier path. Read before the reset clears it.
-    const back = this._detailReturnTo;
-    this._detailId = null;
-    this._detailDraft = null;
-    this._detailReturnTo = null;
-    this._pickerOpen = null;
-    this._resetFileSearch();
+    // Merge what landed, and only the fields each call owns — see OWNED in
+    // live-sync.js for why a whole row would be wrong here.
+    for (const r of results) {
+      if (r.kind !== "row" || !r.row) continue;
+      this._mergeTask(ownedPatch(r.service, r.row));
+      if (r.parent) {
+        this._mergeTask(r.parent);
+        this._syncSubtaskBadges(r.parent.id);
+      }
+    }
+    // Apply to the row as it is NOW, not the `task` read before the awaits:
+    // peer pushes patch the cache in place mid-flight (and _mergeTask swaps
+    // the row object), so the old snapshot would drop a colleague's label or
+    // file that landed meanwhile.
+    const current = () => this._tasks.find((t) => t.id === id) || task;
+    const labelOps = results.filter((r) => r.kind === "label");
+    if (labelOps.length) {
+      this._mergeTask({ id, label_ids: applyLabelOps(current().label_ids, labelOps) });
+    }
+    const fileResults = results.filter((r) => r.kind === "file");
+    const files = longestList(fileResults.map((r) => r.list));
+    if (files) {
+      // Our answers can predate a peer's link: keep any file the cache has
+      // that they don't list.
+      const have = Array.isArray(current().linked_files) ? current().linked_files : [];
+      const ours = new Set(files.map((f) => String(f.file_nid)));
+      this._mergeTask({
+        id,
+        linked_files: [...files, ...have.filter((f) => !ours.has(String(f.file_nid)))],
+      });
+    }
+
+    const failed = results.some(
+      (r) => (r.kind === "row" && !r.row) ||
+        (r.kind === "label" && !r.ok) ||
+        (r.kind === "file" && !r.list),
+    );
     this._setSubmitting(".tasks-panel__detail-submit", false);
+    this._repaintBoard();
+
+    // The user may have moved on while the calls were in flight — opened a
+    // child row, closed the card, or a peer deleted the task. The cache is
+    // already right (merged above); but a new base or a close applied to
+    // whatever card is open NOW would corrupt its merge or shut it under the
+    // user, so stop here.
+    if (this._detailId !== id || this._detailDraft !== draft) {
+      // A deleted task is already announced; "network error" would mislead.
+      if (failed && this._tasks.some((t) => t.id === id)) {
+        Wm.alert(LOCALE.ERROR_NETWORK);
+      }
+      return;
+    }
+
+    if (failed) {
+      // Move the base past whatever did land, so pressing Update again
+      // re-sends only the rest instead of logging the same change twice.
+      const landed = (svc) =>
+        results.some((r) => r.kind === "row" && r.service === svc && r.row);
+      this._detailBase = advanceBase(base, draft, {
+        update: landed("task.update"),
+        status: landed("task.update_status"),
+        assignees: landed("task.update_assignee"),
+        labels: labelOps,
+      });
+      // The landed update already notified this edit's new tags; a retry
+      // must not notify them again.
+      if (landed("task.update")) {
+        draft._mentioned_before = (draft.mention_uids || []).slice();
+      }
+      // Linked files leave the pending list; one that uploaded but failed to
+      // link keeps its nid, so the retry links it instead of uploading a
+      // second copy ("a(1).png") into the task folder.
+      draft.pending_files = settlePendingFiles(
+        draft.pending_files,
+        fileResults.map((r) => ({ pf: r.pf, nid: r.nid, linked: !!r.list })),
+      );
+      this._refreshPendingList("detail");
+      // Keep the card open with the draft, so nothing the user typed is lost
+      // and pressing Update again retries. The cache already holds whatever
+      // DID land, so a retry only re-sends what still differs.
+      if (files) this._refreshAttachments(id).then(() => this._refreshAttachmentsList());
+      Wm.alert(LOCALE.ERROR_NETWORK);
+      return;
+    }
+
+    // Update on a child returns to the parent, exactly as its X does.
+    const back = this._detailReturnTo;
     if (back && this._tasks.some((t) => t.id === back)) {
-      // _openDetail renders on its own.
+      this._closeDetailSilently();
       return this._openDetail(back);
     }
-    this._render();
+    // A saved task leaves the way the X does; only the overlay parts re-feed.
+    this._closeDetailSilently(() => this._renderOverlays());
   }
 
   // Render the detail panel immediately on click; refresh attachments async
@@ -3382,6 +4376,16 @@ class __tasks_panel extends LetcBox {
           pending_files: [],
         }
       : null;
+    // What the card opened with — the "base" of _commitDetail's three-way
+    // merge. Built the same way as the draft's fields (same assignee filter,
+    // same status fallback), from a separate call so no array is shared with
+    // the draft the user is editing.
+    this._detailBase = task
+      ? snapshotTask(task, {
+          assignees: this.getKnownAssignees(task),
+          noStatus: this.getDefaultStatus(),
+        })
+      : null;
     // A half-typed subtask belongs to the task it was opened on — carrying it
     // across to another task would create a child under the wrong parent.
     this._subtaskDraft = null;
@@ -3415,9 +4419,14 @@ class __tasks_panel extends LetcBox {
     // Re-fetch folder filenames so collision preview (a → a(1)) reflects
     // the folder's current state.
     this._folderFilenames = null;
-    this._render();
+    // Three fetches follow, and the card is about to be drawn without any of
+    // them. Flag all three BEFORE the render, or it paints the empty states
+    // for one frame before the skeleton could replace them.
+    this._loading = { attachments: 1, comments: 1, history: 1 };
+    this._renderOverlays();
     this._refreshAttachments(id).then(() => {
       if (this._detailId !== id) return;
+      this._settleLoading("attachments", id);
       // Initial fetch came back — refeed just the rows, don't touch the
       // form fields the user may have already started editing.
       this._refreshAttachmentsList();
@@ -3426,12 +4435,14 @@ class __tasks_panel extends LetcBox {
     // Surgically feed the comment list when it arrives — a full _render() here
     // rebuilds the panel and replays its open animation (visible glitch).
     this._loadComments(id).then(() => {
+      this._settleLoading("comments", id);
       if (this._detailId === id) this._refreshCommentList();
     });
     // "All" (the default tab) shows the change log below the comments, so it is
     // fetched on open rather than on first switch. Feeds its own part — the
     // comment list is untouched by this.
     this._loadTaskHistory(id).then(() => {
+      this._settleLoading("history", id);
       if (this._detailId === id) this._refreshHistoryList();
     });
   }
@@ -3447,6 +4458,7 @@ class __tasks_panel extends LetcBox {
       const rows = await this.fetchService({
         service: SERVICE.task.activity,
         hub_id: this._hubId,
+        workspace: 1,
         nid: this._scopeNid,
         include_unscoped: this._scopeIsRoot,
         limit: HISTORY_SCAN,
@@ -3474,7 +4486,6 @@ class __tasks_panel extends LetcBox {
       const row = await this.postService({
         service: SERVICE.task.column_create,
         hub_id: this._hubId,
-        nid: this._scopeNid,
         name,
         theme: this._boardTheme || "default",
         // "Set as default" — sent for forward-compat; the server ignores it
@@ -3493,6 +4504,25 @@ class __tasks_panel extends LetcBox {
     this._render();
   }
 
+  // Re-feed one column's `col-menu-<key>` slot from getColMenuFor(): mounts
+  // the popover when that column is the open one, clears it otherwise.
+  // Mirrors _closeAssigneeList — the slot is a persistent part of the column
+  // skeleton, so this never touches the cards.
+  _refreshColMenu(key) {
+    if (key == null) return Promise.resolve();
+    return this._withPart(`col-menu-${key}`)
+      .then((part) => {
+        if (!part || part.isDestroyed?.()) return;
+        part.feed(require("./skeleton").buildColumnMenuContent(this, key));
+        if (part.el) {
+          part.el.dataset.open = this._colMenuFor === key ? "1" : "0";
+        }
+      })
+      .catch(() => {
+        /* not mounted (list / calendar / gantt view) */
+      });
+  }
+
   async _renameColumn(trigger) {
     const id = trigger.mget("taskColumn") || this._colMenuFor;
     if (!id) return;
@@ -3509,10 +4539,9 @@ class __tasks_panel extends LetcBox {
       await this.postService({
         service: SERVICE.task.column_update,
         hub_id: this._hubId,
-        // Column ids are folder-scoped: the built-ins share their status keys
-        // across boards, so without nid the server would rename this column on
-        // every board in the workspace.
-        nid: this._scopeNid,
+        // No nid: there is one board per workspace now, so a rename applying
+        // workspace-wide is the intended effect rather than the accident it
+        // would have been while columns were per-folder.
         id,
         name,
       });
@@ -3534,8 +4563,7 @@ class __tasks_panel extends LetcBox {
       await this.postService({
         service: SERVICE.task.column_update,
         hub_id: this._hubId,
-        // Folder-scoped — see _renameColumn.
-        nid: this._scopeNid,
+        // Workspace-wide — see _renameColumn.
         id,
         theme,
       });
@@ -3547,6 +4575,52 @@ class __tasks_panel extends LetcBox {
     this._render();
   }
 
+  /**
+   * Flip "tasks in this column are done".
+   *
+   * is_done is what completion is actually keyed on everywhere in this window
+   * (_doneKeys, the subtask badge, the completed filters) — but until now only
+   * the seeded built-in `complete` ever carried it, so a board whose columns
+   * were renamed or replaced had no finished column at all.
+   *
+   * The row is only mutated locally AFTER the server confirms: getColumns()
+   * caches on a signature that includes is_done, so writing it optimistically
+   * would flip every completion read in the window on a call that may not have
+   * landed. postService resolves undefined when a call does not complete (the
+   * write guard above does exactly that for a viewer), so an empty response is
+   * a failure, not a success with no body.
+   */
+  async _toggleColumnDone(trigger) {
+    const id = trigger.mget("taskColumn") || this._colMenuFor;
+    if (!id) return;
+    const rec = this._customColumns.find((c) => c.id === id);
+    if (!rec) return;
+    const next = Number(rec.is_done) ? 0 : 1;
+    try {
+      const resp = await this.postService({
+        service: SERVICE.task.column_set_done,
+        hub_id: this._hubId,
+        // Workspace-wide — see _renameColumn.
+        id,
+        is_done: next,
+      });
+      const row = Array.isArray(resp) ? resp[0] : resp;
+      if (!row || row.id == null) return; // refused or not applied — keep the old value
+      rec.is_done = Number(row.is_done) ? 1 : 0;
+    } catch (err) {
+      console.error("[tasks_panel] column.set_done failed:", err);
+      return;
+    }
+    // The done/total subtask badge is `subtask_done` from task.list, counted
+    // SERVER-side over the columns flagged is_done — so it does not follow
+    // from the local row and is stale the moment the flag moves. Reload the
+    // tasks, exactly as the peer branch of onWsMessage does; without it the
+    // person who flipped the switch is the only one seeing the old counts.
+    // _loadTasks never rejects and keeps the previous rows on failure.
+    await this._loadTasks();
+    this._render();
+  }
+
   async _deleteColumn(trigger) {
     const id = trigger.mget("taskColumn") || this._colMenuFor;
     if (!id) return;
@@ -3554,9 +4628,7 @@ class __tasks_panel extends LetcBox {
       const resp = await this.postService({
         service: SERVICE.task.column_delete,
         hub_id: this._hubId,
-        // Folder-scoped — without nid the server would delete this column from
-        // every board in the workspace (see _renameColumn).
-        nid: this._scopeNid,
+        // Workspace-wide — see _renameColumn.
         id,
       });
       const row = Array.isArray(resp) ? resp[0] : resp;
@@ -3597,7 +4669,6 @@ class __tasks_panel extends LetcBox {
       await this.postService({
         service: SERVICE.task.column_reorder,
         hub_id: this._hubId,
-        nid: this._scopeNid,
         order: (this._customColumns || []).map((c) => c.id).join(","),
       });
     } catch (err) {
@@ -3638,16 +4709,87 @@ class __tasks_panel extends LetcBox {
     this._render();
   }
 
-  // Step the calendar cursor by ±1 month or ±1 week (per the active mode).
+  // Step the calendar cursor by ±1 day, week or month (per the active mode).
   _calShift(dir) {
     try {
       const base = this._calCursor ? Dayjs(this._calCursor) : Dayjs();
-      const unit = this._calMode === "week" ? "week" : "month";
+      const unit =
+        this._calMode === "day" ? "day" : this._calMode === "week" ? "week" : "month";
       this._calCursor = base.add(dir, unit).format("YYYY-MM-DD");
     } catch (_) {
       this._calCursor = null;
     }
-    this._render();
+    this._closeCalMenus();
+    this._repaintCalendar();
+  }
+
+  _closeCalMenus() {
+    this._calViewMenuOpen = false;
+    this._calPickerOpen = false;
+    this._unbindCalMenuDismiss();
+  }
+
+  /**
+   * The calendar's range, view or cursor moved: repaint the view body and the
+   * controls row (its label names the range). Nothing else on the panel reads
+   * calendar state, so _render() — every node on the panel — was paying to move
+   * a month. See tasks-panel-render-paths.
+   */
+  _repaintCalendar() {
+    // A different range (or view) is new content, so it opens at the top. The
+    // month's offset used to carry over: scroll to the last week, follow a
+    // "+N" into its day, and the Day view opened scrolled past that day's
+    // first tasks — or ‹ › landed mid-grid on the next month. A repaint of the
+    // SAME range (a task edit, a filter) still goes through the plain
+    // _refreshViewBody and keeps its place; this is the rule the Personal
+    // Calendar keys on too (_placeHoursScroll).
+    this._refreshViewBody({ dropScroll: ".tasks-panel__calendar" });
+    this._repaintCalControls();
+  }
+
+  /** Repaint ONLY the calendar's controls row (a dropdown opened or closed). */
+  _repaintCalControls() {
+    this._syncCalMenuDismiss();
+    if (this.getView() !== "calendar") return;
+    this._withPart("cal-controls").then((row) => {
+      if (!row || (this.isDestroyed && this.isDestroyed())) return;
+      row.feed(require("./skeleton/calendar").controlsKids(this));
+    });
+  }
+
+  // ── outside-click dismissal for the calendar dropdowns ──────────────────
+  // Capture phase on `document`, guarded by the WHOLE controls row — the
+  // Personal Calendar's _bindMenuDismiss, for the same reason it gives: closing
+  // repaints the row before the click reaches its target, so a guard narrower
+  // than the row would destroy ‹ › or the other dropdown mid-click. Every
+  // control in the row closes the menus in its own handler anyway.
+  _syncCalMenuDismiss() {
+    if (this._calViewMenuOpen || this._calPickerOpen) this._bindCalMenuDismiss();
+    else this._unbindCalMenuDismiss();
+  }
+
+  _bindCalMenuDismiss() {
+    if (this._calMenuDismiss) return;
+    const row = `.${this.fig.family}__tcal-bar`;
+    this._calMenuDismiss = (ev) => {
+      const t = ev && ev.target;
+      if (!t || !t.closest) return;
+      // THIS panel's row. Two workspace windows can each have a Task tab open,
+      // and a bare closest() would let a click on the other window's calendar
+      // bar count as "inside" and leave this panel's menu hanging open.
+      const bar = t.closest(row);
+      if (bar && this.el && this.el.contains(bar)) return;
+      if (this.isDestroyed && this.isDestroyed()) return this._unbindCalMenuDismiss();
+      this._closeCalMenus();
+      this._repaintCalControls();
+    };
+    document.addEventListener("click", this._calMenuDismiss, true);
+  }
+
+  _unbindCalMenuDismiss() {
+    if (!this._calMenuDismiss) return;
+    document.removeEventListener("click", this._calMenuDismiss, true);
+    this._calMenuDismiss = null;
   }
 
   async _loadComments(taskId) {
@@ -3672,11 +4814,20 @@ class __tasks_panel extends LetcBox {
         }
         return Array.isArray(out) ? out : [];
       };
-      this._comments = (Array.isArray(rows) ? rows : []).map((r) => ({
+      const fresh = (Array.isArray(rows) ? rows : []).map((r) => ({
         ...r,
         reactions: jsonList(r.reactions),
-        attachments: jsonList(r.attachments),
+        attachments: this._withPreviews(jsonList(r.attachments)),
       }));
+      // Carry over any optimistic row still awaiting its create response. A
+      // peer's comment lands on the socket and re-reads the whole thread; if
+      // that read overtakes our own create, a wholesale replace would drop the
+      // row the user is looking at — and the create's own reconciliation would
+      // then find nothing to replace.
+      const stillPending = (this._comments || []).filter(
+        (c) => c && c._pending && !fresh.some((f) => String(f.id) === String(c.id)),
+      );
+      this._comments = fresh.concat(stillPending);
     } catch (err) {
       // Don't silently blank an already-populated feed on a transient failure —
       // that reads to the user as "others' comments disappeared". Log so the
@@ -3686,22 +4837,124 @@ class __tasks_panel extends LetcBox {
     }
   }
 
+  /**
+   * Swap one comment row for another (or drop it, with `next` omitted) and
+   * repaint the feed. Used to reconcile an optimistic row with the server's.
+   */
+  _replaceComment(id, next) {
+    const list = this._comments || [];
+    const i = list.findIndex((c) => String(c.id) === String(id));
+    if (i === -1) {
+      // The row we meant to replace is gone (a concurrent _loadComments), so
+      // there is nothing to swap — but the comment itself is real and must not
+      // disappear. Append it unless that read already brought it back.
+      if (!next) return false;
+      if (list.some((c) => String(c.id) === String(next.id))) return false;
+      list.push(next);
+      this._comments = list;
+      return true;
+    }
+    if (next) list[i] = next;
+    else list.splice(i, 1);
+    return true;
+  }
+
+  /**
+   * Post the composer's comment.
+   *
+   * A plain text comment is rendered OPTIMISTICALLY: the composer empties and
+   * the row appears on the same tick as the Enter key, then the server's row
+   * replaces it. The round trip behind it is not short — comment_create writes
+   * the row, logs the activity and fans out mention / reply / assignee
+   * notifications before it answers — and the old flow waited for all of that
+   * AND a full comment_list re-read before the typed text left the box, which
+   * is what made Enter feel like it had not registered.
+   *
+   * A comment carrying attachments keeps the blocking flow: its staged strip is
+   * the upload progress UI, so the composer cannot be torn down under it, and
+   * the attachment rows only exist once the links are written.
+   */
   async _submitComment() {
     if (!this._detailId) return;
     const draft = this._commentDraft;
     const body = String((draft && draft.body) || "").trim();
     // Files queued on the composer count as content, exactly as in a reply — a
     // comment that is only an attachment is still worth posting.
-    if (!body && !((draft && draft.pending_files) || []).length) return;
+    const pending = (draft && draft.pending_files) || [];
+    if (!body && !pending.length) return;
     const taskId = this._detailId;
-    try {
-      const created = await this.postService({
+    const mention_uids = Array.isArray(draft.mention_uids)
+      ? draft.mention_uids
+      : [];
+    const post = () =>
+      this.postService({
         service: SERVICE.task.comment_create,
         hub_id: this._hubId,
         task_id: taskId,
         body,
-        mention_uids: Array.isArray(draft.mention_uids) ? draft.mention_uids : [],
+        mention_uids,
       });
+
+    if (!pending.length) {
+      const tempId = `pending-${Date.now()}-${Math.random()
+        .toString(36)
+        .slice(2, 8)}`;
+      const now = Math.floor(Date.now() / 1000);
+      this._comments = (this._comments || []).concat({
+        id: tempId,
+        task_id: taskId,
+        author_uid: Visitor.id,
+        parent_id: null,
+        body,
+        edited: 0,
+        ctime: now,
+        mtime: now,
+        reactions: [],
+        attachments: [],
+        // The skin dims the row and the actions are withheld: reacting to or
+        // deleting a comment the server has not acknowledged has no id to act
+        // on yet.
+        _pending: 1,
+      });
+      this._commentDraft = null;
+      this._refreshCommentList();
+      this._refreshPendingList("comment");
+      const ed = this._descEditorEl("comment");
+      if (ed) this._renderEditorContent(ed, "");
+
+      let row = null;
+      try {
+        const created = await post();
+        row = Array.isArray(created) ? created[0] : created;
+      } catch (err) {
+        console.error("[tasks_panel] comment.create failed:", err);
+      }
+      const newId = row && (row.id || row.comment_id);
+      if (newId) {
+        // A fresh comment has no reactions and no attachments — comment_create
+        // returns the row without those columns, so fill the shapes the
+        // renderer expects rather than re-reading the whole feed.
+        this._replaceComment(tempId, {
+          ...row,
+          reactions: [],
+          attachments: [],
+        });
+      } else {
+        // Failed (postService resolves rather than rejects on a refusal): take
+        // the row back out and hand the text back to the composer instead of
+        // losing what was typed.
+        this._replaceComment(tempId, null);
+        this._commentDraft = draft;
+        this._refreshPendingList("comment");
+        const back = this._descEditorEl("comment");
+        if (back) this._renderEditorContent(back, body);
+      }
+      if (this._detailId === taskId) this._refreshCommentList();
+      return;
+    }
+
+    try {
+      const created = await post();
       // The row doesn't exist until now — its id comes back on the create, and
       // only then can the queued files be attached to it.
       const row = Array.isArray(created) ? created[0] : created;
@@ -3880,9 +5133,14 @@ class __tasks_panel extends LetcBox {
     // data-loading of an OPENING chip — that one puts a spinner where the
     // file-type icon sits, and here the spinner belongs on the ✕, which is the
     // control doing the work.
+    // Both shapes a comment file can take: the named chip, and the media tile
+    // a picture or a video renders as. Matching only the chip left every tile
+    // live during its own unlink — the bug this flag exists to close.
     const chip =
       btn && btn.closest
-        ? btn.closest(`.${this.fig.family}__comment-attachment`)
+        ? btn.closest(
+            `.${this.fig.family}__comment-attachment, .${this.fig.family}__comment-media`,
+          )
         : null;
     if (chip && chip.dataset) chip.dataset.removing = "1";
     const taskId = this._detailId;
@@ -4194,6 +5452,10 @@ class __tasks_panel extends LetcBox {
   // chip rendering). Bodies are populated post-feed, like the description.
   _renderCommentBodies() {
     if (!this.el) return;
+    // Comment rows only ever exist inside the open detail panel, so with none
+    // open there is nothing to find — and this runs twice per render (again on
+    // the next frame), each time walking the whole panel subtree.
+    if (!this._detailId) return;
     this.el
       .querySelectorAll(`.${this.fig.family}__comment-body[data-comment-id]`)
       .forEach((el) => {
@@ -4360,8 +5622,16 @@ class __tasks_panel extends LetcBox {
    * a retained node would either leak or silently miss after a re-feed.
    */
   _rememberDropScope(zone) {
+    // `desc` is excluded for exactly the reason detail/create are: it is a task
+    // surface, recoverable from the pointer, so remembering it would let a
+    // stale hover write into a description with no overlay ever shown.
+    const task =
+      zone &&
+      (zone.scope === "detail" ||
+        zone.scope === "create" ||
+        zone.scope === "desc");
     this._lastDropScope =
-      zone && zone.scope !== "detail" && zone.scope !== "create"
+      zone && !task
         ? { scope: zone.scope, key: zone.key, commentId: zone.commentId }
         : null;
   }
@@ -4506,11 +5776,7 @@ class __tasks_panel extends LetcBox {
           provisional: 1,
           status: "queued",
         };
-        if (this._isImageExt(extension)) {
-          try {
-            entry.previewUrl = URL.createObjectURL(item);
-          } catch (_) {}
-        }
+        this._attachLocalPreview(entry, item);
         list.push(entry);
         added.push(entry);
         continue;
@@ -4580,6 +5846,17 @@ class __tasks_panel extends LetcBox {
    */
   async _dropOnCommentRow(commentId, items) {
     const taskId = this._detailId;
+    // An optimistic row carries a local id the server has never seen, so
+    // comment_link_file would have nothing to attach to. Every row is a drop
+    // target, including the one still in flight — refuse this one until its
+    // create answers and the real row takes its place.
+    if (
+      (this._comments || []).some(
+        (c) => c && c._pending && String(c.id) === String(commentId),
+      )
+    ) {
+      return;
+    }
     const staged = await this._stageRowItems(commentId, items);
     if (!staged.length) return;
     // Busy for the length of THIS run, not for as long as entries happen to sit
@@ -4817,10 +6094,16 @@ class __tasks_panel extends LetcBox {
     });
     if (!zone) return null;
     // A zone only accepts while the surface that owns it is actually open.
-    if (zone.scope === "detail" && !this._detailDraft) return null;
-    if (zone.scope === "create" && !this._createDefaults) return null;
+    //
+    // A `desc` zone is the same surface as its form's attachment zone, one row
+    // up — the detail panel's description and its __attachments both live or
+    // die with _detailDraft — so it answers to the same guard rather than a
+    // second one that could drift from it.
+    const surface = zone.scope === "desc" ? zone.descScope : zone.scope;
+    if (surface === "detail" && !this._detailDraft) return null;
+    if (surface === "create" && !this._createDefaults) return null;
     if (
-      (zone.scope === "comment" || zone.scope === "comment-reply") &&
+      (surface === "comment" || surface === "comment-reply") &&
       !this._detailId
     ) {
       return null;
@@ -4833,11 +6116,17 @@ class __tasks_panel extends LetcBox {
   }
 
   // Whichever task form is open. NOT a drop decision: it answers "is a task
-  // surface open at all", never "where does this land". Its only real consumer
-  // is canAttachExisting's claim breadth.
+  // surface open at all", never "where does this land". canAttachExisting reads
+  // it for claim breadth, and _positionlessScope hands it to
+  // attachExistingNodes ("Link to task tracker", desk drops), which resolves the
+  // draft through _scopeKey — so it must carry `key` like a resolveZone result.
   _formUploadScope() {
-    if (this._creating && this._createDefaults) return { scope: "create" };
-    if (this._detailId && this._detailDraft) return { scope: "detail" };
+    if (this._creating && this._createDefaults) {
+      return { scope: "create", key: "create" };
+    }
+    if (this._detailId && this._detailDraft) {
+      return { scope: "detail", key: "detail" };
+    }
     return null;
   }
 
@@ -4854,14 +6143,33 @@ class __tasks_panel extends LetcBox {
    */
   _trackPointer() {
     if (this._pointerTracker || typeof document === "undefined") return;
+    // A held button. jQuery-UI cannot start a drag without one, so this is a
+    // strict superset of "a drag may be in flight" — and it is what keeps the
+    // affordance work off every ordinary mouse move in the app. Every move used
+    // to queue a rAF that ran a document-wide
+    // `querySelector(".ui-draggable-dragging")`, once per frame, for the whole
+    // life of the panel — and once per OPEN PANEL, since the listener is on
+    // document and every folder window installs its own.
+    this._pointerDown = 0;
+    this._pointerArm = () => {
+      this._pointerDown = 1;
+    };
     this._pointerTracker = (e) => {
+      // The POSITION is still recorded on every move, gate or no gate: the
+      // paste route (_pasteZone) reads _lastPointer with no drag in flight and
+      // no TTL, so it must stay current whenever the cursor is over the panel.
       this._lastPointer = { x: e.clientX, y: e.clientY, t: Date.now() };
+      if (!this._pointerDown) return;
       this._syncDragAffordance();
     };
     // A jQuery-UI drop or abort ends with no event on this panel at all — the
     // droppable's `drop` only fires when the pointer is inside it — so the
     // affordance would stay lit after a drag that ended elsewhere.
-    this._pointerRelease = () => this._setDragAffordance(null);
+    this._pointerRelease = () => {
+      this._pointerDown = 0;
+      this._setDragAffordance(null);
+    };
+    document.addEventListener("mousedown", this._pointerArm, true);
     document.addEventListener("mousemove", this._pointerTracker, true);
     document.addEventListener("mouseup", this._pointerRelease, true);
   }
@@ -4927,14 +6235,21 @@ class __tasks_panel extends LetcBox {
   }
 
   /**
-   * image/* files carried by a paste, in clipboard order.
+   * image/* and video/* files carried by a paste, in clipboard order.
    *
    * `items` is the authoritative list (a screenshot is an item with no entry in
    * some engines' `files`), with `files` as the fallback for engines that only
-   * populate that. Everything non-image is left alone: the paste then falls
-   * through to whatever the browser would have done with it.
+   * populate that. Everything that is neither is left alone: the paste then
+   * falls through to whatever the browser would have done with it.
+   *
+   * Video is here because a comment shows one now — copying a clip in the OS
+   * file manager and pasting it into a comment used to do nothing at all, since
+   * nothing on either paste route so much as looked at a non-image.
+   *
+   * @param {Event} e
+   * @param {RegExp} [accept]  narrow it, e.g. to images alone
    */
-  _clipboardImages(e) {
+  _clipboardMedia(e, accept = /^(image|video)\//) {
     const dt =
       (e && e.clipboardData) ||
       (e && e.originalEvent && e.originalEvent.clipboardData);
@@ -4943,16 +6258,22 @@ class __tasks_panel extends LetcBox {
     const items = dt.items || [];
     for (let i = 0; i < items.length; i++) {
       const it = items[i];
-      if (!it || it.kind !== "file" || !/^image\//.test(it.type || "")) continue;
+      if (!it || it.kind !== "file" || !accept.test(it.type || "")) continue;
       const f = it.getAsFile && it.getAsFile();
       if (f) out.push(f);
     }
     if (!out.length) {
       for (const f of Array.from(dt.files || [])) {
-        if (/^image\//.test((f && f.type) || "")) out.push(f);
+        if (accept.test((f && f.type) || "")) out.push(f);
       }
     }
     return out;
+  }
+
+  // Images alone — the caret can hold an inline image and nothing else, so the
+  // editor's own paste handler asks for that narrower set.
+  _clipboardImages(e) {
+    return this._clipboardMedia(e, /^image\//);
   }
 
   /**
@@ -4963,8 +6284,11 @@ class __tasks_panel extends LetcBox {
    */
   _namedPasteFile(file, i) {
     if (!file || file.name) return file;
-    const ext = String(file.type || "").split("/")[1] || "png";
-    const n = i ? `pasted-image-${i + 1}` : "pasted-image";
+    const type = String(file.type || "");
+    const video = /^video\//.test(type);
+    const ext = type.split("/")[1] || (video ? "mp4" : "png");
+    const stem = video ? "pasted-video" : "pasted-image";
+    const n = i ? `${stem}-${i + 1}` : stem;
     try {
       return new File([file], `${n}.${ext}`, { type: file.type });
     } catch (_) {
@@ -4997,7 +6321,17 @@ class __tasks_panel extends LetcBox {
     // Only the one under the cursor may claim it.
     if (!this._dropPointEl(at)) return null;
     const zone = this._activeUploadScope(at);
-    if (zone) return zone;
+    // A desc zone is a DROP target, not a paste target.
+    //
+    // Pasting INTO a description is the editor's own path: the caret is in a
+    // contenteditable, so _onPasteAttach never runs (_isTextEntry) and
+    // _onEditorPaste inlines at the caret. This branch is the opposite case —
+    // the caret is somewhere else entirely and only the POINTER happens to be
+    // over the editor. Claiming it here would drop an image into a body the
+    // user is not typing in, from a keystroke that gave no hint it would go
+    // there. Falls through to the composer default below, exactly as it did
+    // before this zone existed.
+    if (zone && zone.scope !== "desc") return zone;
     // Inside the panel but over no zone — including over another author's
     // comment, which resolveZone refuses rather than passing through. The
     // composer is where a paste belongs by default; its draft is allocated on
@@ -5014,8 +6348,8 @@ class __tasks_panel extends LetcBox {
   }
 
   /**
-   * Ctrl/Cmd+V with an image in the clipboard, with nothing editable focused →
-   * attach it where the cursor is.
+   * Ctrl/Cmd+V with an image or a video in the clipboard, with nothing editable
+   * focused → attach it where the cursor is.
    *
    * Refusals come first and cheapest-first, and preventDefault is called ONLY
    * once we have committed to handling the event, so every paste we decline
@@ -5030,7 +6364,7 @@ class __tasks_panel extends LetcBox {
       typeof document !== "undefined" ? document.activeElement : null;
     if (this._isTextEntry(e.target) || this._isTextEntry(focused)) return;
     if (!this._detailId) return;
-    const files = this._clipboardImages(e);
+    const files = this._clipboardMedia(e);
     if (!files.length) return;
     const zone = this._pasteZone();
     if (!zone) return;
@@ -5118,7 +6452,43 @@ class __tasks_panel extends LetcBox {
     }
     const files = Array.from((e.dataTransfer && e.dataTransfer.files) || []);
     if (!files.length) return;
+    // WHERE in the description the file landed. The event is the only thing
+    // that knows, and the upload that follows is async — by the time it
+    // resolves the drag is long over and there is no pointer left to ask. Same
+    // reason _onEditorPaste clones the caret range before awaiting.
+    if (scope.scope === "desc") {
+      scope.range = this._caretRangeFromPoint(e.clientX, e.clientY);
+    }
     return this._attachFilesToZone(scope, files);
+  }
+
+  /**
+   * A collapsed range at a viewport point, or null.
+   *
+   * Two vendor spellings and no agreement between them: Chromium and WebKit
+   * expose caretRangeFromPoint, Gecko caretPositionFromPoint. Neither is
+   * guaranteed, and null is a perfectly good answer — _insertPastedImage
+   * appends to the editor when it has no usable range, which is what a drop
+   * onto the editor's padding should do anyway.
+   */
+  _caretRangeFromPoint(x, y) {
+    if (typeof document === "undefined" || x == null || y == null) return null;
+    try {
+      if (document.caretRangeFromPoint) {
+        return document.caretRangeFromPoint(x, y);
+      }
+      if (document.caretPositionFromPoint) {
+        const pos = document.caretPositionFromPoint(x, y);
+        if (!pos || !pos.offsetNode) return null;
+        const range = document.createRange();
+        range.setStart(pos.offsetNode, pos.offset);
+        range.collapse(true);
+        return range;
+      }
+    } catch (_) {
+      /* a detached or cross-document node — fall through to appending */
+    }
+    return null;
   }
 
   /**
@@ -5131,6 +6501,10 @@ class __tasks_panel extends LetcBox {
    */
   async _attachFilesToZone(zone, files) {
     if (!zone || !files || !files.length) return;
+    // A description takes an image INTO the body and everything else beside it.
+    if (zone.scope === "desc") {
+      return this._dropOnDescEditor(zone, files);
+    }
     // A comment row has no submit, so arriving IS the commit.
     if (zone.scope === "comment-row") {
       return this._dropOnCommentRow(zone.commentId, files);
@@ -5141,8 +6515,70 @@ class __tasks_panel extends LetcBox {
     this._refreshPendingList(this._scopeKey(zone));
   }
 
+  /**
+   * A drop on a task description.
+   *
+   * Splits the files the way _onEditorPaste splits a paste, and for the same
+   * reason: the body's marker grammar holds mentions, links and inline images,
+   * and nothing else. An image goes IN, at the point it was dropped. A PDF, a
+   * video or a spreadsheet has no marker it could become, so it attaches to the
+   * task instead — which is where that editor's own paperclip already puts it,
+   * and where a pasted video already goes.
+   *
+   * Sequential, not Promise.all: _insertPastedImage moves the range past the
+   * node it just inserted, so three images dropped together land in the order
+   * they were dropped rather than in whatever order their uploads finish.
+   */
+  async _dropOnDescEditor(zone, files) {
+    const editorEl = zone.el;
+    const scope = zone.descScope;
+    if (!editorEl || !scope) return;
+    const images = [];
+    const rest = [];
+    for (const f of files) (this._isDroppableImage(f) ? images : rest).push(f);
+    // Attachments first. Queuing them is synchronous and touches only the
+    // draft, so the strip is already showing them while the first image is
+    // still uploading — rather than both landing at once, several seconds in.
+    if (rest.length) {
+      await this._attachFilesToZone({ scope, key: scope }, rest);
+    }
+    // Every placeholder goes in FIRST, in one synchronous pass, so a drop of
+    // three images shows three spinners at once and in the order they were
+    // dropped. Settling them inside the same loop would mean the second
+    // placeholder only appeared once the first upload had finished — the
+    // spinner would then be describing the wait it was added to explain away.
+    const placed = images.map((file) => ({
+      file,
+      ph: this._beginInlineImage(file, scope, editorEl, zone.range),
+    }));
+    for (const { file, ph } of placed) {
+      // The panel can be closed, or the task switched, mid-upload.
+      if (!editorEl.isConnected) return;
+      await this._settleInlineImage(ph, file, scope, editorEl);
+    }
+  }
+
+  /**
+   * Is this dropped file an image, for the purposes of going inline?
+   *
+   * By MIME type first, exactly as the paste path tests a clipboard item. The
+   * extension is the fallback for a file the OS handed over with no type at
+   * all — a drag out of an archive, off a network share, or from an app that
+   * simply does not set one. A file that DOES declare a type is taken at its
+   * word, so a mislabelled .png attaches rather than rendering as a broken
+   * inline image.
+   */
+  _isDroppableImage(file) {
+    if (!file) return false;
+    if (/^image\//.test(file.type || "")) return true;
+    if (file.type) return false;
+    const { extension } = this._splitFilename(file.name || "");
+    return this._isImageExt(extension);
+  }
+
   // Queues File objects onto a draft's pending list (picker + drag-drop),
-  // caching an object URL for image previews. Names are provisional here; the
+  // caching an object URL so a picture or a video shows before it lands
+  // (_attachLocalPreview). Names are provisional here; the
   // collision-safe one is resolved at upload time (_finalizePendingName).
   async _stashPendingFiles(draft, files) {
     draft.pending_files = draft.pending_files || [];
@@ -5165,17 +6601,43 @@ class __tasks_panel extends LetcBox {
         provisional: 1,
         status: "queued",
       };
-      if (this._isImageExt(extension)) {
-        try {
-          entry.previewUrl = URL.createObjectURL(file);
-        } catch (_) {}
-      }
+      this._attachLocalPreview(entry, file);
       draft.pending_files.push(entry);
     }
   }
 
   _isImageExt(ext) {
     return /^(png|jpe?g|gif|webp|bmp|svg|avif|heic)$/i.test(ext || "");
+  }
+
+  _isVideoExt(ext) {
+    return /^(mp4|m4v|mov|webm|ogv|avi|mkv|3gp|mpe?g|wmv)$/i.test(ext || "");
+  }
+
+  /**
+   * Show a file the browser already holds, before the server has seen it.
+   *
+   * A queued entry has no nid, so no served thumbnail exists yet; the File it
+   * was dropped or pasted with is the only thing that can be painted, and it
+   * is right here. `localPreview` is what tells the renderer the URL is a blob
+   * — a video's blob has no poster frame to put in an <img>, so it needs a
+   * <video> instead (see the tile in ./skeleton).
+   *
+   * Revoked by whoever drops the entry — _removePendingFile and
+   * _releasePendingPreviews for a draft, _dropRowUpload for a row, plus the
+   * task-switch and destroy sweeps. All of them key on `previewUrl` alone, so
+   * a video needs no new release path. An object URL pins the whole file in
+   * memory until one of them runs.
+   */
+  _attachLocalPreview(entry, file) {
+    if (!entry || !file) return entry;
+    const ext = entry.extension;
+    if (!this._isImageExt(ext) && !this._isVideoExt(ext)) return entry;
+    try {
+      entry.previewUrl = URL.createObjectURL(file);
+      entry.localPreview = 1;
+    } catch (_) {}
+    return entry;
   }
 
   _splitFilename(name) {
@@ -5187,11 +6649,62 @@ class __tasks_panel extends LetcBox {
     return { filename: safe.slice(0, dot), extension: safe.slice(dot + 1) };
   }
 
-  // Fetches the folder body's current filenames into a lowercase Set, used
-  // by _resolveAvailableName. Cleared whenever the create modal reopens
+  /**
+   * The folder task attachments are uploaded into.
+   *
+   * NOT `_destNid` — the folder the user happens to be standing in. An
+   * attachment belongs to the task, not to the workspace body, so uploading it
+   * there listed it in that folder's Files tab beside the real documents. It
+   * goes to the hub's hidden task folder instead (`/__chat__/__task__`,
+   * `mfs_home.task_upload_id`): same hub, same member permissions, and already
+   * excluded from every listing, search, export and manifest by the
+   * `^/__chat__` rule the chat staging folder relies on.
+   *
+   * Existing files LINKED to a task (the picker, a drag out of the folder) are
+   * untouched — they stay where they are and keep showing in Files.
+   *
+   * Falls back to `_destNid` when the server has no `task_upload_id` (schema
+   * not patched yet), so attaching keeps working — the file just stays visible,
+   * exactly as before.
+   */
+  async _attachmentNid() {
+    if (this._attachNid) return this._attachNid;
+    if (this._noTaskFolder) return this._destNid;
+    const job =
+      this._attachNidJob ||
+      (this._attachNidJob = (async () => {
+        try {
+          const home = await this.fetchService({
+            service: SERVICE.media.home,
+            hub_id: this._hubId,
+          });
+          const nid = home && home.task_upload_id;
+          if (nid) this._attachNid = nid;
+          else if (home) this._noTaskFolder = 1;
+        } catch (err) {
+          // Leave BOTH caches unset so the next attach retries: a request that
+          // failed says nothing about whether the folder exists, and pinning
+          // the panel to the fallback over one bad request would be wrong.
+          this.warn && this.warn("task attachment folder lookup failed", err);
+        } finally {
+          this._attachNidJob = null;
+        }
+        return this._attachNid || null;
+      })());
+    return (await job) || this._destNid;
+  }
+
+  // Fetches the attachment folder's current filenames into a lowercase Set,
+  // used by _resolveAvailableName. Cleared whenever the create modal reopens
   // (see "add-task" handler) so we re-fetch after each session. Resolves NULL
   // when the listing could not be read — "unknown", which callers must not
   // read as "the folder is empty".
+  //
+  // Only the first page is read, so a workspace with many attachments can miss
+  // an older same-named one. That is a display nicety, not a correctness
+  // problem: mfs_create_node rejects the duplicate and the server resolves the
+  // name itself, and the card is repainted from task_get_linked_files — the
+  // stored name — once the link is written.
   async _ensureFolderFilenames() {
     if (this._folderFilenames) return this._folderFilenames;
     // One fetch, shared by every concurrent caller. The cache used to be
@@ -5204,13 +6717,17 @@ class __tasks_panel extends LetcBox {
     // The four `_folderFilenames = null` resets don't cancel a fetch already in
     // flight, so a job that outlives a scope change must not install names read
     // from the folder we have since left.
-    const forNid = this._destNid;
+    // Resolved INSIDE the job: an await out here would run before
+    // _folderFilenamesJob is assigned, and two concurrent callers would each
+    // start their own listing — the single flight this guard exists for.
     this._folderFilenamesJob = (async () => {
+      let forNid = null;
       try {
+        forNid = await this._attachmentNid();
         const rows = await this.fetchService({
           service: SERVICE.media.show_node_by,
           hub_id: this._hubId,
-          nid: this._destNid,
+          nid: forNid,
           type: "all",
           page: 1,
           order: _K.order.descending,
@@ -5223,7 +6740,11 @@ class __tasks_panel extends LetcBox {
           const full = ext ? `${base}.${ext}` : base;
           if (full) names.add(full.toLowerCase());
         }
-        if (this._destNid === forNid) this._folderFilenames = names;
+        // Read straight off the cache rather than calling _attachmentNid()
+        // again: it is the same value, and re-asking would cost a second
+        // media.home round trip on a server that has no task folder.
+        if ((this._attachNid || this._destNid) === forNid)
+          this._folderFilenames = names;
       } catch (err) {
         // Leave the cache UNSET so the next attach retries. Callers then see
         // null and de-duplicate against the in-flight entries alone, rather
@@ -5321,8 +6842,9 @@ class __tasks_panel extends LetcBox {
    * Rewrite one pending card's visible filename in place.
    *
    * Scope-agnostic on purpose: the same entry shape renders as an
-   * __attachment-row in a staged strip and as a __comment-attachment chip in a
-   * comment row, and _finalizePendingName does not know which. Iterating over
+   * __attachment-row in a staged strip, as a __comment-attachment chip in a
+   * comment row, and as a __comment-media tile when it is a picture or a
+   * video — and _finalizePendingName does not know which. Iterating over
    * data-key rather than building a selector from it, for the same reason as
    * _setPendingStatus: the key carries a filename.
    */
@@ -5332,14 +6854,17 @@ class __tasks_panel extends LetcBox {
     if (!key) return;
     const pfx = this.fig.family;
     const cards = this.el.querySelectorAll(
-      `.${pfx}__attachment-row, .${pfx}__comment-attachment`,
+      `.${pfx}__attachment-row, .${pfx}__comment-attachment, .${pfx}__comment-media`,
     );
     for (const card of cards) {
       if (card.dataset.key !== key) continue;
       const n = card.querySelector(
         `.${pfx}__attachment-name, .${pfx}__comment-attachment-name`,
       );
+      // A tile shows no name — the picture is the content — so its copy of the
+      // filename is the tooltip, and that is what goes stale without this.
       if (n) n.textContent = fullName;
+      else card.setAttribute("title", fullName);
       return;
     }
   }
@@ -5352,41 +6877,96 @@ class __tasks_panel extends LetcBox {
   // entry's provisional name becomes that resolved one.
   async _uploadPendingFile(pf, siblings) {
     await this._finalizePendingName(pf, siblings);
-    return new Promise((resolve, reject) => {
-      this._pendingUploadScope = "_commit";
-      const params = { hub_id: this._hubId, nid: this._destNid };
-      const fullName = pf.extension
-        ? `${pf.filename}.${pf.extension}`
-        : pf.filename;
-      if (fullName && fullName !== pf.file?.name) {
-        params.filename = encodeURI(fullName);
+    const fullName = pf.extension
+      ? `${pf.filename}.${pf.extension}`
+      : pf.filename;
+    const extra =
+      fullName && fullName !== pf.file?.name
+        ? { filename: encodeURI(fullName) }
+        : {};
+    return this._uploadAttachment(pf.file, "_commit", extra);
+  }
+
+  /**
+   * One attachment upload into the task folder, with a single retry into the
+   * folder body if that folder refuses the write.
+   *
+   * The retry is for a member granted a SUBFOLDER rather than the workspace:
+   * `user_permission` resolves the task folder off the hub root, so such a
+   * member can write where they were granted and not into /__chat__/__task__.
+   * Losing their attachment would be worse than showing it in the Files tab —
+   * which is exactly what they had before this change. The downgrade is NOT
+   * cached: a transient failure must not disable the task folder for the rest
+   * of the panel's life.
+   *
+   * media.store reports a denied destination through `exception.server`, which
+   * is an HTTP 500 — indistinguishable from any other server fault, so the
+   * retry fires for those too. That is deliberate. The one case it costs
+   * anything is a 500 raised AFTER the node was written, which leaves a stray
+   * file; the code this replaces left an equally stray file in the workspace
+   * body on that same fault, and failed the attach on top of it.
+   */
+  async _uploadAttachment(file, scope, extra = {}) {
+    const attachNid = await this._attachmentNid();
+    try {
+      return await this._uploadOnce(file, scope, attachNid, extra);
+    } catch (err) {
+      const fallback = this._destNid;
+      if (!err || !err.retryElsewhere || !fallback || fallback === attachNid) {
+        throw err;
       }
+      this.warn &&
+        this.warn("task folder upload refused, using the folder body", err);
+      return this._uploadOnce(file, scope, fallback, extra);
+    }
+  }
+
+  /**
+   * Promise-wrapped uploadFile. Tags scope so the global onUploadResponse
+   * skips this xhr (we resolve via the xhr readystate listener).
+   *
+   * A rejection carries `retryElsewhere` when the destination could be to
+   * blame AND nothing is known to have been written: an upload that never
+   * started, a non-2xx, or a 2xx that names no node (media.store answered
+   * without creating one). The single exception is a 2xx whose body would not
+   * parse — something WAS stored there, so retrying would file the same
+   * attachment twice.
+   */
+  _uploadOnce(file, scope, nid, extra = {}) {
+    return new Promise((resolve, reject) => {
+      const fail = (err, retryElsewhere) => {
+        this._pendingUploadScope = null;
+        if (err && retryElsewhere) err.retryElsewhere = 1;
+        reject(err);
+      };
+      this._pendingUploadScope = scope;
+      const params = { hub_id: this._hubId, nid, ...extra };
       let xhr;
       try {
-        xhr = this.uploadFile(pf.file, params);
+        xhr = this.uploadFile(file, params);
       } catch (e) {
-        this._pendingUploadScope = null;
-        return reject(e);
+        return fail(e, 1);
       }
-      if (!xhr) {
-        this._pendingUploadScope = null;
-        return reject(new Error("upload failed to start"));
-      }
+      if (!xhr) return fail(new Error("upload failed to start"), 1);
       xhr.addEventListener("readystatechange", () => {
         if (xhr.readyState !== 4) return;
         this._pendingUploadScope = null;
-        if (xhr.status >= 200 && xhr.status < 300) {
-          try {
-            const { data } = JSON.parse(xhr.responseText);
-            const nid = data?.nid || data?.id;
-            if (!nid) return reject(new Error("no nid in upload response"));
-            resolve({ nid, data });
-          } catch (err) {
-            reject(err);
-          }
-        } else {
-          reject(new Error(`upload http ${xhr.status}`));
+        if (xhr.status < 200 || xhr.status >= 300) {
+          return fail(new Error(`upload http ${xhr.status}`), 1);
         }
+        let data;
+        try {
+          ({ data } = JSON.parse(xhr.responseText));
+        } catch (err) {
+          return fail(err);
+        }
+        const fileNid = data?.nid || data?.id;
+        // A 2xx that names no node means media.store answered without creating
+        // one — nothing was written, so this is safe to retry elsewhere.
+        if (!fileNid) {
+          return fail(new Error("no nid in upload response"), 1);
+        }
+        resolve({ nid: fileNid, data, hub: data?.hub_id || this._hubId });
       });
     });
   }
@@ -5424,6 +7004,11 @@ class __tasks_panel extends LetcBox {
       this._attachments[this._detailId],
       this._detailDraft && this._detailDraft.pending_files,
       this._createDefaults && this._createDefaults.pending_files,
+      // Comment files too: a picture or a video posted in a comment is opened
+      // straight from its tile, and it is often attached to NO task list at
+      // all — so without these the node_info fallback had nothing to fall back
+      // to and the click did nothing.
+      ...(this._comments || []).map((c) => c && c.attachments),
     ];
     for (const l of lists) {
       if (!Array.isArray(l)) continue;
@@ -5849,15 +7434,16 @@ class __tasks_panel extends LetcBox {
     const strip = this.el.querySelector(`[data-scope="${scopeKey}"]`);
     if (!strip) return;
     const want = this._pendingKey(entry);
-    // Both card shapes: a staged strip renders __attachment-row, a comment row
-    // renders the smaller __comment-attachment chip. Only the first was matched
+    // Every card shape: a staged strip renders __attachment-row, a comment row
+    // renders the smaller __comment-attachment chip — or, for a picture or a
+    // video, the __comment-media tile. Only the first was matched
     // here, so a row upload's queued → uploading → error transitions never
     // reached the DOM — the chip only ever showed the status it happened to be
     // built with. That was survivable while the chip was built AFTER the
     // status was set; now that it is painted on drop, the spinner depends on
     // this write.
     const cards = strip.querySelectorAll(
-      `.${pfx}__attachment-row, .${pfx}__comment-attachment`,
+      `.${pfx}__attachment-row, .${pfx}__comment-attachment, .${pfx}__comment-media`,
     );
     for (const card of cards) {
       if (card.dataset.key === want) {
@@ -5962,12 +7548,27 @@ class __tasks_panel extends LetcBox {
   // Every one of those paths applies the same editing guard, so a drop can
   // never land on the task while a comment owns the surface.
   attachExistingNodes(files, resolved) {
-    const scope =
+    let scope =
       resolved ||
       this._lastDropScope ||
       this._pointerScope() ||
       this._positionlessScope();
     if (!scope) return false;
+    // A workspace node dragged onto a DESCRIPTION attaches; it does not inline.
+    // Inlining uploads a File and this route has none — it carries a node that
+    // already exists — so the zone is normalised to the form behind it.
+    //
+    // Not cosmetic: without this, _draftForScope below is asked for a
+    // "desc:detail" draft, _draftForKey does not know that key, and the drop
+    // returns false having done nothing — while canAttachExisting() has
+    // already told the folder window not to insert the file into its own body.
+    // The file would land nowhere at all.
+    //
+    // The affordance still lights the description the pointer is actually
+    // over, which is one row above where the file lands.
+    if (scope.scope === "desc") {
+      scope = { scope: scope.descScope, key: scope.descScope };
+    }
     // A comment row has no submit, so the drop IS the commit — _stageRowItems
     // applies the same dedupes and the same cross-hub placeholder path this
     // function does for the staged scopes.
@@ -6265,6 +7866,22 @@ class __tasks_panel extends LetcBox {
   }
 
   /**
+   * Who the reporter falls back to in one picker scope: the task's creator in
+   * the detail panel, the current user in the create modal — the person the
+   * field names until somebody reassigns it, and what the chip's ✕ restores.
+   *
+   * Answers "" for a task with no creator recorded, rather than falling back to
+   * the current user: the skeleton passes detail.created_by verbatim, so both
+   * places must resolve the same way — otherwise the ✕ would be absent on the
+   * first render and appear after a pick, offering a reset to the wrong person.
+   */
+  _reporterFallback(scope) {
+    if (/^create/.test(String(scope || ""))) return Visitor.id;
+    const task = this.getDetailTask();
+    return (task && task.created_by) || "";
+  }
+
+  /**
    * Repaint one reporter picker in place after a pick.
    *
    * Mirrors _applyAssigneeChange, with the two single-select differences: the
@@ -6275,10 +7892,13 @@ class __tasks_panel extends LetcBox {
     if (!this.el) return;
     const draft = this._pickerDraft(scope);
     const uid = draft && draft.reporter_uid;
+    const resetTo = this._reporterFallback(scope);
     this._withPart(`${scope}-assignee-chips`)
       .then((chips) => {
         if (!chips || chips.isDestroyed?.()) return;
-        chips.feed(require("./skeleton").buildReporterChip(this, uid));
+        chips.feed(
+          require("./skeleton").buildReporterChip(this, uid, { scope, resetTo }),
+        );
       })
       .catch(() => {
         /* not mounted yet */
@@ -6714,6 +8334,30 @@ class __tasks_panel extends LetcBox {
       return this._insertPastedImage(file, scope, editorEl, range);
     }
 
+    // A video cannot go at the caret — the body's marker grammar holds mentions,
+    // links and inline images, and nothing else. It attaches instead, which is
+    // where it is shown as a poster tile rather than filed under its name. Same
+    // three comment surfaces the editor serves; the two description editors
+    // attach to the task, which is what their own paperclip does.
+    const clips = this._clipboardMedia(e, /^video\//);
+    if (clips.length) {
+      // A row has no submit of its own, so arriving IS the commit — the same
+      // rule the paperclip beside that editor already follows. Every other
+      // editor scope names a draft _draftForKey knows (PICK_ATTACHMENT_SCOPES),
+      // so there the scope IS the key.
+      const row = scope === "comment-edit" ? this._editingCommentId : null;
+      // Resolved BEFORE preventDefault, so a scope with nowhere to put the
+      // file declines the paste rather than swallowing it — the same order
+      // _onPasteAttach keeps for the same reason.
+      if (scope !== "comment-edit" || row) {
+        e.preventDefault();
+        const named = clips.map((f, i) => this._namedPasteFile(f, i));
+        return row
+          ? this._dropOnCommentRow(row, named)
+          : this._attachFilesToZone({ scope, key: scope }, named);
+      }
+    }
+
     const html = dt.getData("text/html");
     const plain = (dt.getData("text/plain") || "").trim();
     if (!html && !plain) return;
@@ -6807,16 +8451,15 @@ class __tasks_panel extends LetcBox {
     }
   }
 
-  async _insertPastedImage(file, scope, editorEl, range) {
-    let res;
-    try {
-      res = await this._uploadInlineImage(file);
-    } catch (err) {
-      console.error("[tasks_panel] inline image upload failed:", err);
-      return;
-    }
-    if (!editorEl.isConnected) return;
-    const node = this._makeInlineImage(res.nid, res.hub, null, true);
+  /**
+   * Put a node at a caret range, or at the end of the editor.
+   *
+   * Extracted from _insertPastedImage so a placeholder and the image that
+   * replaces it land by the same rule — and so the range ADVANCES past what it
+   * just inserted, which is what lets several images dropped together keep the
+   * order they were dropped in.
+   */
+  _insertInlineNode(node, editorEl, range) {
     if (range && editorEl.contains(range.startContainer)) {
       range.deleteContents();
       range.insertNode(node);
@@ -6828,58 +8471,215 @@ class __tasks_panel extends LetcBox {
     } else {
       editorEl.appendChild(node);
     }
-    // Pasted images default to a small size (still resizable up via the handle).
-    // Cap at the image's natural width so a small image isn't upscaled, then
-    // re-sync so the width is stored in the draft marker.
-    const DEFAULT_W = 220;
+    return node;
+  }
+
+  /**
+   * Show that an image is on its way, at the point it was dropped or pasted.
+   *
+   * SYNCHRONOUS, and that is the whole point: the upload behind it takes
+   * seconds, and until now nothing at all appeared during them — an image
+   * dropped on a description read as a drop that had been ignored.
+   *
+   * NOTHING HERE CAN REACH THE SAVED BODY, by three separate properties, because
+   * _onDescInput serializes the editor on every keystroke and a placeholder is
+   * not something the marker grammar can express:
+   *
+   *   - the class is __inline-img-pending, and _serializeEditor tests
+   *     `classList.contains(__inline-img)` — a WHOLE-TOKEN match, so this is
+   *     not one, and no image marker is emitted for it;
+   *   - every child is an element, so the serializer's fallback (walk into
+   *     anything it does not recognise and keep the text) finds no text nodes
+   *     and emits the empty string;
+   *   - the retry and discard glyphs are CSS ::after content, which is
+   *     generated content — never in childNodes, never in textContent.
+   *
+   * So a failed placeholder can sit in the editor indefinitely, and a save
+   * while it is there stores the description exactly as if it were not.
+   */
+  _beginInlineImage(file, scope, editorEl, range) {
+    const pfx = this.fig.family;
+    const ph = document.createElement("span");
+    ph.className = `${pfx}__inline-img-pending`;
+    ph.setAttribute("contenteditable", "false");
+    ph.dataset.status = "uploading";
+    // The file is already in the browser, so the real picture can be shown
+    // while it uploads — the same trick _attachLocalPreview plays for a queued
+    // attachment, and the reason this reads as "this image, arriving" rather
+    // than as an anonymous spinner.
+    let url = null;
+    try {
+      url = URL.createObjectURL(file);
+    } catch (_) {
+      /* an engine that refuses is fine — the spinner alone still says enough */
+    }
+    if (url) {
+      (this._inlinePreviews = this._inlinePreviews || new Set()).add(url);
+      const img = document.createElement("img");
+      img.src = url;
+      img.alt = "";
+      img.setAttribute("draggable", "false");
+      // Take the committed image's width the moment the preview decodes, so
+      // the box keeps ONE size from drop to final image — the CSS 220px alone
+      // would upscale a small image here and shrink it again on the swap.
+      img.addEventListener(
+        "load",
+        () => {
+          const w = inlineImageWidth(img.naturalWidth);
+          if (w) ph.style.width = `${w}px`;
+        },
+        { once: true },
+      );
+      ph.appendChild(img);
+      ph.__previewUrl = url;
+    }
+    for (const part of ["spinner", "retry", "discard"]) {
+      const s = document.createElement("span");
+      s.className = `${pfx}__inline-img-${part}`;
+      ph.appendChild(s);
+    }
+    return this._insertInlineNode(ph, editorEl, range);
+  }
+
+  // Drop a placeholder's object URL. Safe to call twice.
+  _releaseInlinePreview(ph) {
+    const url = ph && ph.__previewUrl;
+    if (!url) return;
+    ph.__previewUrl = null;
+    if (this._inlinePreviews) this._inlinePreviews.delete(url);
+    try {
+      URL.revokeObjectURL(url);
+    } catch (_) {}
+  }
+
+  /**
+   * Upload the file behind a placeholder and put the real image in its place.
+   *
+   * On failure the placeholder STAYS, in its error state, offering a retry —
+   * the alternative is an image that silently never arrives, which is what
+   * this path did before (it logged to the console and returned).
+   *
+   * The placeholder can also be gone by the time the upload lands:
+   * _renderEditorContent rebuilds the editor body from the draft's markers on
+   * every render, and a placeholder is deliberately not a marker. That is not
+   * an error — the image is simply appended, which is exactly what this method
+   * did in that situation before there were placeholders at all.
+   */
+  async _settleInlineImage(ph, file, scope, editorEl) {
+    if (ph && ph.isConnected) ph.dataset.status = "uploading";
+    let res;
+    try {
+      res = await this._uploadInlineImage(file);
+    } catch (err) {
+      console.error("[tasks_panel] inline image upload failed:", err);
+      if (ph && ph.isConnected) {
+        ph.dataset.status = "error";
+        this._wireInlineImageRecovery(ph, file, scope, editorEl);
+      } else if (typeof Butler !== "undefined" && Butler.say) {
+        // No placeholder left to carry the failure, so say it out loud rather
+        // than let the image vanish without a word.
+        Butler.say(LOCALE.ERROR_NETWORK);
+      }
+      return;
+    }
+    if (!editorEl.isConnected) {
+      this._releaseInlinePreview(ph);
+      return;
+    }
+    // The swap must not change the box. The committed wrapper used to be built
+    // with NO width and pointed straight at the served URL, so between the swap
+    // and that download it went from 220px to zero-high, then to the image's
+    // full natural size (inline-block shrink-to-fit around a width:100% img),
+    // and only on its load back down to 220px. Instead: the width is known
+    // already — the local preview decoded long ago — and the <img> keeps
+    // showing that same local preview until the served copy has loaded.
+    const preview = ph && ph.querySelector && ph.querySelector("img");
+    const nat = preview && preview.naturalWidth;
+    const width = inlineImageWidth(nat);
+    const node = this._makeInlineImage(res.nid, res.hub, width, true);
     const img = node.querySelector && node.querySelector("img");
-    const applySmall = () => {
-      if (!node.isConnected) return;
-      const nat = img && img.naturalWidth ? img.naturalWidth : DEFAULT_W;
-      node.style.width = `${Math.min(DEFAULT_W, nat)}px`;
-      this._onDescInput(scope, editorEl);
-    };
-    if (img && img.complete && img.naturalWidth) applySmall();
-    else if (img) img.addEventListener("load", applySmall, { once: true });
-    else node.style.width = `${DEFAULT_W}px`;
-    // Sync the draft from the mutated editor (initial; width sync follows onload).
+    if (img && nat && ph.__previewUrl) {
+      const served = img.src;
+      img.src = ph.__previewUrl;
+      const loader = new Image();
+      const done = () => {
+        if (img.isConnected) img.src = served;
+        this._releaseInlinePreview(ph);
+      };
+      loader.onload = done;
+      loader.onerror = done;
+      loader.src = served;
+    } else {
+      this._releaseInlinePreview(ph);
+    }
+    if (ph && ph.isConnected) {
+      ph.replaceWith(node);
+    } else {
+      // Wiped by a render while it was uploading — fall back to the end of the
+      // editor, the same place a stale range has always put it.
+      this._insertInlineNode(node, editorEl, null);
+    }
+    if (!width) {
+      // No preview to measure (an engine that refused the object URL): size it
+      // once the served image arrives, capped so a small one isn't upscaled.
+      const applySmall = () => {
+        if (!node.isConnected) return;
+        node.style.width = `${inlineImageWidth(img && img.naturalWidth) || INLINE_IMG_W}px`;
+        this._onDescInput(scope, editorEl);
+      };
+      if (img && img.complete && img.naturalWidth) applySmall();
+      else if (img) img.addEventListener("load", applySmall, { once: true });
+      else node.style.width = `${INLINE_IMG_W}px`;
+    }
+    // Sync the draft (with its width marker) from the mutated editor.
     this._onDescInput(scope, editorEl);
   }
 
-  // Promise-wrapped upload for a raw clipboard image File. Tags scope so the
-  // global onUploadResponse skips it (resolved here via the readystate listener).
-  _uploadInlineImage(file) {
-    return new Promise((resolve, reject) => {
-      this._pendingUploadScope = "_inline";
-      const params = { hub_id: this._hubId, nid: this._destNid };
-      let xhr;
-      try {
-        xhr = this.uploadFile(file, params);
-      } catch (e) {
-        this._pendingUploadScope = null;
-        return reject(e);
+  /**
+   * Wire a failed placeholder's two controls.
+   *
+   * Native listeners on the node itself, not services: this is raw DOM that
+   * skeleton feed() never rebuilds, so there is no re-render to survive and
+   * nothing for onUiEvent to route. They are attached once — a retry that
+   * fails again comes back through here and would otherwise stack a second
+   * listener on every attempt.
+   */
+  _wireInlineImageRecovery(ph, file, scope, editorEl) {
+    if (ph.__wired) return;
+    ph.__wired = 1;
+    const pfx = this.fig.family;
+    ph.addEventListener("click", (e) => {
+      const hit = e.target && e.target.closest && e.target.closest("span");
+      if (!hit) return;
+      if (hit.classList.contains(`${pfx}__inline-img-discard`)) {
+        e.preventDefault();
+        e.stopPropagation();
+        this._releaseInlinePreview(ph);
+        ph.remove();
+        // The placeholder was never in the draft, so nothing needs saving —
+        // but the editor may now be empty, and _onDescInput is what notices
+        // (it strips the stray <br> that defeats the :empty placeholder).
+        this._onDescInput(scope, editorEl);
+        return;
       }
-      if (!xhr) {
-        this._pendingUploadScope = null;
-        return reject(new Error("upload failed to start"));
+      if (hit.classList.contains(`${pfx}__inline-img-retry`)) {
+        e.preventDefault();
+        e.stopPropagation();
+        this._settleInlineImage(ph, file, scope, editorEl);
       }
-      xhr.addEventListener("readystatechange", () => {
-        if (xhr.readyState !== 4) return;
-        this._pendingUploadScope = null;
-        if (xhr.status >= 200 && xhr.status < 300) {
-          try {
-            const { data } = JSON.parse(xhr.responseText);
-            const nid = data?.nid || data?.id;
-            if (!nid) return reject(new Error("no nid in upload response"));
-            resolve({ nid, hub: data?.hub_id || this._hubId });
-          } catch (err) {
-            reject(err);
-          }
-        } else {
-          reject(new Error(`upload http ${xhr.status}`));
-        }
-      });
     });
+  }
+
+  async _insertPastedImage(file, scope, editorEl, range) {
+    const ph = this._beginInlineImage(file, scope, editorEl, range);
+    return this._settleInlineImage(ph, file, scope, editorEl);
+  }
+
+  // A raw clipboard image File pasted into a description. Same destination as
+  // every other attachment (the hidden task folder) — an image pasted into a
+  // task is no more part of the folder body than a file attached to it.
+  _uploadInlineImage(file) {
+    return this._uploadAttachment(file, "_inline");
   }
 
   _onDescInput(scope, editorEl) {
@@ -7348,6 +9148,10 @@ class __tasks_panel extends LetcBox {
         '.tasks-panel__filter-picker [name="filter_keyword"]',
         (this._filters || {}).keyword,
       );
+      // Only the typed query is kept (lower-cased), so seed only an empty box:
+      // rewriting a live one would flatten what the user is typing.
+      const ms = this.el.querySelector('.tasks-panel__filter-picker [name="filter_member_search"]');
+      if (ms && !ms.value && this._filterMemberQuery) ms.value = this._filterMemberQuery;
     }
     if (this._creating && this._createDefaults) {
       setVal(
@@ -7358,6 +9162,15 @@ class __tasks_panel extends LetcBox {
         ".tasks-panel__create-modal .tasks-panel__desc-editor",
         "create",
       );
+      // Same 200ms gap on the child-item creator's title: it is rebuilt by
+      // every full render (a peer's WS event, say), and without this it blinks
+      // empty before ui-core re-seeds it from the skeleton.
+      if (this._createSubtaskDraft) {
+        setVal(
+          ".tasks-panel__create-modal .tasks-panel__subtask-card-title input",
+          this._createSubtaskDraft.title,
+        );
+      }
     }
     if (this._detailDraft) {
       setVal(
@@ -7368,6 +9181,12 @@ class __tasks_panel extends LetcBox {
         ".tasks-panel__detail-panel .tasks-panel__desc-editor",
         "detail",
       );
+      if (this._subtaskDraft) {
+        setVal(
+          ".tasks-panel__detail-panel .tasks-panel__subtask-card-title input",
+          this._subtaskDraft.title,
+        );
+      }
       initEditor(
         ".tasks-panel__detail-panel .tasks-panel__comment-input",
         "comment",
@@ -7405,15 +9224,81 @@ class __tasks_panel extends LetcBox {
   // shows a veil + spinner over the current view), let that frame PAINT (double
   // rAF), then run the full render and clear the flag. The attribute lives on
   // this.el, which feed() never replaces, so the veil survives until cleared.
-  // Close an overlay (task detail / create modal) INSTANTLY: hide its DOM
-  // this frame, then rebuild the board deferred. The overlay is only truly
-  // removed by the full re-feed, which on a busy board takes long enough
-  // that the X felt stuck (tester 2026-07-30: click close → delay → popup
-  // finally disappears).
-  _dismissOverlayNow(cls) {
-    if (!this.el) return;
+  /**
+   * Close an overlay (task detail / create modal).
+   *
+   * This used to be `_dismissOverlayNow`, and it hid the backdrop outright —
+   * `display: none` this frame, rebuild deferred — because the overlay is only
+   * truly removed by the re-feed behind it, which on a busy board took long
+   * enough that the X felt stuck (tester 2026-07-30: "click close → delay →
+   * popup finally disappears").
+   *
+   * THAT COMPLAINT IS THE CONSTRAINT, not an argument against animating. What
+   * felt stuck was the overlay sitting there UNCHANGED while the board rebuilt
+   * underneath it — nothing acknowledged the click. So the state still clears
+   * synchronously in the caller (a second click cannot reopen or double-submit),
+   * the click is acknowledged on the very next frame by the exit itself, and
+   * only the DOM teardown waits the 140ms the animation needs.
+   *
+   * `done` is that teardown. WITHOUT IT THIS STAYS INSTANT, and that is the
+   * meaningful distinction rather than a convenience:
+   *
+   *   - a DISMISSAL (X, Cancel, a successful commit) passes one, and animates
+   *   - a REACTION passes none, and cuts. A peer deleted the task under the
+   *     user, or they walked back to a parent task — which re-uses this very
+   *     element to draw something else in the same tick, so a fading ghost
+   *     would sit under whatever replaced it.
+   *
+   * @param {String}   cls  backdrop class suffix, e.g. "detail-backdrop"
+   * @param {Function} done the teardown to run once the exit has played
+   */
+  _dismissOverlay(cls, done) {
+    // Every early return still runs the teardown. An exit that animates
+    // nothing AND tears down nothing leaves the overlay on screen for good,
+    // with the panel's own state already saying it is shut.
+    const run = () => {
+      this._closingTimer = null;
+      if (done) done();
+    };
+    if (!this.el) return run();
     const el = this.el.querySelector(`.${this.fig.family}__${cls}`);
-    if (el) el.style.display = "none";
+    if (!el) return run();
+    if (!done || this._prefersReducedMotion()) {
+      el.style.display = "none";
+      return run();
+    }
+    el.dataset.closing = "1";
+    this._cancelPendingExit();
+    this._closingTimer = setTimeout(run, OVERLAY_EXIT_MS);
+  }
+
+  /**
+   * Drop a queued teardown.
+   *
+   * Anything that re-renders during the exit window — a WS push landing, the
+   * user opening another task — rips the animating node out early. That is
+   * fine to look at; it is exactly what closing did before. But the queued
+   * teardown must not then fire against a panel that has moved on and re-feed
+   * wrappers it no longer owns, so every renderer drops it first.
+   */
+  _cancelPendingExit() {
+    if (!this._closingTimer) return;
+    clearTimeout(this._closingTimer);
+    this._closingTimer = null;
+  }
+
+  // Honoured by hand rather than left to the skin: the skin can stop the
+  // animation, but only this can stop the WAIT for one that will never play.
+  _prefersReducedMotion() {
+    try {
+      return !!(
+        typeof window !== "undefined" &&
+        window.matchMedia &&
+        window.matchMedia("(prefers-reduced-motion: reduce)").matches
+      );
+    } catch (_) {
+      return false;
+    }
   }
 
   _renderDeferred() {
@@ -7434,71 +9319,267 @@ class __tasks_panel extends LetcBox {
     }
   }
 
-  _render() {
+  /**
+   * The focused field, so a DOM swap can put the caret back where it was.
+   * Split out of _render so the overlay-only path restores focus identically.
+   * @returns {Object|null}
+   */
+  _captureFocus() {
+    const active =
+      typeof document !== "undefined" ? document.activeElement : null;
+    if (!active || !this.el || !this.el.contains(active) || !active.getAttribute)
+      return null;
+    const snap = {
+      name: active.getAttribute("name"),
+      pos: null,
+      end: null,
+      scope: "",
+    };
+    const inCreate = this.el.querySelector(".tasks-panel__create-modal");
+    const inDetail = this.el.querySelector(".tasks-panel__detail-panel");
+    if (inCreate && inCreate.contains(active))
+      snap.scope = ".tasks-panel__create-modal ";
+    else if (inDetail && inDetail.contains(active))
+      snap.scope = ".tasks-panel__detail-panel ";
+    try {
+      snap.pos = active.selectionStart;
+      snap.end = active.selectionEnd;
+    } catch (_) {
+      /* date / number inputs throw here */
+    }
+    return snap.name ? snap : null;
+  }
+
+  /**
+   * @param {Object|null} snap from _captureFocus
+   */
+  _restoreFocus(snap) {
+    if (!snap || typeof requestAnimationFrame !== "function") return;
+    requestAnimationFrame(() => {
+      if (!this.el) return;
+      const next = this.el.querySelector(`${snap.scope}[name="${snap.name}"]`);
+      if (!next || typeof next.focus !== "function") return;
+      next.focus();
+      if (snap.pos != null && typeof next.setSelectionRange === "function") {
+        try {
+          next.setSelectionRange(snap.pos, snap.end != null ? snap.end : snap.pos);
+        } catch (_) {}
+      }
+    });
+  }
+
+  /**
+   * Whatever was open has now been painted, so the NEXT render must not play
+   * its entrance again. Recorded AFTER the build, because the skeleton reads
+   * these while assembling — see hasPainted.
+   *
+   * Read from the live state rather than set by each open/close handler:
+   * there are several ways into and out of each of these overlays, and a
+   * flag maintained by hand at every one of them is a flag that will be
+   * missed at one of them.
+   */
+  _markPainted() {
+    this._painted = {
+      create: !!this._creating,
+      detail: !!this._detailId,
+      board: !!this._boardModalOpen,
+    };
+    this._chromeSig = this._chromeSignature();
+  }
+
+  /**
+   * A named part that is mounted right now, or null. Synchronous half of
+   * _withPart, so a caller that must feed in the SAME tick (rather than a
+   * microtask later, behind whatever else is already queued) can do so.
+   * @param {String} name
+   */
+  _mountedPart(name) {
+    let branch = null;
+    try {
+      branch = this._branches ? this._branches[name] : null;
+    } catch (_) {
+      return null;
+    }
+    if (!branch || (branch.isDestroyed && branch.isDestroyed())) return null;
+    return branch;
+  }
+
+  /**
+   * Every piece of state the skeleton reads OUTSIDE the three overlay
+   * wrappers. _render records it; _renderOverlays refuses when it has moved
+   * and falls back to the full rebuild.
+   *
+   *   pickerOpen === "filter"  the popup AND its backdrop are conditional root
+   *                            kids, so opening or closing it changes the kid
+   *                            list itself
+   *   getView()                the viewbar's right-hand controls and the tab
+   *                            strip's data-active
+   *   mayWriteTasks()          the "+ New task" / "+ New board" buttons and
+   *                            the per-column "⋮"
+   *   colMenuFor / renameDraft the column popover lives in the COLUMN header's
+   *                            `col-menu-<key>` slot — on the board, not in a
+   *                            wrapper. add-board clears both while opening a
+   *                            modal, and without them here the popover would
+   *                            stay open behind it.
+   *
+   * This is the invariant that keeps the fast path honest, so a new caller of
+   * _renderOverlays only has to ask "does my transition touch anything the
+   * board or the viewbar draws?" — and if the answer is yes, add it here
+   * rather than reasoning about whether it is reachable.
+   *
+   * It also makes the FIRST render after a mount full by construction: nothing
+   * has been recorded yet, so the comparison cannot match.
+   *
+   * @returns {String}
+   */
+  _chromeSignature() {
+    return [
+      this._pickerOpen === "filter" ? 1 : 0,
+      this.getView(),
+      this._mayWriteTasks() ? 1 : 0,
+      this._colMenuFor == null ? "" : this._colMenuFor,
+      this._colRenameDraft == null ? "" : this._colRenameDraft,
+    ].join("|");
+  }
+
+  // The three overlay hosts, in tree order. Their sys_pn is generated by
+  // Skeletons.Wrapper from the `name` prop (`wrapper-${name}`).
+  static get OVERLAY_PARTS() {
+    return [
+      "wrapper-task-detail",
+      "wrapper-task-create",
+      "wrapper-task-board-modal",
+    ];
+  }
+
+  /**
+   * Repaint ONLY the three overlay wrappers — task detail, create modal, new
+   * board — and leave the view behind them exactly as it stands.
+   *
+   * Opening a task cost a full _render(): feed() on the root replaces the whole
+   * collection, so every card on the board was destroyed and rebuilt just to
+   * put a modal on top of it. On a workspace-wide board that is thousands of
+   * Marionette views and DOM elements per click, and it is the reason closing
+   * a modal needed _dismissOverlay to hide the backdrop up front to feel
+   * responsive at all (tester 2026-07-30: "click close -> delay -> popup
+   * finally disappears").
+   *
+   * Nothing outside the wrappers changes on these transitions, so nothing
+   * outside them is touched — the view keeps its DOM, its scroll offset and
+   * its focus, which is also why this path needs no scroll capture/restore.
+   *
+   * SYNCHRONOUS, deliberately. The wrappers are permanent parts of the tree
+   * (the skin hides them on `:empty` / `data-state="closed"`, which the wrapper
+   * behaviour maintains from the collection), so they are always mounted and
+   * can be fed in the same tick. A microtask-deferred feed would land AFTER a
+   * caller that renders and then immediately refreshes a sub-part — the
+   * add-child-task path does exactly that — and destroy the part it had just
+   * fed.
+   *
+   * Falls back to the full render when a wrapper is missing: the panel is not
+   * mounted yet, or the skeleton was restructured. Same guard as
+   * _refreshViewBody.
+   */
+  _renderOverlays() {
+    // Same reason as _render: this re-feeds the wrappers, so an exit still
+    // playing in one of them ends here. A teardown that is running RIGHT NOW
+    // has already cleared its own handle, so this is a no-op on that path —
+    // it only catches the renders that arrive from somewhere else mid-exit.
+    this._cancelPendingExit();
+    if (this._chromeSig !== this._chromeSignature()) return this._render();
+    const names = this.constructor.OVERLAY_PARTS;
+    const parts = names.map((n) => this._mountedPart(n));
+    if (parts.some((part) => !part)) return this._render();
+    const kids = require("./skeleton")(this).kids || [];
+    const nodes = names.map((n) => kids.find((k) => k && k.sys_pn === n));
+    if (nodes.some((node) => !node)) return this._render();
+    const focus = this._captureFocus();
+    nodes.forEach((node, i) => parts[i].feed(node.kids || []));
+    this._markPainted();
+    // ui-core sets <input> values through a 200ms `waitElement` poll, so the
+    // title/description start empty after each feed; pre-populate them
+    // (sync + next frame as a safety net for late-mount children).
+    this._prepopulateInputs();
+    this._renderCommentBodies();
+    if (typeof requestAnimationFrame === "function") {
+      requestAnimationFrame(() => {
+        this._prepopulateInputs();
+        this._renderCommentBodies();
+      });
+    }
+    this._restoreFocus(focus);
+  }
+
+  /**
+   * @param {Object}  [opt]
+   * @param {Boolean} [opt.full]  rebuild every node through feed() instead of
+   *   patching. For the recovery paths that run because the DOM no longer
+   *   matches what the panel thinks it drew (a drag that lost its card).
+   */
+  _render({ full = false } = {}) {
+    // This render may replace the overlay wrappers outright, so any overlay
+    // mid-exit goes with it. Drop the queued teardown: it would otherwise fire
+    // a moment from now and re-feed wrappers this render has already settled.
+    this._cancelPendingExit();
     // Drafts stay in sync via the `task-input-changed` watch — do NOT add
     // a pre-feed DOM read here; it would race the Entry's async setter.
 
     // Capture focused input + cursor BEFORE the DOM swap, restore after.
-    let focusName = null;
-    let cursorPos = null;
-    let cursorEnd = null;
-    let scopeSel = "";
-    const active =
-      typeof document !== "undefined" ? document.activeElement : null;
-    if (active && this.el && this.el.contains(active) && active.getAttribute) {
-      focusName = active.getAttribute("name");
-      const inCreate = this.el.querySelector(".tasks-panel__create-modal");
-      const inDetail = this.el.querySelector(".tasks-panel__detail-panel");
-      if (inCreate && inCreate.contains(active))
-        scopeSel = ".tasks-panel__create-modal ";
-      else if (inDetail && inDetail.contains(active))
-        scopeSel = ".tasks-panel__detail-panel ";
-      try {
-        cursorPos = active.selectionStart;
-        cursorEnd = active.selectionEnd;
-      } catch (_) {
-        /* date / number inputs throw here */
-      }
-    }
+    const focus = this._captureFocus();
 
     // Capture the underlying view's scroll BEFORE the DOM swap so opening the
     // detail/create overlay (or any background re-render) doesn't reset the
     // board/list back to the top — feed() rebuilds fresh nodes at scroll 0.
     const savedScroll = this._captureViewScroll();
 
-    this.feed(require("./skeleton")(this));
+    // Replay neither the board's first-paint fade nor the calendar's, which
+    // belong to the board first appearing and to a view switch — see
+    // _stampRepaintFades.
+    const viewChanged = this._paintedView !== this.getView();
+    this._stampRepaintFades(viewChanged);
+    this._paintedView = this.getView();
+
+    // PATCHED, not re-fed: _patchKids keeps every mounted node whose skeleton
+    // did not change (reconcile.js). A plain feed() destroyed and rebuilt the
+    // whole panel — every card, every avatar (which then reloads its picture:
+    // blank for a frame, then the photo), every scroller — for any change at
+    // all. That rebuild was the flicker on create / delete / filter.
+    //
+    // The scroll restore runs INSIDE the repaint so _flipRepaint measures the
+    // cards where they will actually sit.
+    const skl = require("./skeleton")(this);
+    this._flipRepaint(() => {
+      if (full) this.feed(this._stamped(skl));
+      else this._patchKids(this, [skl]);
+      // Restores now, and keeps retrying until the rebuilt content is tall
+      // enough to take the offset (see _restoreViewScroll).
+      this._restoreViewScroll(savedScroll);
+    });
+    // The compact tab strip is now KEPT across a view switch, so the mount
+    // hook that paged it to the active tab (_wireViewbarCarousel) no longer
+    // runs on its own. A switch made from code (a Project Health link) would
+    // otherwise leave the chosen tab off-screen.
+    if (viewChanged) this._scrollActiveViewTabIntoView();
+    this._positionFilterPicker();
+    this._markPainted();
+    // The board has drawn: the folder window's Task entrance keys on this
+    // (window/folder/skin, data-view="task"), so it slides in WITH its columns.
+    // After a page refresh nothing is cached and the first render waits on
+    // task.list — an entrance on mount ran on an empty panel instead.
+    if (this.el && this.el.dataset) this.el.dataset.painted = "1";
     // ui-core sets <input> values through a 200ms `waitElement` poll, so
     // the title/description start empty after each feed; pre-populate them
     // (sync + next frame as a safety net for late-mount children).
     this._prepopulateInputs();
     this._renderCommentBodies();
-    // Restore synchronously to avoid a visible jump, then again next frame in
-    // case the rebuilt content only reaches full scrollHeight after layout.
-    this._restoreViewScroll(savedScroll);
     if (typeof requestAnimationFrame === "function") {
       requestAnimationFrame(() => {
         this._prepopulateInputs();
         this._renderCommentBodies();
-        this._restoreViewScroll(savedScroll);
       });
     }
 
-    if (focusName && typeof requestAnimationFrame === "function") {
-      requestAnimationFrame(() => {
-        if (!this.el) return;
-        const next = this.el.querySelector(`${scopeSel}[name="${focusName}"]`);
-        if (!next || typeof next.focus !== "function") return;
-        next.focus();
-        if (cursorPos != null && typeof next.setSelectionRange === "function") {
-          try {
-            next.setSelectionRange(
-              cursorPos,
-              cursorEnd != null ? cursorEnd : cursorPos,
-            );
-          } catch (_) {}
-        }
-      });
-    }
+    this._restoreFocus(focus);
   }
 
   /**
@@ -7519,15 +9600,8 @@ class __tasks_panel extends LetcBox {
    * but the listener removes only its own callback.
    */
   _withPart(name) {
-    let branch = null;
-    try {
-      branch = this._branches ? this._branches[name] : null;
-    } catch (_) {
-      branch = null;
-    }
-    if (branch && (!branch.isDestroyed || !branch.isDestroyed())) {
-      return Promise.resolve(branch);
-    }
+    const branch = this._mountedPart(name);
+    if (branch) return Promise.resolve(branch);
     return new Promise((resolve) => {
       const onReady = (child) => {
         if (!child || child.mget(_a.sys_pn) != name) return;
@@ -7645,9 +9719,19 @@ class __tasks_panel extends LetcBox {
    * is built, instead of a second copy of the view/board dispatch that would
    * drift. Only the host's subtree is actually mounted.
    */
-  _refreshViewBody() {
+  /**
+   * @param {Object} [opt]
+   * @param {String} [opt.dropScroll]  a scroller selector whose offset must NOT
+   *   carry over — the view is showing something new there, not the same thing
+   *   repainted. The calendar passes its own root when the range or the view
+   *   moves (see _repaintCalendar).
+   */
+  _refreshViewBody(opt = {}) {
     if (!this.el) return;
-    const savedScroll = this._captureViewScroll();
+    let savedScroll = this._captureViewScroll();
+    if (opt.dropScroll) {
+      savedScroll = savedScroll.filter((s) => s.selector !== opt.dropScroll);
+    }
     this._withPart("view-host").then((host) => {
       if (!host || !this.el) return;
       const root = require("./skeleton")(this);
@@ -7657,11 +9741,253 @@ class __tasks_panel extends LetcBox {
       // No host in the tree (skeleton restructured) — fall back to a full
       // render rather than silently leaving a stale view on screen.
       if (!node) return this._render();
-      host.feed(node.kids);
-      this._restoreViewScroll(savedScroll);
-      if (typeof requestAnimationFrame === "function") {
-        requestAnimationFrame(() => this._restoreViewScroll(savedScroll));
-      }
+      // A new range (dropScroll) is new content and fades in; the same range
+      // repainted after an Update or a peer's edit does not.
+      this._stampRepaintFades(
+        !!opt.dropScroll || this._paintedView !== this.getView(),
+      );
+      this._paintedView = this.getView();
+      this._flipRepaint(
+        () => {
+          // A new calendar range (dropScroll) is all-new content and keeps its
+          // arrival fade, which needs fresh elements — so it is rebuilt. Every
+          // other repaint patches: only the cards that changed are rebuilt.
+          if (opt.dropScroll) host.feed(this._stamped(node.kids));
+          else this._patchKids(host, node.kids);
+          // Retries per frame until the rebuilt columns can take the offsets.
+          this._restoreViewScroll(savedScroll);
+        },
+        { enter: opt.enter !== false },
+      );
+    });
+  }
+
+  // Stamp nodes that are about to be FED (not patched), so the next patch can
+  // still recognise what this rebuild mounted.
+  _stamped(kids) {
+    (Array.isArray(kids) ? kids : [kids]).forEach((k) => k && k.kind && stamp(k));
+    return kids;
+  }
+
+  /**
+   * Bring a mounted part's children in line with `kids`, rebuilding only the
+   * nodes whose skeleton changed (reconcile.js). Falls back to a plain feed()
+   * when the part cannot be patched or the patch throws half-way — a full
+   * rebuild is always a correct answer, just a slower one.
+   * @param {Object} part  mounted LetcBox
+   * @param {Array}  kids  skeleton nodes, as for feed()
+   */
+  _patchKids(part, kids) {
+    const list = (Array.isArray(kids) ? kids : [kids]).filter(
+      (k) => k && k.kind,
+    );
+    list.forEach(stamp);
+    let ok = false;
+    try {
+      ok = reconcile(part, list);
+    } catch (err) {
+      console.warn("[tasks_panel] patch failed, rebuilding:", err);
+    }
+    if (!ok) part.feed(list);
+    this._dedupeEmptyHints();
+    this._syncDescEditors();
+  }
+
+  /**
+   * Put each mounted mention editor back in step with its draft.
+   *
+   * The editors are contenteditable shells whose text is NOT in the skeleton —
+   * _initDescEditor fills them from the draft when they mount. A full feed()
+   * remounted them on every render, so a draft cleared in code (a comment just
+   * posted) always came back empty. A patch keeps an unchanged shell, text and
+   * all, so it has to be re-applied here. A no-op while typing: the input
+   * handler writes the draft synchronously, so the two already agree.
+   *
+   * An editor holding an inline image still uploading is left alone — its
+   * placeholder is not in the draft yet, and re-rendering would drop it.
+   */
+  _syncDescEditors() {
+    if (!this.el) return;
+    this.el.querySelectorAll("[data-desc-scope]").forEach((el) => {
+      if (el.querySelector(`.${this.fig.family}__inline-img-pending`)) return;
+      const target = this._mentionTarget(el.getAttribute("data-desc-scope"));
+      if (!target) return;
+      const want = target.get();
+      if (this._serializeEditor(el) !== want) this._renderEditorContent(el, want);
+    });
+  }
+
+  /**
+   * The drag path (_syncColumn) adds and removes the empty-column hint by hand,
+   * outside Marionette. A patch that keeps or rebuilds the skeleton's own hint
+   * can then leave two in one column, or a hint beside cards. Drop the
+   * hand-made ones wherever the column already has something to show.
+   */
+  _dedupeEmptyHints() {
+    if (!this.el) return;
+    this.el
+      .querySelectorAll('.tasks-panel__column-empty[data-raw="1"]')
+      .forEach((raw) => {
+        const body = raw.parentNode;
+        if (!body) return;
+        const other = Array.from(body.children).some(
+          (c) =>
+            c !== raw &&
+            (c.classList.contains("tasks-panel__task-card") ||
+              c.classList.contains("tasks-panel__column-empty")),
+        );
+        if (other) raw.remove();
+      });
+  }
+
+  /**
+   * Run a repaint and animate what it did to the task cards and list rows:
+   * survivors glide from their old box to their new one (FLIP), newcomers
+   * fade in. Without it a create / delete / filter snapped every card below
+   * the change to its new slot in one frame.
+   *
+   * Survivors are only recognisable because the repaint PATCHES — a kept card
+   * is the same element before and after. A wholesale swap (switching views)
+   * keeps nothing, and then nothing animates in either: a whole board fading
+   * in on a tab press would read as a slow load, not a transition.
+   *
+   * All reads, then all writes, and only what sits inside its scroller's
+   * viewport — the same economics as _animateMove.
+   *
+   * @param {Function} mutate   the synchronous repaint
+   * @param {Object}   [opt]
+   * @param {Boolean}  [opt.enter=true]  fade newcomers in (off for the card
+   *   window growing under the user's scroll)
+   */
+  _flipRepaint(mutate, { enter = true } = {}) {
+    const SEL = ".tasks-panel__task-card, .tasks-panel__list-row";
+    if (
+      !this.el ||
+      typeof requestAnimationFrame !== "function" ||
+      // A modal covers the board: nothing behind it is worth measuring.
+      this._creating ||
+      this._detailId ||
+      this._prefersReducedMotion()
+    ) {
+      return mutate();
+    }
+    const first = new Map();
+    this.el.querySelectorAll(SEL).forEach((c) => {
+      first.set(c, c.getBoundingClientRect());
+    });
+    mutate();
+    if (!first.size || !this.el) return;
+
+    const vpCache = new Map();
+    const inView = (c, r) => {
+      const p = c.parentElement;
+      if (!p) return false;
+      let v = vpCache.get(p);
+      if (!v) vpCache.set(p, (v = p.getBoundingClientRect()));
+      return (
+        r.bottom >= v.top && r.top <= v.bottom && r.right >= v.left && r.left <= v.right
+      );
+    };
+    const moves = [];
+    const entered = [];
+    let survived = 0;
+    this.el.querySelectorAll(SEL).forEach((c) => {
+      const f = first.get(c);
+      if (f) survived++;
+      const l = c.getBoundingClientRect();
+      if ((!l.width && !l.height) || !inView(c, l)) return;
+      if (!f) return entered.push(c);
+      const dx = f.left - l.left;
+      const dy = f.top - l.top;
+      if (Math.abs(dx) >= 1 || Math.abs(dy) >= 1) moves.push({ c, dx, dy });
+    });
+    if (!survived) return;
+
+    moves.forEach(({ c, dx, dy }) => {
+      // A newer repaint owns the card from here; an older glide's cleanup
+      // must not strip the transition off this one.
+      c._flipGen = (c._flipGen || 0) + 1;
+      c.style.transition = "none";
+      c.style.transform = `translate(${dx}px, ${dy}px)`;
+    });
+    // Each cleanup also runs on a timer: the end event never fires for a card
+    // that left the DOM or stopped rendering (content-visibility) mid-way, and
+    // a stranded inline `transition` would cost the card its hover effects.
+    const settle = (c, ev, fn) => {
+      let timer = 0;
+      const done = (e) => {
+        if (e && e.target !== c) return;
+        clearTimeout(timer);
+        c.removeEventListener(ev, done);
+        fn();
+      };
+      c.addEventListener(ev, done);
+      timer = setTimeout(done, FLIP_SETTLE_MS);
+    };
+    if (enter) {
+      entered.forEach((c) => {
+        c.dataset.enter = "1";
+        settle(c, "animationend", () => delete c.dataset.enter);
+      });
+    }
+    if (!moves.length) return;
+    requestAnimationFrame(() => {
+      moves.forEach(({ c }) => {
+        const gen = c._flipGen;
+        c.style.transition = "transform 0.2s cubic-bezier(0.2, 0, 0, 1)";
+        c.style.transform = "";
+        settle(c, "transitionend", () => {
+          if (c._flipGen === gen) c.style.transition = "";
+        });
+      });
+    });
+  }
+
+  /**
+   * Keep a repaint from replaying the fades meant for an arrival.
+   *
+   * feed() recreates what it feeds, and a newly created element runs its CSS
+   * animation again. Two of them are opacity 0 -> 1 fades:
+   *   - the root's first-paint fade (skin, `&__ui[data-painted="1"] >
+   *     .tasks-panel__root`), on EVERY full render — so opening a workspace
+   *     (two renders), a notification that lands on a task, or an Update
+   *     blinked the whole board to transparent and back (reported by Lexis);
+   *   - the calendar's fade, on every view-body repaint in the Calendar view.
+   * Same class of bug the overlays already gate with `data-entered`.
+   *
+   * Stamped BEFORE the feed so the new elements never pick the animation up.
+   *
+   * @param {Boolean} arriving  a view switch or a new calendar range — new
+   *   content, which keeps the calendar's fade
+   */
+  _stampRepaintFades(arriving) {
+    const ds = this.el && this.el.dataset;
+    if (!ds) return;
+    // The board has faded in already: from now on it simply is.
+    if (ds.painted === "1") ds.settled = "1";
+    ds.calFade = arriving ? "1" : "0";
+  }
+
+  /**
+   * Repaint after the task rows changed but the chrome did not — a create, an
+   * Update, or a peer's edit. Feeds only the view host (and the open task's
+   * subtask rows); the viewbar, filter bar and overlays are left alone.
+   *
+   * The Health view draws the activity feed, which the rows do not carry, so
+   * that view reloads it first. The read cache follows the rows by hand now
+   * that _loadTasks no longer runs after a write. A caller that has just
+   * loaded the activity feed itself passes `activityLoaded` so it is not
+   * fetched twice.
+   */
+  _repaintBoard({ activity = 0, activityLoaded = 0 } = {}) {
+    readCache.set(this._cacheKey("tasks"), this._tasks);
+    const needActivity =
+      !activityLoaded && (activity || this.getView() === "summary");
+    const load = needActivity ? this._loadActivity() : Promise.resolve();
+    return load.then(() => {
+      if (this.isDestroyed && this.isDestroyed()) return;
+      this._refreshViewBody();
+      if (this._detailId) this._refreshSubtaskSection();
     });
   }
 
@@ -7678,12 +10004,26 @@ class __tasks_panel extends LetcBox {
     const active = this.isFilterActive() ? "1" : "0";
     const btn = this.el.querySelector(".tasks-panel__viewbar-filter");
     if (btn) btn.dataset.active = active;
-    const clear = this.el.querySelector(".tasks-panel__filter-clear");
-    if (clear) clear.dataset.active = active;
-    const head = this.el.querySelector(
-      '.tasks-panel__filter-cat[data-dim="keyword"] .tasks-panel__filter-cat-head',
+    // The keyword box lives on the root page, whose head carries "Clear all".
+    const clear = this.el.querySelector(
+      ".tasks-panel__filter-head:not(.tasks-panel__filter-head--page) .tasks-panel__filter-clear",
     );
-    if (head) head.dataset.active = this.isFilterDimActive("keyword") ? "1" : "0";
+    if (clear) clear.dataset.active = active;
+  }
+
+  /**
+   * Repaint the applied-filter chips alone — for the keyword path, which must
+   * not run a full render while its input has focus. Patched, so unchanged
+   * chips keep their elements.
+   */
+  _refreshFilterChips() {
+    const part = this._mountedPart("filter-chips");
+    if (!part) return;
+    const root = require("./skeleton")(this);
+    const node = (root.kids || []).find((k) => k && k.sys_pn === "filter-chips");
+    if (!node) return;
+    this._patchKids(part, node.kids || []);
+    if (part.el) part.el.dataset.empty = node.attrOpt["data-empty"];
   }
 
   // Snapshot the scroll offsets of the current view's scrollable containers,
@@ -7723,17 +10063,45 @@ class __tasks_panel extends LetcBox {
     return saved;
   }
 
-  // Reapply offsets captured by _captureViewScroll. Best-effort: a container
-  // that no longer exists (view switched, column deleted) is simply skipped.
+  // Reapply offsets captured by _captureViewScroll, retrying once per frame
+  // until each one sticks. A rebuilt column's cards reach full height a few
+  // frames after feed(); restoring only then-and-next-frame hit a column still
+  // scrollHeight == clientHeight, which clamped the offset to 0 and threw the
+  // user back to the first card after every create / Update (stage probe,
+  // 2026-09-23). A container that no longer exists (view switched, column
+  // deleted) simply never matches and times out.
+  //
+  // A newer restore supersedes an older one, and any user input cancels the
+  // retry so it never fights a scroll the user started.
   _restoreViewScroll(saved) {
     if (!this.el || !saved || !saved.length) return;
-    for (const { selector, top, left } of saved) {
-      const node = this.el.querySelector(selector);
-      if (!node) continue;
-      if (top) node.scrollTop = top;
-      if (left) node.scrollLeft = left;
+    this._installScrollRestoreCancel();
+    const gen = (this._scrollRestoreGen = (this._scrollRestoreGen || 0) + 1);
+    restoreScroll(saved, {
+      find: (sel) => (this.el ? this.el.querySelector(sel) : null),
+      raf:
+        typeof requestAnimationFrame === "function"
+          ? (fn) => requestAnimationFrame(fn)
+          : null,
+      now: () => Date.now(),
+      isCancelled: () =>
+        gen !== this._scrollRestoreGen ||
+        !!(this.isDestroyed && this.isDestroyed()),
+    });
+  }
+
+  // The user taking over (wheel, touch, click, key) ends a pending restore.
+  _installScrollRestoreCancel() {
+    if (this._scrollRestoreCancelBound || !this.el) return;
+    this._scrollRestoreCancelBound = 1;
+    const cancel = () => {
+      this._scrollRestoreGen = (this._scrollRestoreGen || 0) + 1;
+    };
+    for (const ev of ["wheel", "touchstart", "pointerdown", "keydown"]) {
+      this.el.addEventListener(ev, cancel, { capture: true, passive: true });
     }
   }
+
 
   // ── Skeleton accessors ─────────────────────────────────────────
   /**
@@ -7878,8 +10246,41 @@ class __tasks_panel extends LetcBox {
   getLabel(id) {
     return this._labels.find((l) => l.id === id) || null;
   }
+  /**
+   * A workspace member by uid.
+   *
+   * Indexed, because this is called once per assignee per rendered card (twice,
+   * in fact — getKnownAssignees filters with it and the avatar builder then
+   * resolves the same uid again), so a linear scan made it O(cards x assignees
+   * x members) on every repaint.
+   *
+   * Deliberately keyed on the RAW values and looked up with the raw uid: Map
+   * uses SameValueZero, which matches the `===` of the `.find` this replaces,
+   * so a numeric uid still misses a string id exactly as it did before. First
+   * writer wins on each key, which is the member `.find` would have returned.
+   *
+   * ONE deliberate divergence, for a nullish uid. The old `.find` compared
+   * `m.id === uid || m.uid === uid`, so `getMember(undefined)` matched the
+   * first member that simply HAD NO `id` (or no `uid`) field — an arbitrary
+   * person, decided by the shape of the row rather than by the query. Answer
+   * null instead. Every caller either falls back with `|| {}` / `|| …` or
+   * treats null as "no longer here" (getKnownAssignees, _memberName, the
+   * workload chart's unassigned bucket), so this can only turn a wrong name
+   * into the right absence.
+   */
   getMember(uid) {
-    return this._members.find((m) => m.id === uid || m.uid === uid) || null;
+    if (uid == null) return null;
+    const list = this._members || [];
+    if (this._memberIdxSrc !== list) {
+      this._memberIdxSrc = list;
+      const idx = new Map();
+      for (const m of list) {
+        if (m.id != null && !idx.has(m.id)) idx.set(m.id, m);
+        if (m.uid != null && !idx.has(m.uid)) idx.set(m.uid, m);
+      }
+      this._memberIdx = idx;
+    }
+    return this._memberIdx.get(uid) || null;
   }
 
   /**
@@ -8094,8 +10495,25 @@ class __tasks_panel extends LetcBox {
     return this._subtasksOpen.has(id);
   }
 
-  getSubtaskDraft() {
-    return this._subtaskDraft;
+  /**
+   * The open child-item creator card, per scope.
+   *
+   * "detail" is the one on an existing task (posts straight away); "create" is
+   * the one in the create modal, which only queues onto the parent's draft.
+   * Two fields rather than one because the create modal and the detail panel
+   * are independent overlays — sharing a draft would let one wipe the other's.
+   */
+  getSubtaskDraft(scope = "detail") {
+    return scope === "create" ? this._createSubtaskDraft : this._subtaskDraft;
+  }
+
+  /**
+   * Children queued on the create modal's draft — rows that do not exist
+   * server-side yet. Posted, with the new parent's id, by _commitTask.
+   */
+  getPendingSubtasks() {
+    const draft = this._createDefaults;
+    return (draft && Array.isArray(draft.subtasks) && draft.subtasks) || [];
   }
 
   // List / Gantt chevron. Local-only toggle, but it changes how many rows the
@@ -8156,6 +10574,186 @@ class __tasks_panel extends LetcBox {
     });
   }
 
+  // ── Children queued in the create modal ─────────────────────────
+  //
+  // Everything below mirrors the detail-panel creator, minus the server: the
+  // parent has no id until Create is pressed, so a child can only be held on
+  // the draft and posted afterwards by _commitTask.
+
+  /**
+   * "+ Add child work item" in the create modal.
+   *
+   * Pre-fills the due date from the parent DRAFT (captured first, since the
+   * date lives in the DOM until something reads it), exactly as the detail-panel
+   * creator pre-fills from the saved parent.
+   */
+  _openCreateSubtaskDraft() {
+    if (!this._createDefaults) return;
+    this._captureCreateDraft();
+    const cols = this.getColumns();
+    const firstOpen = cols.find((c) => !c.is_done) || cols[0];
+    this._createSubtaskDraft = {
+      title: "",
+      due_date: this._createDefaults.due_date || "",
+      priority: "medium",
+      status: firstOpen ? firstOpen.key : "todo",
+      menu: null,
+    };
+    this._refreshCreateSubtaskSection();
+  }
+
+  /**
+   * Re-feed ONLY the create modal's child-item block.
+   *
+   * A full _render() would rebuild the title textarea and the description
+   * editor alongside it, stealing focus mid-compose — the same reason the due
+   * section and the detail panel's own child block are separate parts.
+   */
+  _refreshCreateSubtaskSection() {
+    if (!this._creating) return;
+    this._withPart("create-subtask-rows")
+      .then((part) => {
+        if (!this._creating || !part || part.isDestroyed?.()) return;
+        part.feed(
+          require("./skeleton").buildSubtaskRowsContent(this, null, "create"),
+        );
+      })
+      .catch(() => {
+        /* part not mounted yet */
+      });
+  }
+
+  _createSubtaskInput() {
+    return (
+      this.el &&
+      this.el.querySelector(
+        `.${this.fig.family}__create-modal .${this.fig.family}__subtask-card-title input`,
+      )
+    );
+  }
+
+  // Live <input> first, draft second: the value is bound asynchronously, so on
+  // a fast type-then-click the draft can still be a keystroke behind.
+  _readCreateSubtaskTitle() {
+    const draft = this._createSubtaskDraft;
+    if (!draft) return "";
+    const input = this._createSubtaskInput();
+    return String((input && input.value) || draft.title || "").trim();
+  }
+
+  /**
+   * Fold a half-typed child into the queue before the parent is committed.
+   *
+   * The parent's Create button sits directly below the creator card, so "type
+   * the child, press Create" is the natural gesture — and without this the row
+   * the user just typed is silently dropped. Exactly the trap the detail
+   * panel's explicit Create button was added for, one level up.
+   *
+   * Only ever ADDS: an empty card is left alone rather than stealing focus the
+   * way pressing Add on it would.
+   */
+  _flushCreateSubtaskDraft() {
+    if (!this._createSubtaskDraft || !this._readCreateSubtaskTitle()) return;
+    this._queueCreateSubtask();
+  }
+
+  /**
+   * Queue the creator card's row onto the draft. Purely local — nothing is
+   * posted until the parent is.
+   *
+   * Reads the title off the live <input> first for the same reason
+   * _commitSubtask does: the value is bound asynchronously, so on a fast
+   * type-then-click the draft can still be a keystroke behind.
+   */
+  _queueCreateSubtask() {
+    const parentDraft = this._createDefaults;
+    const draft = this._createSubtaskDraft;
+    if (!parentDraft || !draft) return;
+    const input = this._createSubtaskInput();
+    const title = this._readCreateSubtaskTitle();
+    if (!title) {
+      if (input && typeof input.focus === "function") input.focus();
+      return;
+    }
+    if (!Array.isArray(parentDraft.subtasks)) parentDraft.subtasks = [];
+    parentDraft.subtasks.push({
+      // Local key, not a server id. Named `id` so the shared row skeleton can
+      // keep passing `taskId` and the handlers below can look rows up the same
+      // way the detail scope does.
+      id: `pending:${(this._pendingSubtaskSeq = (this._pendingSubtaskSeq || 0) + 1)}`,
+      title,
+      priority: draft.priority || "medium",
+      status: draft.status || this.getDefaultStatus(),
+      due_date: draft.due_date || "",
+    });
+    // Stay open with only the title cleared, matching the detail-panel creator:
+    // breaking a task down means adding several children in a row.
+    this._createSubtaskDraft = { ...draft, title: "", menu: null };
+    if (input) input.value = "";
+    this._refreshCreateSubtaskSection();
+  }
+
+  _removeCreateSubtask(trigger) {
+    const id = trigger.mget("taskId");
+    const draft = this._createDefaults;
+    if (!id || !draft || !Array.isArray(draft.subtasks)) return;
+    draft.subtasks = draft.subtasks.filter((t) => t.id !== id);
+    this._refreshCreateSubtaskSection();
+  }
+
+  // The queued row's checkbox. No server round-trip and no rollup to apply —
+  // it just moves the row between the first done and first open column, which
+  // is the status it will be created with.
+  _toggleCreateSubtaskDone(trigger) {
+    const id = trigger.mget("taskId");
+    const row = this.getPendingSubtasks().find((t) => t.id === id);
+    if (!row) return;
+    const cols = this.getColumns();
+    const target = this.isDoneStatus(row.status)
+      ? cols.find((c) => !c.is_done)
+      : cols.find((c) => c.is_done);
+    if (!target) return;
+    row.status = target.key;
+    this._refreshCreateSubtaskSection();
+  }
+
+  /**
+   * Post the children queued on the create modal, now that the parent has an
+   * id. Sequential, so they land in the order they were entered.
+   *
+   * Never throws: the parent is already created by the time this runs, so a
+   * child that fails must not roll the create back or take the modal down with
+   * it. Returns how many failed and the rows that were created.
+   */
+  async _createQueuedSubtasks(parentId, queued) {
+    let failed = 0;
+    const rows = [];
+    for (const sub of queued) {
+      try {
+        const created = await this.postService({
+          service: SERVICE.task.create,
+          hub_id: this._hubId,
+          // Sent for parity with a normal create; the server ignores it for a
+          // child and inherits the parent's folder instead.
+          nid: this._scopeNid,
+          parent_task_id: parentId,
+          title: sub.title,
+          priority: sub.priority || "medium",
+          status: sub.status || undefined,
+          due_date: sub.due_date || null,
+        });
+        const row = rowOf(created);
+        // postService resolves falsy on failure rather than rejecting.
+        if (row) rows.push(row);
+        else failed += 1;
+      } catch (err) {
+        console.error("[tasks_panel] queued subtask create failed:", err);
+        failed += 1;
+      }
+    }
+    return { failed, rows };
+  }
+
   /**
    * Create a subtask under the currently open task.
    *
@@ -8172,9 +10770,13 @@ class __tasks_panel extends LetcBox {
     // `__subtask-create-input` selector no longer matched anything, which left
     // this reading the draft alone — fine while the watch keeps up, but the
     // empty-title branch below then focused nothing and the create looked dead.
+    // Scoped to the detail panel: the create modal now carries a creator card
+    // with the same class, so an unscoped lookup could read the wrong one.
     const input =
       this.el &&
-      this.el.querySelector(`.${this.fig.family}__subtask-card-title input`);
+      this.el.querySelector(
+        `.${this.fig.family}__detail-panel .${this.fig.family}__subtask-card-title input`,
+      );
     const title = String((input && input.value) || draft.title || "").trim();
     if (!title) {
       if (input && typeof input.focus === "function") input.focus();
@@ -8187,7 +10789,9 @@ class __tasks_panel extends LetcBox {
     // button (same reasoning as the comment actions above).
     const submitBtn =
       this.el &&
-      this.el.querySelector(`.${this.fig.family}__subtask-create-submit`);
+      this.el.querySelector(
+        `.${this.fig.family}__detail-panel .${this.fig.family}__subtask-create-submit`,
+      );
     this._setControlBusy(submitBtn, true, { swapLabel: true });
     try {
       const created = await this.postService({
@@ -8451,7 +11055,7 @@ class __tasks_panel extends LetcBox {
         // only draws a CTA when this passes, so failing here means the plan
         // changed under an open card.
         if (!canUpgradePlan()) return;
-        RADIO_BROADCAST.trigger("desk:open-billing-page");
+        RADIO_BROADCAST.trigger("desk:open-billing-page", { intent: "upgrade" });
       })
       // Dismissed (close X or Escape) — confirm REJECTS, and an unhandled
       // rejection on a modal the user simply closed is noise in the console.
@@ -8466,11 +11070,58 @@ class __tasks_panel extends LetcBox {
   getCalCursor() {
     return this._calCursor;
   }
+  isCalViewMenuOpen() {
+    return !!this._calViewMenuOpen;
+  }
+  isCalPickerOpen() {
+    return !!this._calPickerOpen;
+  }
+  getCalPickerCursor() {
+    return this._calPickerCursor || null;
+  }
   getGanttMode() {
     return this._ganttMode || "weeks";
   }
   getGanttSelected() {
     return this._ganttSelected;
+  }
+
+  /**
+   * Has this overlay already been painted in its current opening?
+   *
+   * The skeleton asks so it can stamp `data-entered`, which is what the skin
+   * gates every entrance animation on. See `_painted` in initialize.
+   *
+   * @param {String} key one of the keys _render records
+   */
+  hasPainted(key) {
+    return !!(this._painted && this._painted[key]);
+  }
+
+  /**
+   * Is this detail-card section still waiting on its fetch?
+   *
+   * The skeleton asks so it can draw placeholder rows instead of an empty
+   * state that is not yet true. See `_loading` in initialize.
+   *
+   * @param {String} key attachments | comments | history
+   */
+  isLoading(key) {
+    return !!(this._loading && this._loading[key]);
+  }
+
+  /**
+   * Mark a section's fetch as finished. Ignores answers for a task the user
+   * has already navigated away from — the same guard the callers apply before
+   * feeding their rows, kept here too so a new caller cannot forget it and
+   * clear the flag for whatever is open NOW.
+   *
+   * @param {String} key    attachments | comments | history
+   * @param {String} taskId the task the answer belongs to
+   */
+  _settleLoading(key, taskId) {
+    if (taskId != null && `${taskId}` !== `${this._detailId}`) return;
+    if (this._loading) this._loading[key] = 0;
   }
 
   isCreating() {

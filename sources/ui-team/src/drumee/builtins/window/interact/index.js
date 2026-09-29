@@ -4,7 +4,7 @@ const { copyToClipboard, timestamp } = require("@drumee/ui-essentials")
 const { TimelineMax } = require("@drumee/ui-core/vendor");
 
 const windowCore = require("../core");
-const { isGrouped } = require("../skeleton/toolkit/file-group");
+const { isSectioned } = require("../skeleton/toolkit/file-group");
 class __window_interact extends windowCore {
   constructor(...args) {
     super(...args);
@@ -39,7 +39,39 @@ class __window_interact extends windowCore {
 
     this.declareHandlers();
     if (opt.headless) {
-      return
+      // A headless window is the WORKSPACE PANE (wm/index.js loadWorkspace is
+      // the only caller that sets the flag). It is sized entirely by CSS —
+      // folder/skin `[data-headless="1"]` pins top/left/width/height with
+      // !important — so it skips every drag/resize geometry step below, and
+      // that early return is correct.
+      //
+      // But `this.size` is not only geometry bookkeeping for those steps: it
+      // is a WINDOW INVARIANT that subclasses read straight after this
+      // returns. folder/index.js does `this.style.set({ width:
+      // this.size.width, ... })` unguarded. On desktop that survived by
+      // accident — folder's `!Visitor.isMobile()` block assigns `this.size`
+      // from `_defaultBounds()` a few lines earlier — but that block is
+      // skipped on MOBILE, so the pane reached the read with `this.size`
+      // undefined and threw
+      //
+      //   TypeError: Cannot read properties of undefined (reading 'width')
+      //
+      // on every single mobile boot, because the workspace pane IS the mobile
+      // default screen. Returning without the invariant was the bug; the
+      // mobile guard in folder only exposed it.
+      //
+      // The viewport is the honest value: it is what the !important CSS gives
+      // the pane anyway, so any later reader sees what is actually on screen,
+      // and writing it back out as inline style is a no-op against that
+      // cascade. Desktop is unchanged either way — folder overwrites all four
+      // fields from `_defaultBounds()` immediately after.
+      this.size = {
+        width: window.innerWidth,
+        height: window.innerHeight,
+        minWidth: 0,
+        minHeight: 0,
+      };
+      return;
     }
 
     let width = _K.docViewer.width;
@@ -461,9 +493,12 @@ class __window_interact extends windowCore {
       if (!this.acceptMedia) {
         return;
       }
+      // Mark stale rather than measure: tiles re-measure lazily when a drag
+      // or marquee needs them (media/interact.js `get bbox`).
       this.__list.children.each((c) => {
         try {
-          c.initBounds();
+          if (_.isFunction(c.invalidateBounds)) c.invalidateBounds();
+          else c.initBounds();
         } catch (e) { }
       });
     };
@@ -503,12 +538,23 @@ class __window_interact extends windowCore {
     // work intermittently. Clear the transforms first, then measure.
     _.defer(() => {
       if (!this.__list || this.__list.isDestroyed()) return;
-      this.__list.children.each((c) => {
+      // snapToRest kills the slide instantly; a tween still running here
+      // would leave part of the offset in the measurement.
+      //
+      // Writes first for EVERY tile, then invalidate: interleaving
+      // snapToRest (a transform write) with initBounds (an offset read) per
+      // tile forced one layout per tile. Lazy tiles re-measure on the next
+      // drag/marquee read (media/interact.js `get bbox`).
+      const kids = this.__list.children.toArray();
+      kids.forEach((c) => {
         try {
-          // snapToRest kills the slide instantly; a tween still running here
-          // would leave part of the offset in the measurement below.
           if (_.isFunction(c.snapToRest)) c.snapToRest();
-          if (_.isFunction(c.initBounds)) c.initBounds();
+        } catch (e) { }
+      });
+      kids.forEach((c) => {
+        try {
+          if (_.isFunction(c.invalidateBounds)) c.invalidateBounds();
+          else if (_.isFunction(c.initBounds)) c.initBounds();
         } catch (e) { }
       });
     });
@@ -862,10 +908,11 @@ class __window_interact extends windowCore {
       this.captured.left = primary;
       if (paired) this.captured.right = paired;
     }
-    // Group view never re-arms the flanking tiles below, so nothing may be
-    // kept shifted: `keep` skips the release AND `_shifted` is reset, leaving
-    // those two tiles pushed aside until the delayed clearShift a second later.
-    const grouped = isGrouped(this);
+    // Group view (and the Media tab's sections) never re-arm the flanking
+    // tiles below, so nothing may be kept shifted: `keep` skips the release
+    // AND `_shifted` is reset, leaving those two tiles pushed aside until the
+    // delayed clearShift a second later.
+    const grouped = isSectioned(this);
     this._releaseShifted(
       grouped ? [] : [this.captured.left, this.captured.right],
     );
@@ -971,7 +1018,11 @@ class __window_interact extends windowCore {
         priv = this.mget(_a.privilege) || this.mget(_a.permission);
       }
       if (!(_K.permission.write & priv)) {
-        this.warning(LOCALE.WEAK_PRIVILEGE);
+        this.warning(
+          require("libs/permission-denied").weakPrivilegeMessage(
+            LOCALE.PERMISSION_ACTION_UPLOAD, priv,
+          ),
+        );
         return null;
       }
       item.phase = _a.upload;
@@ -1318,6 +1369,23 @@ class __window_interact extends windowCore {
    */
   pasteMedia(prepend) {
     if (_.isEmpty(Wm.clipboard.files)) {
+      return;
+    }
+    // Refuse before drawing anything: the tiles below are added optimistically
+    // and each posts its own media.copy / media.move, which a view/chat member
+    // is refused — leaving ghost tiles until reload. Only a KNOWN privilege
+    // without the write bit refuses; with none recorded the server decides.
+    // (Wm carries the open workspace's hub_id AND privilege, so its own
+    // pasteMedia is judged against the same workspace it pastes into.)
+    const priv = this.mget(_a.privilege) || this.mget(_a.permission);
+    if (priv != null && !(_K.permission.write & priv)) {
+      require("libs/permission-denied").sayWeakPrivilege(
+        Wm.clipboard.command === _e.copy
+          ? LOCALE.PERMISSION_ACTION_COPY
+          : LOCALE.PERMISSION_ACTION_MOVE,
+        priv,
+        _K.permission.write,
+      );
       return;
     }
     const list = [];

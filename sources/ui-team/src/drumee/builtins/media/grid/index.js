@@ -10,6 +10,13 @@ const Rectangle = require('rectangle-node');
 // skin/index.scss.
 const SLOT_SHIFT = 24;
 
+// Bubbled by an inline chat image once it has loaded (see _wireInlineMedia);
+// widget_chat listens for it. Keep in sync with widget/chat.
+const INLINE_MEDIA_GROWN = 'drumee:inline-media-grown';
+// Bubbled whenever a tile becomes (or stops being) inline media, so the chat
+// message can lay its attachments out (widget/chat-item _stampInlineLayout).
+const INLINE_MEDIA_READY = 'drumee:inline-media-ready';
+
 class __media_grid extends DrumeeMediaInteract {
   constructor(...args) {
     super(...args);
@@ -45,6 +52,9 @@ class __media_grid extends DrumeeMediaInteract {
       height: 120
     }
     this.initContainer()
+    if (opt.inlineMedia) {
+      this.on("content-ready", () => this._wireInlineMedia());
+    }
     switch (opt.mode) {
       case _a.vignette:
         return this.innerContent = require('./template/vignette')
@@ -108,6 +118,13 @@ class __media_grid extends DrumeeMediaInteract {
     if (service === 'context-menu') {
       e.stopPropagation();
       e.preventDefault();
+      // Trigger is active (its menu is up): this click closes it. ui-core's
+      // own outside-pointerdown close (volatility 4) only fires 300ms later,
+      // so without this the click would open a second menu instead.
+      if (this._closeMenu) {
+        this._closeMenu();
+        return;
+      }
       const trigger = this.el.querySelector('.media-context-menu__trigger')
         || this.el.querySelector('.media-context-menu__folder-trigger');
       const rect = trigger
@@ -131,10 +148,106 @@ class __media_grid extends DrumeeMediaInteract {
           stopPropagation() {},
           stopImmediatePropagation() {},
         });
+        if (trigger) this._stickMenuToTrigger(trigger);
       }
       return;
     }
     super.dispatchUiEvent(e);
+  }
+
+  /**
+   * Keep the kebab's popup attached to its trigger while the grid scrolls.
+   *
+   * ui-core places the menu once, at the trigger's rect at open time, inside
+   * `window.drumeeDialog` — a fixed 0×0 layer at the viewport origin
+   * (router/skin/index.scss `&__dialog`), so the menu's left/top ARE viewport
+   * coordinates. Nothing moved it afterwards, so scrolling the grid left the
+   * menu floating over other tiles. Re-anchor on every scroll (capture phase:
+   * the scroller is a folder-window body, not the document) and on resize:
+   * below the trigger when it fits, flipped above it when it doesn't, clamped
+   * into the viewport. Listeners drop themselves once the menu is gone.
+   *
+   * @param {HTMLElement} trigger
+   */
+  _stickMenuToTrigger(trigger) {
+    const dialog = window.drumeeDialog;
+    const last = dialog && !dialog.isDestroyed() && dialog.children.last();
+    const menu = last && last.el;
+    if (!menu || !menu.classList.contains('drumee-contextmenu')) return;
+
+    if (this._unstickMenu) this._unstickMenu();
+
+    // Active state for as long as the menu is up (skin/context-menu.scss).
+    trigger.dataset.active = '1';
+
+    // The visible grid pane. Once the trigger scrolls out of it the menu would
+    // point at a tile nobody can see, so close it instead of following.
+    const pane = trigger.closest('.window__icons-list, [class*="__icons-list"]');
+
+    let frame = 0;
+    let scrolled = false;
+    const place = () => {
+      frame = 0;
+      if (!menu.isConnected || !trigger.isConnected) return unstick();
+      const r = trigger.getBoundingClientRect();
+      if (pane && scrolled) {
+        const b = pane.getBoundingClientRect();
+        if (r.top < b.top || r.bottom > b.bottom) {
+          close();
+          return;
+        }
+      }
+      const w = menu.offsetWidth;
+      const h = menu.offsetHeight;
+      const vw = window.innerWidth;
+      const vh = window.innerHeight;
+      let top = r.bottom;
+      if (top + h > vh && r.top - h >= 0) top = r.top - h;
+      top = Math.max(0, Math.min(top, vh - h));
+      const left = Math.max(0, Math.min(r.right, vw - w));
+      menu.style.top = `${Math.round(top)}px`;
+      menu.style.left = `${Math.round(left)}px`;
+    };
+    const schedule = (ev) => {
+      // Only a scroll may close the menu; the open-time placement and resizes
+      // must not, or a tile half-clipped at the pane's edge could never open one.
+      if (ev && ev.type === 'scroll') scrolled = true;
+      if (!frame) frame = requestAnimationFrame(place);
+    };
+    // However the menu goes away — this trigger, an item click, an outside
+    // click, the pane-overflow close above — drop the listeners and the
+    // active state with it.
+    const gone = new MutationObserver(() => {
+      if (!menu.isConnected) unstick();
+    });
+    const unstick = () => {
+      if (frame) cancelAnimationFrame(frame);
+      frame = 0;
+      gone.disconnect();
+      document.removeEventListener('scroll', schedule, true);
+      window.removeEventListener('resize', schedule);
+      delete trigger.dataset.active;
+      if (this._unstickMenu === unstick) {
+        this._unstickMenu = null;
+        this._closeMenu = null;
+      }
+    };
+    const close = () => {
+      unstick();
+      if (!last.isDestroyed()) last.suppress();
+    };
+
+    if (menu.parentNode) gone.observe(menu.parentNode, { childList: true });
+    document.addEventListener('scroll', schedule, true);
+    window.addEventListener('resize', schedule);
+    this._unstickMenu = unstick;
+    this._closeMenu = close;
+    place();
+  }
+
+  onBeforeDestroy() {
+    if (this._unstickMenu) this._unstickMenu();
+    if (super.onBeforeDestroy) super.onBeforeDestroy();
   }
 
   /**
@@ -242,6 +355,9 @@ class __media_grid extends DrumeeMediaInteract {
     const instant =
       window.matchMedia &&
       window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    // Latched for snapToRest: from here on this element carries a GSAP
+    // transform, even once it settles back to 0.
+    this._transformTouched = true;
     TweenLite.to(this.$el, instant ? 0 : .2, {
       x,
       overwrite: "auto",
@@ -272,8 +388,99 @@ class __media_grid extends DrumeeMediaInteract {
   snapToRest() {
     this.cancelShift();
     this.el.removeAttribute("data-insert");
+    // ONLY IF GSAP HAS EVER TOUCHED THIS TILE'S TRANSFORM. A tile that was never
+    // part of a drag has no GSAP transform to drop, so this call would write the
+    // value the element already has.
+    //
+    // It is not free. GSAP must READ the computed transform matrix before it can
+    // write one (_renderZeroDurationTween -> _parseTransform -> _getMatrix ->
+    // _getComputedProperty), and that read FLUSHES PENDING STYLE for the whole
+    // document. snapToRest runs per tile on every re-measure, so on a populated
+    // workspace it fired for hundreds of tiles that had never moved. Production
+    // trace 2026-09-15: _renderZeroDurationTween sat behind 184 forced recalcs
+    // costing 20,160ms — the largest single entry, ~8,300 elements each.
+    //
+    // The flag, not the shift value, is the condition: `_shiftX` records the
+    // last TARGET, so a tile tweening 5 -> 0 already reads 0 while still sitting
+    // part-way, and keying off it would let cancelShift() strand it there. Once
+    // the flag is set it stays set, so every tile that has ever shifted keeps
+    // the old behaviour exactly.
     this._shiftX = 0;
-    TweenLite.set(this.$el, { x: 0 });
+    if (this._transformTouched) TweenLite.set(this.$el, { x: 0 });
+  }
+
+  /**
+   * An inline chat image / video (grid/template, inlineMedia) just rendered.
+   *
+   * - Image: `slide` does not exist yet for a fresh upload — fall back to the
+   *   original once, then to the plain file card.
+   * - Video: the native controls own their pointer events. Without stopping
+   *   them here, pressing play or scrubbing would ALSO open the viewer (the
+   *   tile's own onclick) or start dragging the tile (its drag handle is the
+   *   container the video sits in). A codec the browser cannot play falls back
+   *   to the file card, which opens the full player.
+   */
+  _wireInlineMedia() {
+    const root = this.content && this.content.el;
+    if (!root) return;
+    const frame = root.querySelector('.media-grid__inline');
+    const img = root.querySelector('.media-grid__inline-img');
+    if (img) {
+      // Placeholder tint + minimum box until the picture is in (skin).
+      if (img.complete && img.naturalWidth) {
+        if (frame) frame.dataset.loaded = '1';
+      } else {
+        img.addEventListener('load', () => {
+          if (frame) frame.dataset.loaded = '1';
+        });
+      }
+      // The picture arrives AFTER the card (and after the chat's own
+      // "attachment-grown" re-pin), and it is far taller than the 44px card
+      // it replaced — so say so, or a new image message ends up half below
+      // the fold. A DOM event, since this tile's handler is Wm, not the chat:
+      // widget_chat re-pins on it (only while the reader is at the bottom).
+      img.addEventListener('load', () => {
+        img.dispatchEvent(new CustomEvent(INLINE_MEDIA_GROWN, { bubbles: true }));
+      });
+      img.addEventListener('error', () => {
+        const orig = img.dataset.orig;
+        if (orig && !img.dataset.fellBack) {
+          img.dataset.fellBack = '1';
+          img.src = orig;
+          return;
+        }
+        this._inlineMediaFailed();
+      });
+    }
+    const video = root.querySelector('.media-grid__inline-video');
+    if (video) {
+      // mousedown is what jQuery UI's drag starts from (touch-punch turns a
+      // touch into one), click / dblclick are the tile's open. NOT pointerdown:
+      // ui-core's document listener for it is what closes open menus on an
+      // outside press, and a video must not keep a menu stuck open.
+      const own = (e) => e.stopPropagation();
+      ['mousedown', 'click', 'dblclick'].forEach(
+        (ev) => video.addEventListener(ev, own)
+      );
+      video.addEventListener('error', () => this._inlineMediaFailed());
+      if (frame) frame.dataset.loaded = '1';
+    }
+    root.dispatchEvent(new CustomEvent(INLINE_MEDIA_READY, { bubbles: true }));
+  }
+
+  /**
+   * Neither rendition can be shown inline: draw the ordinary attachment card,
+   * whose click opens the file in its viewer.
+   */
+  _inlineMediaFailed() {
+    if (this.isDestroyed && this.isDestroyed()) return;
+    if (!this.mget('inlineMedia')) return;
+    this.mset('inlineMedia', 0);
+    const root = this.content && this.content.el;
+    if (root) {
+      root.innerHTML = this.innerContent(this);
+      root.dispatchEvent(new CustomEvent(INLINE_MEDIA_READY, { bubbles: true }));
+    }
   }
 
   /**

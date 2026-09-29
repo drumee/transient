@@ -17,6 +17,7 @@
  */
 
 const EDITABLE = require("../editable");
+const share = require("builtins/player/widget/share");
 
 const cnWindowButton = "window-button";
 
@@ -170,8 +171,8 @@ module.exports = function (ui) {
 /**
  * The gear menu, as MenuItem data for the widget's folder-settings default.
  *
- * Default set, in both modes: Copy, Rename, Chat threads, Share, Get info,
- * Move to trash.
+ * Default set, in both modes: Copy, Rename, Chat threads, Get info, Move to
+ * trash — plus Share, but only for a file in an external workspace.
  *
  * Preview mode adds the three export rows on top — Download, Download a PDF
  * version, Print. They are absent while editing because they serve the
@@ -252,11 +253,10 @@ module.exports.menu = function (ui) {
 
   const details = [];
 
-  // Share is offered wherever the file lives, as in the Figma; widget/share
-  // decides whether it opens the real flow or explains that an external
-  // workspace is needed first. Gating it on the area would leave that
-  // explanation unreachable.
-  if (editable) {
+  // Share only for a file in an EXTERNAL workspace (widget/share isExternal).
+  // An internal workspace offers no Share row: the Designation link below is
+  // how a file is shared there.
+  if (editable && share.isExternal(ui)) {
     details.push({
       id: "secure-share",
       label: LOCALE.SHARE,
@@ -267,10 +267,12 @@ module.exports.menu = function (ui) {
 
   // The link flavour on top of that is area-dependent. `share` has none of
   // its own — the Share row above already covers it.
+  // Rows that sit below Get info rather than above it.
+  const afterInfo = [];
   if (editable) {
     switch (ui.mget(_a.area)) {
       case _a.private:
-        details.push({
+        afterInfo.push({
           id: "designation-link",
           label: LOCALE.DESIGNATION_LINK,
           icon: "app-share",
@@ -289,6 +291,7 @@ module.exports.menu = function (ui) {
   }
   // "info" is handled by the base player, not this class.
   details.push({ id: "info", label: LOCALE.GET_INFO, icon: "ctxmenu-info", service: "info" });
+  details.push(...afterInfo);
   sections.push(details);
 
   if (media && media.canRemove && media.canRemove()) {

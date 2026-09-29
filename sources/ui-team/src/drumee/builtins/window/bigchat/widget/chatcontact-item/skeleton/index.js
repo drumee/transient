@@ -1,5 +1,11 @@
 
 const { supportAvatar, isSupportEntity } = require("libs/support");
+// The one place a conversation row's preview line is computed — shared with the
+// live-update paths in chat_p2p / chatcontact_list.
+const { chatPreview } = require("libs/chat-preview");
+// The workspace icon — the area-tinted folder shape. Single source, shared
+// with the desk sidebar's workspace_item (via its getFolderIcon wrapper).
+const folderIcon = require("media/grid/template/folder");
 
 const __skl_widget_chatcontactItem = function (ui) {
   let chat_icon, msg, state;
@@ -32,6 +38,27 @@ const __skl_widget_chatcontactItem = function (ui) {
       live_status: 1,
       auto_color: 1,
       sys_pn: _a.profile
+    });
+  } else if (ui.mget('is_workspace')) {
+    // A workspace team-chat row (inbox -> Workspace chat). Draw the WORKSPACE'S
+    // OWN icon — the area-tinted folder shape from media/grid/template/folder —
+    // so a row is recognisably the same object as its desk tile and sidebar
+    // entry, instead of the generic project-room glyph every workspace shared.
+    //
+    // That module is the single source for this icon (workspace-item uses it
+    // through getFolderIcon) and it returns an HTML string, hence Element +
+    // content rather than Image.Svg. `role: desk` + `filetype: hub` is what
+    // selects the workspace shape and its area badge; isAttachment suppresses
+    // the kebab, which has nothing to act on in a chat row.
+    chat_icon = Skeletons.Element({
+      className: `${contentFig}__icon ${contentFig}__icon--workspace ${ui.mget(_a.area) || ''}`,
+      content: folderIcon({
+        area: ui.mget(_a.area),
+        filetype: _a.hub,
+        role: 'desk',
+        widgetId: ui._id || _.uniqueId('ws-chat-icon-'),
+        isAttachment: 1,
+      }),
     });
   } else {
     chat_icon = Skeletons.Button.Svg({
@@ -66,41 +93,16 @@ const __skl_widget_chatcontactItem = function (ui) {
         })
       : null;
 
-  const md = ui.mget(_a.metadata);
-  if (md && (md.message_type === 'call')) {
-    switch (md.call_status) {
-      case _e.leave:
-        // This row comes from p2p_time.metadata, which is a single shared
-        // record for both parties — its `role` is always the writer's
-        // ("caller"). caller_id is the side-independent field; fall back to
-        // role for conversations whose last event predates it.
-        if (md.caller_id ? md.caller_id === Visitor.id : md.role === _a.caller) {
-          msg = LOCALE.OUTGOING_CALL;
-        } else {
-          msg = LOCALE.INCOMING_CALL;
-        }
-        break;
-      case 'reject':
-        msg = LOCALE.CALL_DECLINED;
-        break;
-      case _a.cancel:
-        msg = LOCALE.MISSED_CALL;
-        break;
-      default:
-        msg = ui.mget(_a.message);
-    }
-  } else {
-    msg = ui.mget(_a.message);
-  }
-
-  if (_.isEmpty(msg) && (ui.mget('is_attachment') === 1)) {
-    msg = LOCALE.ATTACHMENT;
-  }
-
-  if (msg && typeof msg === 'string') {
-    // Lazy label (.+?) so a filename containing "]" still strips to @name.
-    msg = msg.replace(/\[@(.+?)\]\((?:user|mention)[^)]*\)/g, '@$1');
-  }
+  // Never the raw body: a system card's body is machine-readable (a meeting
+  // posts a [[MEETING:start:{json}]] sentinel, a file-thread root card has none
+  // at all) and a call log's body is empty. chatPreview owns every one of those
+  // cases, and the live paths that overwrite this Note go through it too
+  // (chat_p2p, chatcontact_list) so the line cannot change meaning on a push.
+  msg = chatPreview(ui.mget(_a.message), {
+    metadata: ui.mget(_a.metadata),
+    meetingStatus: ui.mget('meeting_status'),
+    isAttachment: ui.mget('is_attachment') === 1,
+  });
 
   const chatMessage = Skeletons.Note({
     className: `${contentFig}__note message`,

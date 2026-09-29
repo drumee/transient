@@ -1,6 +1,111 @@
 @use "sass:meta";
 @use "mixins/drumee";
 
+// A desk node's icon at row size — the @-mention rows and the "From
+// workspace" picker rows share it: folder art tinted by area (own area, else
+// the area class on the tile), hub badge in the corner, file glyphs 24px.
+@mixin node-icon-tile {
+  width: 32px;
+  height: 28px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--normal-fg-20);
+  overflow: visible;
+
+  .preview-container,
+  .preview-content,
+  .media-grid__folder-art {
+    width: 32px;
+    height: 28px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 4px;
+    background-position: center;
+    background-size: cover;
+    background-repeat: no-repeat;
+  }
+
+  .preview-content {
+    position: static;
+  }
+
+  .preview-icon {
+    width: 24px;
+    height: 24px;
+    flex-shrink: 0;
+  }
+
+  .preview-icon.extension {
+    width: 28px;
+    height: 28px;
+  }
+
+  .media-grid__folder-art {
+    aspect-ratio: auto;
+    position: relative;
+  }
+
+  .folder-shape,
+  svg:not(.preview-icon):not(.badge) {
+    width: 28px;
+    height: 24px;
+    max-width: 28px;
+    max-height: 24px;
+    flex-shrink: 0;
+  }
+
+  // Hub badge (personal / private / share / public glyph) sits on the
+  // folder's bottom-left corner, as on the sidebar rows.
+  .badge {
+    bottom: -2px;
+    color: var(--grid-color-folder-badge);
+    fill: currentColor;
+    filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.3));
+    height: 14px !important;
+    left: 0;
+    position: absolute;
+    width: 14px !important;
+  }
+
+  .folder-shape {
+    fill: var(--area-private);
+
+    &.personal {
+      fill: var(--area-personal);
+    }
+    &.private {
+      fill: var(--area-private);
+    }
+    &.share,
+    &.dmz {
+      fill: var(--area-share);
+    }
+    &.public {
+      fill: var(--area-public);
+    }
+    &.inner-folder {
+      fill: var(--area-private);
+    }
+  }
+
+  &.personal .folder-shape.inner-folder {
+    fill: var(--area-personal);
+  }
+  &.private .folder-shape.inner-folder {
+    fill: var(--area-private);
+  }
+  &.share .folder-shape.inner-folder,
+  &.dmz .folder-shape.inner-folder {
+    fill: var(--area-share);
+  }
+  &.public .folder-shape.inner-folder {
+    fill: var(--area-public);
+  }
+}
+
 @keyframes widget-chat-typing-bounce {
   0%,
   80%,
@@ -353,6 +458,88 @@
     background: var(--normal-bg);
     width: 100%;
     position: relative;
+
+    // Inert while an upload is running (chat's _syncUploadingState stamps this,
+    // released by a COUNT so two overlapping batches both have to finish).
+    // The whole composer goes at once — input, reply box and the attachment
+    // strip — because a queued file must not be pulled out from under an
+    // upload that is still writing it.
+    //
+    // This only stops the POINTER. Focus is usually already inside the editor
+    // when an upload starts, so Enter would still send; `_isBlockedWhileUploading`
+    // refuses the send service for that half.
+    &[data-uploading="1"] {
+      pointer-events: none;
+      // Dimmed enough to read as unavailable, not so far that the filenames in
+      // the strip stop being legible — they are the thing the user is watching.
+      opacity: 0.55;
+      // The caret would otherwise keep blinking in an editor that ignores it.
+      caret-color: transparent;
+      user-select: none;
+    }
+  }
+
+  // Drop zone. The messenger is the target; the overlay is its child (see
+  // builtins/messenger/skeleton) and this supplies the theme.
+  //
+  // Revealed by `data-drop-active`, which chat's droppable stamps on the
+  // messenger element — not by :hover or a CSS drag state. A jQuery-UI drag
+  // appends its helper to <body> under the cursor, so the pointer never
+  // "enters" the messenger as far as the DOM is concerned and no CSS state
+  // exists to key on.
+  // Two states, as in the reference: ARMED the moment a file is picked up
+  // anywhere, so the target is visible before the user aims at it, and ACTIVE
+  // once the pointer is actually over it. Armed is deliberately quieter — it is
+  // an offer, and at full strength it would compete with the file being dragged.
+  //
+  // Descendant, not `>`: the overlay is fed as one of the messenger's kids and
+  // whether ui-core appends those to the root or to an inner content node is
+  // not something this skin should depend on. There is never a nested
+  // messenger for a loose selector to catch by mistake.
+  &__messenger[data-drop-state="armed"] .lib-messenger__drop-overlay,
+  &__messenger[data-drop-state="active"] .lib-messenger__drop-overlay {
+    opacity: 1;
+    visibility: visible;
+  }
+
+  &__messenger[data-drop-state="armed"] .lib-messenger__drop-overlay {
+    border-color: rgba(89, 80, 255, 0.45);
+    background:
+      linear-gradient(rgba(89, 80, 255, 0.04), rgba(89, 80, 255, 0.04)),
+      var(--normal-bg, #ffffff);
+
+    .lib-messenger__drop-overlay-ico,
+    .lib-messenger__drop-overlay-text {
+      opacity: 0.65;
+    }
+  }
+
+  &__messenger .lib-messenger__drop-overlay {
+    // Two layers: the tint, over an OPAQUE surface. A single 8% wash let the
+    // input's placeholder read straight through the drop zone, so the overlay
+    // said "drop files to attach" and "Type A Message…" at the same time. The
+    // base is the composer's own background, so the zone masks the input in
+    // both themes without hard-coding a colour.
+    background:
+      linear-gradient(rgba(89, 80, 255, 0.08), rgba(89, 80, 255, 0.08)),
+      var(--normal-bg, #ffffff);
+    border: 1px dashed var(--primary-40, #5950ff);
+    border-radius: 12px;
+
+    .lib-messenger__drop-overlay-ico {
+      color: var(--primary-40, #5950ff);
+      fill: currentColor;
+    }
+
+    .lib-messenger__drop-overlay-text {
+      @include drumee.typo(
+        $size: 13px,
+        $weight: 500,
+        $line: 18px,
+        $color: var(--primary-40, #5950ff)
+      );
+      text-align: center;
+    }
   }
 
   &__messenger {
@@ -589,25 +776,135 @@
   &__desk-picker-title {
     font-size: 13px;
     font-weight: 600;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  &__desk-picker-back {
+    color: var(--drumee-orange, #fa8540);
+    cursor: pointer;
+    flex-shrink: 0;
+    font-size: 13px;
+    font-weight: 500;
+    margin-right: 12px;
+
+    &:hover {
+      text-decoration: underline;
+    }
   }
 
   &__desk-picker-list {
     flex: 1;
     min-height: 80px;
     overflow-y: auto;
+    padding: 4px 0;
+  }
 
-    .list-smart__container {
-      > * {
-        cursor: pointer;
-        display: block;
-        overflow: hidden;
-        padding: 9px 14px;
-        text-overflow: ellipsis;
-        white-space: nowrap;
+  // Row laid out like an @-mention row: icon tile, name, extension, in a
+  // rounded pill inset from the panel edges. The kids are inert so the click
+  // always lands on the row, which owns the service.
+  &__desk-picker-item {
+    align-items: center;
+    border-radius: 8px;
+    cursor: pointer;
+    display: flex;
+    gap: 8px;
+    margin: 0 8px;
+    padding: 6px 8px;
+    transition: background 0.15s;
+    @include drumee.skeleton-content-in;
 
-        &:hover {
-          background: var(--normal-bg-10, #f5f5f5);
-        }
+    &:hover {
+      background: color-mix(in srgb, var(--primary-purple-40) 10%, transparent);
+    }
+
+    * {
+      pointer-events: none;
+    }
+  }
+
+  &__desk-picker-icon {
+    @include node-icon-tile;
+  }
+
+  &__desk-picker-name {
+    flex: 1;
+    font-size: 13px;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  // Containers read as rows you can enter: bold name, trailing chevron.
+  &__desk-picker-item--folder {
+    .widget-chat__desk-picker-name {
+      font-weight: 600;
+    }
+
+    &::after {
+      content: "\203A";
+      flex-shrink: 0;
+      opacity: 0.6;
+    }
+  }
+
+  &__desk-picker-empty {
+    color: var(--tertiary-grey-80);
+    font-size: 13px;
+    padding: 12px 16px;
+  }
+
+  // Placeholder rows in the geometry of the real rows, pulsing until the
+  // list's first page lands; the chat widget stamps data-state="done" then.
+  &__desk-picker-skeleton {
+    flex-shrink: 0;
+    padding: 4px 0;
+
+    &[data-state="done"] {
+      display: none;
+    }
+
+    &-row {
+      align-items: center;
+      display: flex;
+      gap: 8px;
+      margin: 0 8px;
+      padding: 6px 8px;
+    }
+
+    &-tile {
+      border-radius: 4px;
+      flex-shrink: 0;
+      height: 28px;
+      width: 32px;
+    }
+
+    &-name {
+      border-radius: 6px;
+      height: 12px;
+      width: 45%;
+    }
+
+    &-row:nth-child(2) &-name {
+      width: 60%;
+    }
+
+    &-row:nth-child(3) &-name {
+      width: 35%;
+    }
+
+    &-tile,
+    &-name {
+      animation: drumee-skeleton-pulse 1.2s ease-in-out infinite;
+      background: var(--border-default, #e5e5ea);
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      &-tile,
+      &-name {
+        animation: none;
       }
     }
   }
@@ -640,37 +937,71 @@
     width: calc(100% - 5px);
     z-index: 50001 !important;
 
+    // The "copied" toast rides at the TOP of the message area instead of the
+    // bottom, where it sat over the composer. Gated on :has() so ONLY that
+    // toast moves: this strip is shared with .preset-acknowledge-error below,
+    // and an error belongs next to the composer that raised it. The token
+    // `preset-acknowledge__main` is exact — `preset-acknowledge-error__main`
+    // is a different class token, so the error toast never matches.
+    // `.widget-chat__main` starts below the panel header, so top:5px lands the
+    // toast just under "Team Chat", not over it.
+    &:has(.preset-acknowledge__main) {
+      bottom: auto;
+      top: 5px;
+    }
+
+    // Compact "copied to clipboard" pill — see ../skeleton/ack for why the
+    // ui-core mascot preset was dropped. Everything is scoped to
+    // .preset-acknowledge and sizes/centres ITSELF: the __ack-wrapper strip
+    // above is shared with .preset-acknowledge-error below, so restyling the
+    // strip would move the error toast too. The old rules assumed the preset's
+    // absolutely-positioned mascot (`.icon` at left: 11px, text padded 25px to
+    // clear it); the skeleton is a plain Box.X row now, so icon and text just
+    // sit side by side.
     & .preset-acknowledge {
       &__main {
-        background-color: var(--dgc-chat-ack-bg);
+        align-self: center; // centre the pill across the wrapper's width
+        margin-bottom: auto; // and hug the top of the 50px strip
+        // --dgc-chat-ack-bg is declared ONLY in skin/vars/bigchat.scss, which
+        // ships with the bigchat chunk. In the desk's workspace chat panel that
+        // stylesheet is never loaded: walking document.styleSheets there, the
+        // token appears in the two rules that CONSUME it and in none that
+        // declare it. So the var was undefined, the declaration invalid, and
+        // the pill fell back to TRANSPARENT — unreadable whenever it landed on
+        // message text. (Not a `.window` ancestor problem: the panel does have
+        // one; the declaring stylesheet simply isn't there.) --default-bg is
+        // :root-scoped and always loaded, and the token still wins where it is
+        // defined.
+        background-color: var(--dgc-chat-ack-bg, var(--default-bg));
         border-radius: var(--border-radius);
-        padding: 10px 40px;
+        box-shadow: var(--drumee-shadow-box);
+        padding: 0;
+        width: auto;
       }
 
       &__container {
-        height: 100%;
+        align-items: center;
+        gap: 8px;
+        height: auto;
         justify-content: center;
         margin: 0;
-        padding: 0;
-        width: 100%;
+        padding: 7px 14px;
+        width: auto;
 
         & .icon {
-          height: 18px;
-          left: 11px;
-          margin-left: -5px;
-          position: absolute;
-          width: 18px;
+          color: var(--primary-purple-50); // brand indigo; the sprite fills currentColor
+          flex-shrink: 0;
+          height: 16px;
+          width: 16px;
         }
 
         & .note-reader {
-          padding-left: 25px;
-          margin-top: auto;
-          margin-bottom: auto;
+          white-space: nowrap;
           @include drumee.typo(
-            $size: 14px,
-            $line: 14px,
-            $weight: 300,
-            $color: var(--tertiary-text-color)
+            $size: 13px,
+            $line: 16px,
+            $weight: 400,
+            $color: var(--default-text-color)
           );
         }
       }
@@ -913,91 +1244,8 @@
     }
 
     .mention-item__icon {
-      width: 32px;
-      height: 28px;
-      flex-shrink: 0;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      color: var(--normal-fg-20);
+      @include node-icon-tile;
       overflow: hidden;
-
-      .preview-container,
-      .preview-content,
-      .media-grid__folder-art {
-        width: 32px;
-        height: 28px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        border-radius: 4px;
-        background-position: center;
-        background-size: cover;
-        background-repeat: no-repeat;
-      }
-
-      .preview-content {
-        position: static;
-      }
-
-      .preview-icon {
-        width: 24px;
-        height: 24px;
-        flex-shrink: 0;
-      }
-
-      .preview-icon.extension {
-        width: 28px;
-        height: 28px;
-      }
-
-      .media-grid__folder-art {
-        aspect-ratio: auto;
-      }
-
-      .folder-shape,
-      svg:not(.preview-icon) {
-        width: 28px;
-        height: 24px;
-        max-width: 28px;
-        max-height: 24px;
-        flex-shrink: 0;
-      }
-
-      .folder-shape {
-        fill: var(--area-private);
-
-        &.personal {
-          fill: var(--area-personal);
-        }
-        &.private {
-          fill: var(--area-private);
-        }
-        &.share,
-        &.dmz {
-          fill: var(--area-share);
-        }
-        &.public {
-          fill: var(--area-public);
-        }
-        &.inner-folder {
-          fill: var(--area-private);
-        }
-      }
-
-      &.personal .folder-shape.inner-folder {
-        fill: var(--area-personal);
-      }
-      &.private .folder-shape.inner-folder {
-        fill: var(--area-private);
-      }
-      &.share .folder-shape.inner-folder,
-      &.dmz .folder-shape.inner-folder {
-        fill: var(--area-share);
-      }
-      &.public .folder-shape.inner-folder {
-        fill: var(--area-public);
-      }
     }
 
     .mention-item__avatar {
@@ -1013,6 +1261,22 @@
         height: 100%;
         border-radius: 50%;
         object-fit: cover;
+      }
+
+      // No photo: initials on a name colour, same mark as the chat bubble.
+      .mention-item__avatar-initials {
+        align-items: center;
+        border-radius: 50%;
+        color: #fff;
+        display: flex;
+        font-size: 9px;
+        font-weight: 600;
+        height: 100%;
+        justify-content: center;
+        line-height: 1;
+        text-transform: uppercase;
+        user-select: none;
+        width: 100%;
       }
     }
 

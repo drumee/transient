@@ -1,5 +1,5 @@
 diff --git a/node_modules/@drumee/ui-core/letc/addons/letc.js b/node_modules/@drumee/ui-core/letc/addons/letc.js
-index be31634..413d616 100644
+index be31634..e3f94f4 100644
 --- a/node_modules/@drumee/ui-core/letc/addons/letc.js
 +++ b/node_modules/@drumee/ui-core/letc/addons/letc.js
 @@ -12,6 +12,9 @@ const { View } = Backbone;
@@ -90,7 +90,37 @@ index be31634..413d616 100644
        const timer = Timer.get(timerId)
        if (timer) {
          clearInterval(timer)
-@@ -1131,7 +1168,16 @@ View.prototype.ensureElement = function (el) {
+@@ -1116,14 +1153,25 @@ View.prototype.ensureElement = function (el) {
+     }
+     var f = function () {
+       i++;
++      // Resolve into a SEPARATE binding. Assigning the lookup back into `el`
++      // destroyed the id on the very first miss: `el` became null, so every
++      // later tick failed `_.isString(el)` and never looked the id up again —
++      // the poll ran out its ticks against a dead handle and rejected. That
++      // was harmless while the first lookup happened a tick late, but the
++      // leading-edge f() below runs while a just-fed element is still
++      // detached, which is the common case for a caller passing an id.
++      let found = el;
+       if (_.isString(el)) {
+-        el = document.getElementById(el);
++        found = document.getElementById(el);
+       } else if (el && el.jquery) {
+-        el = el[0];
++        found = el[0];
+       }
+-      if (el != null) {
++      if (found != null) {
++        // Keep the resolved node so a jQuery handle is unwrapped once, not
++        // per tick; `el` only ever moves from id/handle to the real element.
++        el = found;
+         clearTimer();
+-        resolve(el);
++        resolve(found);
+         return;
+       }
+       if (i > max) {
+@@ -1131,7 +1179,16 @@ View.prototype.ensureElement = function (el) {
          reject()
        }
      };
@@ -165,8 +195,156 @@ index e035048..43c1c6a 100644
      explain: LOCALE.REQUIRE_TEXT
    },
    gender: {
+diff --git a/node_modules/@drumee/ui-core/letc/widgets/list/index.js b/node_modules/@drumee/ui-core/letc/widgets/list/index.js
+index 838406c..dacf105 100644
+--- a/node_modules/@drumee/ui-core/letc/widgets/list/index.js
++++ b/node_modules/@drumee/ui-core/letc/widgets/list/index.js
+@@ -54,7 +54,16 @@ class __list extends LetcBox {
+         }
+       });
+     }
+-    RADIO_BROADCAST.on(_e.responsive, this.responsive.bind(this));
++    // Bind ONCE and keep the reference. Backbone.Radio.off matches listeners by
++    // function identity, so subscribing with `this.responsive.bind(this)` and
++    // unsubscribing with a SECOND `this.responsive.bind(this)` (a different
++    // object) removed nothing: every List ever built stayed subscribed to
++    // RADIO_BROADCAST for the life of the page, and the closure kept the widget
++    // — and therefore its whole DOM subtree — alive with it. Measured on
++    // production 2026-09-10: listeners 10k -> 122k over one desk session, never
++    // returning below ~71k, with the DOM stuck above 100k nodes.
++    this._onResponsive = this.responsive.bind(this);
++    RADIO_BROADCAST.on(_e.responsive, this._onResponsive);
+     this._onMouseWheel = this._onMouseWheel.bind(this)
+     this._initApi();
+   }
+@@ -72,7 +81,16 @@ class __list extends LetcBox {
+     } catch (e) {
+ 
+     }
+-    RADIO_BROADCAST.off(_e.responsive, this.responsive.bind(this));
++    // GUARDED, and the guard is not paranoia. Backbone's `off(name, undefined)`
++    // means "remove EVERY handler for this event" — so a List whose initialize
++    // never ran to completion (a subclass that skips super, a throw partway)
++    // would, on destroy, silently unsubscribe every OTHER widget in the app
++    // from `responsive`. The old code passed a fresh bound function, which
++    // matched nothing and was merely useless; passing an undefined field here
++    // would be actively destructive.
++    if (this._onResponsive) {
++      RADIO_BROADCAST.off(_e.responsive, this._onResponsive);
++    }
+   }
+ 
+   /**
+@@ -218,9 +236,21 @@ class __list extends LetcBox {
+    * 
+    * @returns 
+    */
+-  initContent() {
++  initContent(resolved) {
+     const id = `${this._id}-container`;
+-    const c = document.getElementById(id);
++    // Use the node ensureElement already resolved. Looking the id up again
++    // here can come back null even though ensureElement had just found it --
++    // the container is re-fed while this is queued -- and every line below
++    // dereferences it, so the widget threw partway through initialisation
++    // after having already set __container and fired `ready`. The lookup is
++    // kept as the fallback for a caller that passes nothing.
++    const c = (resolved && resolved.nodeType === 1) ? resolved : document.getElementById(id);
++    if (!c) {
++      // Nothing to bind to. Leave the widget uninitialised rather than half
++      // initialised: onDomRefresh runs again on the next feed.
++      this.warn(`initContent: no container for id=${id}`);
++      return;
++    }
+     this.__container = c;
+     //this.trigger(_e.ready);
+     let kids = this.mget(_a.kids) || [];
+@@ -749,7 +779,7 @@ class __list extends LetcBox {
+         }
+       } else {
+         if ((this._curPage > 1) || this.mget(_a.defaults)) {
+-          this.collection.add(data);
++          this._appendPage(data);
+         } else {
+           this.collection.cleanSet(data);
+         }
+@@ -766,6 +796,74 @@ class __list extends LetcBox {
+     }
+   }
+ 
++  /**
++   * Append one fetched page at the END of the list.
++   *
++   * `this.collection.add(data)` looks like it only adds, but Marionette
++   * re-attaches EVERY child on it, not just the new rows.
++   * `_onCollectionUpdate` -> `sort()` -> `_sortChildren()` asks
++   * `getComparator()`, which answers `_viewComparator` (order by collection
++   * index) for any collection view with `sortWithCollection` on -- the
++   * default. A truthy comparator makes `_sortChildren` `delete
++   * this._addedViews`, so `_renderChildren` falls back to
++   * `this.children._views`: all of them go into a DocumentFragment and are
++   * appended back. Two things follow, and together they are the paging
++   * complaint on the file tab.
++   *
++   *  1. THE SCROLL CONTAINER IS EMPTY for the length of that operation. Any
++   *     layout read while it is -- a tile measuring itself, a GSAP tween
++   *     reading a computed matrix, a partition pass -- clamps `scrollTop` to
++   *     0, and re-appending does not bring it back, so the list snaps to the
++   *     top exactly as the new page arrives. Measured in Chrome against this
++   *     repo's Backbone/Marionette: scrolled to 1500, one layout read during
++   *     the append, scrollTop comes back 0. On the add-to-end path below it
++   *     stays 1500.
++   *  2. The cost is O(rows already loaded) per page, and in the folder grid
++   *     every tile also leaves its `.workspace-/.folder-/.file-section`
++   *     wrapper, so window/utils.js `_doPartition` has to re-partition the
++   *     WHOLE list while the skin hides it (`:not([data-partitioning="0"]) >
++   *     [data-filetype]`). Page 10 of a folder rebuilt 450 tiles to show 45.
++   *
++   * Neither is needed for a page append. With no comparator on the collection
++   * Backbone puts the new rows at the end, in order, so the DOM the existing
++   * children already have IS the order to render -- turning the re-sort off
++   * for the duration of the add keeps `_addedViews`, and Marionette attaches
++   * the new rows alone.
++   *
++   * A collection that DOES carry a comparator (the column sort in
++   * window/core.js `sortContent`, the folder's alphabetical grid pass) is left
++   * on the old path on purpose: there the new rows interleave, so the DOM
++   * genuinely has to be re-ordered. All we can do there is put the scroll
++   * offset back, which is what the snapshot below is for -- it is restored
++   * within the same task, so the jump is never painted.
++   */
++  _appendPage(data) {
++    const c = this.collection;
++    const sorted = !!(c && c.comparator);
++    const el = this.__container;
++    const top = (sorted && el) ? el.scrollTop : null;
++
++    // Restore by DELETING the own property when there was none, rather than
++    // writing `undefined` back: `sortWithCollection` lives on the prototype
++    // (Marionette) unless mergeOptions copied it, and an own `undefined`
++    // would shadow the prototype's `true` and disable sorting for good.
++    const owned = Object.prototype.hasOwnProperty.call(this, 'sortWithCollection');
++    const previous = this.sortWithCollection;
++    if (!sorted) this.sortWithCollection = false;
++    try {
++      c.add(data);
++    } finally {
++      if (!sorted) {
++        if (owned) {
++          this.sortWithCollection = previous;
++        } else {
++          delete this.sortWithCollection;
++        }
++      }
++    }
++    if (top != null && el.scrollTop !== top) el.scrollTop = top;
++  }
++
+   /**
+    * 
+    */
 diff --git a/node_modules/@drumee/ui-core/letc/widgets/profile/index.js b/node_modules/@drumee/ui-core/letc/widgets/profile/index.js
-index 13edb44..e8df4bc 100644
+index 13edb44..fa378f5 100644
 --- a/node_modules/@drumee/ui-core/letc/widgets/profile/index.js
 +++ b/node_modules/@drumee/ui-core/letc/widgets/profile/index.js
 @@ -16,7 +16,23 @@ class __user_profile extends LetcBox {
@@ -243,7 +421,72 @@ index 13edb44..e8df4bc 100644
      return `
        <img class="${this.fig.family}__icon ${this.fig.family}__picture picture" data-flow="x" src="${src}">
      `
-@@ -168,8 +212,20 @@ class __user_profile extends LetcBox {
+@@ -116,30 +160,43 @@ class __user_profile extends LetcBox {
+    * 
+    */
+   initiales() {
+-    let firstname, lastname;
+-    try {
+-      firstname = this.mget(_a.firstname)[0] || '?';
+-    } catch (error) {
+-      firstname = '';
+-    }
+-    try {
+-      lastname = this.mget(_a.lastname)[0] || firstname[0] || "";
+-    } catch (error1) {
+-      lastname = '';
+-    }
++    // Never invent a letter. The previous form read `mget(firstname)[0] || '?'`,
++    // so an EMPTY-STRING firstname (not a missing one — `''[0]` is undefined and
++    // does not throw) became '?', and the lastname line then copied that '?'
++    // through its `|| firstname[0]` fallback: a person whose name parts are both
++    // '' rendered the literal "??" in their avatar. Worse, "??" is two characters
++    // long, so it also defeated the two escape hatches below it — the whole-name
++    // fallback (guarded on a zero-length result) and the empty-initials path in
++    // _show() that draws the generic avatar. Callers legitimately pass '' when
++    // they normalise a missing part (`mget(_a.firstname) || ''`), and some rows
++    // genuinely have no parts at all: hub_get_members_by_type overwrites
++    // firstname/lastname from the REQUESTING user's contact book, where a contact
++    // created from an email invitation has both NULL — which is why the same
++    // member could show initials on one participant's screen and "??" on
++    // another's, with the name beside it still correct.
++    const words = (v) => `${v == null ? '' : v}`.trim().split(/[\s,]+/).filter(Boolean);
++    const letter = (v) => (v ? v[0] : '');
+ 
+-    if ((firstname.length + lastname.length) === 0) {
+-      let a, b;
+-      try {
+-        [a, b] = this.mget(_a.surname).split(/ /);
+-        firstname = a[0];
+-        lastname = b[0];
+-      } catch (error2) {
+-        firstname = '';
+-      }
++    let fw = words(this.mget(_a.firstname));
++    const lw = words(this.mget(_a.lastname));
++
++    if (!fw.length && !lw.length) {
++      // No name parts at all. Every caller that holds only a whole name puts it
++      // in one of these — `surname` (contacts, member services), `fullname` (a
++      // members roster, an attendee card), `username` (a conference display
++      // name). Read it here so those surfaces derive the SAME initials, and the
++      // same colorFromName() colour, as the ones that do pass the parts.
++      fw = words(this.mget(_a.surname) || this.mget(_a.fullname)
++        || this.mget(_a.username) || this.mget('display'));
+     }
+ 
+-    return firstname + lastname;
++    // Several callers hand a WHOLE name in as `firstname` (it is the only field
++    // some of their sources fill). Take the second word as the last initial
++    // instead of repeating the first letter — "Vy Luong" is "VL" here, matching
++    // what the surfaces that pass real parts show for the same person.
++    // Genuinely nothing to show returns '', so _show() falls through to the
++    // generic avatar template rather than printing punctuation at the user.
++    return letter(fw[0]) + (letter(lw[0]) || letter(fw[1]));
+   }
+ 
+   /**
+@@ -168,8 +225,20 @@ class __user_profile extends LetcBox {
     * 
     */
    loadImage() {
@@ -265,7 +508,7 @@ index 13edb44..e8df4bc 100644
        this.el.dataset.default = 1;
        this._show('i');
        return;
-@@ -186,7 +242,7 @@ class __user_profile extends LetcBox {
+@@ -186,7 +255,7 @@ class __user_profile extends LetcBox {
      };
  
      const imageType = this.mget(_a.type) || _a.vignette
@@ -274,7 +517,7 @@ index 13edb44..e8df4bc 100644
    }
  
    /**
-@@ -194,7 +250,7 @@ class __user_profile extends LetcBox {
+@@ -194,7 +263,7 @@ class __user_profile extends LetcBox {
     * @param {*} e
      */
    _onError(e) {
@@ -282,4 +525,73 @@ index 13edb44..e8df4bc 100644
 +    __cache[this._avatarKey()] = 1;
      this.el.dataset.default = 1;
      return this._show('i');
+   }
+diff --git a/node_modules/@drumee/ui-core/letc/widgets/text/index.js b/node_modules/@drumee/ui-core/letc/widgets/text/index.js
+index 83c2dda..4e52e30 100644
+--- a/node_modules/@drumee/ui-core/letc/widgets/text/index.js
++++ b/node_modules/@drumee/ui-core/letc/widgets/text/index.js
+@@ -103,9 +103,63 @@ class ___drumee_text extends Marionette.View {
+     let c = m.content || m.value || m.label || m.text || '';
+     let tags = this.mget(_a.tags) ||  _K.allowed_tag;
+ 
++    // THE SANITIZER IS THE MOST EXPENSIVE THING THIS APP DOES, so don't call it
++    // on content that cannot possibly need it.
++    //
++    // DOMPurify builds a THROWAWAY `Document` per sanitize() call
++    // (implementation.createHTMLDocument) and parses the string into it. Note is
++    // the most-used primitive in the UI — every label, filename, menu item and
++    // button caption is one — so this ran for essentially every piece of text on
++    // screen. A production trace of one 40 s desk session (2026-09-10) counted
++    // 986 sanitize calls, 983 live Documents and 22,008 ParseHTML events, with
++    // the heap going 36 MB -> 175 MB.
++    //
++    // Without `<` or `&` there is no markup and no entity to decode, so
++    // DOMPurify is an identity function on the string and the parse is pure
++    // waste. `>` and quotes are inert in a text position. Anything containing
++    // either character still takes the full path below, unchanged — this
++    // narrows WHEN the sanitizer runs, never WHAT it does.
++    const plain = (typeof c === 'string' && !/[<&]/.test(c));
++
++    // AND DON'T PARSE HTML EITHER. The sanitizer skip above stopped the
++    // throwaway Document per Note, but this assignment still handed the parser
++    // a fresh markup string for every label, filename, menu item and button
++    // caption on screen — even when the content was a bare word.
++    //
++    // An `innerHTML =` is an HTML parse plus a full subtree replacement, and the
++    // subtree replacement is what a MutationObserver sees. That matters beyond
++    // our own cost: content-blocker extensions hook a document-wide observer and
++    // re-run their element-hiding filters over whatever we mutate. A production
++    // trace (2026-09-15) measured 13,773 ParseHTML events in 104s — 133/s — and
++    // in that same trace one ad-filtering extension burned 25.7s of CPU, versus
++    // 10ms in a second trace of the same browser where our mutation rate was 8x
++    // lower. We are billed for that churn twice: once ourselves, once per
++    // extension the user happens to run.
++    //
++    // When `plain` holds there is no markup to parse, so build the one element
++    // directly and set its text. `textContent` writes a single text node with no
++    // parser involved. Same id, same class string (including the literal
++    // "undefined" when innerClass is unset — matched deliberately so no CSS
++    // selector changes), same rendered result: the surrounding newlines the
++    // template used to emit are leading/trailing whitespace in a block context
++    // and were never painted.
++    //
++    // Anything with `<` or `&` still takes the sanitize + innerHTML path below,
++    // byte for byte as before.
++    if (plain) {
++      const inner = document.createElement('div');
++      inner.id = `${m.widgetId}-inner`;
++      inner.className = `${m.innerClass} ${this.fig.family} inner note-content`;
++      inner.textContent = c;
++      this.el.replaceChildren(inner);
++      return;
++    }
++
++    const clean = dompurify.sanitize(c, {ADD_ATTR: ['target'], ALLOWED_TAGS: tags});
++
+     this.el.innerHTML = `
+       <div id="${m.widgetId}-inner" class="${m.innerClass} ${this.fig.family} inner note-content">
+-        ${dompurify.sanitize(c, {ADD_ATTR: ['target'], ALLOWED_TAGS: tags})}
++        ${clean}
+       </div>`
+ 
    }

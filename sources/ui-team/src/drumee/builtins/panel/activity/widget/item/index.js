@@ -1,4 +1,48 @@
 
+// WHY THE LINKS BELOW SAY "reveal" AND NOT "open".
+//
+// Every workspace-opening notification used to navigate to
+// "#/desk/wm/open/?...", which routes to Wm.openFileLocation and launches a
+// FLOATING window_folder — the pre-2.0 UI, reported by Lexis for every type
+// (chat, task, file...). "#/desk/wm/reveal/?..." is the same payload landed in
+// the DOCKED workspace instead (Wm.openNotificationLocation → loadWorkspace),
+// which is where the rest of the desk already puts a workspace — the hub-level
+// team-chat row at the bottom of this file has always gone there via
+// "#/desk/wm/teamchat/".
+//
+// The payload is IDENTICAL and deliberately so: hub_id / nid / pid / filetype /
+// activeTab / open_task_id / highlight all keep their meaning, so nothing about
+// how these rows are built had to change. "#/desk/wm/open/" itself is untouched
+// and still serves mail, chat, share and compact deep links.
+const { isMeetingRollup, meetingDeepLink } = require('./meeting-link');
+
+// What bookmark_add stores as a saved row's snapshot: the row as the server
+// sent it, minus what the list and the panel attach to the model (views and
+// handlers, which cannot be serialised) and minus per-render/per-state fields
+// the server recomputes when it serves the snapshot back (bookmark_rows).
+const SNAPSHOT_SKIP = new Set([
+  'kind', 'uiHandler', 'logicalParent', 'partHandler', 'widgetId',
+  'day_header', 'is_saved', 'is_read', 'pinned_view', 'pinned_source', 'bookmark_key',
+]);
+function snapshotRow(attrs) {
+  const out = {};
+  for (const k of Object.keys(attrs || {})) {
+    if (SNAPSHOT_SKIP.has(k)) continue;
+    const v = attrs[k];
+    if (_.isFunction(v)) continue;
+    // Only plain data: a Backbone view or model here would be circular.
+    if (v && typeof v === 'object' && !Array.isArray(v)
+      && Object.getPrototypeOf(v) !== Object.prototype) continue;
+    out[k] = v;
+  }
+  try {
+    JSON.stringify(out);
+  } catch (e) {
+    return null;
+  }
+  return out;
+}
+
 function parseJson(value, fallback) {
   if (!value) return fallback;
   if (_.isObject(value)) return value;
@@ -20,6 +64,108 @@ function getCategory(data) {
   if (ev === 'hub.invite_received') return 'hub_invite';
   const dot = ev.indexOf('.');
   return dot > 0 ? ev.slice(0, dot) : '';
+}
+
+// ONE file event, TWO category strings — every switch that routes a file
+// notification has to accept both.
+//
+// The panel opens with the Unread toggle OFF (panel/activity `_unreadsOnly = 0`),
+// and that feed is `activity_get_feed_all`, which stamps every mfs_changelog row
+// `event_type = 'mfs'` and leaves `category` NULL. getCategory prefers
+// `event_type`, so those rows resolve to 'mfs' and NEVER to 'media'.
+// Turn the toggle ON and the very same event arrives from
+// `mfs_get_activity_feed`, which returns neither column — so it falls through to
+// the 'media.' event prefix and resolves to 'media'.
+//
+// The row SKELETON has always handled both (`case 'media': case 'mfs':`), which
+// is why these rows look completely normal; only the routing below was keyed on
+// 'media' alone, so with the default toggle a file notification rendered fine
+// and then did nothing at all when clicked.
+function isFileCategory(category) {
+  return category === _a.media || category === _a.mfs;
+}
+
+/**
+ * A share-open notification ("{who} opened {item}") also opens that item's
+ * share panel, with the opener's rows marked in "View access list"
+ * (window/secure-share focusAccessEvent). The reveal link above still does
+ * everything it did; this runs beside it.
+ *
+ * WAITS FOR THE LANDING (`landing`, the promise of Wm.openNotificationLocation,
+ * which resolves to the workspace pane once it is mounted, raised and
+ * navigated). Launched earlier, the panel would be wiped when loadWorkspace
+ * re-feeds headlessLayer — the pool a launched window lands in — or buried when
+ * the landing raises the pane over it. The panel's lazy chunk is fetched during
+ * that same wait, so it adds no time of its own. No landing (the hash fallback)
+ * means no panel: the click then does exactly what it did before.
+ *
+ * A panel already on screen for this node (drawer, column or floating) is
+ * pointed instead of doubled. A hidden one — the column stays mounted after its
+ * ✕ — does not count: that one is out of sight.
+ *
+ * Best-effort: every failure leaves the click exactly as it was before.
+ */
+function openShareOpenAccess({ landing, hub_id, nid, filetype, name, focus }) {
+  const wm = window.Wm;
+  if (!hub_id || !nid || !wm || !landing) return;
+  const chunk = Promise.resolve(Kind.waitFor("window_secure_share")).catch(() => {});
+  Promise.all([landing, chunk])
+    .then(([pane]) => {
+      if (!pane) return;
+      const onScreen = (wm.getItemsByKind("window_secure_share") || []).find(
+        (p) =>
+          p &&
+          !(p.isDestroyed && p.isDestroyed()) &&
+          `${p.mget(_a.nid)}` === `${nid}` &&
+          _.isFunction(p.focusAccessEvent) &&
+          p.el &&
+          p.el.getClientRects().length > 0,
+      );
+      if (onScreen) {
+        // Only a standalone window raises; raising a drawer or a column would
+        // lift it out of its folder window (window/core raise → z 10000).
+        if (!onScreen._embedded && _.isFunction(onScreen.raise)) onScreen.raise();
+        return onScreen.focusAccessEvent(focus);
+      }
+      // The workspace itself was shared: its link is minted on the root folder
+      // (window/folder/secure-share-column secureShareNid), whose node_filetype
+      // the feed reports as "root" (measured on stage), not "hub".
+      const isWorkspace =
+        filetype === _a.hub ||
+        filetype === "root" ||
+        `${pane.mget(_a.actual_home_id)}` === `${nid}`;
+      const isFolder = isWorkspace || !filetype || filetype === _a.folder;
+      const subject = isWorkspace ? "workspace" : isFolder ? "folder" : "file";
+      const uid = `window_secure_share-${nid}`;
+      const launched = wm.launch(
+        {
+          kind: "window_secure_share",
+          wm_unique_id: uid,
+          nid,
+          hub_id,
+          filetype: isFolder ? _a.folder : filetype,
+          area: pane.mget(_a.area),
+          // Slides in and out, like the player's Share (window/secure-share `_floating`).
+          floating: 1,
+          ...(isWorkspace ? { manage_access: 1 } : {}),
+          subject,
+          subject_data: {
+            name: name || (isWorkspace ? pane.mget(_a.filename) || pane.mget(_a.hub_name) : ""),
+            filetype: isWorkspace ? _a.hub : isFolder ? _a.folder : filetype,
+            area: pane.mget(_a.area),
+          },
+          access_focus: focus,
+        },
+        { explicit: 1, singleton: 1 },
+      );
+      // false = the singleton already exists but is out of sight (minimised):
+      // launch wakes it, and the focus has to be handed to it directly.
+      if (launched === false) {
+        const w = (wm.getItemsByAttr("wm_unique_id", uid) || [])[0];
+        if (w && _.isFunction(w.focusAccessEvent)) w.focusAccessEvent(focus);
+      }
+    })
+    .catch((e) => console.warn("[activity] share-open panel failed", e));
 }
 
 /**
@@ -73,17 +219,37 @@ class __activity_item extends LetcBox {
     require('./skin');
     super.initialize(opt);
     this.declareHandlers();
-    if (opt.event === 'media.workspace_move') {
+    // Taken before anything below reshapes the model: bookmarking sends this
+    // so the server can pin the row, and the server only keeps it if it still
+    // hashes to the row's bookmark_key.
+    this._rawRow = snapshotRow(this.model.toJSON());
+    if (opt.event === 'media.workspace_move' || opt.event === 'media.copy') {
       const source = parseJson(opt.src, {});
       const destination = parseJson(opt.dest, {});
       // The changelog belongs to the source workspace, while `dest` describes
       // a folder the recipient may not be allowed to open. Keep the source node
       // as the row target and retain destination data for the renderer.
+      //
+      // media.copy needs exactly this, and for a sharper reason. A copy row is
+      // filed against the SOURCE hub, so the people who receive it are the
+      // source workspace's members -- while `dest` is routinely a node in the
+      // copier's own personal space that none of them can open. That is what
+      // made these rows click through to nothing.
+      //
+      // Note the two branches below could never have caught a copy anyway:
+      // `src`/`dest` arrive as JSON STRINGS (the feed hands the columns through
+      // untouched -- activity.js reads them via asObject()), so `opt.dest?.nid`
+      // is undefined on a string and nid fell back to "0". parseJson handles
+      // both shapes, which is why this branch has to do the work.
       this.mset({
         ...source,
         source_hub_id: opt.hub_id,
         destination_hub_id: destination.hub_id,
         destination_hub_name: destination.hub_name || destination.workspace_name,
+        // The one destination fact a copy row can always rely on. There is no
+        // hub_name on a copy's `dest`, but `area` tells a personal space from a
+        // shared one, which is the distinction the sentence has to make.
+        destination_area: destination.area,
       });
     } else if (opt.dest?.nid) {
       this.mset(opt.dest)
@@ -93,7 +259,29 @@ class __activity_item extends LetcBox {
     let category = getCategory(opt);
     let sender = getSender(opt);
     let autho_id = getAuthorId(opt)
-    if ((category === _a.media || opt.event === 'media.workspace_move') && (opt.id || opt.key_id)) {
+    // media.copy is named explicitly for the same reason media.workspace_move
+    // is: a raw activity_get_feed_all row carries category NULL and
+    // event_type 'mfs', so `category` here resolves to 'mfs' and never equals
+    // _a.media ('media').
+    //
+    // The read handler would still find the id on its own -- it falls back to
+    // mget('id'), and on a changelog row that IS the changelog id -- so this
+    // is not load-bearing today. It is set anyway because the click branch
+    // added below passes `changelog_id` as an explicit argument, and a row
+    // that names its own id is better than one relying on that fallback
+    // chain staying in place.
+    //
+    // 🚨 It IS load-bearing for a raw `activity_get_feed_all` row (category
+    // 'mfs'), and that is why isFileCategory is used here rather than a bare
+    // `=== _a.media`. The mget('id') fallback the paragraph above relies on has
+    // already been destroyed by the `mset(opt.src)` / `mset(opt.dest)` above:
+    // a changelog row's `src`/`dest` payload carries its own `id` — the NODE id
+    // — which overwrites the changelog id on the model. Reading or trashing
+    // such a row therefore posted a 16-hex node id into `changelog_id`, an INT
+    // column, so the row came straight back on the next refresh.
+    if ((isFileCategory(category)
+      || opt.event === 'media.workspace_move'
+      || opt.event === 'media.copy') && (opt.id || opt.key_id)) {
       this.mset({ changelog_id: opt.id || opt.key_id, item_type: 'mfs' })
     }
 
@@ -115,6 +303,15 @@ class __activity_item extends LetcBox {
         : opt.event === 'task_assigned' ? 'contact_invite'
         : opt.event === 'task_column_change' ? 'contact_invite'
         : opt.event === 'task_mention' ? 'contact_invite'
+        // A scheduled-meeting notice (invited / rescheduled / cancelled) is a
+        // yp.contact_activity row like the task events. Falling back to 'mfs'
+        // would dismiss a changelog id that does not exist, so the row would
+        // reappear on the next reload.
+        : opt.event === 'meeting_notice' ? 'contact_invite'
+        // Every other yp.contact_activity row (invite_accepted, invite_received,
+        // invite_refused, …) for the same reason: as 'mfs' a read dismissed a
+        // changelog id that does not exist and came back unread on reload.
+        : opt.event_type === 'contact' ? 'contact_invite'
         : 'mfs');
     const item_key = `${item_type}:${opt.id || opt.hub_id || opt.drumate_id || opt.key_id || ''}`;
     this.mset({ category, sender, autho_id, item_type, item_key })
@@ -151,6 +348,11 @@ class __activity_item extends LetcBox {
     // whole panel (repro: Shares → All activity closed it). The panel now
     // closes only via the explicit close button / sidebar toggle.
     this.feed(require('./skeleton')(this));
+    // A saved row is shown pinned on top by the panel, so its copy in the feed
+    // stays out of sight until it is unsaved (panel _pinFromRow / _unpinKey).
+    if (parseInt(this.mget('is_saved'), 10) === 1 && !this.mget('pinned_view')) {
+      this.el.dataset.twin = '1';
+    }
   }
 
   /**
@@ -175,6 +377,10 @@ class __activity_item extends LetcBox {
     switch (service) {
       case 'toggle-favorite':
         if (!cmd || !cmd.el) return;
+        // One request at a time per row: a second press while the first is in
+        // flight could land out of order and leave the store opposite to the
+        // button.
+        if (this._bookmarkPending) return;
         const next = cmd.el.dataset.state === '1' ? '0' : '1';
         cmd.el.dataset.state = next;
         if (cmd.mset) cmd.mset(_a.state, parseInt(next));
@@ -186,12 +392,12 @@ class __activity_item extends LetcBox {
             service: 'toggle-favorite',
             favorited: next === '1' ? 1 : 0,
             item_key: this.mget('item_key'),
-            message_id: this.mget('message_id')
-              || this.mget('key_id')
-              || this.mget(_a.id)
-              || this.mget('id')
-              || this.mget(_a.drumate_id),
-            hub_id: this.mget(_a.hub_id),
+            // Server-computed identity from activity.get_feed; the same key
+            // comes back on every refresh, which is what makes the saved state
+            // survive closing the panel or switching tabs.
+            bookmark_key: this.mget('bookmark_key'),
+            row: this._rawRow,
+            button: cmd,
           });
         }
         return;
@@ -199,6 +405,10 @@ class __activity_item extends LetcBox {
       case 'dismiss-activity':
         switch (category) {
           case _a.media:
+          // A raw mfs_changelog row reaches here as 'mfs', never as 'media'
+          // (see isFileCategory). Without this label the switch matched nothing
+          // and the trash button on a file notification was inert.
+          case _a.mfs:
             this.triggerHandlers({ service: 'dismiss-activity', hub_id, nid, item_type, changelog_id })
             return
 
@@ -249,6 +459,22 @@ class __activity_item extends LetcBox {
    * @returns 
    */
   onUiEvent(cmd, args = {}) {
+    // ⚠️ EVERY dismiss in THIS method fires 'read-activity', never
+    // 'dismiss-activity'. This is the body-click path -- the user opened the
+    // notification -- and since 2026-08-28 that marks it read and LEAVES THE
+    // ROW IN PLACE, without the unread tint. Firing 'dismiss-activity' here is
+    // what used to delete a notification simply because it had been read, which
+    // is the bug Lexis asked to fix; do not "tidy" the two names back together.
+    //
+    // 'dismiss-activity' belongs exclusively to _dispatchService above, which
+    // handles the trash BUTTON, and it now deletes permanently.
+    //
+    // Day-group caption ("Today" / "Yesterday" / "Aug 13"). It lives inside the
+    // row so it scrolls with the feed, but it is a label and must never
+    // navigate. Read the service off the CLICKED widget rather than the resolved
+    // `service` below: that chain prefers this row's own model service, which
+    // would shadow the caption's and route the click as if the row was clicked.
+    if (cmd && cmd.get && cmd.get(_a.service) === 'day-header') return;
     const service = args.service || this.get(_a.service) || cmd.get(_a.service);
     const parent = this.mget('logicalParent');
     const cmdClass = cmd && cmd.el && cmd.el.classList ? cmd.el.classList[0] : null;
@@ -296,6 +522,42 @@ class __activity_item extends LetcBox {
       }
       return;
     }
+    // 🚨 READ OFF THE CLICKED WIDGET, NOT `service`, for exactly the reason the
+    // day-header guard above does. A hub-invite row carries
+    // `service: 'open-workspace-invitation'` on its OWN model (the panel sets
+    // it when it builds the row), and the `service` chain prefers that over the
+    // button's — so both answers would resolve as "the row was clicked", fall
+    // through to _dispatchService, and navigate to the workspace instead of
+    // answering the invitation. The trash and bookmark buttons survive the same
+    // shadowing only because _dispatchService re-resolves from `cmd`.
+    const clicked = args.service || (cmd && cmd.get && cmd.get(_a.service));
+    if (clicked === 'accept-invite' || clicked === 'decline-invite') {
+      // Forwarded to the activity panel (logicalParent) for the same reason
+      // open-access-request is: _dispatchService knows only toggle-favorite and
+      // dismiss-activity, so anything else dies there silently — and the panel
+      // is what owns the feed refresh and the navigation that follow an answer.
+      //
+      // The token is passed in the args rather than looked up by the panel: the
+      // list factory consumes `kind`, so a kind-based lookup of a forwarded
+      // item can miss, and an answer that silently did nothing is exactly the
+      // failure this whole row exists to remove.
+      if (parent && parent.onUiEvent) {
+        parent.onUiEvent(this, {
+          // `clicked`, NOT `service` — the same shadowing the guard above is
+          // about. Forwarding `service` would hand the panel
+          // 'open-workspace-invitation' and it would match no case at all.
+          service: clicked,
+          invite_token: this.mget('invite_token'),
+          // Only as the fallback target for the post-accept navigation: the
+          // accept response carries its own hub_id and is preferred, because it
+          // is the workspace the TOKEN resolved rather than the one this row
+          // happens to name.
+          hub_id,
+          item_key,
+        });
+      }
+      return;
+    }
     if (service === 'join-meeting' || service === 'open-meeting-chat') {
       // Meeting notification. The green button joins the call directly
       // ('join-meeting'); clicking the row opens the folder chat where the
@@ -320,10 +582,10 @@ class __activity_item extends LetcBox {
       // open_task_id → the tasks panel opens this task's detail after its list
       // loads (activity.list flattens task_id alongside task_nid/task_hub_id).
       const tTask = this.mget('task_id');
-      let tHash = `#/desk/wm/open/?hub_id=${tHub}&nid=${tNid}&filetype=folder&pid=0&activeTab=${_a.task}`;
+      let tHash = `#/desk/wm/reveal/?hub_id=${tHub}&nid=${tNid}&filetype=folder&pid=0&activeTab=${_a.task}`;
       if (tTask) tHash += `&open_task_id=${tTask}`;
       location.hash = tHash + `&ts=${ts}`;
-      this.triggerHandlers({ service: 'dismiss-activity', hub_id: tHub, item_type, item_key, changelog_id });
+      this.triggerHandlers({ service: 'read-activity', hub_id: tHub, item_type, item_key, changelog_id });
       this.triggerHandlers({ service: 'close-activity-panel' });
       return;
     }
@@ -336,17 +598,72 @@ class __activity_item extends LetcBox {
       const tNidRaw = this.mget('nid');
       const tNid = (tNidRaw != null && `${tNidRaw}` !== '0') ? tNidRaw : 0;
       const tTask = this.mget('task_id');
-      let tHash = `#/desk/wm/open/?hub_id=${tHub}&nid=${tNid}&filetype=folder&pid=0&activeTab=${_a.task}`;
+      let tHash = `#/desk/wm/reveal/?hub_id=${tHub}&nid=${tNid}&filetype=folder&pid=0&activeTab=${_a.task}`;
       if (tTask) tHash += `&open_task_id=${tTask}`;
       location.hash = tHash + `&ts=${ts}`;
-      this.triggerHandlers({ service: 'dismiss-activity', hub_id: tHub, item_type, item_key, changelog_id });
+      this.triggerHandlers({ service: 'read-activity', hub_id: tHub, item_type, item_key, changelog_id });
+      this.triggerHandlers({ service: 'close-activity-panel' });
+      return;
+    }
+    // A scheduled-meeting notice. The meeting lives as a `schedule` node in a
+    // folder (room.book creates it at the workspace root by default), so the
+    // click opens that folder — the calendar there is where the meeting can be
+    // seen, joined or edited. A CANCELLED meeting's node is hard-deleted
+    // (permission_revoke DELETEs a schedule row), so it deliberately opens the
+    // container rather than the node: pointing at a deleted nid would render
+    // the "file you requested does not exist" error.
+    if (this.mget('event') === 'meeting_notice') {
+      const mHub = this.mget('meeting_hub_id') || hub_id;
+      const mNidRaw = this.mget('meeting_pid');
+      const mNid = (mNidRaw != null && `${mNidRaw}` !== '0') ? mNidRaw : 0;
+      if (mHub) {
+        // activeTab=meeting: land on the folder's MEETING tab (its calendar),
+        // which is what the paragraph above has always described as the point of
+        // this row — "the calendar there is where the meeting can be seen,
+        // joined or edited". The tab was simply never put on the link, so every
+        // scheduled-meeting notice opened the folder on FILES.
+        //
+        // 🚨 Safe ONLY because this is the docked route. window_folder's
+        // onDomRefresh reads a LAUNCH-TIME `activeTab` of "meeting" as
+        // "_launchMeetingStandalone()" — i.e. START/JOIN A CALL, not show the
+        // tab. openNotificationLocation never puts activeTab in the model: it
+        // calls showFolderTab() on the pane after it mounts, which renders the
+        // schedule. Verified live: the calendar opens and no call window is
+        // created. Do NOT copy this onto a Wm.launch/addWindow call.
+        //
+        // open_meeting_nid additionally opens THIS meeting's card on that
+        // calendar (openMeetingDeepLink, the Personal Calendar's call). Not for
+        // a cancellation: its node is hard-deleted, so the card would only be
+        // refused with "That meeting no longer exists" — that row keeps landing
+        // on the calendar alone. activeTab stays on the link as the fallback
+        // for a row without the meeting's id.
+        const mMeeting = this.mget('meeting_kind') !== 'cancelled' && this.mget('meeting_nid');
+        location.hash = `#/desk/wm/reveal/?hub_id=${mHub}&nid=${mNid}&filetype=folder&pid=0&activeTab=${_a.meeting}`
+          + meetingDeepLink(mMeeting, this.mget('meeting_stime'))
+          + `&ts=${ts}`;
+      }
+      this.triggerHandlers({ service: 'read-activity', hub_id: mHub, item_type, item_key, changelog_id });
+      this.triggerHandlers({ service: 'close-activity-panel' });
+      return;
+    }
+    if (this.mget('event') === 'media.copy') {
+      // Land on the file in the workspace this notification is ABOUT.
+      //
+      // The copy's destination belongs to whoever made the copy and is not
+      // openable by the people who receive the row (see initialize), so the
+      // only node here that the reader can actually be shown is the source.
+      // highlight=1 reveals it in its folder, the same landing every other
+      // file notification uses.
+      const sourceHubId = this.mget('source_hub_id') || hub_id;
+      location.hash = `#/desk/wm/reveal/?hub_id=${sourceHubId}&nid=${target_nid}&filetype=${target_filetype}&pid=${parent_id}&highlight=1&ts=${ts}`;
+      this.triggerHandlers({ service: 'read-activity', hub_id: sourceHubId, nid: target_nid, item_type, changelog_id });
       this.triggerHandlers({ service: 'close-activity-panel' });
       return;
     }
     if (this.mget('event') === 'media.workspace_move') {
       const sourceHubId = this.mget('source_hub_id') || hub_id;
-      location.hash = `#/desk/wm/open/?hub_id=${sourceHubId}&nid=0&filetype=folder&pid=0&ts=${ts}`;
-      this.triggerHandlers({ service: 'dismiss-activity', hub_id: sourceHubId, item_type, changelog_id });
+      location.hash = `#/desk/wm/reveal/?hub_id=${sourceHubId}&nid=0&filetype=folder&pid=0&ts=${ts}`;
+      this.triggerHandlers({ service: 'read-activity', hub_id: sourceHubId, item_type, changelog_id });
       this.triggerHandlers({ service: 'close-activity-panel' });
       return;
     }
@@ -364,10 +681,33 @@ class __activity_item extends LetcBox {
         break;
 
       case _a.media:
+      // Same event, other category string (see isFileCategory). This is the
+      // shape the panel shows by DEFAULT, so until this label was added the
+      // ordinary "<somebody> uploaded <file>" notification was a dead click.
+      case _a.mfs:
+        if (isMeetingRollup(this.model.toJSON())) {
+          // "<Meeting-name> on <time>" — a scheduled meeting, not a file.
+          // Revealing its `schedule` node in the Files grid showed nothing
+          // useful, so it opens like the meeting_notice row above: the Meet
+          // tab's calendar with this meeting's card open. meeting_nid is
+          // stamped by the server (_stampMeetingRollups, matched on title);
+          // without it the row still lands on the calendar.
+          //
+          // The rollup's target is the folder the meeting was filed in; a
+          // workspace target is its root (0). The calendar is hub-wide either
+          // way — this only decides which folder the pane shows behind it.
+          const rFolder = (target_filetype === _a.folder && `${target_nid}` !== '0') ? target_nid : 0;
+          location.hash = `#/desk/wm/reveal/?hub_id=${hub_id}&nid=${rFolder}&filetype=folder&pid=0&activeTab=${_a.meeting}`
+            + meetingDeepLink(this.mget('meeting_nid'), this.mget('meeting_stime'))
+            + `&ts=${ts}`;
+          this.triggerHandlers({ service: 'read-activity', hub_id, nid: target_nid, item_type, changelog_id });
+          this.triggerHandlers({ service: 'close-activity-panel' });
+          return;
+        }
         // highlight=1 → reveal the file in its folder (scroll + select + flash)
         // instead of opening it in a player. Scoped to notification clicks.
-        location.hash = `#/desk/wm/open/?hub_id=${hub_id}&nid=${target_nid}&filetype=${target_filetype}&pid=${parent_id}&highlight=1&ts=${ts}`;
-        this.triggerHandlers({ service: 'dismiss-activity', hub_id, nid: target_nid, item_type, changelog_id })
+        location.hash = `#/desk/wm/reveal/?hub_id=${hub_id}&nid=${target_nid}&filetype=${target_filetype}&pid=${parent_id}&highlight=1&ts=${ts}`;
+        this.triggerHandlers({ service: 'read-activity', hub_id, nid: target_nid, item_type, changelog_id })
         // Opening the file is an explicit "I've handled this" → close the panel.
         // Kept separate from dismiss-activity (the trash button uses that alone
         // and must NOT close the panel) and from item destroy (see onDomRefresh
@@ -376,8 +716,8 @@ class __activity_item extends LetcBox {
         return
 
       case _a.hub_invite:
-        location.hash = `#/desk/wm/open/?hub_id=${hub_id}&nid=0&filetype=folder&pid=0&ts=${ts}`;
-        this.triggerHandlers({ service: 'dismiss-activity', hub_id, nid, item_type, changelog_id })
+        location.hash = `#/desk/wm/reveal/?hub_id=${hub_id}&nid=0&filetype=folder&pid=0&ts=${ts}`;
+        this.triggerHandlers({ service: 'read-activity', hub_id, nid, item_type, changelog_id })
         return
 
       case _a.teamchat: {
@@ -391,33 +731,33 @@ class __activity_item extends LetcBox {
         const folder_nid = (scope_nid && `${scope_nid}` !== "0") ? scope_nid
           : ((nid && `${nid}` !== "0") ? nid : null);
         if (folder_nid) {
-          hash = `#/desk/wm/open/?hub_id=${hub_id}&nid=${folder_nid}&filetype=folder&pid=${parent_id}&activeTab=${_a.chat}`;
+          hash = `#/desk/wm/reveal/?hub_id=${hub_id}&nid=${folder_nid}&filetype=folder&pid=${parent_id}&activeTab=${_a.chat}`;
           if (message_id) hash = hash + `&message_id=${message_id}`;
           location.hash = hash + `&ts=${ts}`;
-          this.triggerHandlers({ service: 'dismiss-activity', hub_id, nid: folder_nid, item_type, changelog_id })
+          this.triggerHandlers({ service: 'read-activity', hub_id, nid: folder_nid, item_type, changelog_id })
           break;
         }
         hash = `#/desk/wm/${category}/?hub_id=${hub_id}&nid=0&pid=0`;
         if (message_id) hash = hash + `&message_id=${message_id}`;
         location.hash = hash + `&ts=${ts}`;
-        this.triggerHandlers({ service: 'dismiss-activity', hub_id, nid, item_type, changelog_id })
+        this.triggerHandlers({ service: 'read-activity', hub_id, nid, item_type, changelog_id })
         break;
       }
       case _a.chat:
         hash = `#/desk/wm/${category}/?drumate_id=${drumate_id}`;
         if (message_id) hash = hash + `&message_id=${message_id}`;
         location.hash = hash + `&ts=${ts}`;
-        this.triggerHandlers({ service: 'dismiss-activity', hub_id, nid, item_type, item_key, changelog_id })
+        this.triggerHandlers({ service: 'read-activity', hub_id, nid, item_type, item_key, changelog_id })
         break;
 
       case _a.contact:
         hash = `#/desk/wm/${category}`;
         location.hash = hash + `&ts=${ts}`;
-        this.triggerHandlers({ service: 'dismiss-activity', hub_id, nid, item_type, item_key, changelog_id })
+        this.triggerHandlers({ service: 'read-activity', hub_id, nid, item_type, item_key, changelog_id })
         break;
 
       case 'contact_refused':
-        this.triggerHandlers({ service: 'dismiss-activity', item_type, item_key })
+        this.triggerHandlers({ service: 'read-activity', item_type, item_key })
         break;
 
       case 'access_request':
@@ -440,21 +780,73 @@ class __activity_item extends LetcBox {
         }
         break;
 
-      case 'share_open':
+      case 'share_open': {
         // Secure/public share-open notification ("{email} opened {folder}"), now an
-        // ordinary feed row. Clicking opens the shared folder so the creator can see
+        // ordinary feed row. Clicking opens the shared target so the creator can see
         // what was accessed, then marks it seen (persistent) and closes the panel —
         // matching the media/teamchat rows. `node_id` is the shared node. Pass
         // token_id + recipient_email so the panel persists the seen state via
         // secure_share.mark_open_seen (so it stays out of Unread + survives reload).
-        location.hash = `#/desk/wm/open/?hub_id=${hub_id}&nid=${this.mget('node_id') || nid}&filetype=folder&pid=0&ts=${ts}`;
+        //
+        // A shared FILE must be revealed INSIDE its parent folder, exactly the way
+        // a media row does it (own nid + real filetype + parent as pid +
+        // highlight=1 → scroll/select/flash). This used to hardcode
+        // `filetype=folder&pid=0` for every share_open row, so a shared file was
+        // opened "as a folder with no parent" and the desk rendered a phantom
+        // empty folder bearing the file's name. Folders and workspaces keep the
+        // original link — opening the target itself is right for them.
+        //
+        // node_filetype / node_parent_id are new (see the secure_share_open_feed
+        // merge in service/private/activity.js). When they are absent — an older
+        // server, or a node whose attributes could not be read — this falls back
+        // to the byte-identical previous link rather than guessing.
+        // ⚠️ `filetype` must always be on the hash: without it the desk silently
+        // opens the workspace ROOT instead of the target.
+        const shareNid = this.mget('node_id') || nid;
+        const shareFiletype = this.mget('node_filetype');
+        const shareParentId = this.mget('node_parent_id');
+        const sharedFile = !!shareFiletype
+          && shareFiletype !== _a.folder
+          && shareFiletype !== 'hub';
+        //
+        // Landed through Wm.openNotificationLocation DIRECTLY — the very call the
+        // `#/desk/wm/reveal/` route makes, with the same payload the hash carried
+        // (as the strings the route would parse) — because the share panel
+        // opened below must come up AFTER it: it raises the workspace pane, and
+        // through the hash that happened ~1.3s later (measured on drumee.in),
+        // burying the panel under the pane. The hash stays as the fallback.
+        const revealArgs = sharedFile
+          ? { hub_id, nid: shareNid, filetype: shareFiletype, pid: `${shareParentId || "0"}`, highlight: "1", ts: `${ts}` }
+          : { hub_id, nid: shareNid, filetype: _a.folder, pid: "0", ts: `${ts}` };
+        let landing = null;
+        if (window.Wm && _.isFunction(Wm.openNotificationLocation)) {
+          landing = Promise.resolve(Wm.openNotificationLocation(revealArgs)).catch(() => null);
+        } else if (sharedFile) {
+          location.hash = `#/desk/wm/reveal/?hub_id=${hub_id}&nid=${shareNid}&filetype=${shareFiletype}&pid=${shareParentId || "0"}&highlight=1&ts=${ts}`;
+        } else {
+          location.hash = `#/desk/wm/reveal/?hub_id=${hub_id}&nid=${shareNid}&filetype=folder&pid=0&ts=${ts}`;
+        }
         this.triggerHandlers({
-          service: 'dismiss-activity', item_type, item_key,
+          service: 'read-activity', item_type, item_key,
           token_id: this.mget('token_id'),
           recipient_email: this.mget('recipient_email'),
         });
         this.triggerHandlers({ service: 'close-activity-panel' });
+        // ...and, over it, the share panel pointed at who opened it.
+        openShareOpenAccess({
+          landing,
+          hub_id,
+          nid: shareNid,
+          filetype: shareFiletype,
+          name: this.mget('node_name'),
+          focus: {
+            token_id: this.mget('token_id'),
+            email: this.mget('recipient_email'),
+            actor_id: this.mget('author_id'),
+          },
+        });
         break;
+      }
     }
   }
 

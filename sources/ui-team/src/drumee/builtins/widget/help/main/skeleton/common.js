@@ -37,7 +37,11 @@ function videoBlock(ui, video) {
     // Named so playVideo() can swap the poster out for the player without
     // re-rendering the rest of the page.
     sys_pn: "help-video",
-    attrOpt: { "data-placeholder": video ? 0 : 1 },
+    // data-poster tints the badge for a real thumbnail.
+    attrOpt: {
+      "data-placeholder": video ? 0 : 1,
+      "data-poster": video && ui.videoPosterUrl() ? 1 : 0,
+    },
     service: video ? "help-play-video" : null,
     uiHandler: video ? [ui] : undefined,
     kidsOpt: { active: 0 },
@@ -126,6 +130,11 @@ function videoPlayer(ui) {
 
 /**
  * Primary CTA that starts the interactive product tour (desk_tutorial).
+ *
+ * CURRENTLY NOT MOUNTED — content.js no longer places this row on the
+ * product-tour page, so `help-main__tour-row` renders nowhere. Kept, with its
+ * skin and the `help-product-tour` service behind it, so putting the button
+ * back is a one-line change in content.js.
  *
  * Label-only, so a single Note carries the click — same primitive as the
  * "Contact Support" link below. Nothing is nested inside it, which is why it

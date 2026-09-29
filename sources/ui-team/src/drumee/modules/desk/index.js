@@ -6,6 +6,7 @@ const {
   captureUtm, campaignArrival, REWARD_CAMPAIGN, PROMO_CAMPAIGN,
 } = require("libs/campaign");
 const hubDeepLink = require("libs/hub-deep-link");
+const { inviteWorkspaceScope } = require("libs/invite-scope");
 // "Open this file once I am signed in" — a Designation link opened by a visitor
 // with no session. Armed at module scope in index.web.js, consumed below.
 const fileDeepLink = require("libs/file-deep-link");
@@ -16,10 +17,153 @@ const { openSupportMail } = require("libs/support");
 // the press. See _closeEscapeModal for why this is an explicit list.
 const ESCAPE_MODAL_KINDS = ["tasks_panel"];
 
+/**
+ * How long the billing chunk may take before a loader is worth showing, in ms.
+ *
+ * The chunk is ~280KB on a cold open and cached on every open after that, so
+ * the usual case resolves in a few milliseconds. Raising a spinner for that
+ * produces a flash — a window that appears and disappears inside a frame or
+ * two, which reads as a glitch rather than as progress and is worse than the
+ * honest nothing it replaced.
+ *
+ * 220ms is under the ~250ms at which a delay starts being felt as a wait, so a
+ * connection fast enough to beat it never sees the loader and never needed one;
+ * anything slower gets told something is happening. See _showBillingLoader.
+ */
+const DESK_BILLING_LOADER_DELAY = 220;
+
+// The Inbox is a FULL-CANVAS screen in the new shell (Figma 43:32209): it
+// occupies the whole centre column — a 400px conversation list beside the
+// active chat — exactly like Settings / Calendar / Get help, and unlike the
+// narrow right-hand slide-out it used to be. So it mounts in the same slot
+// they share, which also gives it their mutual exclusion for free.
+const folderIcon = require("media/grid/template/folder");
+const { groupWorkspaces } = require("libs/workspace-groups");
+const { restoreScreen, pollFor } = require("libs/screen-restore");
+const { lightUtilityButton } = require("libs/utility-light");
+const {
+  SECURE_SHARE_TAB,
+  SECURE_SHARE_CLOSE,
+  SECURE_SHARE_VIEW_EVENT,
+} = require("window/folder/secure-share-column");
+
+const INBOX_SLOT = "settings-main-slot";
+
+// Section screens the desk KEEPS MOUNTED (hidden, data-anim="out") when the
+// user navigates away, so the next press is a reveal rather than a rebuild
+// plus every load the screen does at mount — see _slotKeepsChild. Only kinds
+// that put their data back in order on re-show belong here: each implements
+// onPanelShown() (Settings re-runs its loads, Calendar re-reads its window)
+// or has nothing to refresh (Get help). Deliberately absent: settings_billing,
+// apps_main and desk_org_view, which open with options that describe a
+// different screen each time, and chat_p2p, whose conversation pane decides
+// what counts as read — a hidden inbox must not do that behind the user.
+const KEEP_ALIVE_MAIN_KINDS = new Set(["settings_main", "calendar_main", "help_main"]);
+
+// Topbar utility icon → the kind its service mounts. A service's promise
+// settles once the kind is FED, not once it paints: every kind is a lazy chunk
+// (seeds.js) and togglePanel does not wait for it, so _runUtilityBusy also
+// waits on Kind.waitFor for these. Admin Console is absent on purpose — its
+// case already awaits the plugin, and waitFor on an unloaded plugin kind only
+// warns and returns null.
+const UTILITY_KINDS = {
+  "toggle-activity": "panel_activity",
+  "toggle-calendar": "calendar_main",
+  "toggle-inbox": "chat_p2p",
+  "toggle-contacts": "address_book",
+  "toggle-trash": "panel_trash",
+};
+
+// Longest the workspace pane may stay hidden on a boot that is expected to
+// raise the migrate tour (_holdBootTourPane). Covers the boot's own waits —
+// the 2s settle, _awaitRestoreSettled (6s) and _awaitRailWorkspace (8s) — plus
+// the mount; past it the pane shows whether or not a tour came.
+const BOOT_TOUR_HOLD_MAX = 20000;
+
+// Topbar slide-out icons → the panel each one opens: the service it fires, the
+// button's part name, and how to read whether that panel is on screen.
+const UTILITY_PANELS = [
+  { service: "toggle-activity", button: "utility-activity" },
+  { service: "toggle-contacts", button: "utility-contacts" },
+  { service: "toggle-trash", button: "utility-trash" },
+];
+
+// The rail's __nav-main rows (skeleton/sidebar.js). A press on one of them
+// closes the topbar slide-outs — see _closeUtilityPanelsForRail. The __footer
+// rows (Invite, Upgrade) and the logo also carry `railRow` but are not here.
+const RAIL_NAV_SERVICES = new Set([
+  "rail-files",
+  "rail-chat",
+  "rail-task",
+  "rail-meet",
+  "rail-access",
+]);
+
+// Longest a utility icon may spin. A hung chunk or request must leave the
+// cluster usable rather than locked for the rest of the session.
+const UTILITY_BUSY_MAX = 10000;
+
+// How long the cached workspace list may be served before it is refreshed in
+// the background. Short enough that a workspace shared with the user, or one
+// renamed elsewhere, shows up within a minute; long enough that opening the
+// switcher repeatedly costs nothing.
+const WS_CACHE_TTL = 60000;
+
+// Rows `desk.home` returns per page. MIRRORS THE SERVER: mfs_show_node_by pages
+// through the pageToLimits UDF, which is a hard `offset = (page-1)*45,
+// range = 45`. A page shorter than this is the last one, which is what lets
+// _fetchWorkspacePages stop without paying for an extra empty request — so a
+// desk under the cap still costs exactly one call, as it always did.
+// ⚠️ If the server ever LOWERS its page size, this must follow it down or the
+// list truncates again; raising it server-side is harmless (the pager just
+// reads one more page).
+const WS_PAGE_SIZE = 45;
+
+// Safety stop for that pager. 20 pages is 900 home items — far past any real
+// desk — and it guarantees a malformed answer (a server that keeps returning
+// full pages) cannot spin forever.
+const WS_MAX_PAGES = 20;
+
+
+// Which rail tab a window tour is about.
+//
+// An in-window tour leaves the REAL rail on screen beside it, so the rail has
+// to agree with what the tour is teaching. The desk host has no equivalent: it
+// draws its own rail and the registry's `chrome.rail` says which row it lights.
+const WINDOW_TOUR_TAB = {
+  migrate: "files",
+  chat: "chat",
+  folder_task: "task",
+  // _railHighlight maps "meeting" to the rail's "meet" row itself.
+  meeting: "meeting",
+  // The share tour is about the secure-share panel, which slides into a folder
+  // window — so it belongs over that window, not over a mock desk.
+  //
+  // It reached the desk host only because it was missing from this table: the
+  // folder window's own trigger calls showTutorial directly and always ran
+  // in-window, while a media context menu's Share goes through fire() and
+  // landed here. Two surfaces, one tour, two different-looking runs.
+  //
+  // The desk host draws a full mock desk WITH a mock share panel in it, which
+  // is the tour's subject — so that run also read as the real panel opening
+  // before the tour was finished.
+  share: "access",
+};
+
+// How long the workspace-rename editor takes to arrive and to leave.
+//
+// MUST MATCH the `ws-rename-in` / `ws-rename-out` keyframes in
+// desk/skin/topbar.scss — the JS owns WHEN the field is removed from the DOM,
+// the skin owns what it looks like on the way out, and a mismatch shows up
+// either as a field that vanishes mid-fade or as a gap after it has faded.
+// Change one, change both.
+const WS_RENAME_ANIM_MS = 140;
+
 class desk_module extends LetcBox {
   constructor(...args) {
     super(...args);
     this._updateAddmenu = this._updateAddmenu.bind(this);
+    this._onWorkspaceListChanged = this._onWorkspaceListChanged.bind(this);
     this.onPartReady = this.onPartReady.bind(this);
     this.mediaDragLeaveAvatar = this.mediaDragLeaveAvatar.bind(this);
     this.mediaDragOverAvatar = this.mediaDragOverAvatar.bind(this);
@@ -41,6 +185,7 @@ class desk_module extends LetcBox {
     this.setModuleState = this.setModuleState.bind(this);
     this.lazyClasses = this.lazyClasses.bind(this);
     this._updateActivityBadge = this._updateActivityBadge.bind(this);
+    this._writeRailCounts = this._writeRailCounts.bind(this);
   }
 
   static initClass() {
@@ -74,7 +219,15 @@ class desk_module extends LetcBox {
     // listener. Same shape as the over-limit channel above.
     this._onTourTrigger = this._onTourTrigger.bind(this);
     RADIO_BROADCAST.on(require("libs/tutorial-tours").CHANNEL, this._onTourTrigger);
+    // A folder window asking for a tour to be laid over it. It has no handle
+    // on this module, and the mount belongs here because the overlay slot does.
+    this._onWindowTutorial = this._onWindowTutorial.bind(this);
+    RADIO_BROADCAST.on("window-tutorial:mount", this._onWindowTutorial);
     RADIO_BROADCAST.on("activity-update", this._updateActivityBadge, this);
+    // Rail Files / Chat / Task / Meet pills: new counts, or another workspace in front.
+    RADIO_BROADCAST.on("workspace-unread", this._writeRailCounts, this);
+    RADIO_BROADCAST.on("workspace:focus", this._writeRailCounts, this);
+    RADIO_BROADCAST.on("chat:read", this._writeRailCounts, this);
     // Ctrl/Cmd+Shift+F → search. Registered here, not at bootstrap, so the
     // capture listener only exists while a desk is alive — both of its targets
     // (the topbar file search and a chat window's message search) are desk-only,
@@ -119,6 +272,23 @@ class desk_module extends LetcBox {
     // console — the popup is portalled to <body> and must not reach in here.
     this._openTrashPanel = () => this._deskServiceShim("toggle-trash");
     this._openHomeFromPopup = () => this._deskServiceShim(_e.home);
+    // "Resolve now" on the over-limit popup. The organisation screen is the
+    // index of every department and workspace in the org, which is where a
+    // downgraded owner goes to shed storage and members — and, unlike the
+    // Admin Console, it is gated on role rather than on tier, so it opens for
+    // the Free and Pro accounts a downgrade actually produces.
+    //
+    // THE FALLBACK IS THE POINT. _openOrgView refuses silently when
+    // orgFeature() is false, and while the block itself only ever exists for an
+    // organisation, orgFeature() ALSO requires the server to expose the
+    // organisation endpoints — so against an older server-team this button
+    // would go on doing nothing at all, which is the exact dead end being
+    // removed. Home is where the popup's own storage row sends people to
+    // delete, so it is the right place to land instead of nowhere.
+    this._openOrgViewFromPopup = () => {
+      if (require("libs/org-overview").orgFeature()) return this._openOrgView();
+      return this._deskServiceShim(_e.home);
+    };
     this._onOverLimitChanged = this._onOverLimitChanged.bind(this);
     // The user clicked the docked call to come back to it: take down whatever
     // screen was covering the desk so the restored, full-size window is not
@@ -128,6 +298,7 @@ class desk_module extends LetcBox {
     RADIO_BROADCAST.on("desk:open-admin-console", this._openAdminConsole);
     RADIO_BROADCAST.on("desk:open-trash", this._openTrashPanel);
     RADIO_BROADCAST.on("desk:open-home", this._openHomeFromPopup);
+    RADIO_BROADCAST.on("desk:open-org-view", this._openOrgViewFromPopup);
     RADIO_BROADCAST.on("desk:open-over-limit-popup", this._openOverLimitPopupBound);
     RADIO_BROADCAST.on(require("libs/over-limit").CHANGED, this._onOverLimitChanged);
     // The topbar action cluster (Add new / Upload / Search / Invite) is
@@ -142,6 +313,26 @@ class desk_module extends LetcBox {
       this.ensurePart("action-cluster").then((p) => p && p.setState(1));
     };
     RADIO_BROADCAST.on("workspace:focus", this._restoreTopbarActions);
+
+    // A WORKSPACE WAS CREATED — resync the topbar switcher.
+    //
+    // Both create surfaces already announce this: the desk's own dialog
+    // (builtins/media/form, `.form-folder__main`) and the post-signup tour's
+    // live create screen (desk/tutorial/workspace, `.tutorial-workspace__wsd-dialog`)
+    // both go through libs/create-workspace, which fires `workspace:refresh`
+    // with the new workspace on every one of its three types. The signal was
+    // there; the desk simply never subscribed, so `.desk-module-topbar__ws-menu`
+    // kept listing whatever existed at boot and a workspace you had just made
+    // was missing from the only global way to switch to one.
+    //
+    // Subscribed HERE rather than in either dialog, and that is the point: the
+    // switcher belongs to the desk, neither form has any business reaching into
+    // the topbar, and a third create surface gets this for free.
+    //
+    // The sidebar (desk/workspace-list) already listened, which is why the row
+    // appeared THERE and made the switcher look selectively broken.
+    this._onWorkspaceCreated = this._onWorkspaceCreated.bind(this);
+    RADIO_BROADCAST.on("workspace:refresh", this._onWorkspaceCreated);
     setTimeout(this.lazyClasses, 5000);
 
     // Chrome-style folder tabs in the desk topbar. One tab per open
@@ -159,10 +350,13 @@ class desk_module extends LetcBox {
     this._openWorkspaces = new Set();
     this._onWorkspaceOpen = this._onWorkspaceOpen.bind(this);
     this._onWorkspaceClose = this._onWorkspaceClose.bind(this);
+    this._onSecureShareView = this._onSecureShareView.bind(this);
     // A zoomed folder window claims the desk body the same way a sidebar
     // workspace pane does — including the header row.
     this._onFolderZoom = this._onFolderZoom.bind(this);
     this._bindFolderTabs();
+    this._onWorkspaceWsEvent = this._onWorkspaceWsEvent.bind(this);
+    this._bindWorkspaceWsSync();
 
     // [Reload] Persist desk UI (sidebar screen + workspace + floating
     // folder windows) so a browser reload lands back where the user was.
@@ -170,6 +364,137 @@ class desk_module extends LetcBox {
     // a reload. See _restoreDeskState, called from loadDefault.
     this._persistDeskState = this._persistDeskState.bind(this);
     window.addEventListener("pagehide", this._persistDeskState);
+  }
+
+  /**
+   * Keep the topbar switcher honest about REMOVALS (and renames).
+   *
+   * `workspace:refresh` covers creation, but nothing broadcasts it when a
+   * workspace goes away, so a deleted one sat in
+   * `.desk-module-topbar__ws-menu` until a reload — reported as "some items
+   * have been removed but still display".
+   *
+   * The signal that does exist is Wm's `ws:event`. Wm emits it for remote
+   * changes from the websocket dispatcher AND echoes it locally the moment a
+   * delete is confirmed (see the delete_hub flow in desk/wm), so one
+   * subscription covers both "I deleted it" and "someone else did". The
+   * sidebar workspace list has listened to it all along, which is exactly why
+   * removals corrected THERE and not here.
+   *
+   * Same wait-for-Wm shape as _bindFolderTabs below: this runs from initialize,
+   * which is before window/manager.js assigns the global.
+   */
+  _bindWorkspaceWsSync() {
+    if (this._workspaceWsBound) return;
+    if (!window.Wm || !_.isFunction(Wm.on)) {
+      _.delay(() => this._bindWorkspaceWsSync(), 100);
+      return;
+    }
+    Wm.on("ws:event", this._onWorkspaceWsEvent);
+    this._workspaceWsBound = 1;
+  }
+
+  /**
+   * One `ws:event`. Resync the switcher if — and only if — it was about a
+   * workspace.
+   *
+   * A FULL FORCED RE-RENDER, not the surgical add/remove/rename the sidebar
+   * does. The two lists are not alike: the sidebar's rows own expandable file
+   * trees and a selection highlight, so it has to patch in place, while this
+   * menu is a flat list rebuilt from scratch every time anyway. Mirroring three
+   * delta paths here would be three more things to keep in step with the
+   * sidebar for no gain.
+   *
+   * THE `media.*` GATE IS THE POINT OF THIS FUNCTION. Those services fire for
+   * EVERY node — every file created, renamed or deleted inside any workspace —
+   * so resyncing on all of them would put a `desk.home` request behind ordinary
+   * file activity. Only two media shapes are workspace rows: a hub, and a
+   * FOLDER SITTING AT THE HOME ROOT (that is what a Personal workspace is).
+   * Same test, and same reason, as the sidebar's handleWsEvent.
+   */
+  /**
+   * Does this websocket payload name a workspace the switcher is showing?
+   *
+   * WHY THIS EXISTS. A trash broadcast carries almost nothing. The server sends
+   * it with `keys: [Attr.nid, Attr.hub_id]` (service/private/media.js `trash`),
+   * so `filetype` and `pid` — the two fields the gate above would rather use —
+   * are simply not in the payload. Judged on those alone, trashing a workspace
+   * looks exactly like deleting a file, and the switcher kept showing the
+   * workspace: the reported bug.
+   *
+   * `nid` IS always there, and it is enough, because the cache already holds
+   * the rows on screen. If the removed node is one of them, it is a workspace
+   * by definition — no request needed to decide, and no guessing.
+   *
+   * MATCHED ON `nid`, NEVER ON `hub_id`. For a hub row the two are the same
+   * value, so nothing is lost; for a PERSONAL workspace row `hub_id` is the
+   * user's own id, shared by every personal row and by every file in the user's
+   * home — matching on it would resync on ordinary file activity, which is the
+   * exact cost the gate exists to avoid.
+   */
+  _namesAWorkspace(d) {
+    const rows = this._workspaces;
+    if (!d || !rows || !rows.length) return false;
+    // `nid` can arrive as a scalar (the broadcast) or as a list of
+    // {nid, hub_id} (the request shape) — accept both rather than trusting one.
+    const raw = _.isArray(d.nid) ? d.nid : [d.nid, d.id, d.node_id];
+    const ids = raw
+      .map((v) => (v && v.nid != null ? v.nid : v))
+      .filter((v) => v != null && v !== "")
+      .map((v) => `${v}`);
+    if (!ids.length) return false;
+    return rows.some((r) => {
+      if (!r) return false;
+      if (r.nid != null && ids.includes(`${r.nid}`)) return true;
+      return r.id != null && ids.includes(`${r.id}`);
+    });
+  }
+
+  _onWorkspaceWsEvent(args = {}) {
+    const { data, options } = args || {};
+    const service = (options && options.service) || "";
+    if (!service) return;
+
+    // Adds, removes and renames all change what this menu should show.
+    // `hub.invite_received` is an ADD from the other direction — someone put
+    // the user in a workspace — and the sidebar full-refreshes on it too.
+    //
+    // TRASHING ARRIVES AS `media.remove`, not as `media.trash`. The context
+    // menu's "Move to trash" row and the switcher ⋯ menu's Delete both end at
+    // media/core `trash()` → `putIntoTrash` → `SERVICE.media.trash`, but the
+    // server answers that request by BROADCASTING `media.remove`
+    // (service/private/media.js `trash()`), so that is the name that reaches a
+    // client. `media.trash` is deliberately absent from this list: it is the
+    // request name and never appears on the wire.
+    if (
+      !/^(hub\.(delete_hub|update_name|add_contributors|invite_received)|desk\.(create_hub|leave_hub)|media\.(new|remove|rename))$/.test(
+        service,
+      )
+    ) {
+      return;
+    }
+
+    if (/^media\./.test(service)) {
+      const d = data || {};
+      const filetype = args.filetype || d.filetype;
+      // Not a hub, and the payload does not name a row this menu is showing →
+      // fall back to "is it a folder at the home root", which is what a
+      // Personal workspace is. A file or a nested folder fails all three.
+      if (filetype !== _a.hub && !this._namesAWorkspace(d)) {
+        const pid = `${d.pid || d.parent_id || ""}`;
+        const homeId = `${Visitor.get(_a.home_id) || ""}`;
+        if (!pid || !homeId || pid !== homeId) return;
+      }
+    }
+
+    // Coalesced. Deleting a workspace emits more than one of these (the local
+    // echo, then the server's), and each would otherwise cost its own
+    // cache-busted request.
+    if (this._wsSyncTimer) clearTimeout(this._wsSyncTimer);
+    this._wsSyncTimer = setTimeout(() => {
+      this._wsSyncTimer = null;
+      this._onWorkspaceCreated();
+    }, 250);
   }
 
   _bindFolderTabs() {
@@ -182,6 +507,7 @@ class desk_module extends LetcBox {
     Wm.$el.on("folder:close", this._onFolderClose);
     Wm.$el.on("workspace:open", this._onWorkspaceOpen);
     Wm.$el.on("workspace:close", this._onWorkspaceClose);
+    Wm.$el.on(SECURE_SHARE_VIEW_EVENT, this._onSecureShareView);
     Wm.$el.on("folder:zoom", this._onFolderZoom);
     Wm.$el.on(_e.minimize, this._onWmMinimize);
     Wm.$el.on(_e.wake, this._onWmWake);
@@ -249,6 +575,43 @@ class desk_module extends LetcBox {
     if (this._openWorkspaces.delete(winInstance.cid)) {
       this._syncWorkspaceTopbar();
     }
+    // A pane closed with its secure-share view up announces nothing on the
+    // way out, so the header's link chip is re-read from whatever pane is left.
+    this._syncWorkspaceAccessToggle();
+  }
+
+  /** Is the workspace the header names showing its secure-share view? */
+  _secureShareViewIsUp() {
+    const w = this._railWorkspace();
+    return !!(w && w.activeTab === SECURE_SHARE_TAB);
+  }
+
+  /**
+   * Light the switcher header's link chip while the secure-share view is up.
+   *
+   * The chip is a TOGGLE for that view, and its state is the VIEW's, written
+   * here from the folder window's own announcement — never flipped by the
+   * click. The view can be left without the chip (the panel's ✕, a rail press)
+   * and is only left once its slide-out has played, and a click-driven state
+   * would disagree with the screen in all of those.
+   *
+   * Every chip, not a part: the header is re-fed on navigation, and a stale
+   * copy may still be on its way out.
+   */
+  _syncWorkspaceAccessToggle(open = this._secureShareViewIsUp()) {
+    if (typeof document === "undefined") return;
+    document
+      .querySelectorAll(".desk-module-topbar__ws-head-action--link")
+      .forEach((el) => {
+        el.dataset.state = open ? "1" : "0";
+      });
+  }
+
+  /** Wm.$el `folder:secure-share` — (event, folderWindow, isUp). */
+  _onSecureShareView(event, win, open) {
+    // Only the pane the header names: a popup folder window has the same view.
+    if (!win || win !== this._railWorkspace()) return;
+    this._syncWorkspaceAccessToggle(!!open);
   }
 
   _onFolderZoom() {
@@ -283,15 +646,25 @@ class desk_module extends LetcBox {
   _syncWorkspaceTopbar() {
     const part = this.getPart("top-bar");
     if (!part || !part.el) return;
-    if (this._openWorkspaces.size || this._hasZoomedFolder()) {
+    // The desk topbar now ALWAYS stays up.
+    //
+    // It used to hide behind an open workspace because the pane rendered its
+    // own window topbar, making the desk one a duplicate. In the new shell
+    // (Figma 43:23955) the pane has no chrome — skeleton/index.js drops the
+    // header for a headless pane — so this bar IS the workspace's header, and
+    // hiding it left the screen with no header at all AND no way to switch
+    // workspace, since the switcher lives in it.
+    //
+    // A ZOOMED floating folder window is a different case: it is still a real
+    // window with its own titlebar, so it keeps the old treatment.
+    if (this._hasZoomedFolder()) {
       part.el.dataset.headless = "1";
-      if (this._openFolders.size > 1) {
-        part.el.dataset.tabstrip = "1";
-      } else {
-        delete part.el.dataset.tabstrip;
-      }
     } else {
       delete part.el.dataset.headless;
+    }
+    if (this._openFolders.size > 1) {
+      part.el.dataset.tabstrip = "1";
+    } else {
       delete part.el.dataset.tabstrip;
     }
     // Zoomed windows are inline-pixel geometry, so they must re-fit whenever
@@ -320,6 +693,19 @@ class desk_module extends LetcBox {
     this._renderFolderTabs();
   }
 
+  /**
+   * DEPRECATED — the desk topbar's window-tab strip.
+   *
+   * The new shell (Figma 43:23955) has no window-tab model: a workspace fills
+   * the canvas and subfolders navigate inside it, so there is nothing for a
+   * per-window tab to represent. The strip is hidden in the skin
+   * (__folder-tabs, display:none) and workspace tiles no longer open windows
+   * at all (desk/wm openContent -> loadWorkspace).
+   *
+   * Kept, not deleted: "Open in Window" and share/player parents still launch
+   * real floating windows, and this is the only affordance that reaches one
+   * once it is covered. Remove it when that path goes too.
+   */
   _renderFolderTabs() {
     // Tab-count changes flip the strip-only topbar on/off (see
     // _syncWorkspaceTopbar). Sync here so the popup open/close path
@@ -405,10 +791,37 @@ class desk_module extends LetcBox {
     RADIO_BROADCAST.off("desk:open-admin-console", this._openAdminConsole);
     RADIO_BROADCAST.off("desk:open-trash", this._openTrashPanel);
     RADIO_BROADCAST.off("desk:open-home", this._openHomeFromPopup);
+    RADIO_BROADCAST.off("desk:open-org-view", this._openOrgViewFromPopup);
     RADIO_BROADCAST.off("desk:open-over-limit-popup", this._openOverLimitPopupBound);
     RADIO_BROADCAST.off(require("libs/over-limit").CHANGED, this._onOverLimitChanged);
     RADIO_BROADCAST.off("avatar-changed", this._updateAvatar);
+    RADIO_BROADCAST.off("workspace:refresh", this._onWorkspaceCreated);
+    // A pending "open the workspace once the access panel closes" listener
+    // lives on Wm's collection, which outlives this desk — leaving it attached
+    // would fire a loadWorkspace into a destroyed desk on the next dialog that
+    // empties that wrapper.
+    if (this._onAccessPanelClosed && window.Wm && _.isFunction(Wm.getPart)) {
+      const wrap = Wm.getPart("wrapper-modal");
+      if (wrap && wrap.collection) {
+        wrap.collection.off("update reset", this._onAccessPanelClosed);
+      }
+      this._onAccessPanelClosed = null;
+      this._awaitingAccessClose = 0;
+    }
+    if (this._accessPanelTimer) {
+      clearTimeout(this._accessPanelTimer);
+      this._accessPanelTimer = null;
+    }
+    if (this._wsSyncTimer) {
+      clearTimeout(this._wsSyncTimer);
+      this._wsSyncTimer = null;
+    }
+    if (this._workspaceWsBound && window.Wm && _.isFunction(Wm.off)) {
+      Wm.off("ws:event", this._onWorkspaceWsEvent);
+      this._workspaceWsBound = 0;
+    }
     RADIO_BROADCAST.off(require("libs/tutorial-tours").CHANNEL, this._onTourTrigger);
+    RADIO_BROADCAST.off("window-tutorial:mount", this._onWindowTutorial);
     Visitor.off(_e.change, this._updateAvatar);
     if (this._searchHotkey || this._escHotkey) {
       const hk = require("libs/hotkeys");
@@ -430,12 +843,17 @@ class desk_module extends LetcBox {
       );
     }
     RADIO_BROADCAST.off("activity-update", this._updateActivityBadge, this);
+    RADIO_BROADCAST.off("workspace-unread", this._writeRailCounts, this);
+    RADIO_BROADCAST.off("workspace:focus", this._writeRailCounts, this);
+    RADIO_BROADCAST.off("chat:read", this._writeRailCounts, this);
     RADIO_BROADCAST.off("breadcrumb:content", this._updateAddmenu);
+    RADIO_BROADCAST.off("workspace:refresh", this._onWorkspaceListChanged);
     if (this._folderTabsBound && window.Wm && Wm.$el) {
       Wm.$el.off("folder:open", this._onFolderOpen);
       Wm.$el.off("folder:close", this._onFolderClose);
       Wm.$el.off("workspace:open", this._onWorkspaceOpen);
       Wm.$el.off("workspace:close", this._onWorkspaceClose);
+      Wm.$el.off(SECURE_SHARE_VIEW_EVENT, this._onSecureShareView);
       Wm.$el.off("folder:zoom", this._onFolderZoom);
       Wm.$el.off(_e.minimize, this._onWmMinimize);
       Wm.$el.off(_e.wake, this._onWmWake);
@@ -448,9 +866,16 @@ class desk_module extends LetcBox {
    */
   async loadDefault() {
     this._pending = { available: false };
-    await Kind.waitFor("window_manager");
-    await Kind.waitFor("panel_activity");
-    await Kind.waitFor("activity_item");
+    // In PARALLEL. Each waitFor triggers that kind's dynamic import, so three
+    // awaits in a row meant three chunk round-trips end to end before the desk
+    // skeleton could be fed — on a cold cache that is the whole boot latency,
+    // paid serially, for three independent downloads. None of them reads
+    // anything the others produce.
+    await Promise.all([
+      Kind.waitFor("window_manager"),
+      Kind.waitFor("panel_activity"),
+      Kind.waitFor("activity_item"),
+    ]);
     // Snapshot once before feed: Wm.onDomRefresh may consume hubDeepLink /
     // secure-share keys, and a second read later would wrongly treat a
     // deep-link boot as a plain restore.
@@ -460,9 +885,20 @@ class desk_module extends LetcBox {
     // mount-time loadHome() fires during the render pass and must know a
     // saved screen / workspace / deep-link is about to be restored (see
     // loadHome) — otherwise Wm.reload() wipes the target we just opened.
-    this._restoreInFlight = !!(
-      this._bootDeepLink || this._savedStateIsRestorable(this._bootSavedState)
-    );
+    // ALWAYS true now, not just for a deep link or a saved screen: the desk
+    // always lands on something — the remembered screen, the deep-link target,
+    // or (new shell) the default workspace. It used to be false on a cold boot
+    // with nothing saved, which let the breadcrumb's mount-time loadHome() run
+    // Wm.reload() and paint the home workspace-tile grid; that then raced the
+    // default-workspace open, and the grid usually won.
+    //
+    // _restoreDeskState clears it on every path, including the one where no
+    // workspace could be opened (a brand-new account with none yet) — which is
+    // the only case that should still land on the home grid.
+    this._restoreInFlight = true;
+    // Before the feed, so the restored pane is hidden from its first frame
+    // when this boot is going to raise the migrate tour over it.
+    this._holdBootTourPane();
     this.feed(require("./skeleton")(this));
     await this.ensurePart("desk-content");
     this._restoreDeskState().catch((e) => {
@@ -504,9 +940,36 @@ class desk_module extends LetcBox {
    * @returns {Boolean} whether the billing screen was opened
    */
   _maybeOpenBillingDeepLink() {
-    const preselect = billingDeepLink.consume();
+    // PEEK, NOT CONSUME. Both gates below can refuse, and a refusal must leave
+    // the destination exactly as it found it: consuming first made every
+    // refusal permanent, so a wrong-account sign-in destroyed a link written
+    // for somebody else, who then signed in and found nothing.
+    const preselect = billingDeepLink.peek();
     if (!preselect) return false;
+    // Addressed to somebody else. A campaign CTA carries an opaque marker for
+    // the recipient it was written for (analytics-server _recipientTag), and a
+    // mail gets forwarded, screenshotted, and opened on machines already signed
+    // in as a colleague. Without this, any of those walks that person into a
+    // discounted checkout with a partner code applied that was never offered to
+    // them.
+    //
+    // A link with no marker passes — see isForCurrentUser, which treats absent
+    // as "not bound" rather than "refuse", so every link written before this
+    // existed still works.
+    // KEPT, not consumed: this session is not the one the link was written for,
+    // so the recipient has not had their chance yet. They may sign in on this
+    // very tab a moment from now — which is the case this whole ordering exists
+    // for.
+    if (!billingDeepLink.isForCurrentUser(preselect)) return false;
+    // KEPT for the same reason, and this one can genuinely change underneath:
+    // ownership, or a payment backend that had not finished loading. Throwing
+    // the destination away on a verdict that is not final is the harsher answer.
     if (!canUpgradePlan()) return false;
+    // Committed. Taking it here — and only here — is what keeps the destination
+    // SINGLE-USE: it must not replay for this account after a later sign-out.
+    // The value is already in hand from the peek above, so the return is
+    // deliberately discarded.
+    billingDeepLink.consume();
     // Don't let desk-state restore pull the screen back to the remembered one.
     this._restoreInFlight = false;
     this.openBillingPage(preselect);
@@ -529,6 +992,287 @@ class desk_module extends LetcBox {
    *
    * @returns {Boolean} whether this boot carried such a link
    */
+  /**
+   * Run the in-window tour `?window_tutorial=<id>` asked for, if one did.
+   *
+   * THE DESK OWNS THIS, not the folder window, and that is the fix for a bug
+   * that made the URL do nothing at all. The read used to live in
+   * `__window_folder.buildContent`, which has two problems:
+   *
+   *   it reads too LATE   the hash is rewritten to `#/desk` during boot, so the
+   *                       arg set was always empty by then. The router now
+   *                       captures the intent from the URL early, the same way
+   *                       campaign and billing links are captured, and this
+   *                       consumes what it armed.
+   *   it reads too DEEP   buildContent only runs when a folder window mounts, so
+   *                       with nothing open — the home grid, an ordinary state
+   *                       (see the rail handlers' own `_hasWs` guards) — it was
+   *                       never called at all. That hit
+   *                       `?window_tutorial=workspace` hardest: the tour that
+   *                       teaches CREATING a workspace could not run for someone
+   *                       who had none open.
+   *
+   * So this opens a workspace when there is none, because a tour is drawn ON a
+   * folder window and there has to be one to draw on.
+   *
+   * `_railWorkspace()`, NOT `_activeWorkspace()`: the latter answers "which
+   * window is RAISED" and reports null while a workspace is open but unraised
+   * (boot, a re-feed, anything on top). Trusting it would open a SECOND,
+   * arbitrary workspace over the one already there — the exact fault
+   * `_railWorkspace` was written for.
+   *
+   * @returns {Promise<Boolean>} whether a tour was handed to a window
+   */
+  async _maybeRunWindowTutorial() {
+    const intent = require("libs/window-tutorial-intent");
+    if (!intent.has()) return false;
+
+    // WAIT FOR THE RESTORE FIRST, and this is not defensive tidying — without
+    // it the tour flashed up and vanished.
+    //
+    // loadDefault raises `_restoreInFlight`, feeds the skeleton — whose
+    // `overlay` part reaches onPartReady -> _afterHomeSettled -> here,
+    // synchronously — and only THEN calls _restoreDeskState(). So at this
+    // moment nothing is open yet: `_railWorkspace()` answered null, this opened
+    // rows[0] (an arbitrary workspace), mounted the tour on it, and the restore
+    // then opened the REMEMBERED workspace over the top. Destroying that folder
+    // window takes its overlay with it (__window_folder.onBeforeDestroy ->
+    // _closeTutorialOverlay), so the tour appeared, closed, and left a
+    // workspace behind.
+    //
+    // `_restoreInFlight` is the flag that exists to stop precisely this kind of
+    // interference — the comment on it in loadDefault describes an earlier race
+    // it was written for — so the honest fix is to respect it rather than to
+    // open a workspace into the middle of someone else's open.
+    const id = (w) => (w && w.mget ? `${w.mget(_a.hub_id)}/${w.mget(_a.nid)}` : String(w));
+    intent.trace("hook entered", { restoreInFlight: !!this._restoreInFlight });
+    await this._awaitRestoreSettled();
+
+    // WAIT FOR A PANE, NOT FOR A FLAG — this is the actual fix.
+    //
+    // `_restoreInFlight` is cleared by a TIMER (_clearRestoreInFlight(2500)),
+    // not by the workspace appearing, and `loadWorkspace` mounts its pane from
+    // inside a media.attributes fetch. So the flag routinely clears while the
+    // restore's own pane is still in flight, and `_railWorkspace()` answers null
+    // then — it needs Wm._findWorkspaceWindow to have mounted something.
+    //
+    // Peeking once there is what produced the reported fault: the hook opened a
+    // SECOND workspace, mounted the tour on it, and the restore's original pane
+    // then arrived and took the screen. Nothing was ever destroyed — which is
+    // why no teardown trace fired — the tour was simply left on the pane behind.
+    //
+    // So poll for the pane the restore is already bringing, and only open one if
+    // none is coming at all. `Wm._curWorkspace` is what says which it is: set
+    // means a pane is on its way and waiting is right; unset means nothing is
+    // coming and waiting would just be dead time before the tour.
+    let ws = await this._awaitRailWorkspace(this._workspaceIncoming() ? 8000 : 0);
+    intent.trace("after restore settled", {
+      found: id(ws), incoming: this._workspaceIncoming(),
+    });
+    // HOLD THE RESTORE FLAG ACROSS OUR OWN OPEN — this is the fix, and the desk
+    // documents the hazard itself at _restoreDeskState: "Keep the restore flag
+    // up across the open, or the breadcrumb's mount-time loadHome() fires
+    // Wm.reload() and wipes it."
+    //
+    // loadDefault raises the flag around its own _openDefaultWorkspace() for
+    // exactly that reason. This hook did the opposite: it WAITED for the flag to
+    // clear and then opened, so nothing suppressed loadHome() and Wm.reload()
+    // wiped the pane — and the tour mounted on it — a moment later, then
+    // repainted. That wipe does not route through Marionette's destroy, which is
+    // why no teardown ever fired and the tour appeared simply to vanish.
+    //
+    // Cleared only after the tour is mounted, on the same 2.5s delay loadDefault
+    // uses, and in a `finally` so an early return cannot leave the flag raised —
+    // a stuck flag would suppress loadHome for the rest of the session.
+    let held = false;
+    try {
+      if (!ws) {
+        this._restoreInFlight = true;
+        held = true;
+        await this._openDefaultWorkspace();
+        ws = await this._awaitRailWorkspace();
+        intent.trace("opened a default workspace", { found: id(ws), guarded: true });
+      }
+
+      // Consumed even when there is nothing to run it on. The intent belongs to
+      // THIS page load; leaving it armed would fire the tour at some unrelated
+      // later moment, and the warning below is what makes the failure visible
+      // instead of silent — which is what this whole bug was.
+      const req = intent.take();
+      if (!req) return false;
+      if (!ws || !_.isFunction(ws.showTutorial)) {
+        this.warn(
+          `[window-tutorial] "${req.tour}" was asked for, but no workspace could be opened to run it on`,
+        );
+        return false;
+      }
+      intent.trace("handing tour to window", { tour: req.tour, window: id(ws) });
+      this.mountWindowTutorial(ws, req.tour, req.opt);
+      return true;
+    } finally {
+      if (held) this._clearRestoreInFlight(ws ? 2500 : 0);
+    }
+  }
+
+  /**
+   * Wait for the workspace pane to actually exist after opening one.
+   *
+   * `loadWorkspace` returns the instant it is CALLED and mounts the pane from
+   * inside a `media.attributes` fetch, so `_openDefaultWorkspace()` resolving is
+   * not the same event as a window being there to draw on. Polled rather than
+   * hooked: there is no broadcast that means "this workspace is open", and a
+   * failed open should simply time out instead of leaving a listener behind.
+   *
+   * @returns {Promise<Object|null>}
+   */
+  /**
+   * Resolve once the desk has finished restoring its screen.
+   *
+   * `_restoreInFlight` is raised before the skeleton is fed and cleared by
+   * _clearRestoreInFlight, usually on a 2-2.5s delay after the workspace opens
+   * — so it means "the desk is still deciding what it is showing", which is
+   * exactly the window in which nothing else should open a workspace.
+   *
+   * Bounded, because the flag is cleared by a timer that a failed restore may
+   * never reach. Timing out simply falls through to the normal path, which
+   * opens a default workspace — the same thing that would have happened had
+   * there been no restore at all.
+   *
+   * @returns {Promise<Boolean>} whether it settled before the deadline
+   */
+  /**
+   * Put an in-window tour on screen, over `ws`.
+   *
+   * MOUNTED IN THE DESK'S OVERLAY, not appended to the folder window — and that
+   * is the fix for a fault that survived three attempts.
+   *
+   * The overlay used to be `window.append(wrapper)`, which puts it in the
+   * window's own Marionette collection. `Box.feed()` is `collection.set([c])`,
+   * so ANY feed on that window replaces the collection and drops the wrapper.
+   * The window is not destroyed and the tour widget's part never registers, so
+   * every lifecycle handler stays silent while the node simply leaves the DOM —
+   * which is exactly what the traces showed: overlay gone, window alive,
+   * nothing torn down.
+   *
+   * A workspace pane is fed repeatedly while it builds (loadWorkspace mounts it
+   * from inside a media.attributes fetch), so a tour handed to a pane that has
+   * just been opened is racing a rebuild it cannot see.
+   *
+   * The desk's `overlay` part has none of that: it is a dedicated Wrapper that
+   * nothing else re-feeds, and it is where `desk_tutorial` has always mounted.
+   * The tour positions itself over the window it is about (see
+   * builtins/window/tutorial, _syncToWindow), so it still reads as an overlay ON
+   * that window while being owned by a slot whose lifecycle we control.
+   *
+   * @param {Object} ws   the folder window the tour is about
+   * @param {String} tour a tour id
+   * @param {Object} [opt] extra model attributes
+   */
+  /**
+   * A folder window asked for a tour to be drawn over it.
+   *
+   * Every gate has already been decided by the caller (showTutorial takes the
+   * claim), so this only mounts.
+   */
+  _onWindowTutorial(args = {}) {
+    if (!args.window || !args.tour) return;
+    this.mountWindowTutorial(args.window, args.tour, args.opt || {});
+  }
+
+  mountWindowTutorial(ws, tour, opt = {}) {
+    if (!ws || !tour) return false;
+    // THE RAIL IS REAL beside an in-window tour — unlike the desk host, which
+    // draws its own — so it has to show the tab the tour is about.
+    //
+    // HERE, at the one place every route ends up, because there are three of
+    // them and only one had it: a rail click (which had already lit the row
+    // itself), the workspace tour's hand-off, which arrives on a different bus
+    // entirely (window-tutorial:mount, from the folder window's showTutorial),
+    // and a `?window_tutorial=` link. The last two would have left the rail on
+    // whatever was pressed last while a tour about another tab played over it.
+    //
+    // _railHighlight ignores anything that is not one of the five tabs, so a
+    // tour with no entry in the table simply leaves the rail alone.
+    this._railHighlight(WINDOW_TOUR_TAB[tour]);
+    // Mark the desk for the duration.
+    //
+    // The `overlay` slot is built for FULL-SCREEN guests — desk_tutorial, the
+    // reward flow, the promo modals — so opening it paints a body-wide scrim and
+    // takes `pointer-events: auto` over the whole desk. An in-window tour covers
+    // one window and must do neither: with that scrim up the rail could not be
+    // clicked at all, and the topbar's own menus were painted over. The skin
+    // reads this flag to stand both of those down.
+    if (this.el && this.el.dataset) this.el.dataset.windowTour = "1";
+    // The navigation this mount belongs to. The tour is a lazy chunk, so it can
+    // land long after this call — and anything the user opened meanwhile (the
+    // Calendar, another tab) must not have the tour dropped on top of it. See
+    // onPartReady "window-tutorial", which compares.
+    this._windowTourSeq = this._navSeq || 0;
+    this.ensurePart("overlay").then((p) => {
+      p.feed({
+        kind: "window_tutorial",
+        tour,
+        // The window this tour is drawn over. A widget reference, the same way
+        // `trigger` and `uiHandler` carry one, because the tour has to measure
+        // that window's box on every reflow — an id would need a lookup that
+        // could answer with a different pane after a rebuild.
+        target_window: ws,
+        sys_pn: "window-tutorial",
+        partHandler: this,
+        ...opt,
+      });
+    });
+    return true;
+  }
+
+  _awaitRestoreSettled() {
+    const deadline = Date.now() + 6000;
+    return new Promise((resolve) => {
+      const look = () => {
+        if (this.isDestroyed && this.isDestroyed()) return resolve(false);
+        if (!this._restoreInFlight) return resolve(true);
+        if (Date.now() >= deadline) {
+          this.warn && this.warn("[window-tutorial] desk restore did not settle");
+          return resolve(false);
+        }
+        setTimeout(look, 100);
+      };
+      look();
+    });
+  }
+
+  /**
+   * Is a workspace pane already on its way?
+   *
+   * `Wm._curWorkspace` names the workspace the desk has decided on;
+   * `Wm._findWorkspaceWindow` finds its pane once mounted. The gap between the
+   * two is a real interval — loadWorkspace returns before its fetch lands — and
+   * it is exactly the window in which opening another workspace produces two.
+   *
+   * @returns {Boolean}
+   */
+  _workspaceIncoming() {
+    try {
+      return !!(typeof Wm !== "undefined" && Wm && Wm._curWorkspace && Wm._curWorkspace.hub_id);
+    } catch (e) {
+      return false;
+    }
+  }
+
+  _awaitRailWorkspace(timeoutMs = 5000) {
+    const deadline = Date.now() + timeoutMs;
+    return new Promise((resolve) => {
+      const look = () => {
+        if (this.isDestroyed && this.isDestroyed()) return resolve(null);
+        const w = this._railWorkspace();
+        if (w) return resolve(w);
+        if (Date.now() >= deadline) return resolve(null);
+        setTimeout(look, 100);
+      };
+      look();
+    });
+  }
+
   _maybeOpenFileDeepLink() {
     const hash = fileDeepLink.consume();
     if (!hash) return false;
@@ -859,6 +1603,100 @@ class desk_module extends LetcBox {
       "toggle-contacts": "sidebar-contacts",
       "toggle-inbox": "sidebar-inbox",
       "toggle-activity": "sidebar-notifications",
+      "toggle-calendar": "sidebar-calendar",
+    };
+  }
+
+  /**
+   * How each restorable screen is put back after a reload — see
+   * _restoreScreen and libs/screen-restore.
+   *
+   *  slot     the part the screen mounts into
+   *  kind     the widget kind to wait for in it
+   *  selfPart the part IS the widget (Activity is a permanent part, not a
+   *           child fed into a slot)
+   *  isReal   tells the widget from the lazy placeholder, when it has no
+   *           whenItemsReady to tell by
+   *  ready    resolves once its first load painted; null = ready on mount
+   *  refresh  run once if ready never came
+   *
+   * Keyed like _RESTORABLE_SCREENS, which still decides what is SAVED.
+   */
+  static get _SCREEN_RESTORE() {
+    const alive = (w) => !(w.isDestroyed && w.isDestroyed());
+    // A screen that has not armed libs/items-ready yet (the admin console, a
+    // plugin) counts as ready on mount; the day it arms, this uses it.
+    const itemsReady = (w) => (_.isFunction(w.whenItemsReady) ? w.whenItemsReady() : true);
+    const restartPart = (pn) => (w) => {
+      const p = w.getPart && w.getPart(pn);
+      if (p && _.isFunction(p.restart) && alive(p)) p.restart();
+    };
+    const armed = (w) => _.isFunction(w.whenItemsReady);
+    const main = "settings-main-slot";
+    return {
+      "toggle-activity": {
+        slot: "activity-panel",
+        kind: "panel_activity",
+        selfPart: true,
+        isReal: armed,
+        ready: itemsReady,
+        refresh: (w) => {
+          w.refreshFeed();
+          w.refreshActivity();
+        },
+      },
+      "toggle-calendar": {
+        slot: main,
+        kind: "calendar_main",
+        isReal: armed,
+        ready: itemsReady,
+        // restoreScreen only guards a SYNC throw from refresh; catch here so a
+        // rejection from this chain never surfaces as an unhandled rejection.
+        refresh: (w) =>
+          w._loadItems()
+            .then(() => {
+              if (alive(w)) w._render();
+            })
+            .catch(() => {}),
+      },
+      "toggle-inbox": {
+        slot: INBOX_SLOT,
+        kind: "chat_p2p",
+        isReal: armed,
+        ready: itemsReady,
+        refresh: restartPart("contact-list"),
+      },
+      "toggle-contacts": {
+        slot: "chat-panel",
+        kind: "address_book",
+        isReal: armed,
+        ready: itemsReady,
+        refresh: (w) =>
+          w._loadContacts()
+            .then(() => {
+              if (alive(w)) w._refreshList();
+            })
+            .catch(() => {}),
+      },
+      "toggle-trash": {
+        slot: "trash-panel",
+        kind: "panel_trash",
+        isReal: armed,
+        ready: itemsReady,
+        refresh: restartPart(_a.list),
+      },
+      // `apps apps-main apps__item apps__ui` is the plugin root's own class
+      // list; `apps-main` is what the lazy placeholder does not carry.
+      "toggle-apps": {
+        slot: main,
+        kind: "apps_main",
+        isReal: (w) => armed(w) || !!(w.el && w.el.classList && w.el.classList.contains("apps-main")),
+        ready: itemsReady,
+        refresh: null,
+      },
+      "toggle-settings": { slot: main, kind: "settings_main", ready: null, refresh: null },
+      "toggle-help": { slot: main, kind: "help_main", ready: null, refresh: null },
+      "upgrade-plan": { slot: main, kind: "settings_billing", ready: null, refresh: null },
     };
   }
 
@@ -883,8 +1721,36 @@ class desk_module extends LetcBox {
       (child && child.el && child.el.dataset && child.el.dataset.kind) ||
       kinds[pendingKey];
 
-    // Full-page slot (Apps / Settings / Billing) — destroyed on close, so a
-    // live child that isn't animating out means the screen is showing.
+    // TOP SURFACE FIRST. The slide-outs are asked about before the full-canvas
+    // slot because they paint over it (z 10001 vs 1500) and, since
+    // closeOtherSidebarPanels stopped closing that slot, the two are now
+    // routinely open together. Answering with the screen UNDERNEATH would
+    // light the wrong sidebar row and remember the wrong destination across a
+    // reload.
+
+    // Keep-alive slots — widget stays mounted when hidden; only
+    // data-anim="in" means visible.
+    const trashChild = topChild("trash-panel");
+    if (trashChild && trashChild.el.dataset.anim === "in") {
+      return "toggle-trash";
+    }
+    const chatChild = topChild("chat-panel");
+    if (chatChild && chatChild.el.dataset.anim === "in") {
+      // Contacts still slides out from the right; the Inbox moved to the
+      // full-canvas slot and is detected below.
+      const kind = childKind(chatChild, "chat-panel");
+      if (kind === "address_book") return "toggle-contacts";
+    }
+
+    // Notifications side panel (predates the anim pattern, uses data-state).
+    const act = this.getPart && this.getPart("activity-panel");
+    if (act && ~~act.mget(_a.state) === 1) {
+      return "toggle-activity";
+    }
+
+    // Full-page slot (Apps / Settings / Billing). Most kinds are destroyed on
+    // close; the KEEP_ALIVE_MAIN_KINDS are parked with data-anim="out" — so a
+    // live child that isn't out means the screen is showing, either way.
     const mainChild = topChild("settings-main-slot");
     if (mainChild && mainChild.el.dataset.anim !== "out") {
       switch (childKind(mainChild, "settings-main-slot")) {
@@ -896,26 +1762,19 @@ class desk_module extends LetcBox {
           return "toggle-help";
         case "settings_billing":
           return "upgrade-plan";
+        // The Personal Calendar. _RESTORABLE_SCREENS has carried
+        // "toggle-calendar" since the screen shipped, but nothing ever
+        // ANSWERED it here — so the calendar was never persisted across a
+        // reload and never re-lit its sidebar row, and now that a slide-out
+        // leaves it standing, closing that slide-out lit Home over a visible
+        // calendar.
+        case "calendar_main":
+          return "toggle-calendar";
+        // The Inbox is a full-canvas screen now (Figma 43:32209), so it is
+        // detected here with its slot-mates rather than among the slide-outs.
+        case "chat_p2p":
+          return "toggle-inbox";
       }
-    }
-
-    // Keep-alive slots — widget stays mounted when hidden; only
-    // data-anim="in" means visible.
-    const trashChild = topChild("trash-panel");
-    if (trashChild && trashChild.el.dataset.anim === "in") {
-      return "toggle-trash";
-    }
-    const chatChild = topChild("chat-panel");
-    if (chatChild && chatChild.el.dataset.anim === "in") {
-      const kind = childKind(chatChild, "chat-panel");
-      if (kind === "address_book") return "toggle-contacts";
-      if (kind === "chat_p2p") return "toggle-inbox";
-    }
-
-    // Notifications side panel (predates the anim pattern, uses data-state).
-    const act = this.getPart && this.getPart("activity-panel");
-    if (act && ~~act.mget(_a.state) === 1) {
-      return "toggle-activity";
     }
 
     return null;
@@ -1168,10 +2027,48 @@ class desk_module extends LetcBox {
 
   async _restoreWorkspace(workspace) {
     if (!workspace || !workspace.hub_id || !workspace.nid || !window.Wm) {
-      return;
+      return false;
     }
+
+    // DOES IT STILL EXIST? The snapshot is taken on `pagehide` from whatever
+    // pane was mounted, and a workspace can be gone by the time it is read
+    // back — deleted in this tab (which is the bug this was reported with) or
+    // in another one, or access revoked while the tab was closed.
+    //
+    // Without this, loadWorkspace is called for a dead hub: media.attributes
+    // resolves nothing, it warns "cannot resolve workspace root", releases the
+    // context — and the desk is left on NO workspace, because _restoreDeskState
+    // already spent its one restore attempt here instead of falling back to
+    // _openDefaultWorkspace. Which is exactly "on refresh it tries to open
+    // test(1)".
+    //
+    // _fetchWorkspaces is the switcher's own cached list, so on a warm cache
+    // this costs nothing; on a cold boot it is one request the boot default
+    // shares anyway. A FAILED fetch returns [] — do not treat that as "the
+    // workspace is gone" and throw the user's place away over a network blip.
+    try {
+      const rows = await this._fetchWorkspaces();
+      if (rows && rows.length) {
+        const alive = rows.some(
+          (r) => `${r.hub_id || r.id}` === `${workspace.hub_id}`,
+        );
+        if (!alive) {
+          this.warn &&
+            this.warn(
+              `[restore] workspace ${workspace.hub_id} no longer exists;`
+                + " opening the default instead",
+            );
+          this._forgetSavedWorkspace();
+          return false;
+        }
+      }
+    } catch (e) {
+      // Fall through and try: an unreachable list is not evidence of deletion.
+      this.warn && this.warn("[restore] could not verify workspace", e);
+    }
+
     await Kind.waitFor("window_folder");
-    if (this.isDestroyed && this.isDestroyed()) return;
+    if (this.isDestroyed && this.isDestroyed()) return false;
     // loadWorkspace accepts any nid (root or subfolder) and mounts a
     // headless window_folder at that node — enough to restore both a
     // workspace root and an in-workspace folder navigation. Server-side
@@ -1187,7 +2084,7 @@ class desk_module extends LetcBox {
     // Wait until the headless pane is actually mounted before returning so
     // a subsequent sidebar restore (Settings over workspace) doesn't race.
     for (let i = 0; i < 40; i++) {
-      if (this.isDestroyed && this.isDestroyed()) return;
+      if (this.isDestroyed && this.isDestroyed()) return false;
       const ready =
         Wm.headlessLayer &&
         Wm.headlessLayer.children &&
@@ -1198,17 +2095,125 @@ class desk_module extends LetcBox {
             v.mget(_a.headless) &&
             v.mget(_a.hub_id) === workspace.hub_id,
         );
-      if (ready) break;
+      if (ready) return true;
       await new Promise((r) => setTimeout(r, 100));
+    }
+    // Timed out waiting for the pane. Report it so the caller can fall back
+    // rather than leave the desk on nothing.
+    return false;
+  }
+
+  /**
+   * Drop the saved workspace from the persisted desk state.
+   *
+   * Called when a restore is refused because the workspace is gone: without
+   * this the same dead hub_id is re-read on every subsequent reload, and each
+   * one pays the verification before falling back. The rest of the state (the
+   * remembered screen, floating windows) is deliberately kept.
+   */
+  _forgetSavedWorkspace() {
+    if (this._bootSavedState) delete this._bootSavedState.workspace;
+    try {
+      const raw = sessionStorage.getItem(desk_module._DESK_STATE_KEY);
+      if (!raw) return;
+      const state = JSON.parse(raw);
+      if (!state || !state.workspace) return;
+      delete state.workspace;
+      if (Object.keys(state).length) {
+        sessionStorage.setItem(
+          desk_module._DESK_STATE_KEY,
+          JSON.stringify(state),
+        );
+      } else {
+        sessionStorage.removeItem(desk_module._DESK_STATE_KEY);
+      }
+    } catch (e) {
+      /* private mode / quota — the guard above already did the useful half */
     }
   }
 
-  async _restoreSidebarService(service) {
-    if (!service || !desk_module._RESTORABLE_SCREENS[service]) return;
-    const sidebarPn = desk_module._RESTORABLE_SCREENS[service];
+  /**
+   * Put the last screen back after a reload — AFTER the workspace's split body
+   * is on screen, and not done until the screen's items have painted.
+   *
+   * The order and the guards live in libs/screen-restore (unit-tested); this
+   * is only the wiring into the desk. It replaced _restoreSidebarService,
+   * which replayed the screen 300ms after the pane MOUNTED — not when it
+   * painted — and never looked at whether the screen's rows ever came.
+   *
+   * @param {String} service a key of _RESTORABLE_SCREENS
+   * @param {Function} [onOpened] called once the screen is open —
+   *   _restoreDeskState stops waiting there
+   * @param {Object} [opt]
+   * @param {Boolean} [opt.paneComing] false when the workspace step opened
+   *   nothing — no split body is coming, so do not wait for one
+   * @returns {Promise<String>} what happened (libs/screen-restore)
+   */
+  _restoreScreen(service, onOpened, opt = {}) {
+    const entry = desk_module._SCREEN_RESTORE[service] || null;
+    return restoreScreen({
+      service,
+      entry,
+      host: {
+        // window.Wm, never a bare `Wm`: see _restoreCurrentPath's note.
+        whenSplitBodyShown: (ms) =>
+          opt.paneComing === false
+            ? Promise.resolve("no-pane")
+            : window.Wm && _.isFunction(window.Wm.whenSplitBodyShown)
+              ? window.Wm.whenSplitBodyShown(ms)
+              : Promise.resolve(false),
+        navSeq: () => this._navSeq || 0,
+        currentScreen: () => this._currentScreenService(),
+        open: (s) => this._openRestoredScreen(s),
+        onOpened: onOpened || null,
+        awaitWidget: (e, ms) => this._awaitScreenWidget(e, ms),
+        lightRow: (s) => this._lightRestoredRow(s),
+        // The topbar icon of the restored screen (utility cluster). The open
+        // was a synthetic onUiEvent, so the radio never lit it — see
+        // libs/utility-light.
+        lightIcon: (s) =>
+          lightUtilityButton(s, {
+            getPart: (pn) => (_.isFunction(this.getPart) ? this.getPart(pn) : null),
+            broadcast: (channel, view) => RADIO_BROADCAST.trigger(channel, view),
+            // A press made while this screen mounted wins — see utility-light.
+            isLit: (v) => ~~v.mget(_a.state) === 1,
+            isBusy: () => {
+              const c = _.isFunction(this.getPart) ? this.getPart("utility-cluster") : null;
+              return !!(c && c.el && c.el.dataset.busy === "1");
+            },
+          }),
+        warn: (...args) => this.warn && this.warn(...args),
+      },
+    });
+  }
 
+  /**
+   * Open a saved screen the way its own control does, so every side effect of
+   * a real press comes with it (breadcrumb, rail, modal dismissal, the admin
+   * console's plugin load).
+   *
+   * Activity is the exception: its live service is a true TOGGLE, and the
+   * notifications panel predates togglePanel, so it is opened by hand, open-only.
+   * The toggles that do go through onUiEvent (Trash, Contacts) cannot close
+   * anything here: libs/screen-restore refuses to open when any screen is up.
+   *
+   * @param {String} service
+   */
+  /**
+   * Retitle the address chip for the Notifications panel. The bell press and
+   * the reload restore both open that panel by hand (it predates togglePanel),
+   * so the label lives here once rather than in each of them — the restore's
+   * copy of the open once left it out.
+   */
+  _announceActivityCrumb() {
+    RADIO_BROADCAST.trigger("breadcrumb:context", {
+      filename: LOCALE.NOTIFICATIONS,
+      ico: "top-bell",
+    });
+  }
+
+  async _openRestoredScreen(service) {
     if (service === "toggle-activity") {
-      // Open-only: the live toggle would close the panel if state is already 1.
       this._dismissWmModal();
       this._parkLiveCall();
       const p = await this.ensurePart("activity-panel");
@@ -1217,12 +2222,59 @@ class desk_module extends LetcBox {
         p.setState(1);
         this.closeOtherSidebarPanels("activity-panel");
         if (typeof p.refreshFeed === "function") p.refreshFeed();
+        // The one thing the hand-opened panel used to miss: without it the
+        // chip kept the workspace path over an open Notifications panel.
+        this._announceActivityCrumb();
       }
-    } else {
-      await this.onUiEvent({ mget: () => null }, { service });
+      return;
     }
+    // `intent` matters for ONE of these services: "upgrade-plan" opens the
+    // billing page on checkout when it can tell which plan is meant, and a
+    // RESTORE is not a click — it puts back the plans view the reader was on.
+    await this.onUiEvent({ mget: () => null }, { service, intent: "restore" });
+  }
 
-    this.ensurePart(sidebarPn)
+  /**
+   * The restored screen's REAL widget, once it is mounted.
+   *
+   * togglePanel settles when a kind is FED, not drawn, and these kinds are lazy
+   * import() chunks that paint a placeholder first — so the slot is polled for
+   * a live child of the right kind that entry.isReal accepts.
+   *
+   * @param {Object} entry a _SCREEN_RESTORE row
+   * @param {Number} timeout
+   * @returns {Promise<View|null>}
+   */
+  _awaitScreenWidget(entry, timeout) {
+    const live = (v) => v && !(v.isDestroyed && v.isDestroyed()) && v.el;
+    const find = () => {
+      const part = this.getPart && this.getPart(entry.slot);
+      if (!live(part)) return null;
+      const candidates = entry.selfPart
+        ? [part]
+        : part.children && part.children.toArray
+          ? part.children.toArray()
+          : [];
+      for (let i = candidates.length - 1; i >= 0; i--) {
+        const c = candidates[i];
+        if (!live(c) || c.mget(_a.kind) !== entry.kind) continue;
+        if (entry.isReal && !entry.isReal(c)) continue;
+        return c;
+      }
+      return null;
+    };
+    return pollFor(find, { timeout, interval: 100 });
+  }
+
+  /**
+   * Light the restored screen's sidebar row — the same broadcast a press of
+   * the row makes.
+   * @param {String} service
+   */
+  _lightRestoredRow(service) {
+    const pn = desk_module._RESTORABLE_SCREENS[service];
+    if (!pn) return;
+    this.ensurePart(pn)
       .then((p) => {
         if (p) RADIO_BROADCAST.trigger("sidebar-radio", p);
       })
@@ -1239,6 +2291,7 @@ class desk_module extends LetcBox {
       // A second loadDefault in the same page must not leave the suppress
       // flag stuck true (which would permanently no-op loadHome).
       this._clearRestoreInFlight(0);
+      this._settleHomeGrid();
       return;
     }
     this._screenRestored = true;
@@ -1248,18 +2301,23 @@ class desk_module extends LetcBox {
     const hasSaved = this._savedStateIsRestorable(saved);
 
     if (!deepLink && !hasSaved) {
-      this._clearRestoreInFlight(0);
+      // Nothing to restore — land on a workspace rather than an empty desk.
+      // The new shell's rail (Files / Chat / Task / Meet / Access) all act on
+      // an OPEN workspace, so "no workspace" is not a state it can render.
+      // Keep the restore flag up across the open, or the breadcrumb's
+      // mount-time loadHome() fires Wm.reload() and wipes it.
+      const opened = await this._openDefaultWorkspace();
+      this._clearRestoreInFlight(opened ? 2500 : 0);
+      // Nothing opened — either the account has none (home-empty is up, and
+      // settleHomeGrid sees it) or the list could not be read, which is the
+      // one case the home grid is still the right answer for.
+      if (!opened) this._settleHomeGrid();
       return;
     }
 
     try {
       const wm = await this._waitForWm();
       if (!wm || (this.isDestroyed && this.isDestroyed())) return;
-
-      // Let mount-time renders (breadcrumb loadHome, wm skeleton) settle
-      // before feeding panels / windows, so nothing re-clears afterwards.
-      await new Promise((r) => setTimeout(r, 300));
-      if (this.isDestroyed && this.isDestroyed()) return;
 
       if (deepLink) {
         // Cold boot often reaches loadDefault before window.Wm exists, so
@@ -1279,16 +2337,57 @@ class desk_module extends LetcBox {
       if (saved.windows && saved.windows.length) {
         await this._restoreFloatingWindows(saved.windows);
       }
+      let paneComing;
       if (saved.workspace) {
-        await this._restoreWorkspace(saved.workspace);
+        // `false` means it could not be restored — gone, or the pane never
+        // mounted. Falling through to the default is the whole point of
+        // verifying: this used to leave the desk on no workspace at all.
+        const restored = await this._restoreWorkspace(saved.workspace);
+        paneComing = restored || !!(await this._openDefaultWorkspace());
+      } else {
+        // Restorable state that names a SCREEN but no workspace (the user was
+        // on Contacts / Settings / a floating window last time). The new shell
+        // has no "no workspace" state to fall back to behind that screen, so
+        // seed one underneath it. Runs BEFORE _restoreScreen so the
+        // remembered screen still ends up on top.
+        paneComing = !!(await this._openDefaultWorkspace());
       }
-      if (saved.service) {
-        await this._restoreSidebarService(saved.service);
+      if (saved.service && !(this.isDestroyed && this.isDestroyed())) {
+        // Wait for the OPEN only. The restore flag below exists to keep a
+        // late loadHome from wiping the screen being opened; the wait for the
+        // screen's items (up to 6s more) needs no such guard, and holding the
+        // flag through it blocked Home and the home-grid settle for as long.
+        // libs/screen-restore never rejects, and resolves on every exit path,
+        // including the ones that stop before an open.
+        await new Promise((resolve) => {
+          this._restoreScreen(saved.service, resolve, { paneComing }).then(resolve);
+        });
       }
     } finally {
       // Hold the flag a beat longer than the feed so late mount-time
       // loadHome stragglers (breadcrumb renders async) stay suppressed.
       this._clearRestoreInFlight(2000);
+      // Boot has finished deciding. The grid has been hidden since Wm mounted
+      // (wm/index.js onDomRefresh) precisely so this restore could paint over
+      // it without the old home screen showing through first; now say whether
+      // it comes back. It defers itself until the flag above clears, and
+      // stays hidden unless nothing at all claimed the canvas.
+      this._settleHomeGrid();
+    }
+  }
+
+  /**
+   * Hand the home workspace-tile grid its verdict once boot has stopped
+   * deciding. Safe to call from any restore path, including the ones that
+   * failed: Wm.settleHomeGrid only reveals the grid when nothing else — a
+   * workspace, a restored window, the no-workspace screen — is on the canvas.
+   */
+  _settleHomeGrid() {
+    try {
+      if (typeof Wm === "undefined" || !Wm) return;
+      if (_.isFunction(Wm.settleHomeGrid)) Wm.settleHomeGrid();
+    } catch (e) {
+      /* the grid's own safety net still runs — never block the restore */
     }
   }
 
@@ -1304,21 +2403,15 @@ class desk_module extends LetcBox {
    */
   async openP2Pchat(args = {}) {
     const { drumate_id, message_id } = args;
-    let p = await this.ensurePart("chat-panel");
+    let p = await this.ensurePart(INBOX_SLOT);
     let widget = p.children.last();
     if (!widget || widget.isDestroyed()) {
-      this.togglePanel("chat_p2p", "chat-panel");
-    } else if (widget.mget(_a.kind) === "chat_p2p") {
-      if (widget.el.dataset.anim === "in") {
-        return;
-      } else {
-        this.togglePanel("chat_p2p", "chat-panel");
-      }
-    } else {
-      this.togglePanel("chat_p2p", "chat-panel");
+      this.togglePanel("chat_p2p", INBOX_SLOT, true);
+    } else if (widget.mget(_a.kind) !== "chat_p2p") {
+      this.togglePanel("chat_p2p", INBOX_SLOT, true);
     }
     if (!drumate_id) return;
-    p = await this.ensurePart("chat-panel");
+    p = await this.ensurePart(INBOX_SLOT);
     this.debug("AAA:122", this);
     widget = p && p.children && p.children.last && p.children.last();
     if (widget && widget.openChatByPeerId)
@@ -1331,20 +2424,22 @@ class desk_module extends LetcBox {
    * @returns
    */
   async openContactPanel(args = {}) {
-    let p = await this.ensurePart("chat-panel");
-    let widget = p.children.last();
-    if (!widget || widget.isDestroyed()) {
-      this.togglePanel("address_book", "chat-panel");
-    } else if (widget.mget(_a.kind) === "address_book") {
-      if (widget.el.dataset.anim === "in") {
-        return;
-      } else {
-        this.togglePanel("address_book", "chat-panel");
-      }
-    }
-    this.togglePanel("address_book", "chat-panel");
-    p = await this.ensurePart("chat-panel");
-    widget = p && p.children && p.children.last && p.children.last();
+    // ONE open-only call, always followed by switchTab.
+    //
+    // `togglePanel` is a REAL toggle: for a kind already mounted and animated
+    // in it runs _hidePanel() unless `openOnly` is passed. This used to call it
+    // TWICE in the same pass without that flag, so the first call opened the
+    // Contacts panel and the second immediately closed it again — the "clicking
+    // the contact-invite notification does nothing" report. And the
+    // `dataset.anim === "in"` branch returned EARLY, so a notification arriving
+    // while Contacts was already open never reached [Pending] either.
+    //
+    // openOnly covers every case on its own: empty slot / another kind → load,
+    // mounted but animated out → re-show, mounted and open → leave it open.
+    // Same shape as openP2Pchat, which passes the flag for the same reason.
+    await this.togglePanel("address_book", "chat-panel", true);
+    const p = await this.ensurePart("chat-panel");
+    const widget = p && p.children && p.children.last && p.children.last();
     if (widget && widget.switchTab) widget.switchTab(_a.pending);
   }
 
@@ -1360,16 +2455,223 @@ class desk_module extends LetcBox {
     captureUtm();
     this.route();
     RADIO_BROADCAST.on("breadcrumb:content", this._updateAddmenu);
+    // A workspace was just created (libs/create-workspace announces every
+    // type here) — the cached list is known-wrong at that instant.
+    RADIO_BROADCAST.on("workspace:refresh", this._onWorkspaceListChanged);
     // Post-onboarding handoff for users who picked Google Drive in the
     // tools step. Delayed so workspace renders first.
     setTimeout(() => this._maybeAutoLaunchGDriveMigration(), 1500);
     // PMF rating survey: accumulate active usage; popup fires at 30 min.
     this._initRatingSurveyTimer();
+    // Daily reminder card. Delayed like the migration prompt so the workspace
+    // renders first — the card is a greeting, not a gate.
+    setTimeout(() => this._maybeShowDailyReminder(), 2000);
     // Warm the support-account lookup so screens that need it can answer
     // synchronously: the Get help screen hides Contact Support for the
     // support account itself, and the inbox badges support conversations.
     // Failure is already swallowed into null — nothing here depends on it.
     this.supportContact();
+    this._installOrgViewMirror();
+    this._installWsMenuMirror();
+    this._installUtilityLights();
+  }
+
+  /**
+   * Mirror "a topbar dropdown is open" onto the desk root as
+   * `data-desk-topmenu` — same reason as _installOrgViewMirror, and the same
+   * cost being removed: the rule that reads it had `.desk-module` as its
+   * `:has()` subject, so ordinary DOM churn anywhere re-matched the root.
+   *
+   * ANY DROPDOWN, NOT JUST THE SWITCHER. This watched the ws-wrapper alone and
+   * stamped `data-desk-wsmenu`, which fed the one rule that lifts the bar over a
+   * wrapper-modal. So the workspace switcher stayed usable while the create
+   * form (`.form-folder__main`) was up — and the ORGANISATION panel and the
+   * ACCOUNT menu, which hang from the same 46px bar over the same window, did
+   * not: opening either of them during a modal drew it under
+   * `window-folder__split-body`. The modal dissolves `.window-manager__ui`, the
+   * headless layer goes to 50001 at the document root, and `.desk-module__topbar`
+   * is its own stacking context at 10003 — so every dropdown inside it loses,
+   * and there is nothing specific to the switcher about that.
+   *
+   * All three are `Skeletons.Menu` roots (org-tab skeleton/index.js,
+   * topbar.js `__ws-wrapper` / `__account-wrapper`), so ui-core gives each the
+   * `menu-topic` class and `data-state` — one test covers the bar.
+   *
+   * SCOPED TO THE BAR, not the desk. The observer takes a subtree, which is what
+   * "any dropdown" needs, but the bar is a handful of nodes; the thing worth
+   * avoiding is a `:has()` anchored on the desk ROOT, which re-matches the whole
+   * application on any mutation anywhere (see _installOrgViewMirror).
+   *
+   * `class` is in the filter as well as `data-state` because `menu-topic` is
+   * applied by the menu widget rather than being present from the first render.
+   */
+  _installWsMenuMirror() {
+    this.ensurePart("top-bar").then((p) => {
+      if (!p || !p.el || (this.isDestroyed && this.isDestroyed())) return;
+      const root = this.el;
+      if (!root || !root.dataset || typeof MutationObserver !== "function") return;
+      if (this._wsMenuObserver) this._wsMenuObserver.disconnect();
+      const sync = () => {
+        if (p.el.querySelector('.menu-topic[data-state="1"]')) {
+          root.dataset.deskTopmenu = "1";
+        } else {
+          delete root.dataset.deskTopmenu;
+        }
+      };
+      this._wsMenuObserver = new MutationObserver(sync);
+      this._wsMenuObserver.observe(p.el, {
+        subtree: true,
+        attributes: true,
+        attributeFilter: ["data-state", "class"],
+      });
+      sync();
+    });
+  }
+
+  /**
+   * Mirror "the organisation screen is up" onto the desk root as
+   * `data-desk-orgview`, so the skin can read an attribute instead of a
+   * root-anchored `:has()`.
+   *
+   * WHY THIS IS THE EXPENSIVE KIND OF SELECTOR. A `:has()` whose SUBJECT is
+   * `.desk-module` marks the root "affected by :has()". Blink then has to
+   * re-evaluate it whenever a mutation could change the answer — and the answer
+   * depends on a descendant EXISTING, so EVERY node added or removed anywhere in
+   * the app is such a mutation. The root is re-matched and its whole subtree
+   * invalidated.
+   *
+   * That is not theoretical. Attributing the style invalidations in the
+   * 2026-09-15 trace to the code that caused them put ordinary DOM churn at the
+   * top — 114 from `remove`, 68 from `_toggleClass`, 32 from `_loadAvatar`, 26
+   * from `showThumb` — none of which have anything to do with the org screen.
+   * Each one restyled a median of 8,278 elements, 54% of the document.
+   *
+   * An attribute on the root is matched against the root and nothing else. The
+   * observer is scoped to the slot the screen actually mounts into
+   * (togglePanel -> "settings-main-slot"), so it cannot re-create the cost.
+   */
+  _installOrgViewMirror() {
+    this.ensurePart("settings-main-slot").then((p) => {
+      if (!p || !p.el || (this.isDestroyed && this.isDestroyed())) return;
+      const root = this.el;
+      if (!root || !root.dataset || typeof MutationObserver !== "function") return;
+      if (this._orgViewObserver) this._orgViewObserver.disconnect();
+      // Same test the selector made: an org-view root that is not animating out
+      // and has actually drawn its __main. `data-anim !== "out"` is the desk's
+      // own liveness test (see the `topChild` read in _sectionScreenService).
+      const SEL = '.desk-org-view__ui:not([data-anim="out"]) .desk-org-view__main';
+      const sync = () => {
+        if (p.el.querySelector(SEL)) root.dataset.deskOrgview = "1";
+        else delete root.dataset.deskOrgview;
+      };
+      this._orgViewObserver = new MutationObserver(sync);
+      this._orgViewObserver.observe(p.el, {
+        childList: true,
+        subtree: true,
+        attributes: true,
+        attributeFilter: ["data-anim"],
+      });
+      sync();
+    });
+  }
+
+
+  /**
+   * Daily reminder card — Round 3 / Sprint 1 row 7.
+   *
+   * Fires on the FIRST DESK LOAD OF THE DAY, keyed in localStorage on the
+   * viewer's LOCAL date. Per device on purpose: a two-device user seeing it
+   * twice is accepted, and it costs no schema.
+   *
+   * The day window is computed HERE, from the viewer's own clock, and sent to
+   * the server — "today" is whatever the person in front of the screen calls
+   * today, and the server has no way to know their timezone.
+   *
+   * The day is marked consumed BEFORE the request, not after. Two desk loads
+   * in quick succession would otherwise both pass the check and fan out across
+   * every workspace twice; and a card that failed to load is not worth
+   * retrying all day.
+   *
+   * An all-zero day renders nothing. A card announcing three zeroes is noise,
+   * and the day is still marked so it does not re-query on every load.
+   */
+  async _maybeShowDailyReminder() {
+    let Popup;
+    try {
+      Popup = require("builtins/widget/daily-reminder-popup");
+    } catch (e) {
+      return; // widget not in this build — nothing to show
+    }
+    const key = Popup.dayKey();
+    if (Popup.alreadyShownToday(key)) return;
+
+    // WAIT FOR THE WINDOW MANAGER, and do it BEFORE marking the day consumed.
+    //
+    // This runs off a 2s timer from onDomRefresh, and on a slow boot `Wm` is
+    // simply not defined yet — the launch below then threw
+    // `ReferenceError: Wm is not defined` (seen in the production error log,
+    // both Chrome and Safari wordings). markShownToday used to run BEFORE that
+    // launch, so the throw did not merely log: it BURNED the reminder for the
+    // day, and the card silently never appeared. Slow boots are exactly when
+    // the timer loses the race, which is why this looked intermittent.
+    //
+    // Waiting first keeps the "mark before the request" ordering that stops two
+    // desk loads both fanning out the digest query, while only spending the day
+    // once there is somewhere to actually show the card.
+    const wm = await this._waitForWm();
+    if (!wm || (this.isDestroyed && this.isDestroyed())) return;
+
+    Popup.markShownToday(key);
+
+    // Local midnight → next local midnight. Built from the date parts rather
+    // than by adding 86400s, so the window stays correct across a daylight
+    // saving change.
+    const now = new Date();
+    const start = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const end = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
+
+    let counts;
+    try {
+      counts = await this.fetchService({
+        // SERVICE.activity is NOT in lex/services.json — it exists only in the
+        // backend map merged in at bootstrap, so the whole namespace can be
+        // undefined and `SERVICE.activity.daily_digest` would throw. The
+        // activity panel already guards its calls this way; same idiom here.
+        service:
+          (SERVICE.activity && SERVICE.activity.daily_digest) ||
+          "activity.daily_digest",
+        hub_id: Visitor.id,
+        day: key,
+        stime: Math.floor(start.getTime() / 1000),
+        etime: Math.floor(end.getTime() / 1000),
+      });
+    } catch (e) {
+      return;
+    }
+    // fetchService resolves undefined (or an error payload) rather than
+    // rejecting when a call does not complete, so a non-object IS the failure
+    // path — see _loadTasks in the task panel for the same shape.
+    if (!counts || typeof counts !== "object" || Array.isArray(counts)) return;
+
+    // A day with nothing due still shows the card, reading "nothing due
+    // today" instead of three zeroes. It used to return here, and the first
+    // consequence was the feature looking BROKEN: you open the desk, see
+    // nothing, and cannot tell "quiet day" apart from "it didn't work". A
+    // morning greeting that is silent exactly when there is nothing to report
+    // is indistinguishable from one that failed, and "you're clear today" is
+    // real information. The card renders nothing only when the request itself
+    // did not come back, which is handled above.
+    await Kind.waitFor("daily_reminder_popup");
+    Wm.launch(
+      {
+        kind: "daily_reminder_popup",
+        hub_id: Visitor.id,
+        nid: Visitor.get(_a.home_id),
+        counts,
+        wm_unique_id: "daily_reminder_popup",
+      },
+      { explicit: 1, singleton: 1 },
+    );
   }
 
   /**
@@ -1394,6 +2696,10 @@ class desk_module extends LetcBox {
     if (skipped) return;
 
     await Kind.waitFor("migrate_gdrive_popup");
+    // Same 1.5s-timer race as _maybeShowDailyReminder — `Wm` may not exist yet
+    // on a slow boot, and a bare reference throws rather than returning
+    // undefined.
+    if (!(await this._waitForWm())) return;
     Wm.launch({
       kind: "migrate_gdrive_popup",
       hub_id: Visitor.id,
@@ -1457,6 +2763,10 @@ class desk_module extends LetcBox {
       if (!state || state.done) return;
       if (state.snooze_until && Number(state.snooze_until) > now) return;
       await Kind.waitFor("rating_survey_popup");
+      // `fire()` can run immediately on mount when the stored usage total is
+      // already past the threshold, so it races boot the same way the two
+      // popups above do.
+      if (!(await this._waitForWm())) return;
       Wm.launch({
         kind: "rating_survey_popup",
         hub_id: Visitor.id,
@@ -1503,14 +2813,3909 @@ class desk_module extends LetcBox {
     });
   }
 
+  /**
+   * Write the unread figure to EVERY badge that shows it.
+   *
+   * There are two since the topbar gained its utility cluster (Figma
+   * 43:23955): the rail row's numeric pill and the bell's dot. They read the
+   * same number, so they are filled from one place — updating only the rail
+   * left the bell permanently unmarked.
+   */
+  _writeActivityCount(unread) {
+    const n = parseInt(unread, 10) || 0;
+    const content = n > 99 ? "99+" : String(n);
+    // Three surfaces: the desktop cluster's bell, the phone bar's bell, and
+    // the go-to sheet's notifications tile. (The old drawer's 'activity-count'
+    // is gone with the drawer.) They read the same number, so they are filled
+    // from one place — updating only some left the others permanently unmarked.
+    ["activity-count-top", "activity-count-mobile", "activity-count-sheet"].forEach((pn) => {
+      this.ensurePart(pn).then((p) => {
+        if (!p || !p.el) return;
+        // Blank at zero, matching the existing badge convention — the skin
+        // hides it on data-count="0" AND on :empty, so both agree.
+        p.el.innerText = n === 0 ? "" : content;
+        p.el.dataset.count = content;
+      });
+    });
+  }
+
+  // ── Workspaces ─────────────────────────────────────────────────────────────
+
+  /**
+   * The workspaces this user can open, newest-ranked first.
+   *
+   * Same `desk.home type=node` payload the sidebar list used, and the same
+   * filter it applied in prepareData: hubs only in a collaborative area, plus
+   * home-root FOLDERS (a Personal workspace is a personal-area folder, not a
+   * hub) which get area=personal stamped because desk.home leaves it null.
+   * Hubs sort above folders, mirroring the list's comparator.
+   *
+   * Cached: both the switcher menu and the boot default read it, and it is a
+   * network call. Refreshed on demand via `force`.
+   */
+  async _fetchWorkspaces(force) {
+    if (this._workspaces && !force) {
+      // Serve the cached list immediately — the switcher must open filled, not
+      // empty behind a request — but refresh behind it once it has aged out.
+      // Nothing else invalidates this cache except a workspace being created
+      // or trashed, so without the age check a workspace SHARED with the user,
+      // or RENAMED by someone else, stayed wrong (or missing, and therefore
+      // unreachable — this menu is the only global way to change workspace)
+      // until the page was reloaded.
+      if (this._workspacesAt && Date.now() - this._workspacesAt > WS_CACHE_TTL) {
+        this._revalidateWorkspaces();
+      }
+      return this._workspaces;
+    }
+    let rows = [];
+    try {
+      rows = await this._fetchWorkspacePages(force);
+    } catch (e) {
+      this.warn && this.warn("[workspaces] desk.home failed", e);
+      return [];
+    }
+
+    const list = rows
+      .filter((it) => {
+        if (!it) return false;
+        // GONE, BUT STILL SENT. `desk.home` can answer with a row whose
+        // workspace no longer exists, and nothing here used to drop it — which
+        // is why deleted workspaces stayed in the switcher until a reload.
+        //
+        // It is a server-side asymmetry in mfs_show_node_by (common/procedures/
+        // mfs), the proc `desk.home` runs. For a hub it FILTERS on the media
+        // placeholder's status:
+        //
+        //   WHERE ... m.`status` NOT IN ('hidden', 'deleted')
+        //
+        // but RETURNS the entity's:
+        //
+        //   COALESCE(he.status, m.status) AS status
+        //
+        // A hub whose entity is deleted or frozen keeps an `active` placeholder
+        // row under the user's home, so it passes the filter and comes back
+        // carrying `status: "deleted"`. Verified against the deployed proc, not
+        // just the repo copy.
+        //
+        // So trust the status field the server does send. Allow-list rather
+        // than deny-list on `deleted`: the same asymmetry leaks `frozen` and
+        // `system` (the "System" public hub is one, and it was being listed as
+        // a user workspace), and there is no reason to enumerate every value
+        // the entity table may hold.
+        //
+        // A MISSING status still passes. Every row the proc emits carries one
+        // — `m.status` is NOT NULL and the COALESCE always resolves — but if a
+        // server ever stops sending it, an allow-list read strictly would blank
+        // the entire switcher, and an over-full menu beats an empty one.
+        if (it.status && it.status !== "active") return false;
+        if (it.filetype === _a.folder) return true;
+        if (it.filetype === _a.hub) {
+          return /^(share|private|restricted|public)$/.test(it.area);
+        }
+        return false;
+      })
+      .map((it) =>
+        it.filetype === _a.folder && !it.area ? { ...it, area: _a.personal } : it,
+      );
+    // Stable: hubs (0) before folders (1), server rank preserved within each.
+    this._workspaces = _.sortBy(list, (it) =>
+      it.filetype === _a.folder ? 1 : 0,
+    );
+    // Stamped only on a SUCCESSFUL fetch: the early return above leaves both
+    // the cache and this untouched when the request fails, so a network blip
+    // keeps the last good list rather than emptying the switcher.
+    this._workspacesAt = Date.now();
+    return this._workspaces;
+  }
+
+  /**
+   * Read EVERY page of `desk.home`, not just the first.
+   *
+   * 🚨 `desk.home` IS PAGINATED AND THE CAP IS 45. The service takes a `page`
+   * param and runs `mfs_show_node_by`, whose `pageToLimits` UDF is a hard
+   * `offset = (page-1)*45, range = 45` — the same trap `desk_my_workspaces`
+   * carries a comment about ("mfs_show_node_by would hand back 45 at a time
+   * ... turning a 46-workspace user's total into a silent undercount").
+   *
+   * This request never sent `page`, so it always got page 1. A home listing
+   * is ordered `rank asc`, and a workspace just created or just joined ranks
+   * LAST — so for anyone holding 45 or more home items the newest workspace
+   * landed on page 2 and never appeared in the switcher. Not until it aged
+   * out, not on the cache-busted forced refetch, not after a full reload:
+   * this menu is the only global way to change workspace, so the workspace
+   * was simply unreachable once the user navigated away from it. Reproduced
+   * on the test endpoint: a 46-item account, the new workspace alone on
+   * page 2, absent from the menu.
+   *
+   * Costs NOTHING for the common case: a desk under WS_PAGE_SIZE comes back
+   * short on page 1 and no second request is made — the same single call this
+   * has always cost. Only a desk that actually fills a page pays for the next
+   * one.
+   *
+   * @param {Boolean} force cache-bust the GET (see the caller)
+   * @returns {Promise<Array>} every row, in server order
+   */
+  async _fetchWorkspacePages(force) {
+    // A list service with exactly one row answers with the object itself, not
+    // a one-element array — normalise before filtering or the switcher empties.
+    const asRows = (r) => (r == null ? [] : _.isArray(r) ? r : [r]);
+    const all = [];
+    for (let page = 1; page <= WS_MAX_PAGES; page++) {
+      const rows = asRows(
+        await this.fetchService(SERVICE.desk.home, {
+          hub_id: Visitor.id,
+          type: "node",
+          page,
+          // Cache-buster, on the FORCED path only.
+          //
+          // `fetchService` is a GET and ui-essentials builds it with
+          // `cache: "default"` (socket/utils.js), so a repeat of this exact URL
+          // can be answered from the browser's HTTP cache. Every forced refetch
+          // here is a read-after-WRITE — a workspace was just created — which is
+          // precisely the case that gets served the pre-create response and
+          // leaves the new workspace missing from the switcher until a reload.
+          // A scalar param makes the URL unique and forces the miss.
+          //
+          // Only when forced: the boot read wants the cache, and busting it there
+          // would cost a request on every desk mount for nothing.
+          ...(force ? { _ts: Date.now() } : {}),
+        }),
+      );
+      if (!rows.length) break;
+      all.push(...rows);
+      // A short page is the last page. Checked against the server's own page
+      // size (WS_PAGE_SIZE) rather than against the previous page's length:
+      // page 1 can never be "shorter than page 1", so a relative test would
+      // read a second page on every desk, including the small ones that were
+      // never broken.
+      if (rows.length < WS_PAGE_SIZE) break;
+    }
+    return all;
+  }
+
+  /**
+   * Refresh the workspace list behind an answer already served from cache.
+   *
+   * Re-feeds the switcher only when the list actually CHANGED — this can run
+   * while the menu is open, and re-feeding identical rows would rebuild every
+   * row (and drop the in-place current-row highlight) for nothing.
+   *
+   * Single-flight, and its failure is swallowed: this is a background repair
+   * of a cache that is merely stale, so it must never surface an error or
+   * queue up behind a server that is down.
+   */
+  _revalidateWorkspaces() {
+    if (this._wsRevalidating) return this._wsRevalidating;
+    const sig = (rows) =>
+      (rows || [])
+        .map((r) => `${r.hub_id || r.id}:${r.filename || r.name}:${r.area}`)
+        .join("|");
+    const before = sig(this._workspaces);
+    // force:1, so this cannot re-enter the stale branch that called it.
+    this._wsRevalidating = this._fetchWorkspaces(1)
+      .then((rows) => {
+        if (sig(rows) === before) return;
+        if (this._wsListPart) this._renderWorkspaceMenu(this._wsListPart);
+        this._syncWorkspaceLabel();
+      })
+      .catch(() => {})
+      .finally(() => {
+        this._wsRevalidating = null;
+      });
+    return this._wsRevalidating;
+  }
+
+  /**
+   * A workspace was created — libs/create-workspace announces every type on
+   * "workspace:refresh". The cache is known-wrong at that instant, so drop it
+   * and repaint the switcher rather than waiting for it to age out.
+   */
+  _onWorkspaceListChanged() {
+    this._workspaces = null;
+    this._workspacesAt = 0;
+    this._fetchWorkspaces(1)
+      .then(() => {
+        if (this._wsListPart) this._renderWorkspaceMenu(this._wsListPart);
+        this._syncWorkspaceLabel();
+      })
+      .catch(() => {});
+  }
+
+  /**
+   * The payload Wm.loadWorkspace wants for one row.
+   *
+   * The rules moved to libs/workspace-target so the home grid's tile click
+   * resolves rows exactly as this does — a tile and its switcher row are the
+   * same workspace, fed from the same desk.home payload.
+   */
+  _workspaceTarget(row) {
+    return require("libs/workspace-target").workspaceTarget(row);
+  }
+
+  /**
+   * One workspace's identity in the switcher.
+   *
+   * NOT hub_id. A Personal workspace is a home-root FOLDER, and every one of
+   * them carries the USER's own hub_id — so keyed on hub_id alone, all of a
+   * user's personal workspaces are the same workspace. That is what made
+   * selecting one row under "Personal" light every row in the section, and it
+   * made clicking any of them open the first one, because the lookup found
+   * whichever matched that shared id first.
+   *
+   * The sidebar has always keyed these correctly (workspace-list
+   * `getWorkspaceKey`, with the reason written out); this is the same rule, in
+   * the one place the switcher can share it.
+   *
+   * Prefixed so a folder nid can never collide with a hub id, and so a null
+   * key is obviously null rather than an accidental "".
+   *
+   * @param {Object} row a desk.home row, or Wm._curWorkspace
+   * @returns {String|null}
+   */
+  _workspaceKey(row) {
+    if (!row) return null;
+    // THREE SIGNALS, because no single one survives both shapes.
+    //
+    //   filetype   a desk.home row has it; Wm._curWorkspace does not.
+    //   area       libs/workspace-target pins `personal` on a folder TARGET,
+    //              but loadWorkspace then overwrites _curWorkspace.area from
+    //              media.attributes — and a home-root folder's area is NULL in
+    //              the database. So an OPEN personal workspace arrives here
+    //              with no area at all, and area alone read it as a hub: its
+    //              key came out `hub:<user id>`, matched none of the
+    //              `folder:<nid>` rows, and the switcher header went blank.
+    //   hub_id     the reliable one. A personal workspace IS the user, so its
+    //              hub_id is Visitor.id; a real hub's is its own.
+    //
+    // Not `nid !== hub_id`, which looks like a structural test and is not: an
+    // open HUB's nid is the workspace ROOT node, so the two differ there too.
+    const isFolder =
+      row.filetype === _a.folder ||
+      row.area === _a.personal ||
+      (row.hub_id != null && `${row.hub_id}` === `${Visitor.id}`);
+    const id = isFolder ? row.nid || row.id : row.hub_id || row.id;
+    if (id == null || id === "") return null;
+    return `${isFolder ? "folder" : "hub"}:${id}`;
+  }
+
+  /**
+   * Split the switcher's rows into the types the user chose when creating them.
+   *
+   * THE RULE ITSELF MOVED to libs/workspace-groups. It had two callers while it
+   * lived here, both of which reach it through a desk instance — this method
+   * and mobile-sheets' `ui._groupWorkspaces`. The invite popup's workspace
+   * picker is the third, and it holds no reference to the desk, so the
+   * taxonomy had to stop being the desk's private property.
+   *
+   * Kept as a method rather than updating the two call sites: `ui._groupWorkspaces`
+   * is part of what the desk hands the phone sheet, and a shared rule is only
+   * shared if changing where it lives does not ripple.
+   *
+   * @param {Array} rows desk.home workspaces, already ordered
+   * @returns {Array} [{ label, rows }] — empty groups omitted
+   */
+  _groupWorkspaces(rows) {
+    return groupWorkspaces(rows);
+  }
+
+  /**
+   * Fill the switcher's header: the open workspace's glyph, its name, then
+   * the link and overflow actions.
+   *
+   * Its own method because the highlight sync needs JUST this — the header
+   * NAMES the current workspace, so it has to change when the workspace does,
+   * while the rows below only need an attribute flipped. Re-feeding the whole
+   * menu to repaint one row would rebuild every row on every navigation.
+   *
+   * The link opens Manage access and the ⋯ opens the workspace menu; both are
+   * Buttons, since image_svg views raise no ui event. The link is rendered
+   * only for external workspaces — see below.
+   *
+   * `cur` carries only what Wm tracks, so the name and the area come from the
+   * matching row in the payload the list is built from — the row is what knows
+   * the area the glyph is tinted by.
+   */
+  _feedWorkspaceHead(head, rows, cur) {
+    const cn = "desk-module-topbar";
+    // By KEY. Matching on hub_id put the FIRST personal workspace in the header
+    // whichever one was open, because they all carry the user's own — the same
+    // collision that lit the whole "Personal" section at once.
+    const curKey = this._workspaceKey(cur);
+    const curRow =
+      (curKey && (rows || []).find((r) => this._workspaceKey(r) === curKey)) ||
+      null;
+    if (!curRow) return head.feed([]);
+    return head.feed([
+      Skeletons.Element({
+        className: `${cn}__ws-head-icon ${curRow.area || ""}`,
+        content: folderIcon({
+          area: curRow.area,
+          filetype: curRow.filetype === _a.folder ? _a.folder : _a.hub,
+          role: curRow.filetype === _a.folder ? "" : "desk",
+          widgetId: _.uniqueId("ws-head-icon-"),
+          isAttachment: 1,
+        }),
+      }),
+      Skeletons.Box.X({
+        className: `${cn}__ws-head-name`,
+        kids: [
+          Skeletons.Note({
+            className: `${cn}__ws-head-name-text`,
+            content: curRow.filename || curRow.name || "",
+          }),
+        ],
+      }),
+      Skeletons.Box.X({
+        className: `${cn}__ws-head-actions`,
+        kids: [
+          // EXTERNAL workspaces only. The chain link stands for the share link
+          // that lets someone outside reach the workspace, and only an external
+          // one has such a link — an internal (private/team) workspace is
+          // reached by being a member. Same split that decides which panel the
+          // rail's Access opens (window/folder _manageAccessIsInternal), and
+          // the pair window/hub.js openSettings treats as external.
+          //
+          // Rendering it everywhere offered a link that does not exist for most
+          // workspaces. The ⋯ beside it is NOT gated — rename, duplicate and
+          // delete apply to every workspace.
+          //
+          // A Button, not an Image.Svg: image_svg views raise no ui event, so a
+          // service on one would never reach a handler — the same reason the ⋯
+          // beside it had to become one.
+          [_a.share, _a.dmz].includes(curRow.area)
+            ? Skeletons.Button.Svg({
+                className: `${cn}__ws-head-action ${cn}__ws-head-action--link`,
+                ico: "apps-link-simple",
+                service: "workspace-access",
+                // A toggle for the secure-share view: fed lit when the header
+                // is rebuilt with the view already up, kept in step after that
+                // by _syncWorkspaceAccessToggle. `state`, NOT dataset.state:
+                // this renders as image_svg, whose onDomRefresh stamps
+                // data-state from the model's `state` over any fed dataset.
+                state: this._secureShareViewIsUp() ? 1 : 0,
+                uiHandler: [this],
+              })
+            : null,
+          // A real Button: an Image.Svg raises no ui event, so the ⋯ could
+          // never open anything. The link icon beside it stays an Image.Svg —
+          // its behaviour is still undecided, and a control that looks
+          // clickable and does nothing is worse than one that looks inert.
+          Skeletons.Button.Svg({
+            className: `${cn}__ws-head-action ${cn}__ws-head-action--more`,
+            ico: "app-dots-horizontal",
+            service: "workspace-menu",
+            uiHandler: [this],
+          }),
+          // The link above is null on a non-external workspace.
+        ].filter(Boolean),
+      }),
+    ]);
+  }
+
+  /**
+   * Fill the switcher dropdown.
+   *
+   * Takes the part when the caller already has it (onPartReady hands over the
+   * child) — getPart is not reliable at that moment, the part is still being
+   * registered, and returning early there left the menu permanently empty.
+   *
+   * @param {Object} [target] the ws-list part, when the caller holds it
+   * @param {Boolean} [force] refetch instead of serving the cached rows. Set by
+   *   the workspace:refresh handler, where the cache is known to be one
+   *   workspace out of date.
+   */
+  async _renderWorkspaceMenu(target, force) {
+    const part = target || (this.getPart && this.getPart("ws-list"));
+    // Two parts are filled from here now (the list and the header), and they
+    // become ready in no fixed order, so each caches itself on arrival and this
+    // runs once per arrival. Re-checking `alive` rather than trusting the cache
+    // matters because the menu is rebuilt on every topbar render — a stale part
+    // from the previous tree is destroyed but still referenced.
+    const alive = (p) => !!(p && p.el && !(p.isDestroyed && p.isDestroyed()));
+    if (alive(part)) this._wsListPart = part;
+    const list = alive(this._wsListPart) ? this._wsListPart : null;
+    const head = alive(this._wsHeadPart) ? this._wsHeadPart : null;
+    if (!list && !head) return;
+    const rows = await this._fetchWorkspaces(force);
+    if (!rows.length) {
+      if (head) head.clear();
+      return list
+        ? list.feed([
+            Skeletons.Note({
+              className: "desk-module-topbar__ws-empty",
+              content: LOCALE.NO_CONTENT || "",
+            }),
+          ])
+        : undefined;
+    }
+    // window.Wm, NOT a bare `Wm`: this runs from onPartReady during the first
+    // topbar render, which happens BEFORE window/manager.js:53 assigns the
+    // global. A bare identifier throws ReferenceError there; window.Wm is
+    // merely undefined.
+    // window.Wm, NOT a bare `Wm`: this runs from onPartReady during the first
+    // topbar render, which happens BEFORE window/manager.js:53 assigns the
+    // global. A bare identifier throws ReferenceError there.
+    const cur = (window.Wm && window.Wm._curWorkspace) || null;
+
+    // The workspace's OWN icon — the area-tinted folder shape from
+    // media/grid/template/folder, the same module the sidebar's workspace_item
+    // renders through getFolderIcon.
+    //
+    // This previously used raw-drumee-folder-blue/purple/orange/green, copied
+    // from desk_breadcrumb. Those names exist in NEITHER sprite: the breadcrumb
+    // computes them into a `folderIcon` variable it never uses, so the mapping
+    // is dead code there and these rows were drawing nothing at all.
+    const glyph = (row) =>
+      folderIcon({
+        area: row.area,
+        filetype: row.filetype === _a.folder ? _a.folder : _a.hub,
+        role: row.filetype === _a.folder ? "" : "desk",
+        widgetId: _.uniqueId("ws-menu-icon-"),
+        isAttachment: 1,
+      });
+
+    const cn = "desk-module-topbar";
+    const curKey = this._workspaceKey(cur);
+    const rowFor = (row) => {
+      const hubId = row.hub_id || row.id;
+      const wsKey = this._workspaceKey(row);
+      // By KEY, not by hub_id: personal workspaces all share the user's, so
+      // comparing ids marked every one of them current at once.
+      const isCurrent = !!wsKey && wsKey === curKey;
+      return Skeletons.Box.X({
+        className: `${cn}__ws-item`,
+        service: "switch-workspace",
+        uiHandler: [this],
+        wsKey,
+        // Kept alongside wsKey: other per-row consumers read it (the phone's
+        // sheet re-dispatch carries the cmd along for exactly this).
+        wsHubId: hubId,
+        attrOpt: {
+          "data-current": isCurrent ? "1" : "0",
+          "data-area": row.area || "",
+        },
+        kidsOpt: { active: 0 },
+        kids: [
+          // Element + content, NOT Image.Svg + ico: media/grid/template/folder
+          // returns an HTML STRING, while `ico` names a sprite symbol. Passing
+          // the markup as a name built `<use href="#<markup>">`, which resolves
+          // to nothing and rendered as a broken oversized glyph. Same treatment
+          // the inbox's workspace rows use (chatcontact-item skeleton).
+          Skeletons.Element({
+            className: `${cn}__ws-item-icon ${row.area || ""}`,
+            content: glyph(row),
+          }),
+          Skeletons.Note({
+            className: `${cn}__ws-item-name`,
+            content: row.filename || row.name || "",
+          }),
+        ],
+      });
+    };
+
+    // Personal workspaces are home-root FOLDERS, hub workspaces are hubs.
+    // _fetchWorkspaces already sorts hubs first, so a single boundary splits
+    // them and each group gets a heading instead of one undifferentiated list.
+    // `group`, not `list` — the outer `list` is the part being fed, and
+    // shadowing it here would read as though the section fed itself.
+    const section = (label, group) =>
+      group.length
+        ? [
+            Skeletons.Note({
+              className: `${cn}__ws-section`,
+              content: label,
+            }),
+            ...group.map(rowFor),
+          ]
+        : [];
+
+    if (list) {
+      list.feed(
+        this._groupWorkspaces(rows).flatMap((g) => section(g.label, g.rows)),
+      );
+    }
+
+    // ── Header (Figma 48:36991) ──────────────────────────────────────────
+    if (head) this._feedWorkspaceHead(head, rows, cur);
+  }
+
+  /**
+   * Show the open workspace's name on the switcher.
+   *
+   * A no-op in the current shell: the trigger is a caret only, because
+   * desk_breadcrumb already renders [folder icon] + workspace name right
+   * beside it and two copies read as a duplicate. Kept (and kept harmless via
+   * the missing-part guard) so a trigger that does carry a label — a narrow
+   * breakpoint, say — needs no new wiring.
+   */
+  _setWorkspaceLabel(name) {
+    const p = this.getPart && this.getPart("ws-current");
+    if (!p || !p.el) return;
+    const el =
+      p.el.querySelector(".note-content .root-node") ||
+      p.el.querySelector(".note-content") ||
+      p.el;
+    el.textContent = name || LOCALE.WORKSPACES;
+  }
+
+  /**
+   * Repaint the phone pill's folder glyph for the workspace now open.
+   *
+   * The NAME's twin (_setWorkspaceLabel above), and called beside it every
+   * time: the mobile topbar is not rebuilt on a switch, so both halves of the
+   * pill's identity have to be written into their parts by hand.
+   *
+   * Why it exists at all: the glyph was built once in skeleton/index.js from
+   * `ui.mget(_a.area)` — the DESK's own model, which never carries an area —
+   * so every workspace drew `folder-shape undefined`: the #885EFF default with
+   * no emblem, identical for Personal, an internal workspace and an external
+   * one.
+   *
+   * The `filetype`/`role` pair is the switcher's, not a new one: a PERSONAL
+   * workspace is a home-root folder and is drawn as one, everything else as a
+   * hub with its area emblem. Same mapping as the sheet's wsIcon and the
+   * desktop header's _feedWorkspaceHead, so the three surfaces cannot disagree
+   * about what a workspace looks like.
+   *
+   * `isAttachment: 1` keeps the folder kebab out of a 20px glyph — the template
+   * gates `showKebab` on it.
+   *
+   * @param {Object} [row] a desk.home workspace row; falsy paints the neutral
+   *   folder, which is what "no workspace open" should look like rather than
+   *   the last one's colours.
+   */
+  _setWorkspaceGlyph(row) {
+    const p = this.getPart && this.getPart("ws-current-ico");
+    if (!p || !p.el) return;
+    const isFolder = row && row.filetype === _a.folder;
+    p.el.innerHTML = folderIcon({
+      area: (row && row.area) || "",
+      filetype: isFolder ? _a.folder : _a.hub,
+      role: isFolder ? "" : "desk",
+      widgetId: _.uniqueId("m-ws-"),
+      isAttachment: 1,
+    });
+  }
+
+  /**
+   * Resolve the open workspace's name from the window manager's context and
+   * show it on the switcher. Falls back to the generic label when none is open.
+   *
+   * window.Wm, never a bare `Wm`: this is reached from the breadcrumb:content
+   * broadcast, which the window manager emits from inside its own initialize —
+   * BEFORE manager.js:53 assigns the global. A bare identifier throws
+   * ReferenceError there.
+   */
+  /**
+   * Close the switcher's ⋯ menu if one is open.
+   *
+   * Shared, because two paths end here: the toggle below, and the menu's own
+   * destruction — which happens without us when the user clicks anywhere else
+   * (`volatility: 4`). Both must clear the button's active mark, or a dismissed
+   * menu leaves the ⋯ lit.
+   *
+   * @returns {Boolean} whether there was a menu to close
+   */
+  _closeWorkspaceMenu() {
+    const menu = this._wsMenu;
+    const btn = this._wsMenuBtn;
+    this._wsMenu = null;
+    this._wsMenuBtn = null;
+    // The header is re-fed whenever the workspace changes, which destroys the
+    // button along with it — so a tracked ref can outlive its view.
+    if (btn && !(btn.isDestroyed && btn.isDestroyed()) && _.isFunction(btn.setState)) {
+      btn.setState(0);
+    }
+    if (!menu || (menu.isDestroyed && menu.isDestroyed())) return !!menu;
+    if (_.isFunction(menu.goodbye)) menu.goodbye({ now: true });
+    else if (_.isFunction(menu.destroy)) menu.destroy();
+    return true;
+  }
+
+  /**
+   * Rename the open workspace by editing its NAME IN THE ADDRESS CHIP.
+   *
+   * Lexis, 2026-09-05: no dialog — edit the name in place, the way the old
+   * desk edited a tile's label.
+   *
+   * 🚨 NOT on the switcher card's header, where the name is also drawn.
+   * Choosing Rename in the ⋯ flyout is a click OUTSIDE the card, and ui-core's
+   * menu closes on exactly that (RADIO_CLICK -> _onOutsideClick ->
+   * _closeItems), so an editor fed into the header is created and then hidden
+   * with the card a beat later. Measured on the endpoint: editor present, right
+   * value, right font, and `menu-topic-items__wrapper` already `display: none`.
+   * It draws in __ws-rename instead — desk's own slot in the chip, beside the
+   * breadcrumb, which is on screen whether the card is open or not.
+   *
+   * The tile still owns the WRITE. media/core _commitRename builds the
+   * holder-scoped payload a hub node needs (hub_id = Visitor.id, because the
+   * node sits on the caller's desk, not inside the workspace it names) and runs
+   * afterRename. Re-deriving that here would be a second copy of the one thing
+   * that must not drift.
+   *
+   * Returns false when it cannot start, so the caller can fall back rather than
+   * leave the row doing nothing — the failure this menu already had once.
+   */
+  _renameWorkspaceInline() {
+    const w = this._activeWorkspace();
+    if (!w) return false;
+
+    // Resolved exactly as _toggleWorkspaceMenu resolves it, so the row and the
+    // editor always act on the same workspace.
+    const _cur = (window.Wm && window.Wm._curWorkspace) || null;
+    const wsHub = w.mget && w.mget(_a.hub_id);
+    const tile = this._workspaceMediaItem(
+      wsHub,
+      _cur && `${_cur.hub_id}` === `${wsHub}` ? _cur.nid : w.mget && w.mget(_a.nid),
+    );
+    if (!tile || !_.isFunction(tile._commitRename)) return false;
+
+    const box = this._wsRenamePart;
+    if (!box || !box.el || (box.isDestroyed && box.isDestroyed())) return false;
+    const chip = this._crumbGroupPart;
+    if (!chip || !chip.el) return false;
+
+    // The TILE's filename, because that is the value _commitRename compares
+    // against and writes — the label in the chip is the breadcrumb's rendering
+    // of it. The crumb is the fallback for a tile that somehow carries none.
+    const crumbEl = chip.el.querySelector(".breadcrumb-item__filename");
+    const current = String(
+      (tile.mget && tile.mget(_a.filename))
+      || (crumbEl && crumbEl.textContent)
+      || "",
+    ).trim();
+    if (!current) return false;
+
+    const st = { tile, current, hubId: wsHub, box, chip };
+    this.__wsRename = st;
+    const cn = `${this.fig.family}-topbar`;
+    // Hides the crumb and the caret for as long as the editor is up, so the
+    // field takes the name's place instead of appearing beside it.
+    chip.el.dataset.renaming = "1";
+    // `entry` is registered lazily, and _createInput waits on it for exactly
+    // this reason: feeding a Textarea before its kind exists renders nothing.
+    // Everything that can FAIL was checked above, so the caller's fallback
+    // decision stays synchronous even though the editor arrives a tick later.
+    Kind.waitFor("entry").then(() => {
+      // A second Rename, or a workspace switch, may have superseded this edit
+      // while the kind loaded.
+      if (this.__wsRename !== st) return;
+      if (!box.el || (box.isDestroyed && box.isDestroyed())) {
+        this.__wsRename = null;
+        delete chip.el.dataset.renaming;
+        return;
+      }
+      box.feed([
+        Skeletons.Textarea({
+          className: `${cn}__ws-rename-input`,
+          sys_pn: "ws-rename-input",
+          value: current,
+          rows: 1,
+          require: _a.any,
+          bubble: 0,
+          mode: _a.commit,
+          preselect: 1,
+          removeOnEscape: 1,
+          // WITHOUT THIS, ENTER TYPES A NEWLINE INSTEAD OF SAVING. The widget
+          // only preventDefaults Enter when `ignoreEnter` is set (ui-core
+          // entry/input _onKeydown), so the keypress fell through into the
+          // textarea: measured "ZZ Probe Inline\n", the second line pushed out
+          // of the 22px box, and the field looked as if it had been wiped.
+          // media/interact _createInput passes it for the same reason.
+          ignoreEnter: true,
+          service: "workspace-rename-input",
+          uiHandler: [this],
+        }),
+        // Enter saves, but nothing on screen said so — the field was the whole
+        // editor, and the only visible way out of it was to click away. The
+        // tick is that affordance; it takes the same decision Enter takes.
+        //
+        // bubble: 0 — the press is handled here and has no business continuing
+        // up to the window manager, which answers an unrecognised service by
+        // collapsing the open windows.
+        Skeletons.Button.Svg({
+          className: `${cn}__ws-rename-save`,
+          ico: "app-check",
+          sys_pn: "ws-rename-save",
+          service: "workspace-rename-save",
+          uiHandler: [this],
+          bubble: 0,
+          attrOpt: { title: LOCALE.SAVE },
+        }),
+      ]);
+      // Focus once the widget has mounted; the editor is the point of the row.
+      //
+      // Deliberately NOT hung off `box.children.last()`: for a NESTED part that
+      // read races the render and hands back a stale child — written up above
+      // _forcedTourId (2026-07-31), where it silently broke the tutorial chain.
+      // Every way this edit can end is handled in _onWorkspaceRenameInput.
+      _.defer(() => {
+        const field = box.el && box.el.querySelector("textarea, input");
+        if (!field) return;
+        try {
+          field.focus();
+          if (_.isFunction(field.select)) field.select();
+        } catch (e) { }
+      });
+      // Arrive rather than appear. The field takes the crumb's place in the
+      // chip, so it slides in from where the name was instead of being swapped
+      // for it between two frames. A keyframe, not a transition: there is no
+      // from-state to set and no frame to wait for — the animation runs the
+      // moment the attribute lands. Cleared by _endWorkspaceRename.
+      //
+      // A teardown still in flight from a previous edit would empty this box
+      // under the editor that just mounted; cancel it here as well as there.
+      if (this._wsRenameAnim) {
+        clearTimeout(this._wsRenameAnim);
+        this._wsRenameAnim = null;
+      }
+      if (box.el) box.el.dataset.anim = "in";
+      // Clicking away is the third way out, beside Escape and Enter — see
+      // _dismissWorkspaceRename. Bound here rather than at the top of this
+      // method so it cannot outlive an editor that never mounted, and after the
+      // feed so the press that OPENED the editor is long finished.
+      this._bindWorkspaceRenameDismiss();
+    });
+    return true;
+  }
+
+  /**
+   * Take the editor down and give the chip its name back.
+   *
+   * The breadcrumb owns that label, so nothing is written into it here: the
+   * commit path re-resolves the crumb from the server, and a cancel never
+   * changed it in the first place.
+   */
+  _endWorkspaceRename() {
+    // Every ending routes through here, so this is the one place that cannot be
+    // forgotten — the individual endings release it earlier, before they await.
+    this._unbindWorkspaceRenameDismiss();
+    const st = this.__wsRename;
+    const chip = (st && st.chip) || this._crumbGroupPart;
+    const box = (st && st.box) || this._wsRenamePart;
+
+    // ONLY THE VISUAL TEARDOWN WAITS. The state teardown — __wsRename, the
+    // document listener — is done by the callers and stays synchronous, so the
+    // six paths that end an edit keep the ordering they already had. All that
+    // is deferred here is emptying the slot and giving the crumb back.
+    const finish = () => {
+      this._wsRenameAnim = null;
+      if (box && box.el && !(box.isDestroyed && box.isDestroyed())) {
+        delete box.el.dataset.anim;
+        box.feed([]);
+      }
+      // AFTER the field has gone, not beside it: the crumb and the editor share
+      // the row, so un-hiding it any earlier puts both in the chip at once and
+      // the name appears to jump as the field collapses.
+      if (chip && chip.el) delete chip.el.dataset.renaming;
+    };
+
+    // A pending teardown from a previous edit must not fire against this one —
+    // Escape, then Rename again inside the animation window, would otherwise
+    // blank the editor that had just opened.
+    if (this._wsRenameAnim) clearTimeout(this._wsRenameAnim);
+
+    // Nothing on screen to animate (the slot was never fed, or the desk has
+    // rebuilt under it): take it down now rather than hold the crumb hostage
+    // for 140ms of nothing.
+    if (!box || !box.el || (box.isDestroyed && box.isDestroyed())) {
+      this._wsRenameAnim = null;
+      return finish();
+    }
+
+    box.el.dataset.anim = "out";
+    this._wsRenameAnim = setTimeout(finish, WS_RENAME_ANIM_MS);
+  }
+
+  /**
+   * The inline editor's own events.
+   *
+   * Mirrors media/interact's `case _e.rename`: Escape is a cancel, commit and
+   * Enter are the write, anything else is a keystroke and is ignored.
+   */
+  _onWorkspaceRenameInput(cmd) {
+    const st = this.__wsRename;
+    if (!st || !cmd) return;
+
+    // Escape. removeOnEscape tears the editor down itself, but the slot still
+    // has to be emptied and the crumb un-hidden. Deferred so the widget
+    // finishes destroying before the box is re-fed.
+    if (cmd.status === _e.Escape) {
+      this._unbindWorkspaceRenameDismiss();
+      return _.defer(() => {
+        this._endWorkspaceRename();
+        this.__wsRename = null;
+      });
+    }
+    // Anything else is a keystroke, not an end to the edit.
+    if (![_a.commit, _e.Enter].includes(cmd.status)) return;
+
+    // This edit is ending here; the click-outside listener has nothing left to
+    // dismiss. Released before the write so a press landing while the request
+    // is in flight cannot raise the prompt for an edit already committed.
+    this._unbindWorkspaceRenameDismiss();
+
+    // Close the editor and give the chip its name back, whichever way this
+    // ended. Read the state OUT before clearing it: _endWorkspaceRename needs
+    // the same chip and slot this edit was started on.
+    const done = () => {
+      try {
+        if (_.isFunction(cmd.goodbye)) cmd.goodbye();
+        else if (_.isFunction(cmd.softDestroy)) cmd.softDestroy();
+      } catch (e) { }
+      this._endWorkspaceRename();
+      this.__wsRename = null;
+    };
+
+    const value = String(cmd.mget(_a.value) || "").trim();
+    // Nothing typed, or nothing changed: close without a request. An empty
+    // name would rename the workspace to nothing.
+    if (!value || value === st.current) return done();
+
+    return this._finishWorkspaceRename(value, cmd);
+  }
+
+  /**
+   * Write the new name and take the editor down.
+   *
+   * SHARED BY BOTH WRITE PATHS — Enter/commit above, and Save on the
+   * click-outside prompt (_dismissWorkspaceRename). The holder-scoped payload
+   * and the breadcrumb follow-up are the one thing here that must not drift
+   * between the two, which is why this is a method rather than a second copy.
+   *
+   * `cmd` is the editor widget when there is one to tear down (the Enter path
+   * has it; the click-outside path reads the field's own value and passes
+   * whatever the slot is holding). Optional on purpose — _endWorkspaceRename
+   * empties the slot either way.
+   *
+   * @param {String} value the trimmed new name; the caller has already decided
+   *        it is non-empty and different from `st.current`
+   * @param {Object} [cmd] the editor widget
+   */
+  _finishWorkspaceRename(value, cmd) {
+    const st = this.__wsRename;
+    if (!st) return;
+
+    // Close the editor and give the chip its name back, whichever way this
+    // ended. Read the state OUT before clearing it: _endWorkspaceRename needs
+    // the same chip and slot this edit was started on.
+    const done = () => {
+      try {
+        if (cmd && _.isFunction(cmd.goodbye)) cmd.goodbye();
+        else if (cmd && _.isFunction(cmd.softDestroy)) cmd.softDestroy();
+      } catch (e) { }
+      this._endWorkspaceRename();
+      this.__wsRename = null;
+    };
+
+    const posted = st.tile._commitRename(value);
+    // _commitRename answers nothing when it decides there is no write to make
+    // — empty, or already the TILE's filename, which can differ from the label
+    // this editor captured. Nothing to await, and nothing failed.
+    if (!posted || !_.isFunction(posted.then)) return done();
+
+    return posted
+      .then(() => {
+        done();
+        // The desk BREADCRUMB is fed by neither the rename nor the topbar. It
+        // follows RADIO_BROADCAST "breadcrumb:content" and only from source Wm,
+        // then re-resolves the path from the server — libs/path-request
+        // de-duplicates in flight only and never caches, so a fresh call
+        // answers the new name. The PANE's nid, not the workspace root: the
+        // user may be inside a subfolder and the crumb has to keep that trail.
+        try {
+          const pane = _.isFunction(Wm._findWorkspaceWindow)
+            && Wm._findWorkspaceWindow(st.hubId);
+          const nid = pane && pane.mget(_a.nid);
+          if (nid && st.hubId && _.isFunction(Wm.updateBreadcrumb)) {
+            Wm.updateBreadcrumb({ nid, hub_id: st.hubId }, Wm);
+          }
+        } catch (e) {
+          this.warn("Workspace renamed, but the breadcrumb kept the old name", e);
+        }
+      })
+      .catch((e) => {
+        // The write did not land. The chip still shows the OLD name — nothing
+        // in this path ever wrote it — so closing the editor is all that is
+        // needed to stop claiming a rename that never happened.
+        this.warn("Workspace rename failed", e);
+        done();
+      });
+  }
+
+  /**
+   * The Save tick beside the field.
+   *
+   * NEVER ASKS. The click-outside path raises a Save/Discard prompt because a
+   * press somewhere else in the desk does not say what the user meant; pressing
+   * Save says exactly what they meant, so it takes the decision Enter takes and
+   * gets on with it.
+   *
+   * Reads the FIELD rather than the widget's model, for the same reason
+   * _dismissWorkspaceRename does: it is the live text, and the model is only
+   * refreshed on the widget's own commit/blur.
+   */
+  _saveWorkspaceRename() {
+    const st = this.__wsRename;
+    if (!st) return;
+
+    // This edit is ending either way, so the document listener has nothing left
+    // to dismiss. Released before the write, so a press landing while the
+    // request is in flight cannot raise the prompt for an edit already saved.
+    this._unbindWorkspaceRenameDismiss();
+
+    const field = st.box && st.box.el
+      && st.box.el.querySelector("textarea, input");
+    const value = String((field && field.value) || "").trim();
+    const cmd = st.box && st.box.children && _.isFunction(st.box.children.last)
+      ? st.box.children.last()
+      : null;
+
+    // Nothing typed, or nothing changed: close without a request, exactly as
+    // the Enter path does. An empty name would rename the workspace to nothing.
+    if (!value || value === st.current) {
+      this._endWorkspaceRename();
+      this.__wsRename = null;
+      return;
+    }
+
+    return this._finishWorkspaceRename(value, cmd);
+  }
+
+  /**
+   * CLICKING AWAY ENDS THE EDIT.
+   *
+   * Escape and Enter were the only two ways out, so a click anywhere else left
+   * the field sitting in the chip with the breadcrumb still hidden behind it
+   * (`data-renaming="1"`) — the edit looked abandoned but was still live, and
+   * the crumb did not come back until the user found their way back to the
+   * field.
+   *
+   * `mousedown` on the document in the CAPTURE phase, the same shape as the
+   * desk's other dismissals (_userMenuDismiss, _suggestionsDismiss). Bound only
+   * while the editor is up.
+   *
+   * DELIBERATELY NOT THE WIDGET'S `blur`. ui-core's entry fires one
+   * (widgets/entry/input/index.js _onBlur) and it looks like the obvious hook,
+   * but blur is not "clicked outside": it also fires when the browser window
+   * loses focus, and again when the confirm below takes focus — which would
+   * re-enter this path in the middle of the question it just asked.
+   */
+  _bindWorkspaceRenameDismiss() {
+    if (this._wsRenameDismiss) return;
+    this._wsRenameDismiss = (e) => this._dismissWorkspaceRename(e && e.target);
+    document.addEventListener("mousedown", this._wsRenameDismiss, true);
+  }
+
+  /**
+   * Release the listener. Called from every ending — Escape, Enter, Save,
+   * Discard — so a stale handler can never outlive the edit it belongs to.
+   */
+  _unbindWorkspaceRenameDismiss() {
+    if (!this._wsRenameDismiss) return;
+    document.removeEventListener("mousedown", this._wsRenameDismiss, true);
+    this._wsRenameDismiss = null;
+  }
+
+  /**
+   * A press landed somewhere that is not the editor. End the edit.
+   *
+   * UNCHANGED TEXT CLOSES SILENTLY, which is what Escape already does and what
+   * the Enter path already does for a name that did not change. There is
+   * nothing to decide, so asking would be noise.
+   *
+   * CHANGED TEXT ASKS. A click on the desk is not a decision to rename a
+   * workspace — commit-on-blur would rename one by accident — and it is not a
+   * decision to throw away what was typed either. So the two real answers are
+   * offered and neither is taken on the user's behalf.
+   *
+   * @param {Element} [t] what was pressed
+   */
+  _dismissWorkspaceRename(t) {
+    const st = this.__wsRename;
+    if (!st) return this._unbindWorkspaceRenameDismiss();
+    if (t && _.isFunction(t.closest)) {
+      // The editor itself, and the chip it is drawn in.
+      if (t.closest(".desk-module-topbar__ws-rename")) return;
+      // Our own prompt. Its buttons are a press like any other, and taking one
+      // as "clicked outside" would close the edit under the answer.
+      if (t.closest(".window-manager__wrapper-modal")) return;
+    }
+
+    // BEFORE the prompt, not after. The press that answers it is another
+    // mousedown on the document, and a listener still attached would re-enter
+    // here and stack a second prompt on the first.
+    this._unbindWorkspaceRenameDismiss();
+
+    // The FIELD, not the widget's model: this is the live text the user typed,
+    // and it is what ui-core's own blur handler would have copied into the
+    // model anyway.
+    const field = st.box && st.box.el
+      && st.box.el.querySelector("textarea, input");
+    const value = String((field && field.value) || "").trim();
+    const cmd = st.box && st.box.children && _.isFunction(st.box.children.last)
+      ? st.box.children.last()
+      : null;
+
+    if (!value || value === st.current) {
+      this._endWorkspaceRename();
+      this.__wsRename = null;
+      return;
+    }
+
+    return Wm.confirm({
+      title: LOCALE.SAVE_CHANGES,
+      message: value,
+      confirm: LOCALE.SAVE,
+      confirm_type: "primary",
+      cancel: LOCALE.DISCARD,
+      cancel_type: "secondary",
+      buttonClass: "ws-rename-dismiss",
+      mode: "hbf",
+      // NO BACKDROP. This is confirm()'s own documented case for it: the prompt
+      // is ABOUT the name the user just typed, which is sitting in the chip
+      // right behind it, and dimming the surface the question is about makes it
+      // harder to check rather than easier. The card carries its own shadow, so
+      // it still reads as raised without one.
+      overlay: "none",
+    })
+      .then(() => this._finishWorkspaceRename(value, cmd))
+      .catch(() => {
+        this._endWorkspaceRename();
+        this.__wsRename = null;
+      });
+  }
+
+  /**
+   * Resolve WHAT the workspace actions act on, and WHICH of them apply.
+   *
+   * Lifted out of _toggleWorkspaceMenu so the phone's sheet runs the same
+   * resolution rather than a second copy of it — the desktop header's ⋯ and
+   * the sheet's action button are the same control on the same workspace, and
+   * the subtractions below are decisions about the WORKSPACE menu, not about
+   * the surface it is drawn on. A second copy is what this menu was broken by
+   * once already (see the note on the shared builder).
+   *
+   * @returns {Object|null} {w, media, target, keys}, or null with no workspace
+   *   open. `keys` is empty when the grid has no tile for it yet — the caller
+   *   decides whether that is worth a _refreshHomeGrid and a retry.
+   */
+  /**
+   * Open (or re-feed) the phone's workspace sheet.
+   *
+   * One opener for all three states — first open, back out of the actions, and
+   * the actions themselves — because each is the same sheet with a different
+   * body, and _openMobileSheet's feed() replaces the content wholesale.
+   *
+   * @param {Array} [actions] the action rows; omitted renders the workspace
+   *   list, which is the sheet's resting state.
+   */
+  _openWorkspaceSheet(actions) {
+    return this._fetchWorkspaces().then((rows) => {
+      const cur = (window.Wm && window.Wm._curWorkspace) || null;
+      return this._openMobileSheet(
+        "workspace",
+        // `cur`, not `cur.hub_id`: the sheet resolves the open workspace with
+        // _workspaceKey (its header, and the row it leaves out of the list),
+        // and the key needs the whole object — hub_id alone is Visitor.id for
+        // every personal workspace.
+        require("./skeleton/mobile-sheets").workspaceSheet(this, rows || [], cur, {
+          actions,
+        }),
+      );
+    });
+  }
+
+  /**
+   * Swap the sheet's list for the open workspace's actions.
+   *
+   * The retry is the desktop menu's, for the same reason: a workspace created
+   * while another was open has no tile in the home grid, so the rows come back
+   * empty until the grid is refetched. Once only — a second miss means the
+   * workspace genuinely is not in the grid, and re-fetching per press would be
+   * a request a tap with nothing to show for it.
+   */
+  _openWorkspaceSheetActions(retried) {
+    const actions = this._mobileWorkspaceActions();
+    if (!actions.length) {
+      if (retried) return;
+      return this._refreshHomeGrid().then(() => {
+        if (this.isDestroyed && this.isDestroyed()) return;
+        return this._openWorkspaceSheetActions(1);
+      });
+    }
+    return this._openWorkspaceSheet(actions);
+  }
+
+  /**
+   * The open workspace's actions, flattened for the phone's sheet.
+   *
+   * SAME KEYS AS THE DESKTOP ⋯ (_resolveWorkspaceActions), read back off the
+   * rows the shared contextmenu builder produces so the labels and icons are
+   * the ones that menu shows — "Make a copy", "Move to trash" — rather than a
+   * second vocabulary invented here. Only the SHAPE changes: a sheet row is a
+   * 44px touch target, not a 28px context-menu line.
+   *
+   * Separators are dropped. They divide a floating menu into sections; in a
+   * sheet the rows simply sit under the header's rule, and the desktop's own
+   * `tidy` has already guaranteed none of them are leading, trailing or
+   * doubled, so nothing is lost by ignoring them.
+   *
+   * Two rows answer on the DESK rather than on the media item:
+   *
+   *   Rename — the desktop menu re-points it to `workspace-rename` because the
+   *     tile's inline editor is appended into the home grid, which is hidden
+   *     while a workspace is open. Same re-point here, same reason.
+   *   Manage access — the chain chip of the desktop header, which the phone's
+   *     header has no room for. The desktop ⋯ deliberately omits sharing rows
+   *     because "sharing already has two doors"; on a phone one of those doors
+   *     does not exist, so this is the door.
+   */
+  _mobileWorkspaceActions() {
+    const resolved = this._resolveWorkspaceActions();
+    if (!resolved) return [];
+    const { target, keys } = resolved;
+    const item = require("builtins/contextmenu/skeleton/items");
+    const out = [];
+
+    // NO "MANAGE ACCESS" ROW. It was added here while the phone's header had
+    // no chain chip and the rail was an external workspace's only remaining
+    // door to sharing. The header carries that chip now
+    // (skeleton/mobile-sheets headChip --link, gated on the same share/dmz
+    // test), so a row here would be the third door the desktop ⋯ deliberately
+    // refuses — "sharing already has two doors" is why `secureShare` and
+    // `share` are filtered out of these keys in the first place.
+    //
+    // The phone and the desktop ⋯ therefore offer exactly the same rows again.
+    for (const k of keys) {
+      if (k === "separator") continue;
+      const row = item(target, target, k);
+      if (!row) continue;
+      // The builder's row is [icon, label] under a context-menu class; this
+      // reads those two back rather than re-deriving them from the key.
+      // `chartId` FIRST, and that is not a fallback — it is the normal case.
+      // `Skeletons.Image.Svg` does not keep `ico`: its builder
+      // (ui-core toolkit/builder/button/svg.js) runs
+      //
+      //   if (this.props.ico) { this.props.chartId = this.props.ico;
+      //                         delete this.props.ico; }
+      //
+      // so every icon the shared menu builder produces arrives here as
+      // `chartId` and NEVER as `ico`. Reading only `ico` found nothing, and the
+      // sheet drew action rows with no glyph at all. `ico` is still accepted so
+      // a hand-made row (or a future builder that stops renaming) also works.
+      const kids = [].concat(row.kids || []).filter(Boolean);
+      const iconKid = kids.find((x) => x && (x.chartId || x.ico));
+      const ico = iconKid && (iconKid.chartId || iconKid.ico);
+      const label = (kids.find((x) => x && x.content != null) || {}).content;
+      if (!label) continue;
+      const isRename = k === _a.rename;
+      out.push({
+        key: k,
+        label,
+        ico,
+        service: isRename ? "workspace-rename" : row.service,
+        onDesk: isRename ? 1 : 0,
+      });
+    }
+    return out;
+  }
+
+  _resolveWorkspaceActions() {
+    const w = this._activeWorkspace();
+    // Every row acts on an open workspace; with none there is nothing to act
+    // on, so no menu rather than an empty one.
+    if (!w) return null;
+    // Act on the workspace's MEDIA item, never on the pane.
+    //
+    // loadWorkspace() feeds window_folder with no `media` and no `trigger`, so
+    // getFolderActionTarget() falls back to the window — which is scoped to the
+    // workspace's ROOT FOLDER (its own nid, pid "0", no filename) and is not a
+    // media widget at all: no move(), no trash(), no delete(). Every row of this
+    // menu was inert for that reason, and Download threw outright because
+    // ui-core's download() calls filename.replace() unguarded.
+    //
+    // The media widget is the object the folder context menu has always acted
+    // on, and it carries the HUB node: real nid, real pid, real filename.
+    // The nid too: for a personal workspace hub_id is the user's own and names
+    // every one of them at once. Wm._curWorkspace is the workspace ROOT, which
+    // the pane's own nid is not once the user has browsed into a subfolder.
+    const _cur = (window.Wm && window.Wm._curWorkspace) || null;
+    const _wsHub = w.mget && w.mget(_a.hub_id);
+    const media = this._workspaceMediaItem(
+      _wsHub,
+      _cur && `${_cur.hub_id}` === `${_wsHub}` ? _cur.nid : w.mget && w.mget(_a.nid),
+    );
+    const target = media || w;
+
+    // Trashing a workspace removes its tile from the grid (media/core.js
+    // answers the media.trash broadcast with `_e.deleted` + suppress), but the
+    // switcher reads its OWN cached list and the pane keeps showing a workspace
+    // that no longer exists — a blank screen until a reload. Listen for that
+    // signal here. Attached at most once per tile: the menu can be opened any
+    // number of times before a delete ever happens.
+    if (media && !media.__wsDeleteHooked && _.isFunction(media.once)) {
+      media.__wsDeleteHooked = 1;
+      media.once(_e.deleted, () => this._onWorkspaceDeleted(media));
+    }
+
+    // Rows come from the canonical builder (media/core.js
+    // contextmenuItemsForFolder, "Sectioned Folder menu spec 2026-06-10") —
+    // the same list the grid's right-click menu renders, already privilege-
+    // gated and already carrying the labels Lexis asked for: makeACopy is
+    // "Make a copy", trash is "Move to trash", info is "Get info".
+    //
+    // Building a parallel vocabulary here is what broke this menu once: those
+    // rows duplicated items that already existed and raised services the pane
+    // could not answer.
+    // Removing a row can leave the divider that framed it, so the list is
+    // tidied rather than trusted: no leading rule, no trailing rule, never two
+    // in a row. The builder's own sectioning is otherwise passed through.
+    const tidy = (list) => {
+      const out = [];
+      for (const k of list) {
+        if (k === "separator" && (!out.length || out[out.length - 1] === "separator")) continue;
+        out.push(k);
+      }
+      while (out.length && out[out.length - 1] === "separator") out.pop();
+      return out;
+    };
+
+    const keys = media && _.isFunction(media.contextmenuItemsForFolder)
+      ? tidy(
+          media
+            .contextmenuItemsForFolder()
+            // Everything below is a WORKSPACE-menu-only subtraction. The
+            // builder is shared with the grid's folder menu, which keeps every
+            // one of these rows — nothing here may change what a folder or a
+            // file offers.
+            .filter((k) =>
+              // MOVE — dropped 2026-09-04 (Lexis, via Duy): moving a whole
+              // workspace is too much work for what it buys, and Move stays a
+              // folder/sub-folder and file action. `organize` is the submenu
+              // wrapping Move + "Link to task tracker" (items.js); this menu
+              // used to flatten it to a bare "move" row. Filtering the key out
+              // instead of mapping it is what removes the row — the grid's own
+              // menu still renders the submenu for folders and files.
+              k !== "organize"
+              // GET INFO — hidden 2026-09-04 (Lexis, via Duy) on the WORKSPACE
+              // menu only. Folders and files keep it; so does the workspace's
+              // own grid-tile menu, which is built by contextmenuItemsForHub.
+              && k !== _a.info
+              // Not in Lexis' menu. The builder adds a secure-share row on a
+              // `share` workspace, but sharing already has two doors — the
+              // header's chain icon and the rail's Access — and a third one
+              // here is the duplication this menu was just cleared of.
+              && k !== "secureShare" && k !== _a.share),
+        )
+      : [];
+
+    return { w, media, target, keys };
+  }
+
+  /**
+   * The switcher header's ⋯ — toggles the open workspace's own menu.
+   *
+   * Built the way a right-click builds one (ui-core letc.js buildContextmenu):
+   * rows from builtins/contextmenu/skeleton/items, a `.drumee-contextmenu` box
+   * fed into the global drumeeDialog part, `volatility: 4` so a click elsewhere
+   * dismisses it, and the same viewport clamp. Position comes from the button's
+   * own rect rather than a pointer event — media/grid dispatchUiEvent does the
+   * same for its kebab, because a synthetic 'contextmenu' event does not reach
+   * property-style oncontextmenu handlers.
+   *
+   * NOT the home tile's menu, though that was the obvious thing to borrow:
+   * loadWorkspaceNode repoints the grid's list to media.show_node_by and
+   * resets its collection, so the tile for the open workspace is not reliably
+   * mounted — and its items act on a media row, not on the workspace.
+   *
+   * `uiHandler` is the WINDOW, not this module: window_folder already
+   * implements every service these rows raise, so nothing new handles them.
+   *
+   * The two gates are the desk's existing ones, which fail OPEN by design —
+   * they can only ever remove a row from someone provably lacking the right,
+   * never block a member whose privilege could not be read.
+   */
+  _toggleWorkspaceMenu(cmd, retried) {
+    // Second click: shut it and stop. `volatility: 4` listens on POINTERDOWN,
+    // which precedes this click, so the menu has already queued its own
+    // destroy — but on a 300ms timeout, so it is still alive right now. Without
+    // closing here the click would fall through and feed a second menu on top.
+    //
+    // Not on the RETRY below: that is the same press continuing, and closing
+    // there would answer a menu this press never opened.
+    if (!retried && this._closeWorkspaceMenu()) return;
+
+    const dialog = window.drumeeDialog;
+    if (!dialog || (dialog.isDestroyed && dialog.isDestroyed())) return;
+
+    // Target and rows both come from _resolveWorkspaceActions, which the
+    // phone's sheet calls too.
+    const resolved = this._resolveWorkspaceActions();
+    if (!resolved) return;
+    const { target, keys } = resolved;
+    const item = require("builtins/contextmenu/skeleton/items");
+
+    // NO MEDIA ITEM. Every row would be inert, and a menu whose rows do nothing
+    // is the bug this replaced — so rather than show one, go and get the grid.
+    //
+    // _refreshHomeGrid explains why it can be missing: a workspace created
+    // while another is open never gets a tile, so the ⋯ was dead until a page
+    // reload. That is now repaired at the source, on the create; this is what
+    // makes a stale grid cost a beat instead of a dead click, whatever emptied
+    // it — a session that booted straight into a restored workspace, say.
+    //
+    // ONCE. A second miss means the workspace genuinely is not in the grid
+    // (it is beyond the list's first page, or gone), and re-fetching for every
+    // press would be a request per click with nothing to show for it.
+    if (!keys.length) {
+      if (retried) return;
+      this._refreshHomeGrid().then(() => {
+        if (this.isDestroyed && this.isDestroyed()) return;
+        if (!cmd || (cmd.isDestroyed && cmd.isDestroyed())) return;
+        this._toggleWorkspaceMenu(cmd, 1);
+      });
+      return;
+    }
+
+    // THE TRIGGER IS THE MEDIA ITEM, not the ⋯ button.
+    //
+    // ui-core's buildContextmenu calls `p.contextmenuSkeleton(p, trigger, e)`
+    // with the tile as BOTH, and builtins/contextmenu/skeleton then passes that
+    // same pair down to every row. Handing `cmd` here made this menu the only
+    // caller in the app whose rows are built against a different trigger than
+    // their handler. No row reads it today, so this changes nothing that runs —
+    // it removes a difference that would decide the behaviour the day one does.
+    const kids = keys
+      .map((k) => {
+        const row = item(target, target, k);
+        // RENAME opens a DIALOG from this menu, not the inline editor.
+        //
+        // Every row here acts on the workspace's home-grid tile, and that grid
+        // is display:none whenever a workspace is open — which is the only
+        // time this menu exists. rename() appends its textarea INTO that tile
+        // (media/interact _createInput -> this.append), so it was being
+        // created, pre-filled with the right name, and left invisible: the row
+        // looked dead while doing exactly what it was written to do.
+        //
+        // Re-pointing the service is all it takes, and it is confined to this
+        // menu: the grid's own folder and file menus still carry
+        // `direct-rename` and still rename inline. The key stays `rename` so
+        // the row keeps its icon, label and classes from the shared builder.
+        if (row && k === _a.rename) {
+          row.service = "workspace-rename";
+          // ...and to THIS, not to the tile. Renaming now edits the name in
+          // the topbar, which is the desk's own chrome; the tile still owns
+          // the commit (its _commitRename carries the holder-scoped payload),
+          // but it does not own the label being edited.
+          row.uiHandler = [this];
+        }
+        return row;
+      })
+      .filter(Boolean);
+    if (_.isEmpty(kids)) return;
+
+    const rect = cmd && cmd.el && _.isFunction(cmd.el.getBoundingClientRect)
+      ? cmd.el.getBoundingClientRect()
+      : { left: 0, right: 0, top: 0, bottom: 0 };
+    // ANCHORED TO THE CARD, NOT TO THE ⋯ (Figma: the menu sits beside the
+    // switcher panel, its top level with the panel's).
+    //
+    // The ⋯ is the last chip of __ws-head, which is the first row INSIDE the
+    // switcher card — so anchoring to the button drops the menu over the very
+    // workspace list the user is choosing from. Beside the card it covers
+    // nothing, and it reads as what it is: a flyout off that panel.
+    //
+    // .menu-topic-items is the card that paints the border and background
+    // (topbar.scss __ws-wrapper); the wrapper around it and __ws-menu inside it
+    // are the fallbacks, then the button itself if the ⋯ is ever mounted
+    // outside a card at all.
+    const WS_MENU_GAP = 8;
+    const card =
+      (cmd &&
+        cmd.el &&
+        _.isFunction(cmd.el.closest) &&
+        (cmd.el.closest(".menu-topic-items") ||
+          cmd.el.closest(".menu-topic-items__wrapper") ||
+          cmd.el.closest(".desk-module-topbar__ws-menu"))) ||
+      null;
+    const anchor =
+      card && _.isFunction(card.getBoundingClientRect)
+        ? card.getBoundingClientRect()
+        : rect;
+    dialog.feed(
+      Skeletons.Box.Y({
+        volatility: 4,
+        // `drumee-contextmenu <family> desk-module-topbar`: the family is what
+        // buildContextmenu stamps (`drumee-contextmenu ${p.fig.family}`), so a
+        // rule written for the grid's menu reaches this one too — the two are
+        // the same menu on the same target, opened from two places. The topbar
+        // token stays last for this module's own positioning rules.
+        className: `drumee-contextmenu ${
+          (target.fig && target.fig.family) || "media-grid"
+        } desk-module-topbar`,
+        uiHandler: [target],
+        kids,
+        style: {
+          // The final placement is applied below, once the panel has a size to
+          // measure. This is the same position minus the clamps, so a panel
+          // that somehow never gets measured still lands beside the card
+          // rather than at 0,0.
+          left: anchor.right + WS_MENU_GAP + (window.scrollX || 0),
+          top: anchor.top + (window.scrollY || 0),
+          zIndex: 100000,
+        },
+      }),
+    );
+    const l = dialog.children && dialog.children.last();
+    if (!l || !l.el) return;
+
+    // Lit while the menu is up. Cleared from the menu's own destroy so that
+    // EVERY way out clears it — the volatility dismissal never comes back
+    // through this module.
+    this._wsMenu = l;
+    this._wsMenuBtn = cmd;
+    if (_.isFunction(cmd.setState)) cmd.setState(1);
+    if (_.isFunction(l.once)) {
+      l.once(_e.destroy, () => {
+        if (this._wsMenu === l) this._closeWorkspaceMenu();
+      });
+    }
+
+    // BESIDE THE CARD: its left edge a hair off the card's right, tops level.
+    //
+    // It used to be fed `left: rect.right` against the BUTTON, which puts the
+    // panel's left edge on the ⋯'s right edge — 200px of menu hanging into
+    // empty topbar, clear of the card and attached to nothing.
+    //
+    // offsetWidth / offsetHeight, not jQuery's .width() / .height(): those
+    // return the CONTENT box, and this panel carries 6px of padding and a 1px
+    // border on each side, so measuring that way placed it 14px off.
+    const mw = l.el.offsetWidth;
+    const mh = l.el.offsetHeight;
+    const scrollX = window.scrollX || 0;
+    const scrollY = window.scrollY || 0;
+    const EDGE = 8;
+
+    // Right of the card, or LEFT of it when there is no room — never spilling
+    // off the viewport, and never back over the card it belongs to.
+    let left = anchor.right + WS_MENU_GAP + scrollX;
+    if (left + mw > scrollX + window.innerWidth - EDGE) {
+      const flipped = anchor.left - WS_MENU_GAP - mw + scrollX;
+      left = flipped >= scrollX + EDGE
+        ? flipped
+        : Math.max(scrollX + EDGE, scrollX + window.innerWidth - EDGE - mw);
+    }
+    l.el.style.left = `${left}px`;
+
+    // Tops level with the card, slid up only as far as a tall menu needs.
+    let top = anchor.top + scrollY;
+    if (top + mh > scrollY + window.innerHeight - EDGE) {
+      top = Math.max(scrollY + EDGE, scrollY + window.innerHeight - EDGE - mh);
+    }
+    l.el.style.top = `${top}px`;
+  }
+
+  /**
+   * Move the switcher's tick to whichever workspace is now open.
+   *
+   * `data-current` is computed in rowFor at FEED time, so it only ever reflects
+   * the workspace that was open when the list was last built. Every entry point
+   * other than the switcher itself — a home-grid tile, a sidebar row, a deep
+   * link, reload-restore — changes the workspace without re-feeding, and the
+   * tick stayed on the previous one.
+   *
+   * In place, not a re-feed: rebuilding the list destroys and recreates every
+   * row plus the header on each navigation, and would yank the ground out from
+   * under an open menu. Only the header is re-fed — it NAMES the current
+   * workspace, so it genuinely has to change.
+   *
+   * `==`, not `===`: hub ids arrive as strings from desk.home and as numbers
+   * from some deep links, exactly as rowFor's own isCurrent test allows for.
+   */
+  _syncWorkspaceHighlight() {
+    const list = this._wsListPart;
+    if (!list || !list.el || (list.isDestroyed && list.isDestroyed())) return;
+    const cur = (window.Wm && window.Wm._curWorkspace) || null;
+    const curKey = this._workspaceKey(cur);
+    if (list.children && _.isFunction(list.children.each)) {
+      list.children.each((row) => {
+        // Section headings are children too and carry no key.
+        if (!row || !row.el || !row.el.dataset || !row.mget) return;
+        const rowKey = row.mget("wsKey");
+        if (rowKey == null) return;
+        // Same key comparison as rowFor — the two must agree, or a re-render
+        // and an in-place pass would disagree about which row is current.
+        row.el.dataset.current = curKey && rowKey === curKey ? "1" : "0";
+      });
+    }
+    // The header alone — NOT _renderWorkspaceMenu, which re-feeds the rows too
+    // and would undo the point of the in-place pass above. _workspaces is the
+    // cache _fetchWorkspaces fills, so this needs no request.
+    const head = this._wsHeadPart;
+    if (head && head.el && !(head.isDestroyed && head.isDestroyed())) {
+      this._feedWorkspaceHead(head, this._workspaces || [], cur);
+    }
+  }
+
+  /**
+   * `workspace:refresh` — a workspace was created; rebuild the switcher.
+   *
+   * Fired by libs/create-workspace for all three types, so this is the one
+   * place that has to know a workspace list went stale. See the subscription in
+   * initialize for why it lives on the desk and not in the two dialogs.
+   *
+   * FORCED, and that word is the whole fix. `_fetchWorkspaces` caches, and the
+   * two existing callers are mount-time — so without `force` this would re-feed
+   * the rows from the same pre-create array and change nothing visible. Forcing
+   * also REPLACES `this._workspaces`, which is what makes a later unforced
+   * render correct too: the topbar is rebuilt when a workspace opens, and its
+   * `onPartReady` render reads the cache.
+   *
+   * `_syncWorkspaceLabel` after, because its "not in the cached index (…created
+   * since boot)" fallback is now answerable from the index itself.
+   *
+   * WHETHER IT SWITCHES IS THE CREATE SURFACE'S CALL, not this handler's. It
+   * used to switch for nobody, on the grounds that who opens the new workspace
+   * differs per surface — and that is still true, which is why the answer is
+   * carried in the broadcast (`open`, see libs/create-workspace) rather than
+   * decided here. What changed is that the create DIALOG asks: making a
+   * workspace and being left standing in the old one, with the new one
+   * reachable only by then finding it in the switcher, is not what the user
+   * asked for. The tour's own create screen still does not ask, because it
+   * opens the workspace itself once the walkthrough ends.
+   */
+  async _onWorkspaceCreated(payload = {}) {
+    // THE ORGANISATION SCREEN'S INVENTORY IS NOW WRONG TOO — drop its cache.
+    //
+    // libs/org-overview holds ONE module-level promise for the whole page
+    // session and hands it to every reader. Its only invalidator was
+    // org-tab._refresh, which runs on the "org:refresh" broadcast, which is
+    // raised only from INSIDE desk_org_view — so a workspace created or deleted
+    // while that screen was closed never reached it. desk_org_view is
+    // destroy-on-close, so the next open re-rendered from the boot-time answer
+    // and the new workspace was simply absent until the browser was reloaded.
+    // Reported by Duy, 2026-09-16.
+    //
+    // HERE because this is the single chokepoint for every shape of the event:
+    // "workspace:refresh" (every create type, via libs/create-workspace) calls
+    // it directly, and _onWorkspaceWsEvent funnels delete / rename /
+    // add_contributors / invite_received / leave_hub into it through the 250ms
+    // coalescing timer. Both are already gated, so nothing new fires.
+    //
+    // COSTS NOTHING, WHICH IS THE POINT. invalidate() is one assignment — no
+    // request, no render. Deliberately NOT org-tab._refresh(), the obvious
+    // one-liner: that also runs _feedPanel(1), i.e. an organization.overview
+    // round trip (three result sets, a whole-domain scan) on every workspace
+    // mutation, for a chip that draws only department_count and member_count —
+    // neither of which a workspace can change. The refetch is left to whoever
+    // next opens the screen, which is the only moment the answer is read.
+    //
+    // First statement, before any await: a fetch already in flight cannot
+    // re-cache the stale answer behind this (orgOverview assigns __pending up
+    // front and its .then never re-assigns), so the window is closed.
+    require("libs/org-overview").invalidate();
+
+    // Was the desk on the no-workspace screen? Read the stamp BEFORE anything
+    // refetches, because that is what decides whether the user needs taking
+    // into the workspace they just made.
+    const wasEmpty = !!(
+      this.el && this.el.dataset && this.el.dataset.noWorkspace === "1"
+    );
+
+    // No part yet (created before the topbar mounted, or during a rebuild):
+    // dropping the cache is still the right move, so the mount-time render
+    // that follows fetches fresh instead of serving the stale array.
+    const alive = (p) => !!(p && p.el && !(p.isDestroyed && p.isDestroyed()));
+    if (!alive(this._wsListPart) && !alive(this._wsHeadPart)) {
+      this._workspaces = null;
+    } else {
+      await this._renderWorkspaceMenu(this._wsListPart, true);
+      this._syncWorkspaceLabel();
+    }
+
+    // The HOME GRID has to be refreshed too, and not for its own sake: its
+    // tiles are what the workspace ⋯ menu is built from, and a create while a
+    // workspace is open never reaches it. See _refreshHomeGrid.
+    //
+    // Not awaited — nothing below depends on the tiles, and this handler is on
+    // the path that opens a freshly created workspace.
+    this._refreshHomeGrid();
+
+    // CREATED FROM THE EMPTY SCREEN → open it. Forced, because the create
+    // happened after the cache was read and step 1 must see the new workspace
+    // rather than the empty list it was built from.
+    //
+    // This branch is the case with NOTHING TO NAME: the workspace just made is
+    // the only one there is, so "open whichever exists" and "open that one" are
+    // the same answer and the descriptor is not needed. A create that asks to
+    // be switched to is handled below, where it does have to be named.
+    if (wasEmpty) {
+      // NOTHING FOLLOWS THE FORM → open it now.
+      //
+      // Two ways to get here. A PERSONAL workspace raises no follow-up panel by
+      // its nature — it is a home-root folder, not a hub, so media/form
+      // finishes as soon as it exists. And an ordinary create no longer raises
+      // one either: the create dialog hands the user straight into the new
+      // workspace (media/form, the `post` block). Either way there is nothing
+      // to wait for, and waiting would cost the 4s fallback below.
+      //
+      // `payload.open` IS PART OF THE TEST, though this branch has never read
+      // it, because one create does NOT want to be taken in: the post-signup
+      // tour (desk/tutorial/workspace) calls createWorkspace with no options
+      // and opens the workspace itself when the walkthrough ends. It reaches
+      // here with neither flag, and it must keep landing on the two-stage wait
+      // below — which for it has always meant the 4s fallback — rather than
+      // being handed a new, faster way to have a workspace opened underneath
+      // its own screen.
+      //
+      // _walkthroughRunning() for the same reason, and it is the test the
+      // `created` branch below has always applied: reward-flow and
+      // activate-workspace create through the ORDINARY dialog, which asks to
+      // be taken in on their behalf whether they want it or not, and each owns
+      // its own sequel. They keep the route they have always taken.
+      if (
+        payload.personal
+        || (payload.open && !payload.panel && !this._walkthroughRunning())
+      ) {
+        await this._openWorkspaceOrEmptyScreen({ force: true });
+        return;
+      }
+      // A SURFACE SAID IT WILL RAISE A PANEL (today: the activate-workspace
+      // walkthrough's override), never asked to be taken in at all, or is a
+      // walkthrough that owns what comes next — wait, exactly as this branch
+      // did for every create before.
+      // See _openWorkspaceAfterAccessPanel for why it cannot be done now.
+      this._openWorkspaceAfterAccessPanel();
+      return;
+    }
+
+    // THE CREATE ASKED TO BE SWITCHED TO. Same two-step shape as the empty
+    // screen above — that path is simply the case where the descriptor is not
+    // needed, because the new workspace is the only one there is.
+    //
+    // Declined while a walkthrough is on screen: reward-flow and
+    // activate-workspace create through the same dialog, which sends `open`
+    // regardless, and each owns its own sequel — see _walkthroughRunning.
+    //
+    // A descriptor with no resolvable key (an older announcement, or one whose
+    // workspace came back without an id) is treated as no request at all
+    // rather than as "open something": guessing is what the empty-screen
+    // fallback is for, and it is wrong here.
+    const created =
+      payload.open && !this._walkthroughRunning() && this._workspaceKey(payload.workspace)
+        ? payload.workspace
+        : null;
+    if (created) {
+      // Nothing follows the form — the ordinary create, and every personal one
+      // — so open it straight away. Same reasoning as the empty-screen branch
+      // above.
+      if (payload.personal || !payload.panel) {
+        await this._openCreatedWorkspace(created);
+        return;
+      }
+      this._openWorkspaceAfterAccessPanel(created);
+      return;
+    }
+
+    // Otherwise just keep the screen honest: a create cannot make the desk
+    // empty, but a REMOVAL reaches this same handler (ws:event) and can.
+    await this._showEmptyWorkspaceScreen(
+      !((await this._fetchWorkspaces()) || []).length,
+    );
+  }
+
+  /**
+   * OPEN THE WORKSPACE A CREATE JUST PRODUCED.
+   *
+   * Through `_switchWorkspace`, not a bare `Wm.loadWorkspace`: opening a
+   * workspace is more than mounting the pane — the rail goes back to Files, the
+   * topbar label has to name it, and the switcher has to re-mark its current
+   * row. All three already live in that method, and arriving in a new workspace
+   * with a Task-lit rail over a Files view is exactly the mismatch it exists to
+   * avoid. It resolves the row by `_workspaceKey`, which is also why the key is
+   * the thing tested for upstream.
+   *
+   * IT WORKS OFF `desk.home`, and that list is refetched by _onWorkspaceCreated
+   * before anything gets here, so the new workspace is normally in it. When it
+   * is NOT — the create is confirmed but the list answered before the row was
+   * visible to it — fall back to the descriptor. It carries everything
+   * loadWorkspace needs (libs/create-workspace pins `nid` to the workspace ROOT
+   * node for precisely this reuse, and the reload-restore path opens from the
+   * same shape). Without the fallback a list one beat behind is a silent
+   * no-op: the workspace exists, and the user is left standing where they were
+   * — which is the behaviour this whole path removes.
+   *
+   * @param {Object} ws the create's workspace descriptor
+   */
+  async _openCreatedWorkspace(ws) {
+    const wsKey = this._workspaceKey(ws);
+    if (!wsKey) return;
+    const rows = await this._fetchWorkspaces();
+    if (this.isDestroyed && this.isDestroyed()) return;
+    // ON FILES, both here and in the _switchWorkspace branch above: this
+    // workspace was created seconds ago, so inheriting the outgoing pane's Chat
+    // or Task tab would open it on a view that is empty by construction. See
+    // the `land_on_files` note in Wm.loadWorkspace.
+    if ((rows || []).some((r) => this._workspaceKey(r) === wsKey)) {
+      return this._switchWorkspace(wsKey, { landOnFiles: 1 });
+    }
+    if (!window.Wm || !_.isFunction(window.Wm.loadWorkspace)) return;
+    // `filetype` is what libs/workspace-target branches on, and a descriptor
+    // carries `area` instead — so say it, rather than letting a personal
+    // workspace resolve as a hub and open Home.
+    const row = ws.area === _a.personal ? { ...ws, filetype: _a.folder } : ws;
+    const target = this._workspaceTarget(row);
+    if (target) target.land_on_files = 1;
+    window.Wm.loadWorkspace(target);
+    this._railHighlight("files");
+    this._setWorkspaceLabel(ws.filename);
+    // `row`, not `ws`: the line above already corrected a personal workspace's
+    // filetype to `folder`, which is what decides whether the glyph is drawn as
+    // a folder or as a hub with an emblem.
+    this._setWorkspaceGlyph(row);
+    return this._renderWorkspaceMenu(this._wsListPart, true);
+  }
+
+  /**
+   * REFETCH THE HOME GRID.
+   *
+   * The grid's tiles are not just decoration — the workspace ⋯ menu is built
+   * from one (_workspaceMediaItem), because only a media widget carries the
+   * privilege-gated row list and can be the target the rows act on. So a stale
+   * grid is a dead ⋯ button.
+   *
+   * And the grid goes stale on every create, always. Wm inherits newContent
+   * from window/utils, whose first test is
+   *
+   *     if (this.mget(_a.nid) != pid) return;
+   *
+   * — only add what belongs to the folder you are showing. While a workspace is
+   * open, loadWorkspace's `apply()` has done `this.mset(data)` with that
+   * WORKSPACE's attributes, so Wm's nid is the workspace root while the new
+   * workspace's pid is the HOME root. They never match, the tile is never
+   * appended, and the ⋯ stayed dead until a reload put Wm's nid back to
+   * home_id (Wm.reload) and the List.Smart fetched from scratch. That is
+   * exactly the reported "must refresh to open it".
+   *
+   * A restart rather than a targeted append: the list owns its own paging and
+   * ordering, and desk.home is the same request it made to build itself.
+   *
+   * @returns {Promise} settles when the list has answered, or after 2s
+   */
+  _refreshHomeGrid() {
+    const wm = window.Wm;
+    const list = wm && wm.iconsList;
+    if (!list || !list.el || (list.isDestroyed && list.isDestroyed())) {
+      return Promise.resolve(false);
+    }
+    return new Promise((resolve) => {
+      let done = 0;
+      const finish = (v) => {
+        if (done) return;
+        done = 1;
+        resolve(v);
+      };
+      // The collection answering is the signal; the timer is the floor, because
+      // a fetch that fails or returns nothing raises no update at all and the
+      // caller must not be left hanging on it.
+      try {
+        if (list.collection && _.isFunction(list.collection.once)) {
+          list.collection.once("update", () => finish(true));
+        }
+        list.restart();
+      } catch (e) {
+        this.warn && this.warn("[home-grid] restart failed", e);
+        return finish(false);
+      }
+      setTimeout(() => finish(false), 2000);
+    });
+  }
+
+  /**
+   * MAKE THE ADDRESS CHIP THE SWITCHER'S BUTTON.
+   *
+   * A CAPTURE-phase DOM listener, which is the only thing that works here.
+   * The widget way — a `service` on __crumb-group — cannot see these clicks:
+   * el.onclick is bound by every widget between the box and the pointer (the
+   * breadcrumb root, the menu root, and the menu's own `.menu-trigger` part,
+   * none of which ui-core marks inert), and __handleClick calls
+   * stopPropagation. A click on the caret or on the workspace name was
+   * swallowed there, and only the chip's few pixels of bare padding ever
+   * reached the box. Capture runs root-down, before any of them.
+   *
+   * A CRUMB WITH SOMEWHERE TO GO STILL GOES THERE. The chip holds the whole
+   * address, so a deeper path shows folders in it, and those must navigate.
+   * The one the user is already on is not a destination — clicking it moves
+   * nowhere — so it counts as chip, which is the common case: the address is
+   * just the workspace.
+   */
+  _bindCrumbGroupTrigger(child) {
+    const el = child && child.el;
+    if (!el || !_.isFunction(el.addEventListener)) return;
+    if (el.__wsTriggerBound) return;
+    el.__wsTriggerBound = 1;
+    el.addEventListener(
+      "click",
+      (e) => {
+        if (!this._crumbClickOpensSwitcher(e.target)) return;
+        // Nothing else answers this click: not the crumb underneath, and not
+        // the menu's own RADIO_CLICK outside-close, which only runs off a
+        // widget's triggerHandlers. That is what lets the toggle below be a
+        // plain read of the state.
+        e.preventDefault();
+        e.stopPropagation();
+        this._toggleWorkspaceSwitcher();
+      },
+      true,
+    );
+  }
+
+  /**
+   * Did this click land on the chip, or on a crumb that has somewhere to go?
+   *
+   * @param {Element} target
+   * @returns {Boolean} true when the switcher should open
+   */
+  _crumbClickOpensSwitcher(target) {
+    // AN UNRESOLVED ADDRESS IS NOT A CONTROL.
+    //
+    // Until the crumbs are up the chip held no icon and no name, yet it opened
+    // a workspace switcher over the blank. desk_breadcrumb._syncPathLoading
+    // stamps `data-address` once it has an answer — `ready`, or `none` for an
+    // address that cannot resolve, which still opens because the switcher is
+    // then the only way off it.
+    //
+    // ASK THE CRUMBS, exactly as the skin does — the same condition, on the
+    // same element, so the click and the caret cannot disagree.
+    //
+    // NO FLAG. Three attempts gated this on one (`data-loading`, then
+    // `data-address` on the breadcrumb, then on this chip) and each could be
+    // wrong at the moment of the click: the breadcrumb does not exist for the
+    // whole of its own lazy chunk load, its crumbs are painted inside an
+    // `ensurePart` promise, and the chip outlives the widget across a topbar
+    // re-feed and so can hold a stale answer. Reading the DOM at click time
+    // cannot be stale — the question is answered when it is asked.
+    //
+    // Both parts, because a crumb with a glyph and no name yet is not an
+    // address; the skin's `:has(.breadcrumb-item__icon):has(…__filename)`
+    // pair is the same test.
+    //
+    // FAILS CLOSED: a missing chip, a missing querySelector, or a chip with no
+    // crumbs in it all refuse.
+    //
+    // Returning false is a COMPLETE disable, not a deferral to something
+    // underneath: the capture listener bails without preventDefault, and the
+    // crumbs are display:none until they are complete, so nothing beneath is
+    // there to receive the click either.
+    //
+    // NOT `pointer-events: none` on the chip, which is the obvious CSS answer
+    // and the wrong one: the switcher's panel is a DESCENDANT of
+    // __crumb-group (see the note below), so that would kill an open dropdown
+    // along with the chip.
+    const chip = this._crumbGroupPart;
+    if (!chip || !chip.el || !chip.el.querySelector) return false;
+    if (!chip.el.querySelector(".breadcrumb-item__icon")
+      || !chip.el.querySelector(".breadcrumb-item__filename")) {
+      return false;
+    }
+    // A DEEPER PATH HAS NO SWITCHER: topbar.scss hides __ws-wrapper once the
+    // crumb track holds more than one item, so there is nothing to open.
+    if (chip.el.querySelector(".desk-breadcrumb__content > :nth-child(2)")) {
+      return false;
+    }
+    if (!target || !_.isFunction(target.closest)) return true;
+    // THE PANEL IS NOT THE CHIP, even though it is inside it.
+    //
+    // .menu-topic-items__wrapper is a DESCENDANT of __crumb-group — the
+    // dropdown is absolutely positioned, not detached — so every click in the
+    // open panel passes through this capture listener on its way down: the ⋯,
+    // the rename pencil, the share link, a workspace row, "New workspaces".
+    // Treated as chip, each of them shut the panel and swallowed the click
+    // that was meant for the control the user actually pressed. Reported for
+    // the ⋯: it opened nothing and closed the switcher.
+    //
+    // Both spellings, because the wrapper is ui-core's and __ws-menu is ours;
+    // a fed part that ends up outside the wrapper is still panel, not chip.
+    if (
+      target.closest(".menu-topic-items__wrapper") ||
+      target.closest(".desk-module-topbar__ws-menu")
+    ) {
+      return false;
+    }
+    // THE INLINE RENAME FIELD IS NOT THE CHIP EITHER. It is fed into the chip
+    // (desk/skeleton/topbar __ws-rename), so a click meant to put the caret in
+    // the name would otherwise reach this listener and open the switcher over
+    // the field the user is typing in.
+    if (target.closest(".desk-module-topbar__ws-rename")) {
+      return false;
+    }
+    const crumb = target.closest(".breadcrumb-item__main");
+    if (!crumb) return true;
+    // A SECTION label carries no service — there is nothing to browse to — so
+    // it is not a destination either. It is handled again in the toggle, which
+    // refuses to open a workspace list over Settings or Trash.
+    if (crumb.classList && crumb.classList.contains("breadcrumb-item__main--section")) {
+      return true;
+    }
+    return crumb.dataset && crumb.dataset.current === "1";
+  }
+
+  /**
+   * OPEN OR CLOSE THE WORKSPACE SWITCHER.
+   *
+   * The menu widget used to open itself: its caret lived in its own `trigger`
+   * part, and menu_topic answers any ui event raised in there. The caret is
+   * inert now and the chip around it is the button, so the toggle is driven
+   * from here.
+   */
+  _toggleWorkspaceSwitcher() {
+    const menu = this._wsSwitcher;
+    if (!menu || !menu.el || (menu.isDestroyed && menu.isDestroyed())) return;
+    // A SECTION screen has no workspace in the bar for the panel to hang off,
+    // and the chip paints no ground there — see the `:has()` rule in
+    // desk/skin/topbar.scss. Offering the list would be a control the chip is
+    // not drawing.
+    if (this.el && this.el.querySelector) {
+      const bc = this.el.querySelector(".desk-breadcrumb__ui[data-section='1']");
+      if (bc) return;
+    }
+    if (_.isFunction(menu._triggerToggle)) menu._triggerToggle();
+  }
+
+  /**
+   * CLOSE THE WORKSPACE SWITCHER — the panel only, never the screen under it.
+   *
+   * Picking a row left the dropdown up, and the only way to be rid of it was
+   * to click somewhere else. Three things in menu_topic conspire to that, and
+   * it is worth naming them so this is not "fixed" again in the wrong place:
+   *
+   *  - `_onItemClicked` returns early for `persistence: _a.always`, which is
+   *    what the switcher is built with (desk/skeleton/topbar
+   *    workspaceSwitcher);
+   *  - `_onOutsideClick` stands down for any origin the menu `contains`, and a
+   *    row is inside it;
+   *  - the caret is inert, so the trigger is not pressed either.
+   *
+   * 🚨 `persistence` STAYS `always`. It is not decoration: the panel also
+   * holds the header's inline Rename editor and its ⋯ menu, and both are
+   * clicks INSIDE the panel that must leave it standing. Relaxing persistence
+   * would close it on those too, which is the regression this avoids — only
+   * the one gesture that actually leaves for another workspace closes it.
+   *
+   * 🚨 IT MUST NOT SLIDE. `_closeItems()` — the method the outside-click
+   * handler uses — is the ANIMATED close: `gsap.to(items.el, { y: -y })` with
+   * `y = items_width + trigger_width`, and this panel is `min-width: 260px`,
+   * so it visibly FLICKS UPWARD by ~300px on its way out. Duy, 2026-09-11:
+   * no push, it should just stop being there.
+   *
+   * `_onClosed` is the tail of that same close — the part that actually shuts
+   * the panel — and everything visible in it happens SYNCHRONOUSLY at the top:
+   * `data-state` goes to "closed" on the items and to 0 on the root, and the
+   * root is what the skin's `display: none` hangs off
+   * (`&:not([data-state="1"]) .menu-topic-items__wrapper`, desk/skin/topbar).
+   * So calling it directly is the same close, minus the tween. It ends by
+   * resetting `y` to 0, which is what leaves the geometry right for the next
+   * open — dropping the tween does not strand the panel off-position.
+   *
+   * Not `_triggerToggle` either: a toggle flips, so on an already closed panel
+   * it would OPEN one.
+   */
+  _closeWorkspaceSwitcher() {
+    const menu = this._wsSwitcher;
+    if (!menu || !menu.el || (menu.isDestroyed && menu.isDestroyed())) return;
+    // Already shut — the org view's cards raise the same service from a screen
+    // where this panel was never open. `isOpen` is set synchronously by
+    // _openItems while `state` only lands in the model when the open animation
+    // completes, so either one saying "open" is enough.
+    const open = menu.isOpen || (menu.mget && menu.mget(_a.state));
+    if (!open) return;
+    // _onClosed is async only because of a trailing measure-and-reset; the
+    // shutting itself is done before it ever yields. Nothing here waits on it,
+    // and a rejection is swallowed rather than left unhandled.
+    if (_.isFunction(menu._onClosed)) {
+      Promise.resolve(menu._onClosed()).catch(() => {});
+      return;
+    }
+    // Fallback only if a future ui-core drops _onClosed: an animated close
+    // still beats a panel that will not go away.
+    if (_.isFunction(menu._closeItems)) menu._closeItems();
+  }
+
+  _syncWorkspaceLabel() {
+    const wm = window.Wm;
+    const cur = wm && wm._curWorkspace;
+    if (!cur || !cur.hub_id) {
+      this._setWorkspaceGlyph(null);
+      return this._setWorkspaceLabel(null);
+    }
+    // BY KEY for the glyph's row, not by hub_id. Every personal workspace
+    // carries the user's own hub_id, so the id match below lands on whichever
+    // personal row comes first — harmless for the NAME it was written for
+    // (_setWorkspaceLabel falls back to the window manager's), and not harmless
+    // for a glyph, which would then paint one personal workspace's area over
+    // another's. The id match is left as it is so the name keeps its existing
+    // behaviour; the glyph resolves properly alongside it.
+    const curKey = this._workspaceKey(cur);
+    const keyed =
+      (curKey && (this._workspaces || []).find((r) => this._workspaceKey(r) === curKey)) ||
+      null;
+    const row = (this._workspaces || []).find(
+      (r) => (r.hub_id || r.id) == cur.hub_id,
+    );
+    // `cur` as the last resort: it is what Wm resolved for a workspace reached
+    // by deep link, and it carries `area` for a hub (loadWorkspace writes it
+    // from media.attributes). A home-root folder's area is NULL there, which is
+    // exactly the case `keyed` covers.
+    this._setWorkspaceGlyph(keyed || row || cur);
+    if (row) return this._setWorkspaceLabel(row.filename || row.name);
+    // Not in the cached index (reached by deep link, or created since boot) —
+    // take the name the window manager resolved for it.
+    this._setWorkspaceLabel(
+      _.isFunction(wm.mget) && (wm.mget(_a.hub_name) || wm.mget(_a.filename)),
+    );
+  }
+
+  /**
+   * Switcher row -> open that workspace, then refresh the menu's current mark.
+   *
+   * @param {String} wsKey            the row key, see _workspaceKey
+   * @param {Object} [opt]
+   * @param {Boolean} [opt.landOnFiles] open on Files rather than inheriting the
+   *   outgoing pane's tab. Asked for by _openCreatedWorkspace alone — see the
+   *   `land_on_files` note in Wm.loadWorkspace. Absent, nothing changes.
+   */
+  async _switchWorkspace(wsKey, opt = {}) {
+    if (!wsKey) return;
+    const rows = await this._fetchWorkspaces();
+    // Matched on the KEY the row was built with. Finding by hub_id opened the
+    // FIRST personal workspace whichever one was clicked, because they all
+    // carry the user's own hub_id — the same collision that lit the whole
+    // "Personal" section at once.
+    const row = (rows || []).find((r) => this._workspaceKey(r) === wsKey);
+    if (!row) return;
+    if (!window.Wm || !_.isFunction(window.Wm.loadWorkspace)) return;
+    // Is this row the workspace that is ALREADY open? Asked before the call,
+    // because loadWorkspace overwrites _curWorkspace on its way in.
+    //
+    // By the same KEY the rows are marked `data-current` with, so "the row that
+    // looks current" and "the row that counts as current" cannot disagree — and
+    // so the personal-workspace collision _workspaceKey exists for (they all
+    // carry the user's own hub_id) is not reintroduced here.
+    const wasOpen = this._workspaceKey(window.Wm._curWorkspace) === wsKey;
+    // WHICH TAB THE NEW PANE WILL OPEN ON, asked BEFORE the call: a switch
+    // hands the outgoing pane's tab to the incoming one (Wm.loadWorkspace →
+    // `restore_tab`), and the pane that knows it is the one this call is about
+    // to replace. Null means Files — which is also what `landOnFiles` forces,
+    // and the rail has to be told the same thing the pane is (below).
+    const landsOn = !opt.landOnFiles && _.isFunction(window.Wm.paneTabToCarry)
+      ? window.Wm.paneTabToCarry()
+      : null;
+    const target = this._workspaceTarget(row);
+    // Read by loadWorkspace in place of paneTabToCarry(). Set on the target
+    // rather than passed as an argument because that is the one object the
+    // method reads before `apply` shadows its `data`.
+    if (target && opt.landOnFiles) target.land_on_files = 1;
+    window.Wm.loadWorkspace(target);
+    // ONLY on a real change of workspace. Re-picking the open one makes
+    // loadWorkspace an early return that merely raises the pane, so the window
+    // keeps the tab it was on — restamping the rail there is at best a no-op.
+    if (!wasOpen) this._railHighlight(landsOn || "files");
+    this._setWorkspaceLabel(row.filename || row.name);
+    this._setWorkspaceGlyph(row);
+    // In place: flip `data-current` and re-feed the header only. Re-feeding
+    // the whole list here rebuilt every switcher row on every switch — the
+    // exact cost _syncWorkspaceHighlight exists to avoid (the rows themselves
+    // did not change; only which one is current did).
+    return this._syncWorkspaceHighlight();
+  }
+
+  /**
+   * A workspace opened from a listing that is not the switcher's — the org
+   * view's cards (Figma 104:33055).
+   *
+   * THE SAME GESTURE, so the same path: a card is a switcher row drawn
+   * somewhere else, and the work around the open is what the card was missing.
+   * `Wm.loadWorkspace` alone (which is what the card called) opens the pane and
+   * closes the screen over it, but leaves the rail lit on the tab the PREVIOUS
+   * workspace was on, the switcher's label and its `data-current` mark reading
+   * the old workspace, and a tour still painted on the pane being replaced.
+   * _switchWorkspaceAndOffer is where all of that lives, and none of it is
+   * worth a second copy.
+   *
+   * A ROW, not a wsKey. The org view is fed `org_workspaces`, whose rows the
+   * switcher has never seen; _workspaceKey is the desk's own rule for turning
+   * one into an identity, so deriving it here keeps a single definition rather
+   * than teaching another widget to spell it. (Those rows are always
+   * `filetype: 'hub'`, so they cannot hit the personal-workspace collision the
+   * key rule exists for — but they go through it anyway, because that is the
+   * rule and this is not the place to decide it does not apply.)
+   *
+   * THE FALLBACK IS NOT A DETAIL. The org view lists every workspace in the
+   * ORGANISATION, deliberately including private ones the caller is not a
+   * member of — per-workspace membership lives in each hub's own database, so
+   * yp cannot say which those are (see acl/organization.json) and the cards
+   * cannot be greyed. _switchWorkspaceAndOffer resolves against the caller's
+   * OWN list and returns in silence for anything absent from it, which would
+   * turn those cards into dead clicks. So a row the switcher does not know is
+   * opened directly, exactly as the card did before: the server refuses at
+   * media.attributes and says so, which is a worse outcome than opening and a
+   * much better one than nothing happening.
+   *
+   * @param {Object} row an org_workspaces row
+   * @returns {Promise}
+   */
+  async _switchWorkspaceRow(row) {
+    if (!row) return;
+    const wsKey = this._workspaceKey(row);
+
+    // THE CARD FOR THE WORKSPACE THAT IS ALREADY OPEN, which is a click that
+    // did nothing at all. Wm.loadWorkspace early-returns for the workspace it
+    // is already on (same hub_id + nid) and that return sits ABOVE its panel
+    // cleanup, deliberately and with the reason written there: "Only close when
+    // actually opening a NEW workspace (not when raising an existing tab) —
+    // otherwise switching tabs would close shared panels."
+    //
+    // That is right for the sidebar and the switcher, where the open panel has
+    // nothing to do with the gesture. From a CARD it is inverted: the panel IS
+    // the screen the click came from, and the click means "take me to that
+    // workspace". With the org screen also hiding the address chip and the
+    // rail, a desk left on it looked stuck — there was nothing else to press.
+    //
+    // So the exit is made here, through the desk's own _leaveSectionScreen —
+    // the call the rail uses (_railTab). It closes the three main slots AND, if
+    // the bar was showing a section label, rebuilds the workspace path from the
+    // pane's own model; that second half is what brings the address chip back
+    // (breadcrumb._setSectionMode drops its `hideAddress` stamp on any repaint).
+    //
+    // `wsKey &&` is load-bearing: _leavesWorkspace answers FALSE for a falsy
+    // key — "nothing to leave" — which reads identically to "already open", so
+    // an unkeyable row would close the screen and open nothing.
+    if (wsKey && !this._leavesWorkspace(wsKey)) {
+      // The pane BEFORE the exit, and _railWorkspace rather than the active
+      // window: a pane that is open but not raised must not read as "no
+      // workspace" (see that helper).
+      const w = this._railWorkspace();
+      // Still handed to loadWorkspace. Its early return RAISES a pane that a
+      // popup folder window is covering, which is the other half of "open the
+      // workspace I clicked".
+      if (window.Wm && _.isFunction(window.Wm.loadWorkspace)) {
+        window.Wm.loadWorkspace(this._workspaceTarget(row));
+      }
+      return this._leaveSectionScreen(w);
+    }
+
+    // The caller's own workspaces, which is what _switchWorkspace can resolve.
+    // Cached, so this is a microtask in practice.
+    const rows = await this._fetchWorkspaces().catch(() => null);
+    const known = !!wsKey
+      && (rows || []).some((r) => this._workspaceKey(r) === wsKey);
+    if (known) return this._switchWorkspaceAndOffer(wsKey);
+    if (!window.Wm || !_.isFunction(window.Wm.loadWorkspace)) return;
+    return window.Wm.loadWorkspace(this._workspaceTarget(row));
+  }
+
+  /**
+   * Open a workspace on boot when nothing else claimed the screen.
+   *
+   * The desk used to land on an empty home grid, which the new shell has no
+   * screen for — the rail's Files/Chat/Task/Meet all act on an OPEN workspace.
+   * Only runs when there is no deep link and no restorable saved state, so it
+   * never overrides where the user actually was.
+   */
+  /**
+   * OPEN A WORKSPACE, OR PUT UP THE SCREEN THAT SAYS THERE ARE NONE.
+   *
+   * Two steps, in this order:
+   *
+   *   1. is there any workspace left? The list is the same one the topbar
+   *      switcher (`.desk-module-topbar__ws-menu`) is fed from — so "what the
+   *      switcher would show" and "what this opens" cannot disagree. If there
+   *      is one, open it.
+   *   2. if there is not, show desk/home-empty: logo, title, and the button
+   *      that opens the create dialog.
+   *
+   * With 1, 2 and 3, deleting 1 lands on 2 and deleting 3 lands on 2 — step 1
+   * all the way. Delete 2 as well and step 2 is the only answer left; before
+   * this it returned false into six callers that all ignored it, leaving the
+   * desk on a shape its own chrome cannot draw.
+   *
+   * REVERSIBLE, both ways. A workspace can appear without this tab doing
+   * anything (someone adds you to one), so the screen has to come down again
+   * without a reload — hence the state is keyed on the COUNT every time rather
+   * than on "did a delete just happen".
+   *
+   * @param {Object} [opt]
+   * @param {Boolean} [opt.force] refetch instead of serving the cached list.
+   * @param {Object} [opt.exclude] a workspace that no longer exists — {hub_id}
+   *   for a hub, {hub_id, nid} for a personal one (Wm.onCurrentWorkspaceRemoved
+   *   passes exactly what it was given). The cache still holds it, so step 1
+   *   must not "find" and reopen it; but the cache is otherwise good enough to
+   *   pick the replacement from RIGHT NOW. This used to `force` a refetch
+   *   instead, and the paged desk.home round trip it cost sat between the
+   *   delete and the replacement — long enough for the dead pane to be torn
+   *   down and the retired home grid to flash through before the next
+   *   workspace mounted. The list is still refreshed, behind the open, so the
+   *   switcher stops offering the deleted workspace.
+   * @returns {Promise<Boolean>} whether a workspace was opened
+   */
+  async _openWorkspaceOrEmptyScreen(opt = {}) {
+    let rows;
+    try {
+      const excludeKey = opt.exclude ? this._workspaceKey(opt.exclude) : null;
+      const without = (list) =>
+        (list || []).filter((r) => this._workspaceKey(r) !== excludeKey);
+      if (excludeKey && this._workspaces) {
+        rows = without(this._workspaces);
+        if (rows.length) {
+          // Known-wrong cache: refetch and repaint the switcher, but not on
+          // this path's critical section.
+          this._onWorkspaceListChanged();
+        } else {
+          // Nothing left as far as the cache knows. Confirm with the server
+          // before putting up "create your first workspace" — the cache may
+          // simply be missing a workspace shared since it was filled.
+          rows = without(await this._fetchWorkspaces(true));
+        }
+      } else if (excludeKey) {
+        rows = without(await this._fetchWorkspaces(true));
+      } else {
+        rows = await this._fetchWorkspaces(opt.force);
+      }
+    } catch (e) {
+      // An unreachable list is not evidence of an empty account. Leave the
+      // screen as it is rather than throwing "create your first workspace" at
+      // someone who has ten.
+      this.warn && this.warn("[workspaces] default open failed", e);
+      return false;
+    }
+    if (this.isDestroyed && this.isDestroyed()) return false;
+
+    const first = rows && rows[0];
+    await this._showEmptyWorkspaceScreen(!first);
+    if (!first) return false;
+
+    try {
+      const wm = await this._waitForWm();
+      if (!wm || !_.isFunction(wm.loadWorkspace)) return false;
+      if (this.isDestroyed && this.isDestroyed()) return false;
+      wm.loadWorkspace(this._workspaceTarget(first));
+      return true;
+    } catch (e) {
+      this.warn && this.warn("[workspaces] default open failed", e);
+      return false;
+    }
+  }
+
+  /**
+   * Show or hide the no-workspace screen.
+   *
+   * The stamp is what the skin reads — one rule instead of reaching into the
+   * rail's five parts — and it is also how _onWorkspaceCreated learns that the
+   * desk was empty before a create.
+   *
+   * @param {Boolean} empty
+   */
+  async _showEmptyWorkspaceScreen(empty) {
+    if (this.el && this.el.dataset) {
+      this.el.dataset.noWorkspace = empty ? "1" : "0";
+    }
+
+    // CLEAR THE TOPBAR TRACK. `.desk-module-topbar__left-cluster` holds the
+    // breadcrumb, and with a workspace to fall back to it repaints itself —
+    // opening one calls updateBreadcrumb. With NONE, nothing repaints it, so it
+    // was left naming the workspace that had just been deleted.
+    //
+    // Called on the part directly, not through the `breadcrumb:content`
+    // broadcast. That route reads `data.event` and compares it against
+    // `_a.home`, while the desk's own existing caller sends `_e.home` — two
+    // ambient lexicons, and whether they resolve to the same string is not
+    // something this should be betting the clear on. `loadDefault()` is the
+    // method the breadcrumb uses for this case anyway (it calls _buildContent
+    // with no data, which empties the track).
+    if (empty) {
+      const crumb = this.getPart && this.getPart("breadcrumb");
+      if (crumb && !(crumb.isDestroyed && crumb.isDestroyed())
+        && _.isFunction(crumb.loadDefault)) {
+        crumb.loadDefault();
+      }
+    }
+    const slot = await this.ensurePart("home-empty-slot");
+    if (!slot || !slot.el) return;
+    const mounted = !!(slot.collection && slot.collection.length);
+    if (empty) {
+      // Guarded so re-running this while already empty cannot stack a second
+      // copy.
+      if (mounted) return;
+      await Kind.waitFor("desk_home_empty");
+      if (this.isDestroyed && this.isDestroyed()) return;
+      slot.feed({ kind: "desk_home_empty", persistence: _a.once });
+      return;
+    }
+    if (mounted) slot.clear();
+  }
+
+  /**
+   * OPEN THE NEW WORKSPACE ONCE THE ACCESS PANEL IS CLOSED.
+   *
+   * ONLY REACHED WHEN THE CREATE ANNOUNCED `panel: 1`. The ordinary create no
+   * longer raises anything over the form — it hands the user straight into the
+   * new workspace — and _onWorkspaceCreated opens it directly in that case.
+   * Today the one surface that still asks for this is the activate-workspace
+   * walkthrough, whose Step 2 invites a teammate and so needs Step 1 to end on
+   * the members panel (see _createFormOverrides).
+   *
+   * When a panel IS raised, opening the workspace cannot happen alongside it,
+   * because loadWorkspace CLEARS the wrapper-modal on its way in
+   * (wm/index.js): open first and the panel the user was about to invite people
+   * from is destroyed under them. So the order is the user's — panel, then
+   * dismiss, then the workspace.
+   *
+   * THE SIGNAL is the wrapper-modal's collection emptying, which is the same
+   * one Wm's own `_closeWhenEmpty` waits for and for the same stated reason:
+   * media_form chains to permission_* via parent.feed(), and "update" fires
+   * once after that swap so the length reflects the FINAL state. Watching a
+   * child destroy instead would fire mid-swap, i.e. the moment the form is
+   * replaced by the panel — which is precisely not what "closed" means here.
+   *
+   * Note on ordering: libs/create-workspace announces `workspace:refresh` from
+   * inside createWorkspace, BEFORE media/form's `.then` feeds the panel. So at
+   * the moment this runs the wrapper still holds the FORM, and the transition
+   * being waited for is the one after the panel goes.
+   *
+   * Already empty is treated as "there is nothing to wait for" rather than as
+   * an error: a create that raised no panel at all (no hub in the response, or
+   * a caller whose post_override is falsy) still ends with a workspace that
+   * wants opening.
+   *
+   * @param {Object} [created] the create's workspace descriptor. Given, THAT
+   *   workspace is the one opened; omitted, the desk falls back to "open
+   *   whichever workspace exists", which is only ever right on the path that
+   *   omits it — a create from the no-workspace screen, where the one just made
+   *   is the only one there is.
+   */
+  _openWorkspaceAfterAccessPanel(created) {
+    const openNow = () => (created
+      ? this._openCreatedWorkspace(created)
+      : this._openWorkspaceOrEmptyScreen({ force: true }));
+    if (!window.Wm || !_.isFunction(Wm.ensurePart)) return openNow();
+    if (this._awaitingAccessClose) return;
+    this._awaitingAccessClose = 1;
+
+    Wm.ensurePart("wrapper-modal").then((p) => {
+      if (!p || !p.collection) {
+        this._awaitingAccessClose = 0;
+        return openNow();
+      }
+
+      // TWO STAGES: SEE THE PANEL, THEN SEE IT GO.
+      //
+      // Deciding on the collection's state at arm time is what let the
+      // workspace open while the panel was still up. This runs from
+      // `workspace:refresh`, which libs/create-workspace fires from INSIDE
+      // createWorkspace — before media/form's `.then` has fed the panel. So at
+      // arm time the wrapper holds whatever the create left there, and reading
+      // "empty" as "no panel to wait for" is a guess about a state that has not
+      // happened yet. Any moment where it reads empty — the form having closed
+      // itself, a swap observed between events — opened the workspace
+      // immediately and destroyed the panel a beat later (loadWorkspace clears
+      // this very wrapper).
+      //
+      // So track it as a state machine instead: nothing opens until a panel has
+      // been SEEN, and then gone. `seen` only ever goes false→true, so no later
+      // empty reading can be mistaken for the panel's departure.
+      let seen = !!p.collection.length;
+
+      const stop = () => {
+        p.collection.off("update reset", this._onAccessPanelClosed);
+        if (this._accessPanelTimer) {
+          clearTimeout(this._accessPanelTimer);
+          this._accessPanelTimer = null;
+        }
+        this._onAccessPanelClosed = null;
+        this._awaitingAccessClose = 0;
+      };
+
+      this._onAccessPanelClosed = () => {
+        // A desk torn down while the panel was up must not open a workspace
+        // into it, and must not leave a listener on Wm's collection either.
+        if (this.isDestroyed && this.isDestroyed()) return stop();
+        if (p.collection.length) {
+          // The panel arrived (or the form was swapped for it). Now there is
+          // something to wait for.
+          seen = true;
+          return;
+        }
+        // Empty. Only a departure if something was there to depart.
+        if (!seen) return;
+        stop();
+        openNow();
+      };
+      p.collection.on("update reset", this._onAccessPanelClosed);
+
+      // BOUNDED. If no panel ever appears — a create that raised none, or one
+      // whose chain never reached this wrapper — the workspace still has to
+      // open. Long enough to cover the create round-trip that feeds the panel,
+      // and it is cancelled the moment a panel is seen.
+      this._accessPanelTimer = setTimeout(() => {
+        this._accessPanelTimer = null;
+        if (this.isDestroyed && this.isDestroyed()) return stop();
+        if (seen) return; // a panel is up; wait for it properly
+        stop();
+        openNow();
+      }, 4000);
+    });
+  }
+
+  /**
+   * Kept as the name six call sites already use. Step 1 + step 2 both live in
+   * _openWorkspaceOrEmptyScreen; this is the plain entry point.
+   */
+  async _openDefaultWorkspace(opt = {}) {
+    return this._openWorkspaceOrEmptyScreen(opt);
+  }
+
+  /**
+   * Current unread figure, read from whichever badge is mounted.
+   *
+   * Which one that is depends on the device: the desktop rail no longer has a
+   * notifications row (it moved to the topbar cluster), so 'activity-count'
+   * exists only in the mobile drawer, and 'activity-count-top' only on
+   * desktop. getPart is used rather than ensurePart deliberately — ensurePart
+   * NEVER resolves for a part that will not mount on this device, which would
+   * hang the caller forever.
+   */
+  _readActivityCount() {
+    for (const pn of ["activity-count-top", "activity-count-mobile", "activity-count-sheet"]) {
+      const p = this.getPart && this.getPart(pn);
+      if (p && p.el) {
+        return parseInt(p.el.dataset.count || p.el.innerText || "0", 10) || 0;
+      }
+    }
+    return 0;
+  }
+
+  /** Drop the unread figure by `by`, floored at zero, on every badge. */
+  _decrementActivityCount(by = 1) {
+    this._writeActivityCount(Math.max(0, this._readActivityCount() - by));
+  }
+
   _updateActivityBadge(args = {}) {
     if (args.unread_count == null) return;
-    this.ensurePart("activity-count").then((p) => {
-      let content = args.unread_count || 0;
-      if (parseInt(content) > 99) content = "99+";
-      p.el.innerText = content;
-      p.el.dataset.count = content;
+    this._writeActivityCount(args.unread_count);
+  }
+
+  /**
+   * The rail's Files / Chat / Task / Meet pills — what is unread IN THE OPEN
+   * WORKSPACE: new files and folders, team-chat messages, task notifications
+   * (assigned to me, mentions / replies on my tasks, moves into a column I
+   * watch) and meeting invitations. Counted by panel_activity from the rows it already fetched
+   * (panel/activity/hub-counts.js) and broadcast as `workspace-unread`; the
+   * last value is also kept on window.ActivityHandler, so a workspace switch
+   * (workspace:focus / chat:read) repaints without a request.
+   *
+   * getPart, not ensurePart — the desktop rail and the phone bar are
+   * per-device, and ensurePart never resolves for a part that will not mount
+   * here (same idiom as _readActivityCount).
+   */
+  _writeRailCounts() {
+    const ws = typeof Wm !== "undefined" && Wm ? Wm._curWorkspace : null;
+    // Standing on Task / Meet: what just arrived is on screen, so it is seen
+    // (window_folder _announceTabSeen). panel_activity republishes only when a
+    // mark moves, so this re-ask on every count update cannot loop. Asked
+    // BEFORE the counts are read: a moved mark republishes synchronously, and
+    // reading first would paint the stale numbers over the fresh ones.
+    const pane = ws && ws.hub_id != null ? this._railWorkspace() : null;
+    if (pane && _.isFunction(pane._announceTabSeen)) pane._announceTabSeen(pane.activeTab || "files");
+    const all = (window.ActivityHandler && window.ActivityHandler._hubCounts) || {};
+    const c = (ws && ws.hub_id != null && all[ws.hub_id]) || {};
+    const rows = { files: c.files, chat: c.chat, task: c.task, meet: c.meeting };
+    if (!_.isFunction(this.getPart)) return;
+    for (const key of Object.keys(rows)) {
+      const n = parseInt(rows[key], 10) || 0;
+      const content = n > 99 ? "99+" : String(n);
+      for (const pn of [`rail-badge-${key}`, `mrail-badge-${key}`]) {
+        const p = this.getPart(pn);
+        if (!p || !p.el || (p.isDestroyed && p.isDestroyed())) continue;
+        p.el.innerText = n === 0 ? "" : content;
+        p.el.dataset.count = content;
+      }
+    }
+  }
+
+  /**
+   * The workspace window the rail acts on, or null when the desk is showing
+   * its home grid with nothing open.
+   *
+   * Wm.getActiveWindow(1) answers the raised folder/team/sharebox window, and
+   * falls back to returning Wm ITSELF when none is open — hence the
+   * showFolderTab check rather than a truthiness test, which would hand the
+   * rail the window manager and throw on the first click.
+   */
+  _activeWorkspace() {
+    if (typeof Wm === "undefined" || !_.isFunction(Wm.getActiveWindow)) return null;
+    const w = Wm.getActiveWindow(1);
+    if (!w || w === Wm || w.isDestroyed?.()) return null;
+    return _.isFunction(w.showFolderTab) ? w : null;
+  }
+
+  /**
+   * The workspace window a RAIL click should act on.
+   *
+   * _activeWorkspace() answers "which window is RAISED", and that is not always
+   * the workspace even when one is wide open: anything else on top takes the
+   * raise, and a pane can also simply not hold it yet (boot/restore, a re-feed).
+   * getActiveWindow(1) then finds no folder-ish child carrying `state` and
+   * returns Wm itself, which _activeWorkspace reports as null.
+   *
+   * _railTab read that null as "there is no workspace open" and called
+   * _openDefaultWorkspace(), which opens rows[0] — literally the FIRST
+   * workspace in the list, on its default (Files) tab. Reported by Duy: from
+   * the Invite popup, the first tab click landed on a workspace he had never
+   * opened. Confirmed by forcing the state on a pane that was demonstrably
+   * alive: pool ["folder:0:true"], _curWorkspace still the open workspace, and
+   * the click nevertheless switched to the first one in the list.
+   *
+   * So when the raise heuristic finds nothing, ask what the desk ALREADY KNOWS:
+   * Wm._curWorkspace names the open workspace and Wm._findWorkspaceWindow finds
+   * its headless pane — the same pair _curWorkspaceCanWrite already trusts for
+   * exactly this reason. Opening the default workspace stays the answer only
+   * when there is genuinely no current one, which is the case that fallback was
+   * written for.
+   *
+   * PURELY ADDITIVE: when _activeWorkspace() answers, that answer is returned
+   * unchanged, so every path that works today is untouched.
+   *
+   * @returns {Object|null} a folder window with showFolderTab, or null
+   */
+  _railWorkspace() {
+    const w = this._activeWorkspace();
+    if (w) return w;
+    if (typeof Wm === "undefined" || !Wm) return null;
+    const ws = Wm._curWorkspace;
+    if (!ws || !ws.hub_id || !_.isFunction(Wm._findWorkspaceWindow)) return null;
+    const pane = Wm._findWorkspaceWindow(ws.hub_id);
+    if (!pane || (pane.isDestroyed && pane.isDestroyed())) return null;
+    return _.isFunction(pane.showFolderTab) ? pane : null;
+  }
+
+  /**
+   * ╔══════════════════════════════════════════════════════════════════════╗
+   * ║  RAIL & INVITE — BEHAVIOUR CONTRACT (desktop rail AND phone bar)      ║
+   * ╚══════════════════════════════════════════════════════════════════════╝
+   *
+   * These are DELIBERATE decisions, each one the fix for a reported bug
+   * (Lexis + Duy, 2026-09-04). They are not incidental, and the phone bar
+   * is expected to behave the same way — please do not diverge on mobile
+   * without raising it first.
+   *
+   * 1. THE LIT ROW MUST ALWAYS MATCH WHAT IS ON SCREEN. Every bug below was
+   *    the rail naming a screen that was not up.
+   *
+   * 2. Switching workspace KEEPS THE TAB the user is standing on, so the
+   *    rail is lit on that tab (_railHighlight; _resetRailToFiles is its
+   *    Files-only twin, still used by the paths that really do land there).
+   *    A new window_folder starts with `activeTab` unset, which every reader
+   *    treats as Files, so the tab is handed over explicitly:
+   *    Wm.paneTabToCarry() reads the outgoing pane and loadWorkspace passes
+   *    it to the new one as `restore_tab`. Both callers ask Wm the same
+   *    question BEFORE the switch — the pane that knows the answer is the
+   *    one about to be replaced — so the lit row and the screen still cannot
+   *    disagree, which is rule 1 and the whole point.
+   *    ONLY ON A REAL CHANGE of workspace: re-picking the one already open
+   *    is a loadWorkspace early-return that keeps its tab anyway.
+   *
+   * 3. A rail click acts on the workspace that is OPEN, not on whatever
+   *    window happens to be RAISED — see _railWorkspace. Reverting that to
+   *    _activeWorkspace() brings back "the first tab click jumps to the
+   *    first workspace in the list", which is what it reads as when the
+   *    pane is alive but unraised.
+   *
+   * 4. INVITE IS AN OVERLAY ON THE CURRENT TAB, NOT A DESTINATION:
+   *    a. it stays OUT of the rail's radio group (skeleton/sidebar.js
+   *       `soloState`) so the current tab KEEPS its highlight — Files and
+   *       Invite lit together is correct, not a bug. Whoever opens the
+   *       popup lights and unlights the row by hand (_setInviteRowState).
+   *       An Invite row added to the phone bar must follow the same rule:
+   *       do NOT put it in "mobile-rail-radio".
+   *    b. opening it from a workspace tab must NOT change that tab.
+   *    c. opening it from a SECTION SCREEN (Plan / Settings / Get help /
+   *       Calendar / Inbox / Trash / Apps) must leave that screen and land
+   *       on Files first, or the rail lights the section AND Invite while
+   *       the screen underneath is the workspace. Approved for the whole
+   *       class, not just Plan.
+   *
+   * 5. THE SHARED MODAL LAYER (Wm.__wrapperModal) IS RELEASED ONLY WHILE IT
+   *    HOLDS THE INVITE POPUP — see _leaveSectionScreen. Never clear it
+   *    unconditionally on navigation: it also carries the create-workspace
+   *    form, the permission panels and Wm.confirm(), and discarding a
+   *    half-filled form because someone glanced at another tab is a worse
+   *    bug than the one that guard fixes.
+   *
+   * 6. THE INVITE BACKDROP IS FULLY TRANSPARENT ON PURPOSE
+   *    (invite-popup/skin `[data-invite-overlay]`) — no blur and no dim, at
+   *    every width, so the tab behind stays completely readable. That is what
+   *    makes it read as a popup over the tab. It is intended, not a missing
+   *    scrim; the other occupants of the shared wrapper keep the glass.
+   *
+   * Rail → folder-window tab. With no workspace open there is nothing to show
+   * a tab OF, so OPEN one — the legacy all-workspaces grid this used to fall
+   * back to is retired (it is the same screen the Home crumb reached, and the
+   * rail cannot render a "no workspace" state anyway). The workspace opens on
+   * its own default tab, which beats landing on a screen we no longer ship.
+   */
+  /**
+   * Offer the migrate tour on an ordinary boot.
+   *
+   * A refresh restores a workspace and lands on Files — the same surface the
+   * rail's Files button leads to, and the one this tour is about. Without this
+   * the tour was reachable only by pressing a rail item the user was already
+   * looking at the result of.
+   *
+   * IT STANDS DOWN FOR THE POST-ONBOARDING CHAIN, and that guard is load-
+   * bearing rather than tidy. The workspace tour hands over to migrate from its
+   * own destroy handler (desk/tutorial, _chainMigrateTour), and this method runs
+   * from _afterHomeSettled — which is an EARLIER handler on that same destroy.
+   * Claiming here first would make the hand-off's showTutorial return false, so
+   * the tour would still run but arrive without `celebrate`, and the confetti
+   * that belongs to a workspace just created would be lost. The chain owns that
+   * moment; this is for every other boot.
+   *
+   * A URL tour also wins: `?window_tutorial=` is a person asking by name.
+   *
+   * Everything else is the seen-set's answer, as ever. `migrate` is
+   * `mark_on: "success"`, so it keeps being offered until a folder is created,
+   * files are uploaded, or the last step is reached — which is what makes this
+   * "in case the user is not done" rather than "once".
+   *
+   * @returns {Promise<Boolean>} whether the tour was asked for
+   */
+  async _maybeRunBootTour() {
+    let raised = false;
+    try {
+      raised = await this._raiseBootTour();
+    } finally {
+      // Declined: show the pane now rather than at BOOT_TOUR_HOLD_MAX. Raised:
+      // the hold goes when the tour is on screen (onPartReady
+      // "window-tutorial") — or when the claim is released, which also covers
+      // a mount that failed after fire() succeeded.
+      if (!raised) this._releaseBootTourHold();
+      else require("libs/tutorial-tours").whenDone("migrate", () => this._releaseBootTourHold());
+    }
+    return raised;
+  }
+
+  /**
+   * HIDE THE RESTORED PANE UNTIL THE BOOT TOUR IS UP.
+   *
+   * A refresh by a user who has not finished the migrate tour restores their
+   * workspace and only then raises the tour over it — after the 2s settle, the
+   * restore wait and the pane poll in _maybeRunBootTour. So
+   * window-folder__split-body sat on screen for seconds before the tour
+   * covered it: the answer before the question, the same fault
+   * _railTabWithTour fixed for rail presses.
+   *
+   * Stamps `data-boot-tour-hold` on the desk root, and the skin keeps the
+   * headless layer `visibility: hidden` while it is up. VISIBILITY, not
+   * display: the pane still lays out, so _awaitRailWorkspace finds it and the
+   * tour (builtins/window/tutorial _syncToWindow) measures its box.
+   *
+   * This is NOT the reverted tour-intro curtain (470a4076): nothing is drawn in
+   * the pane's place, the canvas is simply empty until the tour arrives.
+   *
+   * Asked with the same gates _maybeRunBootTour applies up front, so a user who
+   * finished the tour, a URL tour, or the post-onboarding tutorial (which
+   * covers the desk itself) never get a hidden pane. Every way out releases it:
+   * the tour's mount, a decline, the claim's release, a user navigation
+   * (_navigated), and BOOT_TOUR_HOLD_MAX as the last resort.
+   */
+  _holdBootTourPane() {
+    if (!this.el || !this.el.dataset) return;
+    try {
+      if (this._postOnboardingTutorial) return;
+      if (Visitor.parseModuleArgs().tutorial) return;
+      if (require("libs/window-tutorial-intent").has()) return;
+      if (!require("libs/tutorial-tours").offerable("migrate", this)) return;
+    } catch (e) {
+      return;
+    }
+    this.el.dataset.bootTourHold = "1";
+    clearTimeout(this._bootTourHoldTimer);
+    this._bootTourHoldTimer = setTimeout(
+      () => this._releaseBootTourHold(),
+      BOOT_TOUR_HOLD_MAX,
+    );
+  }
+
+  /** Show the pane _holdBootTourPane hid. Idempotent. */
+  _releaseBootTourHold() {
+    clearTimeout(this._bootTourHoldTimer);
+    this._bootTourHoldTimer = null;
+    if (this.el && this.el.dataset) delete this.el.dataset.bootTourHold;
+  }
+
+  /** The body of _maybeRunBootTour; resolves whether the tour was asked for. */
+  async _raiseBootTour() {
+    if (this._tutorialWasAutomatic) return false;
+    if (require("libs/window-tutorial-intent").has()) return false;
+    // ASKED BEFORE EITHER WAIT BELOW. `offerable` applies every gate a claim
+    // would except single-flight, and takes no lock — so a user who finished
+    // this tour long ago is not made to sit through _awaitRestoreSettled and
+    // _awaitRailWorkspace for a tour that was never going to run.
+    if (!require("libs/tutorial-tours").offerable("migrate", this)) return false;
+    try {
+      // The same wait the URL hook documents at length: the restore clears its
+      // flag on a TIMER, not when the pane arrives, so a workspace has to be
+      // watched for rather than asked about once.
+      await this._awaitRestoreSettled();
+      const ws = await this._awaitRailWorkspace(this._workspaceIncoming() ? 8000 : 3000);
+      if (!ws || (this.isDestroyed && this.isDestroyed())) return false;
+      return await this._raiseRailTour("migrate");
+    } catch (e) {
+      return false;
+    }
+  }
+
+  /**
+   * Resolve once no tour holds single-flight.
+   *
+   * A rail click ENDS the tour that is up (_railTab -> _endWindowTour) and may
+   * raise another in the same gesture — Chat pressed during the migrate tour is
+   * exactly that. But softDestroy fades for 0.5s and only its `destroy`
+   * releases the claim, so a tour raised on the spot meets
+   * `if (_inFlight) return false` and is refused in silence.
+   *
+   * `whenDone` runs its callback immediately when nothing is in flight, so the
+   * common case costs a microtask. The timeout is for a guard that never
+   * settles: a tour that fails to arrive must not disable every later one.
+   *
+   * @returns {Promise}
+   */
+  _whenToursIdle() {
+    const Tours = require("libs/tutorial-tours");
+    const busy = Tours.inFlight();
+    if (!busy) return Promise.resolve();
+    return new Promise((resolve) => {
+      Tours.whenDone(busy, resolve);
+      setTimeout(resolve, 2000);
     });
+  }
+
+  /**
+   * Draw a tour over the open workspace, for _onTourTrigger.
+   *
+   * THE CLAIM IS ALREADY HELD. fire() takes it before broadcasting — that is
+   * what makes every gate live in one place — so this MOUNTS and does not
+   * claim, and has to release when it cannot: a latched guard would block every
+   * tour for the rest of the session, or until the 30s watchdog.
+   *
+   * AWAITED, because the pane may not exist yet. A rail click that finds
+   * nothing open falls back to _openDefaultWorkspace(), which mounts from
+   * inside a media.attributes fetch, and the sidebar rows and workspace tiles
+   * that raise `folder_task` are mid-navigation too. Polling covers all of
+   * them; a workspace already open answers on the first look, and one that
+   * never arrives declines — a tour drawn on a window needs a window.
+   *
+   * @param {String} tour a tour id
+   * @param {Object} [opt] extra model attributes for the tour widget
+   * @returns {Promise<Boolean>} whether a tour was mounted
+   */
+  async _mountWindowTourFor(tour, opt = {}) {
+    const Tours = require("libs/tutorial-tours");
+    // THE NAVIGATION THIS TOUR WAS ASKED FOR — see _navigated. The poll below
+    // is up to 3s long and both the rail and the switcher are reachable
+    // throughout it (they sit above the tour's overlay), so without this a
+    // tour asked for on one workspace could arrive on another, or a tour the
+    // user has already pressed past could arrive at all.
+    const seq = this._navSeq || 0;
+    try {
+      const ws = await this._awaitRailWorkspace(3000);
+      if (this.isDestroyed && this.isDestroyed()) return false;
+      if ((this._navSeq || 0) !== seq) {
+        Tours.release(tour);
+        return false;
+      }
+      if (!ws || !this.mountWindowTutorial(ws, tour, opt)) {
+        Tours.release(tour);
+        return false;
+      }
+      return true;
+    } catch (e) {
+      Tours.release(tour);
+      this.warn && this.warn("[desk] could not mount the in-window tour", e);
+      return false;
+    }
+  }
+
+  /**
+   * Ask for a tour after a rail click, once the screen is free.
+   *
+   * A rail click ENDS the tour that is up (_railTab -> _endWindowTour) and may
+   * ask for another in the same gesture — Chat pressed during the migrate tour.
+   * fire() refuses while single-flight is held, and softDestroy fades for 0.5s
+   * before its destroy releases it, so asking on the spot is refused in
+   * silence. _whenToursIdle is the wait for that release.
+   *
+   * @param {String} tour a tour id
+   * @param {Number} [seq] the _navSeq of the navigation asking. When given, a
+   *   navigation during the wait cancels the claim: the tour belongs to a
+   *   screen the user has already left.
+   * @returns {Promise<Boolean>} whether the tour was asked for
+   */
+  async _raiseRailTour(tour, seq) {
+    await this._whenToursIdle();
+    if (this.isDestroyed && this.isDestroyed()) return false;
+    if (seq !== undefined && (this._navSeq || 0) !== seq) return false;
+    return require("libs/tutorial-tours").fire(tour, this);
+  }
+
+  /**
+   * Show a rail tab — but let its tour go FIRST.
+   *
+   * THE ORDER WAS THE OTHER WAY ROUND, deliberately: every rail case called
+   * _railTab and only then asked for the tour, so "the tour can never swallow
+   * the navigation the user asked for". The cost of that is what this fixes.
+   * _railTab is SYNCHRONOUS and the tour is several async hops behind it — a
+   * claim, a broadcast, a poll for the workspace, a mount — so pressing Files
+   * drew window-folder__split-body, and the migrate tour then appeared on top
+   * of the pane it exists to introduce. The user watched the answer before the
+   * question.
+   *
+   * So the tab now follows the tour down. What still happens IMMEDIATELY is
+   * everything the tour itself needs:
+   *
+   *   the section screen  goes at once — a tour drawn over Settings would be
+   *                       teaching a pane that is not on screen.
+   *   a window            has to exist, because an in-window tour is drawn ON
+   *                       one. Opening a workspace is not the same as switching
+   *                       its tab, and only the second waits.
+   *   any other tour      is ended here rather than inside the deferred
+   *                       _railTab, or pressing Chat during the Files tour
+   *                       would leave the first one up while the second was
+   *                       refused for single-flight.
+   *
+   * And when no tour is raised — already completed, mobile, the kill switch —
+   * the tab shows immediately, which is every press after the walkthrough.
+   *
+   * @param {String} tab  the rail tab pressed
+   * @param {String} tour the tour that tab is about
+   * @returns {Promise}
+   */
+  async _railTabWithTour(tab, tour) {
+    // THIS PRESS SUPERSEDES THE ONE BEFORE IT. See _navigated: the previous
+    // press may have parked a tab switch on its tour's release, and ending
+    // that tour below is exactly what fires it.
+    this._navigated();
+    const w = this._railWorkspace();
+    this._leaveSectionScreen(w);
+    // ASKED FIRST, and the order is load-bearing now rather than incidental.
+    //
+    // `offerable` is every gate a claim applies except single-flight, without
+    // taking one — so a press after the walkthrough skips _whenToursIdle's
+    // wait entirely and shows its tab at once. And asking BEFORE the tour that
+    // is up comes down is what lets that one skip its fade: a tour being
+    // replaced by another tour has nothing to reveal, while a tour that is
+    // simply ending is uncovering the window on purpose. See _endWindowTour.
+    const offerable = require("libs/tutorial-tours").offerable(tour, this);
+    this._endWindowTourUnlessAbout(tab, { immediate: offerable });
+    if (!w) await this._openDefaultWorkspace();
+    if (this.isDestroyed && this.isDestroyed()) return;
+    // Read AFTER the open above, which is this method's own doing and not a
+    // navigation. From here on a change means the user has gone somewhere else
+    // — another rail item, or another workspace — see the deferred tab below.
+    const seq = this._navSeq || 0;
+    if (!offerable) return this._railTab(tab);
+    // THE TOUR IS ALREADY UP — show the tab under it and stop. Files pressed
+    // during the migrate tour reaches here with that very tour standing (it is
+    // about Files, so _endWindowTourUnlessAbout kept it). Asking for it again
+    // did not fail fast: _whenToursIdle WAITED for the running tour to release,
+    // i.e. for whatever ended it next — and the next thing was the Calendar,
+    // whose togglePanel ends the tour once the screen has painted. The wait
+    // then resolved, fire() claimed the now-free tour and mounted a fresh
+    // migrate tour straight over the Calendar the user had just opened.
+    if (this._windowTourIs(tour)) return this._railTab(tab);
+    const raised = await this._raiseRailTour(tour, seq);
+    // Whatever the wait inside was for, a navigation during it wins: the user
+    // has gone elsewhere, so neither a tour nor this tab lands on top of it.
+    if ((this._navSeq || 0) !== seq) return;
+    if (!raised) {
+      // Nothing was raised — already completed, mobile, the kill switch, or
+      // another tour holding single-flight. The tab shows at once.
+      return this._railTab(tab);
+    }
+    // THE TAB GOES IN UNDER THE TOUR, not after it. Parked on the release, it
+    // switched only when the tour's softDestroy had FINISHED — and that is a
+    // 0.5s fade-and-shrink during which the pane underneath is revealed. So
+    // Done on the chat tour faded out onto the Files view (files-panel + chat
+    // panel) and only then jumped to the Chat view (thread-rail + chat panel).
+    // Switched as soon as the tour has painted, the swap happens behind an
+    // opaque overlay and the fade reveals the tab the user asked for.
+    //
+    // The release stays as the fallback, for a tour that was claimed and never
+    // reached the screen. Whichever comes first runs; the other is a no-op.
+    let shown = false;
+    const show = () => {
+      if (shown) return;
+      shown = true;
+      if (this.isDestroyed && this.isDestroyed()) return;
+      // UNLESS THE USER HAS MOVED ON. Every way of ending this tour early runs
+      // this callback — the release is the release — so without the check the
+      // tab it was parked for lands on top of wherever the user actually went:
+      // the Task panel over the Files pane they pressed Files for, or the tab
+      // of a tour they walked out of over the workspace they switched into.
+      // Both were reported; see _navigated.
+      if ((this._navSeq || 0) === seq) this._railTab(tab);
+    };
+    this._windowTourShown = { tour, cb: show };
+    require("libs/tutorial-tours").whenDone(tour, show);
+  }
+
+  /**
+   * Take an in-window tour down, if one is up.
+   *
+   * WHY NAVIGATION HAS TO DO THIS. The tour is an OPAQUE overlay covering the
+   * folder window, mounted in the desk's own `overlay` slot at z 50000 — it is
+   * not inside the window and cannot be raised past. So a rail click while it
+   * is up does everything it is supposed to (the tab really does change, the
+   * window really is raised) and none of it can be seen: the tour is still
+   * painted over the pane, showing the mock it was showing before.
+   *
+   * That reads as a dead click, and it is the fault behind "clicking Chat does
+   * not move to chat". The rail itself is fine — the desk stands its overlay
+   * down to `pointer-events: none` for exactly this reason, and the click does
+   * land on the row.
+   *
+   * softDestroy rather than destroy BY DEFAULT: it fades, which is how every
+   * other exit from this tour leaves, and its destroy is what releases
+   * single-flight and clears `data-window-tour`.
+   *
+   * `opt.immediate` DROPS THE FADE, and it is the answer to a reported fault
+   * rather than a tuning knob. That fade is half a second during which this
+   * tour is dissolving and the next one cannot even be claimed — a claim is
+   * not free until the release, which the destroy at the END of the fade is
+   * what does. So switching between rail items played: tour dissolves, the
+   * folder pane underneath is revealed for half a second, then the next tour
+   * arrives on top of it. The pane flashing between two tours is what the
+   * user sees, and there is nothing to fade FOR when the thing replacing it is
+   * another tour over the same window.
+   *
+   * Only when a replacement is actually coming — see _railTabWithTour. Every
+   * other exit (Escape, a section screen, a workspace switch, completion) ends
+   * with the window revealed on purpose and keeps the fade.
+   *
+   * @param {Object} [opt]
+   * @param {Boolean} [opt.immediate] destroy now instead of fading out
+   * @returns {Boolean} whether a tour was taken down
+   */
+  _endWindowTour(opt = {}) {
+    const t = this._windowTour;
+    if (!t || (t.isDestroyed && t.isDestroyed())) return false;
+    this._windowTour = null;
+    try {
+      const fade = !opt.immediate && _.isFunction(t.softDestroy);
+      if (fade) t.softDestroy();
+      else if (_.isFunction(t.destroy)) t.destroy();
+    } catch (e) {
+      this.warn && this.warn("[desk] could not close the in-window tour", e);
+      return false;
+    }
+    return true;
+  }
+
+  /**
+   * End an in-window tour unless the destination is what it is about.
+   *
+   * Leaving what a tour teaches ends it — see _endWindowTour for why an
+   * in-window tour cannot simply be navigated out from under. Asked of the
+   * RUNNING tour rather than against a hardcoded tab: pressing Chat while the
+   * chat tour is up is not leaving it, and ending it there would restart the
+   * tour from screen one on every press of the row the user is already on.
+   *
+   * @param {String} tab where the user is going
+   * @param {Object} [opt] forwarded to _endWindowTour — `immediate` when the
+   *   caller is about to raise another tour over the same window
+   * @returns {Boolean} whether a tour was ended
+   */
+  _endWindowTourUnlessAbout(tab, opt) {
+    const running = this._windowTour && _.isFunction(this._windowTour.mget)
+      ? this._windowTour.mget("tour")
+      : null;
+    if (running && WINDOW_TOUR_TAB[running] === tab) return false;
+    return this._endWindowTour(opt);
+  }
+
+  /**
+   * End an in-window tour when the switcher sends the user to another
+   * workspace.
+   *
+   * A TOUR IS DRAWN ON A WINDOW, and a switcher row replaces that window. The
+   * rail already knows this (_railTab -> _endWindowTourUnlessAbout) but the
+   * switcher did not, and it is reachable from under a running tour: the tour
+   * covers the work area at z 50000, while the topbar was lifted clear of the
+   * same overlay and sits above it. So the row could be pressed, the workspace
+   * really did change, and the tour stayed painted over the pane of the
+   * workspace the user had just left — showing a mock of the wrong window.
+   *
+   * IT IS NOT COMPLETION. _endWindowTour goes through softDestroy, and only
+   * _markDone in the host records the flag (every window tour is
+   * `mark_on: "success"`), so a tour cut short this way stays armed and is
+   * offered again — the same treatment Escape and the rail get. Walking away
+   * from a lesson is not finishing it.
+   *
+   * NOT WHEN THE ROW IS THE OPEN WORKSPACE. Re-picking it makes loadWorkspace
+   * an early return that merely raises the pane — the tour's own window, still
+   * the one it is about — so there is nothing to leave. Same test, by the same
+   * key, that _switchWorkspace uses to decide whether it re-lights the rail.
+   *
+   * A real switch counts as a navigation (_navigated), which is what the two
+   * places that have already committed to a workspace and finish
+   * asynchronously read — _mountWindowTourFor and _railTabWithTour's deferred
+   * tab. They compare that count rather than ask the window manager, because
+   * during a switch its `_curWorkspace` is mid-flight and answers for neither
+   * workspace reliably.
+   *
+   * @param {String} wsKey the row pressed, by _workspaceKey
+   * @returns {Boolean} whether a tour was taken down
+   */
+  _endWindowTourOnSwitch(wsKey) {
+    if (!this._leavesWorkspace(wsKey)) return false;
+    this._navigated();
+    return this._endWindowTour();
+  }
+
+  /**
+   * WARM EVERYTHING THE DESK-HOSTED TOUR MOUNTS, not just its shell.
+   *
+   * `desk_tutorial` has been warmed during the wizard for a while, and that
+   * fixed the shell — but the shell is not what the user is waiting for. It
+   * mounts and then feeds TWO more gated kinds, both of which were cold at
+   * exactly the handover that is supposed to feel instant:
+   *
+   *   tutorial_spotlight  its skeleton declares it (desk/tutorial/skeleton)
+   *   the step            onDomRefresh feeds step 1's kind, which for the
+   *                       post-onboarding run is `tutorial_workspace`
+   *
+   * AND THE HOST'S OWN PRELOADER CANNOT COVER THE STEP. _preloadSteps warms
+   * `steps.slice(1)` — deliberately, because by the time it runs step 1 has
+   * already been fed — so step 1 is never warm before the mount, and the
+   * `workspace` tour has exactly one step, which makes that preloader a no-op
+   * for this run. Kind.get() then hands back the lazy-loader placeholder,
+   * which mounts EMPTY, waits on the network and respawns itself once the
+   * module lands (ui-core letc/kind/loader.js): a round trip and a
+   * mount-and-rebuild, with the tour's shell already on screen around a hole.
+   *
+   * Read off the registry rather than named here, so a tour that gains a step
+   * is warmed without anyone remembering this method.
+   *
+   * Fire and forget: a warm-up that fails costs nothing, because every kind
+   * still loads on demand exactly as it does today.
+   *
+   * @param {String} tourId the tour that is going to run
+   */
+  _warmDeskTourKinds(tourId) {
+    if (typeof Kind === "undefined" || !_.isFunction(Kind.waitFor)) return;
+    const kinds = ["desk_tutorial", "tutorial_spotlight"];
+    try {
+      const t = require("desk/tutorial/tours").tour(tourId);
+      for (const step of (t && t.steps) || []) {
+        if (step.kind && !kinds.includes(step.kind)) kinds.push(step.kind);
+      }
+    } catch (e) {
+      // The registry is not load-bearing for a prefetch — the shell and the
+      // spotlight are still worth warming without it.
+      this.warn && this.warn("[tutorial] could not read the tour registry", e);
+    }
+    for (const kind of kinds) {
+      Promise.resolve(Kind.waitFor(kind)).catch((e) => {
+        this.warn && this.warn(`[tutorial] could not warm ${kind}`, e);
+      });
+    }
+  }
+
+  /**
+   * PULL THE TOUR'S OWN CHUNKS DOWN BEFORE ANYTHING ASKS FOR THEM.
+   *
+   * `mountWindowTutorial` feeds `kind: "window_tutorial"`, and the host it
+   * names feeds `tutorial_spotlight` in turn (builtins/window/tutorial/
+   * skeleton). Both are lazy seeds, so the FIRST rail press that raises a tour
+   * pays a fetch for each of them — and what the user looks at while it lands
+   * is the pane they came from, because the tab is deliberately not switched
+   * until the tour is done. That is the other half of the reported "the folder
+   * pane shows before the tutorial".
+   *
+   * Kind.waitFor resolves the import and registers the class, after which
+   * Kind.get() answers synchronously — no placeholder, no fetch. The same
+   * warm-up the desk host does for its steps (desk/tutorial, _preloadSteps),
+   * for the same reason.
+   *
+   * ONLY WHEN A TOUR IS STILL OWED. `offerable` is free to ask, and an account
+   * past the walkthrough fetches nothing — which is almost every session.
+   *
+   * Fire and forget: a warm-up that fails costs nothing, because the kind
+   * still loads on demand exactly as it does today.
+   */
+  _warmWindowTourKinds() {
+    if (typeof Kind === "undefined" || !_.isFunction(Kind.waitFor)) return;
+    const Tours = require("libs/tutorial-tours");
+    const owed = Object.keys(WINDOW_TOUR_TAB).some((t) => Tours.offerable(t, this));
+    if (!owed) return;
+    for (const kind of ["window_tutorial", "tutorial_spotlight"]) {
+      Promise.resolve(Kind.waitFor(kind)).catch((e) => {
+        this.warn && this.warn(`[window-tutorial] could not warm ${kind}`, e);
+      });
+    }
+  }
+
+  /**
+   * COUNT A NAVIGATION, so work already in flight for the previous one can see
+   * that it is stale.
+   *
+   * THE BUG THIS EXISTS FOR, in full, because it took three attempts to see:
+   * a rail press with a tour does not switch its tab immediately. The tab is
+   * deferred to the tour's release (_railTabWithTour), and a release happens
+   * however the tour ends — including when the NEXT rail press ends it. So:
+   *
+   *   Files is open. Press Task -> the task tour comes up and "show the Task
+   *   tab" is parked on its release. Press Files -> that press ends the task
+   *   tour and shows Files, the ended tour releases, and the parked callback
+   *   fires: the Task panel lands on top of the Files pane the user just
+   *   asked for. Pressing Files a second time works, because by then nothing
+   *   is parked.
+   *
+   * A press therefore has to invalidate what the press before it parked. This
+   * was HALF built already — the count existed as `_wsSwitch` and only a
+   * workspace switch bumped it, which is the same fault on the other axis and
+   * was fixed there first. One counter, bumped by every navigation, is what
+   * closes both: the rail (here and _railAccess) and the switcher
+   * (_endWindowTourOnSwitch).
+   *
+   * Read by the deferred tab in _railTabWithTour and by _mountWindowTourFor,
+   * which polls up to 3s for a window and must not land a tour that a later
+   * press has already moved on from.
+   *
+   * @returns {Number} the new count
+   */
+  _navigated() {
+    // The user went somewhere: a pane hidden for the boot tour must not stay
+    // hidden under wherever that is. See _holdBootTourPane.
+    this._releaseBootTourHold();
+    this._navSeq = (this._navSeq || 0) + 1;
+    return this._navSeq;
+  }
+
+  /**
+   * Does this switcher row go somewhere else?
+   *
+   * Re-picking the workspace that is already open makes loadWorkspace an early
+   * return that merely raises the pane — nothing is left and nothing arrives —
+   * so neither the tour that is up nor the tour that would be offered has any
+   * business reacting to it. By the same key the rows are marked `data-current`
+   * with, which is also the key _switchWorkspace re-lights the rail on.
+   *
+   * @param {String} wsKey the row pressed
+   * @returns {Boolean}
+   */
+  _leavesWorkspace(wsKey) {
+    if (!wsKey) return false;
+    const cur = this._workspaceKey(window.Wm && window.Wm._curWorkspace);
+    return !cur || cur !== wsKey;
+  }
+
+  /**
+   * SWITCHER ROW -> OPEN THAT WORKSPACE, AND OFFER THE TOUR IT LANDS ON.
+   *
+   * A switch that arrives on FILES is the same moment the rail's Files button
+   * offers this tour (_railTabWithTour) and the same moment a refresh does
+   * (_maybeRunBootTour), reached by a third gesture. A user who has not been
+   * shown how to get files into a workspace has not been shown it in the
+   * workspace they just opened either.
+   *
+   * "That arrives on Files" is now a real condition rather than a given: a
+   * switch keeps the tab the user was standing on (rail contract rule 2), so
+   * the offer below stands down when it lands on Chat, Task or Meet — see the
+   * `offerable` guard.
+   *
+   * ONLY FROM THE SWITCHER. _switchWorkspace itself is left alone because
+   * _openCreatedWorkspace goes through it: the workspace tour creates a
+   * workspace, opens it that way, and then chains the migrate tour ITSELF with
+   * `celebrate` set (_chainMigrateTour). Offering from inside _switchWorkspace
+   * would race that chain for single-flight, and the copy that won would be
+   * this one — the walkthrough's confetti would vanish, on the one arrival it
+   * is for.
+   *
+   * @param {String} wsKey the row pressed
+   * @returns {Promise}
+   */
+  async _switchWorkspaceAndOffer(wsKey) {
+    // Not a switch — hand straight over, and offer nothing.
+    if (!this._leavesWorkspace(wsKey)) return this._switchWorkspace(wsKey);
+    const Tours = require("libs/tutorial-tours");
+    // BEFORE the switch: the pane a running tour is painted on is about to be
+    // replaced underneath it. Ends it WITHOUT recording it — see
+    // _endWindowTourOnSwitch.
+    this._endWindowTourOnSwitch(wsKey);
+    // Asked before the switch, and cheap: `offerable` takes no lock, so a user
+    // who finished this tour long ago pays nothing for the question.
+    //
+    // NOT WHEN THE SWITCH DOES NOT LAND ON FILES. A switch now keeps the tab
+    // the user was standing on (Wm.loadWorkspace → `restore_tab`), and this
+    // tour's five screens are all about the file pane — raised over a task
+    // board or a thread it would be explaining a screen that is not up, the
+    // one thing the rail contract above forbids. The offer keeps its place for
+    // the arrival it was written for, which is the Files one.
+    const landsOnFiles = !(
+      window.Wm &&
+      _.isFunction(window.Wm.paneTabToCarry) &&
+      window.Wm.paneTabToCarry()
+    );
+    const offerable = Tours.offerable("migrate", this) && landsOnFiles;
+    await this._switchWorkspace(wsKey);
+    if (this.isDestroyed && this.isDestroyed()) return;
+    if (!offerable) return;
+    // DID IT ACTUALLY GO? _switchWorkspace declines silently when the row is
+    // not in the list any more — deleted from another tab, or a stale menu —
+    // and a tour raised then would have nothing to draw on. loadWorkspace
+    // overwrites _curWorkspace on its way in, which is what makes this
+    // readable here.
+    if (this._workspaceKey(window.Wm && window.Wm._curWorkspace) !== wsKey) return;
+    // _raiseRailTour, not fire(): the tour just ended fades for 0.5s and only
+    // its destroy releases single-flight, so asking on the spot is refused in
+    // silence.
+    await this._raiseRailTour("migrate");
+  }
+
+  _railTab(tab) {
+    this._endWindowTourUnlessAbout(tab);
+    // The active tab, stamped for the skin: the phone's Files action row
+    // (search + "+ New") shows only while the files view is up — Chat has its
+    // composer and Task its own "+ New". No stamp (first paint) reads as
+    // files, which is also the boot view.
+    if (this.el) this.el.dataset.mtab = tab === "files" ? "files" : `${tab}`;
+    // _railWorkspace, not _activeWorkspace: a pane that is open but not raised
+    // must not be mistaken for "no workspace" and answered with the FIRST one
+    // in the list. See _railWorkspace.
+    const w = this._railWorkspace();
+    // BEFORE the tab is shown, and on both branches — see _leaveSectionScreen.
+    this._leaveSectionScreen(w);
+    if (!w) return this._openDefaultWorkspace();
+    w.showFolderTab(tab);
+    return w.raise && w.raise();
+  }
+
+  /**
+   * PUT THE RAIL BACK ON FILES, because the workspace that just opened is.
+   *
+   * Opening another workspace mounts a BRAND NEW window_folder (Wm.loadWorkspace
+   * re-feeds headlessLayer), and a fresh one starts with `activeTab` unset —
+   * which showFolderTab, the view stamp and syncNewCtrlVisibility all read as
+   * "files". So the screen always lands on Files.
+   *
+   * The rail does not: it is desk chrome, it is not rebuilt with the window, and
+   * nothing in the switch path touches its radio group. Switching workspace from
+   * Chat / Task / Meet / Access therefore left the previous tab lit over the new
+   * workspace's file grid — the rail claiming a screen that is not up, which is
+   * exactly what Lexis reported (a Task-lit rail over a Files view).
+   *
+   * `mtab` is the SAME stamp _railTab writes, not a second one: the phone's Files
+   * action row (search + "+ New") is keyed on it, so leaving it on "task" would
+   * hide those controls on a files screen.
+   *
+   * getPart, NEVER ensurePart. The two rails are per-device — `sidebar-files`
+   * mounts only on the desktop rail, `mrail-files` only in the phone's bottom bar
+   * (skeleton/index.js, and it has its own radio group so the two cannot mark each
+   * other) — and ensurePart NEVER RESOLVES for a part that will not mount on this
+   * device, which would hang this caller forever. Same reason, same idiom as
+   * _readActivityCount. Both are re-asserted rather than one; which of them is on
+   * screen is not this method's business.
+   */
+  _resetRailToFiles() {
+    return this._railHighlight("files");
+  }
+
+  /**
+   * Light the rail row for `tab` — the general form of _resetRailToFiles, whose
+   * whole docstring above applies unchanged (getPart not ensurePart, both rails
+   * re-asserted, `mtab` the same single stamp _railTab writes).
+   *
+   * Added for the notification landing, which can put the workspace on Chat or
+   * Task rather than Files and so cannot use the Files-only twin. The row keys
+   * are the rail's own (skeleton/sidebar.js, skeleton/index.js); "meeting" is
+   * the folder window's tab name for the row the rail calls "meet". A tab with
+   * no rail row of its own leaves the rail alone rather than guessing.
+   *
+   * @param {String} tab folder-window tab: files | chat | task | meeting
+   */
+  _railHighlight(tab) {
+    const key = tab === "meeting" ? "meet" : tab;
+    if (!["files", _a.chat, _a.task, "meet", "access"].includes(key)) return;
+    if (this.el) this.el.dataset.mtab = key === "meet" ? "meeting" : key;
+    if (!_.isFunction(this.getPart)) return;
+    const light = (pn, channel) => {
+      const p = this.getPart(pn);
+      if (!p || !p.el || (p.isDestroyed && p.isDestroyed())) return;
+      RADIO_BROADCAST.trigger(channel, p);
+    };
+    light(`sidebar-${key}`, "sidebar-radio");
+    light(`mrail-${key}`, "mobile-rail-radio");
+  }
+
+  /**
+   * PUT THE RAIL OUT — no row is the screen any more.
+   *
+   * The counterpart to _railHighlight, for the full-canvas section screens the
+   * topbar utility cluster opens (Calendar, Inbox, Admin Console). They mount
+   * in `settings-main-slot`, which is `position:absolute; inset:0` over the
+   * workspace pane (skin/index.scss), so the workspace the rail is claiming is
+   * not on screen at all. The cluster has its own radio group
+   * (`topbar-utility-radio`, skeleton/topbar.js), and the radio behavior only
+   * unlights views on the SAME channel — so nothing took the rail's highlight
+   * away and Files stayed lit under a Calendar. That is the disagreement
+   * _leaveSectionScreen's docstring describes, arriving from the other side:
+   * there the lit row moved and the screen did not, here the screen moved and
+   * the lit row did not.
+   *
+   * ONE BROADCAST, NOT A ROW LIST. `sidebar-radio` is the rail's own group, so
+   * every member hears it: the five __nav-main rows AND the footer's Plan row,
+   * which is a section screen in exactly the same sense. Enumerating the rows
+   * here would be a second copy of skeleton/sidebar.js's group membership, and
+   * the next row added would be missed.
+   *
+   * `this` AS THE ORIGIN, deliberately: the behavior lights the origin and
+   * unlights everything else (radio.js _on_message), and the desk is in no
+   * row's parent chain (Backbone.View.contains walks `parent`), so every row
+   * takes the else branch. A row-shaped origin would leave that row lit.
+   *
+   * The mobile rail is left alone — it is a different group
+   * (`mobile-rail-radio`), it is not on screen where this cluster is, and it
+   * reaches these screens through its own bottom sheets.
+   *
+   * NOT `data-mtab`. That stamp says which workspace tab is selected
+   * UNDERNEATH, which a section screen does not change, and the phone's Files
+   * action row is keyed on it.
+   *
+   * Coming back needs nothing: a rail click lights its own row (the radio
+   * behavior's onAlsoClick), a workspace switch calls _railHighlight, and Home
+   * runs Wm.reload(), which closes every window — so an unlit rail is then the
+   * honest answer.
+   */
+  _railUnlight() {
+    RADIO_BROADCAST.trigger("sidebar-radio", this);
+  }
+
+  /**
+   * PUT THE UTILITY CLUSTER OUT — the screens those icons stand for are gone.
+   *
+   * The mirror of _railUnlight, and it exists for the mirror-image reason: a
+   * rail click (or Home) closes the full-canvas screens through
+   * closeMainPanels, and the cluster is on its own radio group
+   * (`topbar-utility-radio`, skeleton/topbar.js), so nothing unlit the icon of
+   * the screen that just closed. Files and Calendar were lit at once, each
+   * naming a different thing as the screen.
+   *
+   * NOT A GROUP BROADCAST, which is what _railUnlight gets to do. The cluster
+   * holds two different kinds of thing on one radio group: these three, whose
+   * screens live in settings-main-slot, and the bell / Contacts / Trash
+   * slide-outs. closeMainPanels does not close the ACTIVITY panel — see
+   * closeOtherSidebarPanels for why that one is deliberately left standing —
+   * so a broadcast would darken a bell whose panel is still open, and the
+   * cluster would then be lying in the other direction.
+   *
+   * Named parts rather than the group for that reason, and getPart NEVER
+   * ensurePart: the cluster mounts only in the desktop topbar, and ensurePart
+   * never resolves for a part that will not mount on this device — the same
+   * trap, and the same idiom, as _railHighlight and _readActivityCount.
+   *
+   * setState(0) rather than a per-view radio trigger: the skin marks the open
+   * panel with `[data-state="1"]` (topbar.scss __utility-btn), and there is no
+   * origin to name here — nothing was clicked, a screen simply closed.
+   *
+   * Lighting stays where it was: the cluster item lights itself on click
+   * through the radio behavior, which is also what keeps the three mutually
+   * exclusive. This only ever turns them off.
+   */
+  _clusterUnlight() {
+    if (!_.isFunction(this.getPart)) return;
+    // The three cluster items that mount into the slots closeMainPanels
+    // empties. Contacts and Trash are NOT here: their panels are keep-alive
+    // slide-outs, and adding them means deciding what a parked panel's icon
+    // should say — a separate question from this one.
+    for (const pn of ["utility-calendar", "utility-inbox", "utility-apps"]) {
+      const p = this.getPart(pn);
+      if (!p || !p.el || (p.isDestroyed && p.isDestroyed())) continue;
+      p.setState(0);
+    }
+  }
+
+  /**
+   * Leave the full-canvas section screen for the workspace underneath it —
+   * the Inbox's own X. Same exit the rail takes (_leaveSectionScreen), plus
+   * relighting the rail row the screen put out on the way in.
+   */
+  closeSectionScreen() {
+    const w = _.isFunction(this._railWorkspace) ? this._railWorkspace() : null;
+    this._leaveSectionScreen(w);
+    // With no workspace window _leaveSectionScreen cannot rebuild the path,
+    // and the bar would keep reading "Inbox" over whatever is underneath.
+    if (!w) {
+      const crumb = _.isFunction(this.getPart) ? this.getPart("breadcrumb") : null;
+      if (crumb && _.isFunction(crumb._restoreCurrentPath)) crumb._restoreCurrentPath();
+    }
+    // Opening the screen put the rail out (_railUnlight); relight the tab the
+    // workspace is on underneath, which _railTab / _railHighlight stamped.
+    const tab = (this.el && this.el.dataset.mtab) || "files";
+    this._railHighlight(tab);
+  }
+
+  /**
+   * Rail navigation is about to show workspace content — get whatever SECTION
+   * SCREEN is in front of the workspace out of the way, and put the breadcrumb
+   * back on the workspace it is navigating in.
+   *
+   * This is what made Files / Task / Meet read as dead clicks. Settings, Get
+   * help, Plan, Calendar, Inbox and the Admin console all mount in
+   * `settings-main-slot`, which is `position:absolute; inset:0; z-index:1500`
+   * (skin/index.scss) — it FULLY covers the workspace pane. _railTab only
+   * talks to the workspace window underneath it, so the tab really did switch,
+   * invisibly, behind the panel: nothing on screen moved, the breadcrumb kept
+   * reading "Get help", and the rail highlight jumped to the row that appeared
+   * to do nothing (the rail's own Plan row shares its radio group with
+   * Files…Access, which is why the lit row and the screen could disagree).
+   *
+   * closeMainPanels(), not closeAllPanels(): the three main slots are exactly
+   * the screens that occlude the pane AND the ones that retitle the breadcrumb
+   * (`breadcrumb:context`), while the activity/notification side panels do
+   * neither — closing those too would be an unrelated change. It is the same
+   * cleanup Wm.loadWorkspace already runs when opening a workspace, and it is
+   * a no-op when no such panel is up.
+   *
+   * Called even when there is NO workspace window: Wm.loadWorkspace returns
+   * early when the requested workspace is already the current one, so leaving
+   * the close to _openDefaultWorkspace() would strand the panel on exactly the
+   * path that has nothing else to show.
+   *
+   * @param {Object} [w]  the workspace window the rail is about to act on
+   */
+  _leaveSectionScreen(w) {
+    // THE INVITE POPUP IS IN FRONT TOO, and closeMainPanels() cannot reach it.
+    //
+    // It is fed into Wm.__wrapperModal — z-index 100000, above the workspace
+    // pane and above the three main slots — while the close below only clears
+    // settings-main-slot / trash-panel / chat-panel. So the rail was the ONE
+    // sidebar route in the desk that never released that layer: Plan, Settings,
+    // Trash, Inbox, Contacts, Calendar and Apps all go through togglePanel(),
+    // which opens with _dismissWmModal(). Reported by Lexis as Invite covering
+    // Files/Chat/Task/Meet/Access until you clicked Invite a second time — the
+    // tab underneath had in fact already switched, invisibly.
+    //
+    // ONLY WHEN THE LAYER IS HOLDING THE INVITE POPUP, deliberately. That same
+    // wrapper also carries the create-workspace form, the permission panels and
+    // Wm.confirm() dialogs; clearing it unconditionally would throw away a
+    // half-filled form because the user glanced at another tab, which is a
+    // worse bug than the one being fixed. Nobody has reported those covering
+    // anything, so they keep today's behaviour.
+    if (
+      this._invitePopup &&
+      !(this._invitePopup.isDestroyed && this._invitePopup.isDestroyed())
+    ) {
+      this._dismissWmModal();
+    }
+    // Asked BEFORE the close, and getPart rather than ensurePart: this answers
+    // synchronously with what is mounted right now, which is what a rail click
+    // needs. A breadcrumb that has not mounted yet reads as "no section to
+    // leave", which is correct — it has nothing on it to be stale.
+    const crumb = _.isFunction(this.getPart) ? this.getPart("breadcrumb") : null;
+    const wasSection = !!(crumb && _.isFunction(crumb.isSectionMode) && crumb.isSectionMode());
+    this.closeMainPanels();
+    // GIVE THE TOPBAR BACK. togglePanel hides the action cluster for the four
+    // screens that carry their own "+ New" (apps_main, settings_main,
+    // calendar_main, desk_org_view) — and the close above only stamps
+    // data-anim="out" on a keep-alive child, so nothing put it back.
+    //
+    // The one path that did was the `workspace:focus` broadcast, and
+    // Wm.onWorkspaceRaised suppresses that when the raise does not change
+    // context — which is exactly this case, where the pane behind the screen is
+    // already the one being shown. So leaving the Calendar or Settings for
+    // Files / Task / Meet left the topbar's New button gone until the user
+    // switched workspace. Every caller here is about to show workspace content,
+    // where the cluster applies.
+    this.ensurePart("action-cluster").then((p) => p && p.setState(1));
+    // Closing the panel does not un-stamp the crumbs — they still read
+    // "Get help". Only a fresh `breadcrumb:content` whose SOURCE is Wm rebuilds
+    // the workspace path (desk_breadcrumb._updateContent ignores every other
+    // source), which is the same broadcast Wm makes on a workspace switch.
+    //
+    // Only when the bar really was on a section: that broadcast costs a
+    // get_path round trip, and folder-to-folder rail clicks inside one
+    // workspace already have the right crumbs.
+    if (!wasSection) return;
+    if (!w || !w.model || !window.Wm || !_.isFunction(Wm.updateBreadcrumb)) return;
+    // Exactly the four keys _onBrowse reads, not the whole window model: that
+    // model accumulates whatever every mset() along the window's life put on
+    // it, and _updateContent SWITCHES on a payload's `event` (closed → ignore,
+    // home → clear the track). Handing it a filtered payload is what keeps an
+    // unrelated key on the window from clearing the crumbs.
+    const { nid, hub_id, actual_home_id, filetype } = w.model.toJSON();
+    Wm.updateBreadcrumb(
+      { nid, hub_id, actual_home_id, filetype, service: "change-workspace" },
+      Wm,
+    );
+  }
+
+  /**
+   * The switcher header's link icon → Manage access, with a loading state.
+   *
+   * The wait is real and specific: `window_secure_share` is a LAZY dynamic
+   * import (seeds.js), so the first click pays a chunk fetch and parse before
+   * anything appears on screen. Awaiting Kind.waitFor covers exactly that span
+   * — the same handle wm/index.js onPartReady uses to warm the tutorial kinds.
+   *
+   * Cleared in `finally`, and the whole thing is guarded: a dropped chunk must
+   * leave the button usable rather than spinning for the rest of the session,
+   * and a desk that boots before `Kind` exists must still open the panel.
+   *
+   * The flag is still up when _railAccess runs, which is the point — clearing
+   * it first would cover nothing.
+   */
+  _workspaceAccessFromHeader(cmd) {
+    const el = cmd && cmd.el;
+    const set = (v) => {
+      if (!el || !el.dataset) return;
+      if (v) el.dataset.loading = "1";
+      else delete el.dataset.loading;
+    };
+    set(1);
+    const warm =
+      typeof Kind !== "undefined" && Kind && _.isFunction(Kind.waitFor)
+        ? Promise.resolve(Kind.waitFor("window_secure_share")).catch(() => {})
+        : Promise.resolve();
+    // AWAITED now that _railAccess waits for an in-window tour to release: the
+    // icon's spinner should cover the whole wait, not just the chunk fetch it
+    // used to be the only part of.
+    return warm
+      .then(() => this._railAccess())
+      .then(() => set(0), () => set(0));
+  }
+
+  /**
+   * Is the slide-out behind this utility icon on screen?
+   *
+   * Read off the panel ITSELF, the same test togglePanel's close branch uses —
+   * not off the icon, whose radio state is set to 1 by the press before the
+   * service runs, and not off `_pendingKinds`, which only says what was fed.
+   *   bell      panel_activity's own state (1 = open)
+   *   Contacts  address_book in chat-panel with data-anim="in"
+   *   Trash     panel_trash in trash-panel with data-anim="in"
+   *
+   * `opt.pending` also counts a panel that is MOUNTED but has not slid in yet
+   * (no data-anim): address_book only sets "in" after its four fetches land,
+   * and panel_trash a frame after mount. For the icon lights, which must not
+   * go dark under a panel that is on its way — not for the close decision.
+   *
+   * @param {String} service toggle-activity | toggle-contacts | toggle-trash
+   * @param {Object} [opt]
+   * @param {Boolean} [opt.pending]
+   * @returns {Boolean}
+   */
+  _utilityPanelOpen(service, opt = {}) {
+    if (!_.isFunction(this.getPart)) return false;
+    if (service === "toggle-activity") {
+      const p = this.getPart("activity-panel");
+      return !!(p && ~~p.mget(_a.state) === 1);
+    }
+    const slot = { "toggle-contacts": "chat-panel", "toggle-trash": "trash-panel" }[service];
+    const kind = { "toggle-contacts": "address_book", "toggle-trash": "panel_trash" }[service];
+    if (!slot) return false;
+    const p = this.getPart(slot);
+    if (!p || p.isEmpty() || (this._pendingKinds || {})[slot] !== kind) return false;
+    const child = p.children.last();
+    if (!child || !child.el) return false;
+    const anim = child.el.dataset.anim;
+    return anim === "in" || (!!opt.pending && !anim);
+  }
+
+  /**
+   * Close the slide-out behind an ACTIVE utility icon.
+   *
+   * The second press on a lit bell / Contacts / Trash icon. Each path is the one
+   * its own toggle already takes on close — the activity panel's setState(0),
+   * and _hidePanel for the two keep-alive slots — so a closed panel keeps its
+   * data and scroll exactly as before. The icon is turned off here too: the
+   * radio lit it on this very press and never turns anything off itself.
+   *
+   * And the path comes BACK, which only the bell did before. Opening any of the
+   * three retitles the breadcrumb (Notifications / Contacts / Trash), so closing
+   * one has to rebuild the workspace path or the bar keeps naming a panel that
+   * is gone — unless a section screen is still up underneath, whose title is
+   * left alone. _restoreCurrentPath falls back to loadDefault itself.
+   *
+   * @param {String} service
+   * @returns {Promise}
+   */
+  _closeUtilityPanel(service) {
+    const done =
+      service === "toggle-activity"
+        ? this.ensurePart("activity-panel").then((p) => {
+            if (!p) return;
+            p.activityState = 0;
+            p.setState(0);
+          })
+        : this.ensurePart(
+            service === "toggle-contacts" ? "chat-panel" : "trash-panel",
+          ).then((p) => this._hidePanel(p));
+    return done.then(() => {
+      this._syncUtilityLights();
+      // Only back onto the WORKSPACE path. A section screen still up under the
+      // panel (Calendar, Inbox, Admin Console…) is not the workspace, and
+      // repainting its path there would be the opposite lie.
+      if (_.isFunction(this._currentScreenService) && this._currentScreenService()) return;
+      const crumb = _.isFunction(this.getPart) ? this.getPart("breadcrumb") : null;
+      if (crumb && _.isFunction(crumb._restoreCurrentPath)) {
+        crumb._restoreCurrentPath();
+      }
+    });
+  }
+
+  /**
+   * Keep each slide-out icon lit exactly while its panel is open.
+   *
+   * The icons share a ui-core radio channel, which lights the pressed one and
+   * turns the rest off — and does nothing else. So an icon stayed lit after its
+   * panel closed any other way (an outside click, another panel opening,
+   * Escape, a section screen), and "active" stopped meaning "open".
+   *
+   * Driven by the panels, not by the paths that close them: one observer on the
+   * right panel container, where all three live, for the attributes that ARE the
+   * open state (`data-anim`, `data-state`) and for panels being mounted or
+   * cleared. Coalesced to a frame; the sync itself is three reads.
+   */
+  _installUtilityLights() {
+    this.ensurePart("trash-panel").then((p) => {
+      if (!p || !p.el || (this.isDestroyed && this.isDestroyed())) return;
+      if (typeof MutationObserver !== "function") return;
+      const container = p.el.closest(".desk-module__panel-container") || p.el.parentElement;
+      if (!container) return;
+      if (this._utilityLightsObserver) this._utilityLightsObserver.disconnect();
+      let queued = false;
+      this._utilityLightsObserver = new MutationObserver(() => {
+        if (queued) return;
+        queued = true;
+        requestAnimationFrame(() => {
+          queued = false;
+          if (this.isDestroyed && this.isDestroyed()) return;
+          this._syncUtilityLights();
+        });
+      });
+      this._utilityLightsObserver.observe(container, {
+        subtree: true,
+        childList: true,
+        attributes: true,
+        attributeFilter: ["data-anim", "data-state"],
+      });
+      this._syncUtilityLights();
+    });
+  }
+
+  /**
+   * One pass of _installUtilityLights: turn OFF the icon of every panel that is
+   * not open.
+   *
+   * Off only, never on. The press already lit its own icon (radio), and lighting
+   * one here while its panel is still loading — address_book slides in only
+   * after four fetches — would have to be undone a frame later. So an icon is lit
+   * by the press that opens its panel and unlit by the panel closing.
+   *
+   * An icon that is still spinning (_runUtilityBusy) is left alone: its panel is
+   * on its way, and the release re-runs this.
+   */
+  _syncUtilityLights() {
+    if (!_.isFunction(this.getPart)) return;
+    for (const { service, button } of UTILITY_PANELS) {
+      const b = this.getPart(button);
+      if (!b || !b.el || (b.isDestroyed && b.isDestroyed())) continue;
+      if (b.el.dataset.loading === "1") continue;
+      if (~~b.mget(_a.state) === 1 && !this._utilityPanelOpen(service, { pending: true })) {
+        b.setState(0);
+      }
+    }
+  }
+
+  /**
+   * Close the topbar slide-outs and clear their icons, for a rail press.
+   *
+   * closeOtherSidebarPanels() with no exception is exactly those three: the
+   * activity panel (setState 0), and chat-panel / trash-panel, hidden in place
+   * (keep-alive) so Contacts and Trash keep their data and scroll.
+   *
+   * The icons are cleared HERE, not left to _syncUtilityLights: that observer
+   * only turns off an icon whose panel it sees close, and the rail press must
+   * clear them even when the panel had already gone some other way (the panels'
+   * own outside-click handlers run on this same click) — an icon left lit with
+   * nothing open is the state being fixed. Including one still spinning: the
+   * user has moved on from whatever it was loading.
+   *
+   * @returns {Promise}
+   */
+  _closeUtilityPanelsForRail() {
+    const unlight = () => {
+      if (!_.isFunction(this.getPart)) return;
+      for (const { button } of UTILITY_PANELS) {
+        const b = this.getPart(button);
+        if (!b || !b.el || (b.isDestroyed && b.isDestroyed())) continue;
+        if (~~b.mget(_a.state) !== 0) b.setState(0);
+      }
+    };
+    unlight();
+    return Promise.resolve(this.closeOtherSidebarPanels())
+      .catch(() => {})
+      .then(unlight);
+  }
+
+  /** Was this event fired by a real press on a topbar utility icon? */
+  _isUtilityBtn(cmd) {
+    const el = cmd && cmd.el;
+    return !!(
+      el &&
+      el.classList &&
+      el.classList.contains("desk-module-topbar__utility-btn")
+    );
+  }
+
+  /**
+   * Run a utility icon's service with a loading state on it and every other
+   * utility icon disabled until the screen behind it is up.
+   *
+   * `data-loading` on the pressed button draws the spinner; `data-busy` on the
+   * cluster locks the siblings (skin/topbar.scss). Both are stamped on the
+   * element directly — synthetic dispatches (_deskServiceShim, reload restore)
+   * carry no `el` and never get here.
+   *
+   * "Up" is the service's promise AND the kind's lazy chunk (UTILITY_KINDS),
+   * then two frames so the respawned widget has painted. Released on every
+   * path, including a throw, and capped at UTILITY_BUSY_MAX.
+   *
+   * @param {Object} cmd       the pressed utility button
+   * @param {String} service   its service
+   * @param {Function} run     runs the service (re-enters onUiEvent)
+   */
+  _runUtilityBusy(cmd, service, run) {
+    const btn = cmd.el;
+    const cluster = btn.closest(".desk-module-topbar__utility-cluster");
+    // One at a time. The skin already makes the siblings unclickable; this
+    // covers a press that lands in the same frame the flag goes up.
+    if (cluster && cluster.dataset.busy === "1") return;
+
+    let done = false;
+    let timer = null;
+    const release = () => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      delete btn.dataset.loading;
+      if (cluster) delete cluster.dataset.busy;
+      // A panel that failed to open, or closed while this icon spun, left the
+      // icon lit — the lights skip a spinning icon. See _syncUtilityLights.
+      if (_.isFunction(this._syncUtilityLights)) this._syncUtilityLights();
+    };
+    btn.dataset.loading = "1";
+    if (cluster) cluster.dataset.busy = "1";
+    timer = setTimeout(release, UTILITY_BUSY_MAX);
+
+    let result;
+    this._utilityInner = cmd;
+    try {
+      result = run();
+    } catch (e) {
+      release();
+      throw e;
+    } finally {
+      this._utilityInner = null;
+    }
+
+    const kind = UTILITY_KINDS[service];
+    const chunk = () =>
+      kind && typeof Kind !== "undefined" && Kind && _.isFunction(Kind.waitFor)
+        ? Kind.waitFor(kind)
+        : null;
+    const painted = () =>
+      new Promise((resolve) =>
+        requestAnimationFrame(() => requestAnimationFrame(resolve)),
+      );
+    Promise.resolve(result)
+      .catch(() => {})
+      .then(chunk)
+      .catch(() => {})
+      .then(painted)
+      .then(release, release);
+    return result;
+  }
+
+  /** Rail → the workspace's manage-access panel (the Permission Matrix). */
+  /**
+   * @param {Object} [opt]
+   * @param {boolean} [opt.members] force the workspace-MEMBERS panel (invite row
+   *   + permissions matrix) regardless of the workspace's area.
+   *
+   * The rail's Access passes it: Natrix' ruling is that Access always means
+   * "who can get in", so an EXTERNAL workspace must show the same matrix an
+   * internal one does rather than the secure-share link builder.
+   *
+   * The header's chain icon (_workspaceAccessFromHeader) calls this WITHOUT it
+   * on purpose — that control is the Manage Access link button, it is rendered
+   * only for external workspaces, and the link builder is exactly what it is
+   * for. Sharing this method is why the flag is a parameter and not a change
+   * inside openManageAccess, which four other surfaces also reach.
+   */
+  async _railAccess(opt) {
+    // A navigation like any other rail press — see _navigated. This one raises
+    // no tour of its own, but it still has to invalidate a tab the press
+    // before it parked, and the _endWindowTourUnlessAbout below is what would
+    // otherwise set that off.
+    this._navigated();
+    if (this.el) this.el.dataset.mtab = "access";
+    // Same as _railTab, and for the same reason: an open-but-unraised pane is
+    // not "no workspace". See _railWorkspace.
+    const w = this._railWorkspace();
+    // Same as _railTab: Access is workspace content, so it cannot be reached
+    // from behind a section screen either.
+    this._leaveSectionScreen(w);
+    // Same as _railTab: open a workspace rather than the retired home grid.
+    if (!w) return this._openDefaultWorkspace();
+
+    // AND THE SAME AS _railTab HERE TOO, which it never was — this is the one
+    // rail route that did not end an in-window tour, and it showed:
+    //
+    // the workspace tour hands over to the migrate tour, which is drawn over
+    // this window. Press the topbar's access icon then and NOTHING HAPPENS.
+    // Twice over, and neither half is visible:
+    //
+    //   the share tour is refused, because `migrate` still holds single-flight
+    //   and showTutorial's claim returns false;
+    //   the access panel opens anyway — into this window's dialogWrapper,
+    //   underneath the tour covering it, where `isolation: isolate` on the
+    //   window manager's root means nothing can lift it out.
+    //
+    // So the tour it is not about is ended, and the window is not asked until
+    // that tour has RELEASED — a claim is not free until then, and softDestroy
+    // fades for half a second first.
+    this._endWindowTourUnlessAbout("access");
+    await this._whenToursIdle();
+    if (this.isDestroyed && this.isDestroyed()) return;
+    // Re-read: the wait is long enough for the window to have gone.
+    if (w.isDestroyed && w.isDestroyed()) return;
+    // The rail's Access (opt.members) is a VIEW of the workspace, like Files /
+    // Chat / Task: the members panel takes the split body's chat column
+    // (window/folder/access-column). The header's link icon calls this without
+    // `members` and keeps its secure-share drawer below.
+    if (opt && opt.members && _.isFunction(w.showFolderTab)) {
+      w.showFolderTab("access");
+      return w.raise && w.raise();
+    }
+    if (_.isFunction(w.onUiEvent)) {
+      return w.onUiEvent(w, {
+        service: "folder-manage-access",
+        members: opt && opt.members ? 1 : 0,
+      });
+    }
   }
 
   /** Keep the topbar actions enabled when the breadcrumb context changes. */
@@ -1563,6 +6768,108 @@ class desk_module extends LetcBox {
   }
 
   /**
+   * The MEDIA widget for a workspace — the object the folder context menu has
+   * always acted on, and the one that carries the HUB node (real nid, real pid,
+   * real filename) plus move() / trash() / delete() / download().
+   *
+   * Read from the home grid (`__icons-list`, wm/skeleton/index.js), which is fed
+   * `kind: "media"` rows from desk.home and stays mounted BELOW the headless
+   * layer — so it still resolves while a workspace pane is open.
+   *
+   * Deliberately NOT the pane: loadWorkspace() feeds window_folder without
+   * `media`/`trigger`, so the pane answers for the workspace's root FOLDER and
+   * implements none of those methods. Returns null rather than throwing; the
+   * caller shows no menu in that case, because every row would be inert.
+   */
+  /**
+   * A workspace was trashed — put the desk back into a valid state.
+   *
+   * Three things go stale at once and none of them fix themselves:
+   *   - `_workspaces` is a cache nothing ever invalidates, so the switcher
+   *     keeps offering the deleted workspace until the page is reloaded;
+   *   - the headless pane is still rendering it, which reads as a blank screen;
+   *   - `Wm._curWorkspace` still names it, and loadWorkspace() no-ops when the
+   *     hub_id it is given matches — so opening a replacement would do nothing
+   *     unless that context is cleared first.
+   */
+  async _onWorkspaceDeleted(media) {
+    try {
+      const gone = media && media.mget && media.mget(_a.hub_id);
+      // Force past the cache — this is the one moment it is known to be wrong.
+      this._workspaces = null;
+      await this._fetchWorkspaces(true);
+      if (this._wsListPart) this._renderWorkspaceMenu(this._wsListPart);
+
+      const cur = (window.Wm && Wm._curWorkspace) || null;
+      if (!gone || !cur) return;
+      // BY WORKSPACE KEY, not hub_id. Every PERSONAL workspace is a folder in
+      // the user's own hub, so they all share hub_id === Visitor.id: comparing
+      // ids alone read "another personal workspace is open" as "the deleted
+      // one is still open", cleared the layer and reopened the default — a
+      // second teardown on top of the one Wm.onCurrentWorkspaceRemoved had
+      // already replaced. Same rule the switcher keys its rows with.
+      const goneKey = this._workspaceKey({
+        hub_id: gone,
+        nid: media.mget(_a.nid),
+        filetype: media.mget(_a.filetype),
+      });
+      if (!goneKey || this._workspaceKey(cur) !== goneKey) return;
+
+      // The open pane is the one that just went. Clear it and the context it
+      // set, then fall back the same way boot does.
+      if (Wm.headlessLayer && _.isFunction(Wm.headlessLayer.clear)) {
+        Wm.headlessLayer.clear();
+      }
+      Wm._curWorkspace = null;
+      await this._openDefaultWorkspace();
+    } catch (e) {
+      this.warn && this.warn("[workspaces] post-delete recovery failed", e);
+    }
+  }
+
+  _workspaceMediaItem(hub_id, nid) {
+    try {
+      if (!hub_id || typeof Wm === "undefined") return null;
+      const list = Wm.getPart && Wm.getPart(_a.list);
+      const kids = list && list.children ? list.children.toArray() : [];
+      const live = (k) =>
+        k && !(k.isDestroyed && k.isDestroyed()) && _.isFunction(k.mget);
+      // BY KEY, not by hub_id.
+      //
+      // hub_id alone cannot tell two personal workspaces apart: they are
+      // folders in the user's own home, so ALL of them report hub_id ===
+      // Visitor.id (verified in desk.home for vowaw91171@robustq.com — rrr,
+      // 111 and 222(1) all carry it, while every hub carries its own id).
+      // This returned whichever came first, so the ⋯ menu of an open personal
+      // workspace was built from — and acted on — a different one.
+      //
+      // Same collision, and the same key, as the switcher's _workspaceKey.
+      const want = this._workspaceKey({ hub_id, nid });
+      if (want) {
+        const byKey = kids.find(
+          (k) =>
+            live(k) &&
+            this._workspaceKey({
+              hub_id: k.mget(_a.hub_id),
+              nid: k.mget(_a.nid),
+              filetype: k.mget(_a.filetype),
+            }) === want,
+        );
+        if (byKey) return byKey;
+      }
+      // A hub is unambiguous by id, and this is the path a caller that knows
+      // only a hub_id still needs.
+      return (
+        kids.find(
+          (k) => live(k) && String(k.mget(_a.hub_id)) === String(hub_id),
+        ) || null
+      );
+    } catch (e) {
+      return null;
+    }
+  }
+
+  /**
    * Refuse a create/upload the current workspace privilege does not allow, with
    * words, BEFORE the file picker or editor opens. Returns true when the caller
    * must stop — same contract as over-limit's guardWrite, so the two read alike
@@ -1572,9 +6879,9 @@ class desk_module extends LetcBox {
    * write bit), so this is not the enforcement — it exists so a view/chat member
    * is never offered a picker whose result can only be a 403.
    */
-  _guardWorkspaceWrite() {
+  _guardWorkspaceWrite(action) {
     if (this._curWorkspaceCanWrite()) return false;
-    this._sayWeakPrivilege();
+    this._sayWeakPrivilege(action, _K.permission.write);
     return true;
   }
 
@@ -1582,12 +6889,13 @@ class desk_module extends LetcBox {
    * The one place this batch says "you don't have the right for that".
    * Mirrors over-limit's notifyBlocked: Butler first, Wm.alert as the fallback,
    * and never allowed to throw into the caller's own path.
-   * LOCALE.WEAK_PRIVILEGE already exists in all six locales — no new key.
+   * Names the refused action and the viewer's level in the current workspace
+   * (libs/permission-denied); `needed` is the _K.permission bit it asks for.
    */
-  _sayWeakPrivilege() {
+  _sayWeakPrivilege(action, needed) {
     try {
-      if (typeof Butler !== "undefined" && Butler.say) Butler.say(LOCALE.WEAK_PRIVILEGE);
-      else if (typeof Wm !== "undefined" && Wm.alert) Wm.alert(LOCALE.WEAK_PRIVILEGE);
+      const PD = require("libs/permission-denied");
+      PD.sayWeakPrivilege(action, PD.workspacePrivilege(), needed);
     } catch (e) {
       /* a toast must never break the caller's own path */
     }
@@ -1597,10 +6905,62 @@ class desk_module extends LetcBox {
     this.ensurePart("action-cluster").then((p) => {
       p.setState(1);
     });
+    // The switcher trigger names the open workspace, and this broadcast is the
+    // one signal every path to a workspace shares — sidebar row, switcher row,
+    // deep link and reload-restore all end in updateBreadcrumb.
+    //
+    // The try/catch is load-bearing, not habit. The window manager emits this
+    // broadcast from inside its OWN initialize (window/utils.js
+    // __window_mfs.initialize -> updateBreadcrumb), which runs BEFORE
+    // manager.js:53 sets `window.Wm`. Anything thrown here unwinds into that
+    // initialize and aborts it before the global is assigned — after which
+    // every `Wm.` reference in the app throws ReferenceError and the window
+    // manager's own 10s watchdog suppresses it. That is exactly what a missing
+    // method here caused once already.
+    try {
+      this._syncWorkspaceLabel();
+      // Same broadcast, same guard: this is the one signal every path to a
+      // workspace shares, and a throw here would unwind the same initialize.
+      this._syncWorkspaceHighlight();
+    } catch (e) {
+      this.warn && this.warn("[workspaces] label sync failed", e);
+    }
     // Navigating into (or out of) a workspace can change whether the create /
     // upload rows apply at all. Re-feed the topbar only when the answer actually
     // flips, so ordinary folder-to-folder navigation inside one workspace costs
     // nothing. Same re-feed mechanism _onOverLimitChanged already uses.
+    //
+    // UNKNOWN IS NOT "YES". Mid-switch, _curWorkspace already names the new
+    // hub but its pane is not findable yet (the outgoing pane's `closed`
+    // broadcast and the incoming pane's own, from its initialize, both land in
+    // that gap). The fail-open checks answered true/true there, so a member
+    // without write/admin rights paid a full top-bar rebuild to "yes" and a
+    // second one back to "no" on every switch — each rebuild remounting the
+    // breadcrumb (a get_path ahead of show_node_by), the switcher and every
+    // menu. Wait for the pane instead and decide once.
+    const ws = (window.Wm && window.Wm._curWorkspace) || null;
+    if (
+      ws &&
+      ws.hub_id &&
+      _.isFunction(window.Wm._findWorkspaceWindow) &&
+      !window.Wm._findWorkspaceWindow(ws.hub_id)
+    ) {
+      if (
+        this._addmenuWaitHub !== ws.hub_id &&
+        _.isFunction(window.Wm._awaitWorkspaceWindow)
+      ) {
+        const hub = (this._addmenuWaitHub = ws.hub_id);
+        window.Wm._awaitWorkspaceWindow(hub).then((win) => {
+          if (this._addmenuWaitHub !== hub) return;
+          this._addmenuWaitHub = null;
+          // Never mounted (the open failed): keep the current rows rather
+          // than re-arm a wait that would poll forever.
+          if (!win || (this.isDestroyed && this.isDestroyed())) return;
+          this._updateAddmenu();
+        });
+      }
+      return;
+    }
     const may = this._curWorkspaceCanWrite();
     const manage = this._curWorkspaceCanManage();
     if (this._addmenuMayWrite === may && this._addmenuMayManage === manage) return;
@@ -1614,11 +6974,10 @@ class desk_module extends LetcBox {
   }
 
   closeDeskNewMenu(cmd) {
-    // On mobile the same five services are reached from the drawer's `create`
-    // screen instead of a menu, so there is no menu to close — the DRAWER is
-    // what has to go, or the user is left staring at the screen they just left.
-    // Every new-* case calls this first, so one branch covers all of them.
-    if (Visitor.isMobile()) this._closeMobileDrawer();
+    // On mobile the same five services are reached from the create SHEET
+    // instead of a menu, and mobile-sheet-go already closes it before the
+    // re-dispatch — this is the belt for any path that lands here directly.
+    if (Visitor.isMobile()) this._closeMobileSheet();
     const menu = cmd && cmd.getParentByKind?.(KIND.menu.topic);
     if (!menu) return;
     const group = menu.el?.querySelector(
@@ -1655,6 +7014,54 @@ class desk_module extends LetcBox {
    */
   onPartReady(child, pn) {
     switch (pn) {
+      // Switcher dropdown body. Populated on mount rather than on open: the
+      // menu's items render once, and the desk.home payload is cached, so
+      // filling it here costs one fetch that the boot default shares.
+      case "ws-list":
+        // Pass the child: getPart cannot resolve it yet at part-ready time.
+        this._renderWorkspaceMenu(child);
+        break;
+
+      // The switcher's header (Figma 48:36991) names the CURRENT workspace, so
+      // it is filled by the same pass that builds the rows — that pass already
+      // resolves Wm._curWorkspace and the area-tinted folder glyph, and doing
+      // it here would be a second copy of both. Which part arrives first is not
+      // fixed, so each one caches itself and re-runs the fill; whichever lands
+      // second finds the other already stored.
+      case "ws-head":
+        this._wsHeadPart = child;
+        this._renderWorkspaceMenu(this._wsListPart);
+        break;
+
+      // The phone pill's folder glyph. Painted on arrival because the workspace
+      // is usually resolved BEFORE this part mounts — _syncWorkspaceLabel runs
+      // from the boot path and simply finds no part to write to, which would
+      // leave the neutral placeholder standing until the next switch.
+      // _syncWorkspaceLabel, not _setWorkspaceGlyph directly: resolving which
+      // workspace is open belongs in one place.
+      case "ws-current-ico":
+        this._syncWorkspaceLabel();
+        break;
+
+      // The switcher widget itself. Held because the CHIP opens it now, and
+      // the chip is not inside it — the caret it used to open itself from is
+      // inert (desk/skeleton/topbar workspaceSwitcher).
+      case "wsmenu":
+        this._wsSwitcher = child;
+        break;
+
+      // The address chip. It is the switcher's button now, and it cannot be
+      // one through a `service` — see _bindCrumbGroupTrigger.
+      case "crumb-group":
+        this._crumbGroupPart = child;
+        this._bindCrumbGroupTrigger(child);
+        break;
+
+      // Where the ⋯ menu's Rename draws its editor. Empty the rest of the time.
+      case "ws-rename":
+        this._wsRenamePart = child;
+        break;
+
       case "ref-avatar":
         /** wait for  $el.droppable*/
         this.ensurePart("desk-content").then(() => {
@@ -1824,9 +7231,33 @@ class desk_module extends LetcBox {
           Visitor.parseModuleArgs().tutorial ||
           this._postOnboardingTutorial
         ) {
+          // Read BEFORE the flag is cleared: it is what tells the two ways into
+          // this branch apart, and only one of them should wait.
+          const postOnboarding = !!this._postOnboardingTutorial;
           this._postOnboardingTutorial = false;
           const explicit = !!Visitor.parseModuleArgs().tutorial;
           const forced = this._forcedTourId();
+          // NO DELAY COMING OUT OF THE WIZARD.
+          //
+          // The 2s here was never reasoned for the tutorial: `}, 2000)` is the
+          // idiom the two sibling branches use to let the desk settle before
+          // stacking the reward flow or the LAUNCH30 popup on it, and this
+          // branch inherited it. The tour has nothing to settle for — it draws
+          // its OWN desk, full screen, over whatever is underneath — so the two
+          // seconds were spent showing the user a home screen that the next
+          // frame covers up.
+          //
+          // Nor were they buying the chunk any time: `desk_tutorial` is fetched
+          // when _showTutorial feeds the kind, not before, so the wait ran to
+          // completion and the round trip started afterwards. _loadOnboarding
+          // now warms that kind while the wizard is on screen, which is what
+          // actually makes this immediate rather than merely earlier.
+          //
+          // `?tutorial=` keeps the 2s. That path runs at COLD BOOT, where the
+          // desk is still restoring behind the overlay and there has been no
+          // wizard to warm anything during — a different situation with its own
+          // timing, and not the one being fixed.
+          const delay = postOnboarding ? 0 : 2000;
           setTimeout(() => {
             if (this._launchHomeTutorial(explicit, forced)) return;
             // Nothing mounted, and nothing is going to: the post-onboarding
@@ -1839,7 +7270,7 @@ class desk_module extends LetcBox {
             clearTimeout(this._homeSettledFallback);
             this._homeSettledFallback = null;
             this._afterHomeSettled();
-          }, 2000);
+          }, delay);
           // Safety net. In this branch the ONLY route to _afterHomeSettled is
           // the "desk-tutorial" part becoming ready, so if desk_tutorial fails
           // to mount — kind not loaded, widget throws, part never signals —
@@ -1869,6 +7300,67 @@ class desk_module extends LetcBox {
         }
         return;
 
+      // The in-window tour. Release single-flight on its destroy, the same
+      // handshake desk-tutorial gets below — it moved here with the mount.
+      case "window-tutorial": {
+        const wtTour = (child && child.mget && child.mget("tour")) || null;
+        const wtPreview = child && child.mget && child.mget("preview");
+        // Held so navigation can take the tour down — see _endWindowTour.
+        this._windowTour = child;
+        // The tour is mounted and has laid itself over the window: the pane
+        // hidden for it can come back underneath. Two frames so the tour has
+        // painted first — see _holdBootTourPane.
+        if (this.el && this.el.dataset && this.el.dataset.bootTourHold) {
+          requestAnimationFrame(() =>
+            requestAnimationFrame(() => this._releaseBootTourHold()),
+          );
+        }
+        if (child && _.isFunction(child.once)) {
+          child.once(_e.destroy, () => {
+            if (this._windowTour === child) this._windowTour = null;
+            if (this.el && this.el.dataset) delete this.el.dataset.windowTour;
+            if (wtPreview || !wtTour) return;
+            try {
+              require("libs/tutorial-tours").release(wtTour);
+            } catch (e) { /* a release must not take the desk down */ }
+          });
+        }
+        // ARRIVED AFTER THE USER LEFT. _mountWindowTourFor checks _navSeq once,
+        // before mounting — but the tour is a lazy chunk, and the gap between
+        // that check and this line is a download. Press Files (which raises the
+        // migrate tour), then the Calendar before the chunk lands: togglePanel
+        // saw no tour to wait for or end (`_windowTour` is only set HERE), so the
+        // Calendar opened, and the tour then arrived over it. The Calendar is a
+        // navigation (togglePanel → _navigated), so the counter has moved:
+        // drop the tour now, without a fade, before it is ever seen. Its destroy
+        // handler above releases the claim, so the tour is offered again later.
+        //
+        // In a microtask, not inline: this runs from inside the child's own
+        // render/ready path, and tearing it down mid-callback leaves ui-core
+        // finishing a render on a destroyed view. A microtask still runs before
+        // the next paint.
+        if ((this._navSeq || 0) !== (this._windowTourSeq || 0)) {
+          Promise.resolve().then(() => {
+            if (this._windowTour !== child) return;
+            this._endWindowTour({ immediate: true });
+          });
+          return;
+        }
+        // The tab a rail press parked for this tour (_railTabWithTour) — now,
+        // under the tour, rather than on its release at the end of the fade.
+        // Two frames, so the tour has painted over the pane before the pane
+        // changes: switching first would show the answer before the question.
+        const parked = this._windowTourShown;
+        if (parked && parked.tour === wtTour) {
+          this._windowTourShown = null;
+          requestAnimationFrame(() => requestAnimationFrame(() => {
+            if (this._windowTour !== child) return;
+            parked.cb();
+          }));
+        }
+        return;
+      }
+
       case "desk-tutorial": {
         const tour = (child && child.mget && child.mget("tour")) || "full";
         // Release single-flight for EVERY tour, deliberately outside the chain
@@ -1876,9 +7368,17 @@ class desk_module extends LetcBox {
         // next trigger for the rest of the session. Hangs off the same destroy
         // event _chainRewardFlowAfterTutorial uses.
         if (_.isFunction(child.once)) {
-          child.once(_e.destroy, () =>
-            require("libs/tutorial-tours").release(tour),
-          );
+          child.once(_e.destroy, () => {
+            if (this.el && this.el.dataset) delete this.el.dataset.deskTour;
+            require("libs/tutorial-tours").release(tour);
+          });
+        }
+        // Belt and braces for the stamp: a tour whose kind fails to load never
+        // reaches the destroy above, and a desk left stamped would keep the
+        // topbar lifted and the overlay inset for the rest of the session.
+        // `release` is already covered by the 20s net in _afterHomeSettled.
+        if (!_.isFunction(child.once) && this.el && this.el.dataset) {
+          delete this.el.dataset.deskTour;
         }
         // Only the post-onboarding run and the full tour own the hand-off to
         // the post-home chain. A contextual tour firing an hour later reaches
@@ -1969,6 +7469,20 @@ class desk_module extends LetcBox {
     Kind.loadPlugin({ name: "onboarding", kind: "onboarding" })
       .then(async () => {
         await Kind.waitFor("onboarding");
+        // Warm the tour while the wizard is on screen.
+        //
+        // Finishing onboarding is the ONE moment the `workspace` tour is
+        // raised automatically (onPartReady "overlay"), and it used to be
+        // raised cold. THE WHOLE SET, not just `desk_tutorial`: warming the
+        // shell alone left its spotlight and its step to be fetched after it
+        // mounted, which is the part the user actually waits for — see
+        // _warmDeskTourKinds.
+        //
+        // The wizard is several screens long, so these resolve many times over
+        // before they are needed and Kind.get() answers synchronously.
+        // Deliberately NOT awaited: the wizard must not wait on a prefetch to
+        // render, and a warm-up that fails costs nothing.
+        this._warmDeskTourKinds("workspace");
         this.feed({
           kind: "onboarding",
           type: "app",
@@ -2017,6 +7531,23 @@ class desk_module extends LetcBox {
 
   _showTutorial(tourId, opt = {}) {
     const tour = tourId || "full";
+    // MARK THE DESK FOR THE DURATION, the same way an in-window tour does.
+    //
+    // This tour draws its own rail and its own canvas but NO topbar — the real
+    // one is mounted underneath it (see tutorial/skeleton/index.js) — and until
+    // now the tour's canvas simply painted over it. So the workspace switcher
+    // and the account menu were unreachable for the length of the tour, and a
+    // menu opened before it started was buried: both hang DOWN off the bar into
+    // exactly the area the tour covers.
+    //
+    // The skin reads this flag to lift the bar — and ONLY to lift the bar.
+    // The overlay this tour mounts into is a child of `__body` (see
+    // desk/skeleton/index.js, where the slot is pushed onto `bodyKids`), so it
+    // has always been confined to the body area and has never covered the bar.
+    // Two earlier attempts at insetting it were therefore fixing a problem
+    // that did not exist, and each pushed the tour BELOW the body's top —
+    // which uncovered the real desk in the gap: its rail, and its folder art.
+    if (this.el && this.el.dataset) this.el.dataset.deskTour = "1";
     this.ensurePart("overlay").then((p) => {
       p.feed({
         kind: "desk_tutorial",
@@ -2033,6 +7564,8 @@ class desk_module extends LetcBox {
    *
    *   #/desk?tutorial=share                 the share tour, from screen 1
    *   #/desk?tutorial=share&screen=3        straight to its third screen
+   *   #/desk?tutorial=share&subject=workspace   its panel headed by a
+   *                                         workspace instead of a file
    *   #/desk?tutorial=folder_task&step=2    straight to the tracker step
    *   #/desk?tutorial=folder_task&step=2&screen=4   ...and its fourth view
    *   #/desk?tutorial=1                     the whole six-step tour
@@ -2054,6 +7587,14 @@ class desk_module extends LetcBox {
     const opt = { preview: 1 };
     if (args.step) opt.enter_at_step = args.step;
     if (args.screen) opt.enter_at_screen = args.screen;
+    // What the tour is about, when only the trigger would normally know.
+    //
+    // The share panel's header is the case: opened over a workspace it shows a
+    // workspace (180:51964), and the trigger says so through fire()'s third
+    // argument (libs/tutorial-tours). A preview URL has no trigger, so without
+    // this the workspace header could not be looked at from a URL at all — it
+    // would need a fresh account and a real click on Manage access.
+    if (args.subject) opt.subject = args.subject;
     return opt;
   }
 
@@ -2100,7 +7641,26 @@ class desk_module extends LetcBox {
    */
   _onTourTrigger(args = {}) {
     if (!args.tour) return;
-    this._showTutorial(args.tour);
+    // WHICH HOST, decided in one place.
+    //
+    // Some tours are about a folder window — its + New menu, its threads, its
+    // tracker — and end by acting on it: migrate opens the real import dialog,
+    // task the real New task form. Only the in-window host can carry that,
+    // because only it knows which window (`target_window`). Drawn on the desk
+    // host they would show a mock of the surface the user is already looking
+    // at, and their closing action would reach nothing.
+    //
+    // Decided HERE rather than at each trigger, because there are four of them
+    // for `folder_task` alone (this rail, two sidebar rows, a workspace tile)
+    // and they would have had to agree.
+    if (WINDOW_TOUR_TAB[args.tour]) {
+      this._mountWindowTourFor(args.tour, args.opt || {});
+      return;
+    }
+    // `opt` is whatever the trigger knew and the tour could not — see fire()
+    // in libs/tutorial-tours. _showTutorial spreads it onto the widget, so it
+    // arrives as model attributes.
+    this._showTutorial(args.tour, args.opt || {});
   }
 
   /**
@@ -2178,12 +7738,16 @@ class desk_module extends LetcBox {
    *
    * Shared by the sidebar entry (`toggle-help`) and by the return trip after a
    * product tour, so both land on the same screen with the same breadcrumb.
-   * The panel is destroyed on close, so it always re-opens on help_main's
-   * default page — Product tour, which is the page the button was on.
+   * The panel is KEPT when closed (KEEP_ALIVE_MAIN_KINDS), so it re-opens on
+   * the page it was left on — for the return trip that is the Product tour
+   * page the button was pressed from.
    */
   _openGetHelp() {
     RADIO_BROADCAST.trigger("breadcrumb:context", {
       filename: LOCALE.GET_HELP,
+      // Reached from the rail and the account menu; `ph-info` is the id both
+      // the mobile sheet and the account menu already give it.
+      ico: "ph-info",
     });
     return this.togglePanel("help_main", "settings-main-slot", true);
   }
@@ -2266,7 +7830,7 @@ class desk_module extends LetcBox {
       is_support: 1,
     };
 
-    const part = this.getPart && this.getPart("chat-panel");
+    const part = this.getPart && this.getPart(INBOX_SLOT);
     const child =
       part && !part.isEmpty() && part.children && part.children.last();
 
@@ -2276,13 +7840,13 @@ class desk_module extends LetcBox {
     // so an already-open inbox switches to the support conversation instead
     // of revealing whatever was last open — or toggling itself shut.
     if (child && _.isFunction(child.openPeer)) {
-      this.closeOtherSidebarPanels("chat-panel");
+      this.closeOtherSidebarPanels(INBOX_SLOT);
       this._showPanel(part);
       await child.openPeer(peer.entity_id, peer);
       return true;
     }
 
-    await this.togglePanel("chat_p2p", "chat-panel", true, { open_peer: peer });
+    await this.togglePanel("chat_p2p", INBOX_SLOT, true, { open_peer: peer });
     return true;
   }
 
@@ -2420,6 +7984,30 @@ class desk_module extends LetcBox {
   _createFormOverrides() {
     if (!this._activateFlow || this._activateFlow.isDestroyed()) return {};
     return { post_override: "permission_restricted" };
+  }
+
+  /**
+   * Is a guided onboarding walkthrough currently driving the desk?
+   *
+   * Asked before acting on a create's `open` request. Both flows create their
+   * workspace through the SAME dialog every other surface uses — so the dialog
+   * cannot tell that one is driving it, and it asks for the switch either way —
+   * but each owns what happens after its own create:
+   *
+   *   activate-workspace  runs its invite step ON the members panel, and then
+   *                       hands over to whatever comes next.
+   *   reward-flow         Step 3 opens the workspace itself, when the user
+   *                       presses Upload, and closes it again on teardown.
+   *
+   * Navigating out from under either is how a walkthrough loses the target its
+   * current step is spotlighting. So the desk declines here rather than the
+   * form declining there: which flows are on screen is the desk's knowledge,
+   * and it already holds both references for exactly this kind of question
+   * (see _createFormOverrides directly above, which reads one of them).
+   */
+  _walkthroughRunning() {
+    const alive = (f) => !!(f && !(f.isDestroyed && f.isDestroyed()));
+    return alive(this._activateFlow) || alive(this._rewardFlow);
   }
 
   /**
@@ -2907,6 +8495,23 @@ class desk_module extends LetcBox {
     // the two are mutually exclusive in practice (a URL is either #/desk/billing
     // or a file link, never both).
     this._maybeOpenFileDeepLink();
+    // Same tier again, and for the same reason: `?window_tutorial=<id>` is an
+    // explicit request typed by a person, so it runs before the reward /
+    // LAUNCH30 flows rather than underneath them. A no-op unless the router
+    // armed one.
+    this._maybeRunWindowTutorial();
+    // An ordinary boot lands on a workspace's Files tab, which is the surface
+    // the migrate tour is about — so offer it there too, not only on a rail
+    // press. Declines for almost every session; see the method.
+    this._maybeRunBootTour();
+    // And whether or not that one runs, warm the chunks a RAIL press would
+    // need, so the first press does not sit on a fetch with the previous pane
+    // on screen. Declines for almost every session too.
+    this._warmWindowTourKinds();
+    // Same idea for the office editor: its ~3.6 MB bundle is what the first
+    // .docx / .xlsx open otherwise waits on. Loads it in a hidden iframe on the
+    // docserver origin once per docserver version; see libs/office-warmup.
+    require("libs/office-warmup").schedule(this);
     // Over-limit outranks the promo/reward flows: a locked workspace needs
     // its popup first, and a locked org is not eligible for either promo.
     return this._maybeShowOverLimit()
@@ -2914,7 +8519,7 @@ class desk_module extends LetcBox {
       // After the reward flow, and skipped entirely when that one mounted: both
       // open with the same create-workspace walkthrough (see
       // _maybeStartActivateWorkspace).
-      .then(() => this._maybeStartActivateWorkspace())
+      // .then(() => this._maybeStartActivateWorkspace())
       .then(() => this._maybeShowPromoLaunch30("home", { defer: !opt.immediate }))
       .then(() => this._waitForHomePopups())
       .then((clear) =>
@@ -3234,6 +8839,130 @@ class desk_module extends LetcBox {
   }
 
   /**
+   * The organisation screen — Figma 104:33055.
+   *
+   * A full-canvas section screen. The breadcrumb is retitled first, the same
+   * way Settings / Get help / Calendar announce themselves, so leaving the
+   * screen later takes the `wasSection` branch in _leaveSectionScreen and the
+   * workspace path is rebuilt rather than left reading "Organization".
+   *
+   * REFUSES when there is no organisation to show, or no server behind it.
+   * The only way in is the topbar chip, which is not mounted in either case —
+   * but the "New department" path also arrives here from a RADIO_BROADCAST,
+   * and a broadcast has no such gate of its own. Without this, an account on
+   * domain 1 that somehow reached it would get a screen whose breadcrumb reads
+   * the SHARED server domain's name ("Drumee Stage Server", via the
+   * metadata.isOrganization row) over an empty grid.
+   *
+   * @param {Object} [opt] merged into the mounted widget (e.g. armNewDepartment)
+   */
+  _openOrgView(opt) {
+    if (!require("libs/org-overview").orgFeature()) return;
+    // See _railUnlight. This screen fills settings-main-slot, which is
+    // `position:absolute; inset:0` over the workspace pane — so the rail row
+    // that was lit is naming a surface nobody can see, the same disagreement
+    // Calendar / Inbox / Admin Console each fix on their own way in. It was
+    // missing here only because this screen had a single entry point in the
+    // topbar; the rail logo below is a second one, right beside the rows that
+    // stayed lit.
+    //
+    // AFTER the orgFeature() gate and before the raise, exactly like
+    // toggle-apps: an open that refuses must not darken the rail over a screen
+    // that never changed.
+    this._railUnlight();
+    RADIO_BROADCAST.trigger("breadcrumb:context", {
+      filename: Organization.name() || LOCALE.ORGANIZATION,
+      // NO ADDRESS CHIP FOR THIS ONE. The org chip is two elements to the left
+      // in the same cluster and already reads "Acme Corporation"; the address
+      // chip would print the same words again, right next to it, with a "/"
+      // and a cursor that go nowhere. So the chip is not drawn at all here —
+      // the only section screen that asks for this, because it is the only one
+      // whose name is already in the bar.
+      //
+      // Still a SECTION in every other respect, which is what matters on the
+      // way out: _leaveSectionScreen reads breadcrumb.isSectionMode() to
+      // decide whether to rebuild the workspace path, and a screen that was
+      // never a section would leave the bar reading nothing.
+      hideAddress: 1,
+    });
+    return this.togglePanel("desk_org_view", "settings-main-slot", true, opt);
+  }
+
+  /**
+   * THE RAIL LOGO — take me somewhere I know.
+   *
+   * Lexis, 2026-09-15: "when a user opens other tabs and wants to go back to
+   * the workspace they started in, they get lost in navigation". The rail's own
+   * five rows cannot answer that, because every one of them drives the
+   * workspace window UNDERNEATH whatever full-canvas screen is up — the surface
+   * that is, by definition, not the one the user is looking at. So the logo,
+   * which until now rendered as decoration, becomes the one control that always
+   * leads out. Temporary: a real Home screen is a separate piece of work.
+   *
+   * THE DESTINATION IS RESOLVED AT CLICK TIME, not baked into the skeleton,
+   * because it depends on an answer only the server has — `can_browse`, which
+   * the org overview reports and which requires dom_admin_security or above
+   * (server-team service/private/organization.js `_org`). The three outcomes:
+   *
+   *   1. an organisation this account may browse → the organisation screen,
+   *      which is what was asked for: it is the directory of every department
+   *      and every workspace in the org, so it is the one screen you can reach
+   *      any workspace FROM. Identical to the topbar chip's "Open".
+   *   2. an organisation it may NOT browse (a plain member) → the workspace.
+   *      The chip withholds "Open" from exactly these accounts because the
+   *      server sends them no departments and no workspaces, so the screen
+   *      behind it would be an empty grid — see the `can_browse` note in
+   *      org-tab/skeleton. Sending them there would be a worse answer than the
+   *      one they already had.
+   *   3. no organisation at all → the workspace. THIS IS THE MAJORITY: 79% of
+   *      accounts sit on domain 1 (libs/org-overview `inOrganization`), and
+   *      they have no organisation screen to go to. Without this branch the
+   *      logo would be a dead click for four users in five, which is a worse
+   *      bug than the one being fixed.
+   *
+   * NEVER loadHome(). That is the pre-2.0 Home and it runs Wm.reload(), which
+   * closes every open window — a user who clicked this to get un-lost would
+   * lose the folder windows they had arranged. Getting back to a known screen
+   * must not cost anything.
+   *
+   * orgOverview() is the shared, cached promise the topbar chip has already
+   * resolved by the time any rail is clickable, so the async hop is free in
+   * practice, and it never rejects — a deployment whose server has no org
+   * endpoints resolves to EMPTY, whose can_browse is 0, and lands on (3).
+   */
+  _railHome() {
+    const { orgFeature, orgOverview } = require("libs/org-overview");
+    // Synchronous and local: no organisation means there is nothing to fetch.
+    if (!orgFeature()) return this._railHomeWorkspace();
+    return orgOverview(this).then((data) => {
+      if (this.isDestroyed && this.isDestroyed()) return;
+      if (!data || !data.can_browse) return this._railHomeWorkspace();
+      return this._openOrgView();
+    });
+  }
+
+  /**
+   * The rail logo's fallback — back to the workspace, on Files.
+   *
+   * _railTab("files") is the desk's own "leave the section screen and show
+   * workspace content" path: it closes the three main slots, releases the
+   * invite popup, rebuilds the breadcrumb off the workspace and, when no
+   * workspace window is open at all, opens the default one. _resetRailToFiles
+   * then lights the row, which the click cannot do by itself — the logo is not
+   * in `sidebar-radio` (it is not one of the five tabs and must not read as
+   * though it were), so nothing would otherwise unlight the row belonging to
+   * the screen that just closed.
+   *
+   * The same pair, in the same order and for the same reason, as the section-
+   * screen branch of _openInvitePopup.
+   */
+  _railHomeWorkspace() {
+    const landed = this._railTab("files");
+    this._resetRailToFiles();
+    return landed;
+  }
+
+  /**
    * Slots whose mounted widget uses `data-anim` CSS for slide-in/out.
    * For these we keep the widget alive on close (preserving fetched
    * data + scroll position), only flipping `data-anim`. Other slots
@@ -3243,11 +8972,131 @@ class desk_module extends LetcBox {
     return pn === "trash-panel" || pn === "chat-panel";
   }
 
+  /**
+   * Does the child mounted in slot `pn` stay alive when the slot is closed?
+   * True for a keep-alive SLOT's child always, and for a section screen whose
+   * KIND is in KEEP_ALIVE_MAIN_KINDS. The screen is then parked with
+   * data-anim="out" (skin/index.scss hides it) instead of being destroyed, and
+   * togglePanel's mounted-widget branch reveals it on the next open — the same
+   * mechanism the Trash and Contacts panels have always used.
+   *
+   * @param {String} pn   slot part name
+   * @param {Object} p    the slot part (already resolved)
+   * @returns {Boolean}
+   */
+  _slotKeepsChild(pn, p) {
+    if (this._isKeepAliveSlot(pn)) return true;
+    if (pn !== "settings-main-slot" || !p || p.isEmpty()) return false;
+    const child = p.children.last();
+    if (!child || (child.isDestroyed && child.isDestroyed()) || !child.el) {
+      return false;
+    }
+    // A kind still being fetched is the lazy-loader placeholder (ui-core
+    // letc/kind/loader.js), whose model already answers the real kind. It
+    // must NOT be parked: when its import lands, renew() swaps in the real
+    // view with no data-anim, and that would paint full-canvas over whatever
+    // the user navigated to meanwhile. Clearing it makes renew() a no-op.
+    if (child.isLazyClass) return false;
+    const kind =
+      (child.mget && child.mget(_a.kind)) ||
+      (child.el.dataset && child.el.dataset.kind);
+    return KEEP_ALIVE_MAIN_KINDS.has(kind);
+  }
+
+  /**
+   * Is `c` a keep-alive section screen currently parked (hidden) in the slot?
+   * Never the lazy-loader placeholder — see _slotKeepsChild.
+   */
+  _isParkedKeeper(c) {
+    if (!c || (c.isDestroyed && c.isDestroyed()) || !c.el) return false;
+    if (c.isLazyClass) return false;
+    if (c.el.dataset.anim !== "out") return false;
+    const kind = (c.mget && c.mget(_a.kind)) || c.el.dataset.kind;
+    return KEEP_ALIVE_MAIN_KINDS.has(kind);
+  }
+
+  /**
+   * Empty slot `pn` — except, in settings-main-slot, the keep-alive screens
+   * parked there. A plain p.clear() here used to throw away a parked Calendar
+   * or Settings just because a non-kept screen (Billing, Admin Console, the
+   * org view, the Inbox) was closed on top of it.
+   */
+  _clearSlotKeepingParked(pn, p) {
+    if (!p) return;
+    if (pn !== INBOX_SLOT) return p.clear();
+    const drop = p.children.toArray().filter((c) => !this._isParkedKeeper(c));
+    if (drop.length === p.children.length) return p.clear();
+    drop.forEach((c) => {
+      try {
+        c.selfDestroy({ now: 1 });
+      } catch (e) { }
+    });
+  }
+
+  /**
+   * Open `kind` in settings-main-slot WITHOUT destroying the section screens
+   * already parked there.
+   *
+   * The slot used to hold ONE child: opening Settings over a parked Calendar
+   * cleared it, so Calendar → Settings → Calendar rebuilt both screens and
+   * re-ran every mount load (Settings alone fires four requests). Now each
+   * KEEP_ALIVE_MAIN_KINDS screen parks in the slot (data-anim="out", which the
+   * skin hides) and the visible screen is always `children.last()` — the
+   * invariant every other reader of this slot (topChild, _slotKeepsChild,
+   * _hidePanel, _showPanel…) already relies on. At most one parked screen per
+   * kind, so the slot never holds more than those three plus the visible one.
+   *
+   * Returns false (caller falls back to the plain mount) when the slot is
+   * empty — nothing to preserve.
+   */
+  _switchMainSlot(p, kind, opt = {}) {
+    if (!p || p.isEmpty()) return false;
+    const pn = INBOX_SLOT;
+    const kindOf = (c) =>
+      (c && c.mget && c.mget(_a.kind)) || (c && c.el && c.el.dataset.kind);
+    // 1. Take the current screen off the top: park a keep-alive one, drop the
+    //    rest (including a lazy placeholder, which must never be parked).
+    if (this._slotKeepsChild(pn, p)) this._hidePanel(p);
+    this._clearSlotKeepingParked(pn, p);
+    // 2. A parked screen of this kind: a plain open brings it back as it was
+    //    left; an open WITH options describes a different screen, so the
+    //    parked one goes and a fresh mount reads them (same rule as the
+    //    single-screen keep-alive in togglePanel).
+    const parked = p.children.toArray().filter((c) => kindOf(c) === kind);
+    if (parked.length && _.isEmpty(opt)) {
+      const target = parked[parked.length - 1];
+      const last = p.children.last();
+      // Marionette's own swap: children container AND DOM, no re-render.
+      if (last && last !== target) p.swapChildViews(target, last);
+      this.closeOtherSidebarPanels(pn);
+      this._pendingKinds[pn] = kind;
+      this._showPanel(p);
+      return true;
+    }
+    parked.forEach((c) => {
+      try {
+        c.selfDestroy({ now: 1 });
+      } catch (e) { }
+    });
+    // 3. Mount the new screen ON TOP of whatever stays parked.
+    this.closeOtherSidebarPanels(pn);
+    this._parkLiveCall();
+    if (p.isEmpty()) {
+      this._loadKind(p, kind, pn, opt);
+      return true;
+    }
+    p.append({ kind, uiHandler: [this], ...opt });
+    this._pendingKinds[pn] = kind;
+    return true;
+  }
+
   _hidePanel(p) {
     if (!p || p.isEmpty()) return;
     const child = p.children.last();
     if (child && child.el && child.el.dataset.anim !== "out") {
       child.el.dataset.anim = "out";
+      // A kept screen hears it left the screen (Get help stops its video).
+      if (_.isFunction(child.onPanelHidden)) child.onPanelHidden();
     }
   }
 
@@ -3278,6 +9127,86 @@ class desk_module extends LetcBox {
    * screen"). Dismiss the modal before showing another screen so the lift
    * is released.
    */
+  /**
+   * A RAIL CLICK CLOSES THE TIER-GATE CARD.
+   *
+   * The "Unlock Admin Console" upsell (_showAdminUnlockModal → openFeatureLock
+   * → Wm.confirm) is an answer to a question the user has stopped asking the
+   * moment they navigate: it is not blocking anything the rail can reach, and
+   * on desktop the glass it carries stops at the window manager's edge, so the
+   * rail stays live beside it. Left standing the card hangs over the Files grid
+   * the rail just opened, and the only way out is its own X.
+   *
+   * ONLY THE FEATURE-LOCK CARD, never the wrapper on sight. __wrapperModal is
+   * SHARED — it also carries the create-workspace form, the permission panels
+   * and every other Wm.confirm — and _leaveSectionScreen already records what
+   * clearing it unconditionally costs: a half-filled form thrown away because
+   * the user glanced at another tab. So the host is asked what it is holding
+   * (`.feature-lock`, the card's own root class, builtins/widget/feature-lock)
+   * and anything else is left alone.
+   *
+   * ASKED OF THE DOM rather than tracked in a flag. A flag has to be set on
+   * every open path and cleared on every close path — including the ones that
+   * settle the promise from inside the card — and the _invitePopup field two
+   * methods down is the standing example of how much bookkeeping that is. The
+   * host can simply be asked, and the answer cannot go stale.
+   *
+   * onCancel, NOT _dismissWmModal: that is the card's own X path. It settles
+   * the confirm's promise as a cancel, releases the Escape handler and the
+   * state-guard MutationObserver (window/confirm _releaseModalGuards) and lets
+   * goodbye() take the host down — where clearing the host instead yanks it out
+   * from under a dialog that is still armed. The clear stays as the fallback
+   * for a card caught between feed() and ask().
+   */
+  /**
+   * The feature-lock card currently hosted by the shared wrapper-modal, or
+   * null when it is holding something else (or nothing).
+   *
+   * Pulled out of _dismissFeatureLock because a second caller needs the same
+   * question answered — see _showAdminUnlockModal, which must not raise a
+   * card that is already standing. Asked of the DOM for the reason the note
+   * above gives: a flag would have to be set on every open path and cleared on
+   * every close path, including the ones that settle the confirm's promise
+   * from inside the card.
+   */
+  _featureLockCard() {
+    try {
+      const w = typeof Wm !== "undefined" && Wm.__wrapperModal;
+      if (!w || !w.el || !w.children || !w.children.length) return null;
+      const card = w.children.last();
+      if (!card || !card.el || !card.el.querySelector(".feature-lock")) return null;
+      // STANDING, not merely PRESENT — and this is the load-bearing half for
+      // the caller that refuses to open over it.
+      //
+      // A dismissed confirm is not removed from the host the instant it is
+      // answered: window/confirm sets `_done` and calls goodbye(), whose tween
+      // leaves the element in place while it plays, and an interrupted
+      // teardown can leave it there for good. Matching on the class alone
+      // would then read that husk as a live card — harmless for the dismiss
+      // path, which simply has nothing to cancel, but for _showAdminUnlockModal
+      // it would mean the Admin Console button never opens anything again.
+      //
+      // `_done` is the confirm's own record that its promise has settled
+      // (window/confirm ask()), and isConnected catches a card detached from
+      // the document with the host's reference not yet cleaned up. Either way
+      // the answer is the same: nothing here is waiting on the user.
+      if (card._done) return null;
+      if (card.el.isConnected === false) return null;
+      return card;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  _dismissFeatureLock() {
+    try {
+      const card = this._featureLockCard();
+      if (!card) return;
+      if (_.isFunction(card.onCancel)) return card.onCancel();
+      return this._dismissWmModal();
+    } catch (e) { /* non-fatal */ }
+  }
+
   _dismissWmModal() {
     try {
       const w = typeof Wm !== "undefined" && Wm.__wrapperModal;
@@ -3295,7 +9224,12 @@ class desk_module extends LetcBox {
     if (!p || p.isEmpty()) return false;
     const child = p.children.last();
     if (child && child.el) {
+      const wasParked = child.el.dataset.anim === "out";
       child.el.dataset.anim = "in";
+      // A kept screen coming back refreshes what it showed (Settings re-runs
+      // its loads, Calendar re-reads its window). Only on a RE-show: the
+      // first show follows the mount, whose own loads are still landing.
+      if (wasParked && _.isFunction(child.onPanelShown)) child.onPanelShown();
       return true;
     }
     return false;
@@ -3307,69 +9241,60 @@ class desk_module extends LetcBox {
    * drawer closes only via the in-drawer close button or by tapping the
    * overlay backdrop. No-op on non-mobile.
    */
-  openMobileDrawer(mode) {
-    return this.ensurePart("sidebar-main").then((p) => {
-      if (!p || !p.el) return;
-      const el = p.el;
-      el.dataset.mode = mode;
-      el.dataset.state = "open";
-      this._setMobileBackdrop(true);
-      this._setMobileTopbarActive(mode);
-    });
-  }
-
   /**
-   * Mirror the drawer state on the two mobile-topbar buttons so the
-   * currently-displayed mode shows as active. Pass null to clear both.
+   * Open one of the phone's bottom sheets (the approved Option A: workspace
+   * switcher / go-to grid / account / create). One host, one sheet at a time —
+   * feed() replaces the content wholesale and data-kind lets the skin size
+   * each shape.
    */
-  _setMobileTopbarActive(activeMode) {
-    const map = {
-      // "create" is a sub-screen of the add flow, not a sibling of it — the
-      // user reached it through this button, so it stays lit rather than
-      // going dark under a screen it owns.
-      "mobile-add-btn": activeMode === "actions" || activeMode === "create",
-      "mobile-menu-btn": activeMode === "nav",
-    };
-    Object.entries(map).forEach(([pn, isActive]) => {
-      this.ensurePart(pn).then((p) => {
-        if (!p || !p.el) return;
-        if (isActive) {
-          p.el.dataset.state = "active";
-        } else {
-          delete p.el.dataset.state;
-        }
+  _openMobileSheet(kind, content) {
+    return this.ensurePart("mobile-sheet-content").then((c) => {
+      if (!c) return;
+      c.feed(content);
+      return this.ensurePart("mobile-sheet-host").then((host) => {
+        if (!host || !host.el) return;
+        host.el.dataset.kind = kind;
+        host.el.dataset.state = "open";
       });
     });
   }
 
-  /**
-   * Show/hide the shared __overlay as a tap-to-close backdrop for the
-   * mobile drawer. The click listener that actually closes the drawer
-   * is bound once in _bindMobileBackdropListener at mount time.
-   */
-  _setMobileBackdrop(visible) {
-    this.ensurePart("overlay").then((p) => {
-      if (!p || !p.el) return;
-      p.el.dataset.state = visible ? "open" : "closed";
+  _closeMobileSheet() {
+    this.ensurePart("mobile-sheet-host").then((host) => {
+      if (!host || !host.el) return;
+      host.el.dataset.state = "closed";
     });
   }
 
   /**
-   * `keepBackdrop` is for the drawer → search-card handoff. _setMobileBackdrop
-   * writes inside ensurePart().then(), so two callers racing false-then-true
-   * would be ordered only by promise resolution, not by program order — correct
-   * today merely because "overlay" is already mounted and resolves eagerly, and
-   * silently wrong the day ensurePart goes cold. The handoff therefore suppresses
-   * this closer's write entirely and lets _openMobileSearch issue the single
-   * one, so the backdrop's final state does not depend on ordering at all.
+   * Show/hide the shared `__overlay` as the mobile search card's tap-to-close
+   * backdrop (the skin drives it off `data-state`, and pins it to the viewport
+   * under `[data-device="mobile"]`).
+   *
+   * RESTORED. This is drawer-era machinery that the 2.0 mobile shell deleted
+   * along with the drawer itself (1c503a32), but the search card is the OTHER
+   * caller and it was left behind: `_openMobileSearch` and `_closeMobileSearch`
+   * both still call this, so on a phone every one of those paths threw
+   * "this._setMobileBackdrop is not a function" — which is a real crash on the
+   * default screen, since the search pill sits in the mobile action row.
+   *
+   * What it cost, in the order the user meets it: the card opened (setState(1)
+   * runs first) but never focused its input and never fetched, so it read as a
+   * dead blank sheet; Escape threw out of `_onEscape` before
+   * `_closeEscapeModal`; and tapping a result threw out of `open-search-hit`
+   * before the hit was opened.
+   *
+   * The sheets do NOT come through here — the sheet host carries its own
+   * `__msheet-dim` (skeleton/index.js) — so this stayed single-purpose and the
+   * drawer's `keepBackdrop` handoff argument is gone with the drawer.
+   *
+   * @param {Boolean} visible
    */
-  _closeMobileDrawer(keepBackdrop) {
-    this.ensurePart("sidebar-main").then((p) => {
+  _setMobileBackdrop(visible) {
+    return this.ensurePart("overlay").then((p) => {
       if (!p || !p.el) return;
-      p.el.dataset.state = "closed";
+      p.el.dataset.state = visible ? "open" : "closed";
     });
-    if (!keepBackdrop) this._setMobileBackdrop(false);
-    this._setMobileTopbarActive(null);
   }
 
   /**
@@ -3437,6 +9362,18 @@ class desk_module extends LetcBox {
       try {
         localStorage.setItem("drumee.sidebar.pinned", pinnedNext ? "1" : "0");
       } catch (e) {}
+      // The rail's reserved column goes 64px ↔ 231px, which MOVES and resizes
+      // the work area with no browser `resize` event — open windows carry
+      // inline pixel geometry and would keep the old box, hanging their whole
+      // right side past the viewport edge. Wm watches the container itself
+      // (ResizeObserver, see manager.js), so this is only the fallback for a
+      // runtime without one; after the 0.18s width transition so the new box
+      // is the one measured. Harmless when the observer already handled it —
+      // re-fitting to the same area is a no-op.
+      if (window.Wm && _.isFunction(Wm.reflowWorkArea)) {
+        clearTimeout(this._sidebarPinReflow);
+        this._sidebarPinReflow = setTimeout(() => Wm.reflowWorkArea(), 250);
+      }
     });
   }
 
@@ -3466,7 +9403,7 @@ class desk_module extends LetcBox {
       ]);
     }
     if (this._drawerDismissServices.has(service)) {
-      this._closeMobileDrawer();
+      this._closeMobileSheet();
     }
   }
 
@@ -3474,6 +9411,42 @@ class desk_module extends LetcBox {
    *
    */
   togglePanel(kind, pn, openOnly, opt) {
+    // A section screen is navigation away from the workspace, so it ends an
+    // in-window tour for the same reason a rail tab does: the tour is painted
+    // over the pane at desk level and would sit on top of whatever opens. See
+    // _endWindowTour.
+    //
+    // BUT NOT YET for a full-canvas screen (Calendar, Inbox, Admin Console,
+    // Settings, Get help…). Ending here started the tour's 0.5s fade at once,
+    // while the screen is a lazy chunk fed only after ensurePart below — so the
+    // fade uncovered window-folder__split-body and the screen arrived on top of
+    // it a moment later: pane first, then the Calendar. The tour now stays up
+    // over the pane until the screen has painted in its slot, and only then
+    // fades, uncovering the screen instead. See _endWindowTourAfter.
+    //
+    // Side panels still end it at once: they slide in over part of the pane,
+    // which is on screen beside them either way.
+    //
+    // EXCEPT Contacts and Trash, which leave the tour standing — a glance at the
+    // address book or the bin is not leaving the lesson, the same call the bell
+    // makes (it never reaches togglePanel). The skin lifts the right panel container over the
+    // tour while one is up (`[data-window-tour="1"] …__panel-container.right`),
+    // so the panel slides in OVER it rather than under.
+    const tourWaitsForScreen = pn === "settings-main-slot" && this._hasWindowTour();
+    const tourStaysUp =
+      (kind === "address_book" && pn === "chat-panel") ||
+      (kind === "panel_trash" && pn === "trash-panel");
+    // A FULL-CANVAS SCREEN IS A NAVIGATION — see _navigated. Pressing Files
+    // during a tour parks its tab switch on that tour's release
+    // (_railTabWithTour), and cancels it only if the user has gone somewhere
+    // since. Opening the Calendar (Inbox, Admin Console…) is going somewhere,
+    // but did not count: so when the tour then ended over the Calendar, the
+    // parked `_railTab("files")` ran, left the section screen and raised
+    // window-folder__split-body straight over the Calendar the user had just
+    // opened. Side panels slide over the workspace rather than leaving it, so
+    // they do not count.
+    if (pn === "settings-main-slot") this._navigated();
+    if (!tourWaitsForScreen && !tourStaysUp) this._endWindowTour();
     // Release the wm z-30000 lift before any sidebar screen change — see
     // _dismissWmModal. Covers both the first-open (_loadKind) and the
     // keep-alive re-show (_showPanel) paths.
@@ -3481,26 +9454,40 @@ class desk_module extends LetcBox {
     if (!this._pendingKinds) this._pendingKinds = {};
     if (!this._closeTimers) this._closeTimers = {};
 
-    // Disable actions when the admin console is active
+    // Disable actions when the admin console is active. The Calendar joins the
+    // list because it carries its OWN "+ New" (Task / Meeting) in its toolbar —
+    // leaving the topbar's "New" (add workspace / upload) visible would put two
+    // identically-labelled buttons 24px apart meaning different things.
     this.ensurePart("action-cluster").then((p) => {
-      if (["apps_main", "settings_main"].includes(kind)) {
+      // desk_org_view joins the list for the same reason the Calendar did: it
+      // carries its OWN "+ New" (department / workspace / migrate), so leaving
+      // the topbar's visible would put two identically-labelled buttons on one
+      // screen meaning different things.
+      if (["apps_main", "settings_main", "calendar_main", "desk_org_view"].includes(kind)) {
         p.setState(0);
       } else {
         p.setState(1);
       }
     });
 
-    return this.ensurePart(pn).then((p) => {
+    const settled = this.ensurePart(pn).then((p) => {
       // Mid-flight close animation pending: snap the dying child out so
       // the next kind doesn't paint through a fading sibling.
       if (this._closeTimers[pn]) {
         clearTimeout(this._closeTimers[pn]);
         delete this._closeTimers[pn];
-        p.clear();
+        this._clearSlotKeepingParked(pn, p);
         this._pendingKinds[pn] = null;
       }
 
-      const keepAlive = this._isKeepAliveSlot(pn);
+      // Kept alive because the SLOT is (side panels), or because the KIND
+      // parked in it is (section screens that refresh on re-show) — and only
+      // for a plain open: options describe a different screen (a billing
+      // preselect, an armed department form), and only a fresh mount reads
+      // them.
+      const keepAlive =
+        this._isKeepAliveSlot(pn) ||
+        (_.isEmpty(opt) && this._slotKeepsChild(pn, p));
       const sameKindMounted = this._pendingKinds[pn] === kind && !p.isEmpty();
 
       if (sameKindMounted && keepAlive) {
@@ -3518,6 +9505,24 @@ class desk_module extends LetcBox {
         return;
       }
 
+      // A PARKED kept screen asked for again WITH options: the options
+      // describe a different screen (see keepAlive above), so the parked one
+      // is dropped and a fresh mount reads them — never the close branch
+      // below, which would only re-stamp "out" and swallow the click.
+      if (sameKindMounted && !keepAlive) {
+        const parked = p.children.last();
+        if (parked && parked.el && parked.el.dataset.anim === "out") {
+          // Section screens: drop THIS parked one only — p.clear() would also
+          // throw away the other screens parked beside it (_switchMainSlot).
+          if (pn === INBOX_SLOT && this._switchMainSlot(p, kind, opt)) return;
+          p.clear();
+          this._pendingKinds[pn] = null;
+          this.closeOtherSidebarPanels(pn);
+          this._loadKind(p, kind, pn, opt);
+          return;
+        }
+      }
+
       // Slot has no slide-out CSS — fall back to animate-then-destroy.
       if (sameKindMounted && !keepAlive) {
         if (openOnly) return;
@@ -3526,10 +9531,13 @@ class desk_module extends LetcBox {
         this._closeTimers[pn] = setTimeout(() => {
           delete this._closeTimers[pn];
           this._pendingKinds[pn] = null;
-          p.clear();
+          this._clearSlotKeepingParked(pn, p);
         }, 250);
         return;
       }
+
+      // Section screens PARK BESIDE EACH OTHER — see _switchMainSlot.
+      if (pn === INBOX_SLOT && this._switchMainSlot(p, kind, opt)) return;
 
       if (!p.isEmpty()) {
         p.clear();
@@ -3537,6 +9545,107 @@ class desk_module extends LetcBox {
       }
       this.closeOtherSidebarPanels(pn);
       this._loadKind(p, kind, pn, opt);
+    });
+    if (tourWaitsForScreen) this._endWindowTourAfter(settled, kind);
+    return settled;
+  }
+
+  /** Is the in-window tour that is up right now this one? */
+  _windowTourIs(tour) {
+    if (!this._hasWindowTour() || !_.isFunction(this._windowTour.mget)) return false;
+    return this._windowTour.mget("tour") === tour;
+  }
+
+  /** Is an in-window tour up right now? */
+  _hasWindowTour() {
+    const t = this._windowTour;
+    return !!(t && !(t.isDestroyed && t.isDestroyed()));
+  }
+
+  /**
+   * End the in-window tour once a full-canvas screen has painted beneath it.
+   *
+   * togglePanel's promise settles when the kind is FED, not drawn: every section
+   * screen is a lazy chunk (seeds.js) that mounts a placeholder and respawns as
+   * the real widget when it lands. So the wait is that promise, then the chunk
+   * (Kind.waitFor), then two frames for the respawned screen to paint — and the
+   * tour's own fade then reveals the screen, never the pane.
+   *
+   * Ended on every outcome, including a failure, and capped: a chunk that never
+   * lands must not leave the tour standing over a screen the user asked for.
+   * A tour the user has already left (Escape, a rail press) is simply gone by
+   * then, and _endWindowTour is a no-op on it.
+   *
+   * @param {Promise} settled togglePanel's own promise
+   * @param {String} kind the screen being opened
+   */
+  _endWindowTourAfter(settled, kind) {
+    let ended = false;
+    const end = () => {
+      if (ended) return;
+      ended = true;
+      clearTimeout(cap);
+      if (this.isDestroyed && this.isDestroyed()) return;
+      this._endWindowTour();
+    };
+    const cap = setTimeout(end, 5000);
+    const chunk = () =>
+      typeof Kind !== "undefined" && Kind && _.isFunction(Kind.waitFor) && Kind.get(kind)
+        ? Kind.waitFor(kind)
+        : null;
+    Promise.resolve(settled)
+      .catch(() => {})
+      .then(chunk)
+      .catch(() => {})
+      .then(
+        () =>
+          new Promise((resolve) =>
+            requestAnimationFrame(() => requestAnimationFrame(resolve)),
+          ),
+      )
+      .then(end, end);
+  }
+
+  /**
+   * Open the Personal Calendar, optionally on a view the caller names.
+   *
+   * @param {String} [view] "month" | "week" | "day". When given, the screen
+   *   opens on TODAY in that view instead of wherever it was last left — the
+   *   Daily Reminder card asks for "day", because the card is about today.
+   *   Every other entry point omits it and keeps the existing behaviour
+   *   exactly: no options, so the keep-alive reveal still applies.
+   */
+  _openCalendar(view) {
+    // Launch options reach a FRESH mount only — and passing any makes
+    // togglePanel drop a parked instance and remount, which is precisely what
+    // a named view needs. This is the mechanism the billing preselect and the
+    // armed department form already use. It is also the only way to reach a
+    // kind that is still lazy-importing when the promise below settles: there
+    // is nothing but a loader placeholder to call a method on at that point.
+    const opt = view ? { startView: view } : undefined;
+    const opening = this.togglePanel(
+      "calendar_main",
+      "settings-main-slot",
+      true,
+      opt,
+    );
+    if (!view) return opening;
+    return opening.then(() => {
+      // The one case options cannot cover: the calendar was ALREADY on screen,
+      // where an open-only togglePanel is a deliberate no-op. Not a corner
+      // case here — the calendar is a restorable screen, so a reload with it
+      // open puts it back, and the Daily Reminder card fires 2s later on that
+      // same load. focusView returns immediately when the screen is already on
+      // that view and on today, so the fresh-mount path above — which read the
+      // same view from its options — is not charged a second fetch.
+      const p = _.isFunction(this.getPart)
+        ? this.getPart("settings-main-slot")
+        : null;
+      if (!p || p.isEmpty()) return;
+      const child = p.children.last();
+      if (!child || (child.isDestroyed && child.isDestroyed())) return;
+      if (child.isLazyClass || !_.isFunction(child.focusView)) return;
+      child.focusView(view);
     });
   }
 
@@ -3551,14 +9660,287 @@ class desk_module extends LetcBox {
   openBillingPage(preselect) {
     RADIO_BROADCAST.trigger("breadcrumb:context", {
       filename: LOCALE.BILLING_SUBSCRIPTION,
+      ico: "billing",
     });
+    // Extended page -> "Opened billing / plans". Marked HERE rather than on the
+    // sidebar item so every route counts: the sidebar entry, the Settings
+    // "Manage subscription" card, the desk storage upsell, the admin-console
+    // upsell and a #/desk/billing deep link all pass through this method.
+    //
+    // Fire-and-forget, and never awaited: the user asked for the billing page
+    // and an analytics row must not be able to delay or block it. A rejection
+    // is swallowed for the same reason.
+    //
+    // Ship-ahead guard: `desk` services arrive from the server's ACL via
+    // Platform.get('services') -- lex/services.json has no `desk` key -- so
+    // SERVICE.desk.cta_click is undefined until server-team ships the endpoint.
+    // postService is async and its promise rejection is swallowed by .catch,
+    // but without this guard the call POSTs to a path built from `undefined`.
+    if (SERVICE.desk && SERVICE.desk.cta_click) {
+      this.postService(SERVICE.desk.cta_click, { cta: "upgrade", hub_id: Visitor.id },
+        { async: 1 }).catch(() => {});
+    }
     // `preselect` (plan/cycle/tab) rides in from a #/desk/billing deep link; a
     // plain "Upgrade plan" trigger passes nothing, so the page opens on its
     // default tab exactly as before.
     const opt = Object.assign({ page: 1 }, preselect || {});
-    return Kind.waitFor("settings_billing").then(() =>
-      this.togglePanel("settings_billing", "settings-main-slot", true, opt)
-    );
+    // WHAT THE LOADER COVERS, and it is only this line. Kind.waitFor resolves a
+    // dynamic import: settings_billing is a ~280KB chunk, and until it lands
+    // nothing on screen changes at all — the previous panel simply sits there
+    // while the click appears to have done nothing.
+    //
+    // It does NOT cover the widget's own data load, deliberately. onDomRefresh
+    // paints immediately from Visitor.quota()'s cache and re-renders when the
+    // catalog and subscription land; that was a deliberate fix for this same
+    // screen sitting blank through two round trips, and covering it with a
+    // spinner would put one back over a page that is already readable.
+    this._showBillingLoader();
+    return Kind.waitFor("settings_billing")
+      .then(() => this.togglePanel("settings_billing", "settings-main-slot", true, opt))
+      .finally(() => this._hideBillingLoader());
+  }
+
+  /** The live billing loader window, or null. */
+  _billingLoader() {
+    try {
+      const all = (window.Wm && Wm.getItemsByKind && Wm.getItemsByKind("window_info")) || [];
+      for (const w of all) {
+        if (!w || (w.isDestroyed && w.isDestroyed())) continue;
+        if (w.mget && w.mget("billing_loading")) return w;
+      }
+    } catch (e) {
+      /* Wm not answering */
+    }
+    return null;
+  }
+
+  /**
+   * "Loading plans…" while the billing chunk downloads.
+   *
+   * Modelled on _showInvitedWorkspaceLoader, and it shares that one's two
+   * safety properties: a `dismiss_after` backstop, because a loader with no
+   * footer cannot be dismissed by a button and must not outlive its reason even
+   * if a future path forgets; and mode "hb", which keeps the drumee/✕ header so
+   * it can always be closed by hand.
+   *
+   * TWO THINGS DIFFER FROM THAT ONE, and both matter here.
+   *
+   * IT IS DELAYED. The chunk is cached after the first open, so on every visit
+   * after that Kind.waitFor resolves in a few milliseconds — and a spinner that
+   * appears and vanishes inside one frame reads as a glitch, which is worse
+   * than the honest nothing it replaced. The window is only raised if the wait
+   * is still running when the timer fires.
+   *
+   * IT IS NOT ONCE-PER-SESSION. The invited-workspace loader latches on a flag
+   * it never clears, because that intent is consumed once. Billing can be
+   * opened as many times as somebody clicks Upgrade plan, so the latch is
+   * released in _hideBillingLoader — otherwise the second visit, which is
+   * usually the cached one, would be the only one that could show it, and the
+   * first, which is the slow one, would not.
+   */
+  _showBillingLoader() {
+    if (this._billingLoaderPending) return;
+    this._billingLoaderPending = true;
+    // WHICH RAISE THIS IS. _hideBillingLoader can only cancel what it can
+    // reach — the timer — and the kind wait below is not cancellable, so the
+    // chain re-reads this on the other side. Without it, a close followed by
+    // a second Upgrade-plan click could have two chains alive at once and
+    // stack two spinners.
+    const run = (this._billingLoaderRun = (this._billingLoaderRun || 0) + 1);
+    this._billingLoaderTimer = setTimeout(() => {
+      this._billingLoaderTimer = null;
+      // The wait ended while we were holding back — this is the cached path,
+      // and nothing should appear.
+      if (!this._billingLoaderPending || run !== this._billingLoaderRun) return;
+      this._raiseBillingLoader(run);
+    }, DESK_BILLING_LOADER_DELAY);
+  }
+
+  /**
+   * Put the spinner on screen — but not until `window_info` is a REAL class.
+   *
+   * 🚨 THIS IS THE FIX FOR "the billing loading popup appears on the page I
+   * moved on to, and sits there" (Natrix, preview, 2026-09-09 night).
+   *
+   * Wm.info() does NOT reliably leave a window behind by the time it returns.
+   * `window_info` is a dynamic-import seed (seeds.js), so the FIRST one of a
+   * session resolves through Kind.get -> kind/loader.js, which hands the pool
+   * a lazy PLACEHOLDER view carrying this very model. _billingLoader() finds
+   * that placeholder and _hideBillingLoader() closes it — and then the import
+   * lands and the placeholder puts itself back as the real window_info
+   * (kind/loader.js `ok` -> View.renew, which re-adds the model with no
+   * destroyed/stopping guard). Nothing holds that second window, so the
+   * spinner appears AFTER the wait it belongs to has ended, over whatever
+   * screen the user clicked through to, and stays for the full dismiss_after
+   * — 30 seconds.
+   *
+   * Resolving the kind FIRST takes the placeholder out of the path: after the
+   * await, collection.add() builds the real view synchronously (Marionette
+   * _onCollectionUpdate), so the window exists the moment Wm.info returns and
+   * _hideBillingLoader can always find it. Nothing else changes — same
+   * window, same copy, same 220ms hold-back, same dismiss_after backstop.
+   *
+   * The pending flag is re-read after the await because that is the other
+   * half of the same race: the chunk can land while the kind is resolving,
+   * and then there is nothing left to explain a spinner, so none is raised.
+   *
+   * A rejected import resolves to null and simply raises nothing — the page
+   * is no worse off than before, and openBillingPage's `finally` still runs.
+   *
+   * @param {Number} run the raise this call belongs to (see _showBillingLoader)
+   */
+  _raiseBillingLoader(run) {
+    if (!window.Wm || !Wm.info) return;
+    return Kind.waitFor("window_info")
+      .catch(() => null)
+      .then(() => {
+        if (!this._billingLoaderPending || run !== this._billingLoaderRun) return;
+        if (!window.Wm || !Wm.info) return;
+        const fig = "window-info";
+        Wm.info({
+          variant: "notice",
+          mode: "hb",
+          billing_loading: 1,
+          dismiss_after: 30000,
+          message: [
+            Skeletons.Box.X({
+              className: `${fig}__loader`,
+              kids: [
+                Skeletons.Element({ className: `${fig}__loader-spinner` }),
+                Skeletons.Note({
+                  className: `${fig}__loader-label`,
+                  content: LOCALE.LOADING_BILLING || "Loading plans…",
+                }),
+              ],
+            }),
+          ],
+        });
+      });
+  }
+
+  /**
+   * Take it down. Idempotent, and called from `finally` so a failed import —
+   * an offline tab, a chunk 404 after a redeploy — cannot leave a spinner
+   * standing over a desk that has stopped trying.
+   */
+  _hideBillingLoader() {
+    if (this._billingLoaderTimer) {
+      clearTimeout(this._billingLoaderTimer);
+      this._billingLoaderTimer = null;
+    }
+    // Released, not latched: see _showBillingLoader. The next Upgrade plan
+    // click has to be able to raise it again.
+    this._billingLoaderPending = false;
+    const w = this._billingLoader();
+    if (w && w.goodbye) w.goodbye();
+  }
+
+  /**
+   * The upsell card, over the migrate tour when that tour is still owed.
+   *
+   * A user who has not finished the migrate tour opens it, walks away to the
+   * Calendar (which ends the tour — togglePanel, _endWindowTourAfter), then
+   * presses Admin Console. The card has no screen of its own, so it opened over
+   * whatever was left: the Calendar — and the card's own modal dissolves the
+   * window manager's isolation, which releases the workspace pane at 50001 OVER
+   * that screen's 1500. Card and window-folder__split-body, where the user
+   * wanted the card over the tour they have not done.
+   *
+   * So when the tour is offerable and not already up, it is raised FIRST, over
+   * the workspace pane (which is laid out under any section screen, so the tour
+   * can measure it). Only once it is on screen is the section screen closed —
+   * underneath the tour, so the pane never shows — and then the card opens,
+   * over the tour, where the modal cap keeps the pane below it (skin:
+   * `[data-window-tour="1"][data-wm-modal="open"]`).
+   *
+   * Every other case is the card exactly as before: tour done, mobile, no
+   * workspace to draw it on, or the tour refused.
+   *
+   * RESOLVES WHEN THE CARD IS UP, not when it closes. This runs under the utility
+   * icon's spinner (_runUtilityBusy), which waits on the service's promise;
+   * the card's own promise settles on dismissal, which would have kept the
+   * icon spinning and the cluster locked for as long as the card stood.
+   *
+   * @returns {Promise}
+   */
+  async _showAdminUnlockOverTour() {
+    // SINGLE-FLIGHT, and the awaits below are the whole reason it is needed.
+    //
+    // _showAdminUnlockModal refuses to raise a card while one is already up
+    // (_featureLockCard), which covers the ordinary second press. It cannot
+    // cover a second press that arrives BEFORE the first has produced
+    // anything to find: raising the tour can take the best part of four
+    // seconds here, and Wm.confirm is itself async behind Kind.waitFor, so two
+    // clicks inside that window both sail past the guard and the second
+    // rebuilds the card the first just put up.
+    //
+    // Cleared once the card has been RAISED, not when it is dismissed. From
+    // that moment the DOM probe is the accurate answer and this flag would
+    // only be a second, staler copy of it — the kind of bookkeeping the note
+    // on _featureLockCard argues against keeping.
+    //
+    // A TIMESTAMP, NOT A BOOLEAN, and that is the part that matters. The tour
+    // phase awaits _raiseRailTour, which this method neither owns nor can
+    // bound; a bare flag would latch forever the first time that failed to
+    // settle, and the Admin Console button would be dead for the rest of the
+    // session. That trades a cosmetic double-open for something strictly
+    // worse, on a promise this file has no control over. The window only has
+    // to outlast the tour budget (4s, _awaitWindowTour) plus confirm's own
+    // async hop; 10s clears both and is far longer than any gap a person
+    // would call pressing the button again.
+    const started = Date.now();
+    if (
+      this._adminUnlockInFlight &&
+      started - this._adminUnlockInFlight < 10000
+    ) {
+      return;
+    }
+    this._adminUnlockInFlight = started;
+    try {
+      try {
+        const Tours = require("libs/tutorial-tours");
+        if (
+          !this._hasWindowTour() &&
+          Tours.offerable("migrate", this) &&
+          this._railWorkspace() &&
+          (await this._raiseRailTour("migrate")) &&
+          (await this._awaitWindowTour(4000))
+        ) {
+          this._leaveSectionScreen(this._railWorkspace());
+        }
+      } catch (e) {
+        this.warn && this.warn("[desk] could not raise the migrate tour under the upsell", e);
+      }
+      if (this.isDestroyed && this.isDestroyed()) return;
+      this._showAdminUnlockModal();
+    } finally {
+      this._adminUnlockInFlight = 0;
+    }
+  }
+
+  /**
+   * Resolve once an in-window tour is mounted and has painted, or false at the
+   * deadline. `_windowTour` is set in onPartReady("window-tutorial"), i.e. by
+   * the real widget, not its lazy placeholder; two frames then let it draw.
+   *
+   * @param {Number} timeoutMs
+   * @returns {Promise<Boolean>}
+   */
+  _awaitWindowTour(timeoutMs = 4000) {
+    const deadline = Date.now() + timeoutMs;
+    return new Promise((resolve) => {
+      const look = () => {
+        if (this.isDestroyed && this.isDestroyed()) return resolve(false);
+        if (this._hasWindowTour()) {
+          return requestAnimationFrame(() =>
+            requestAnimationFrame(() => resolve(true)),
+          );
+        }
+        if (Date.now() >= deadline) return resolve(false);
+        setTimeout(look, 50);
+      };
+      look();
+    });
   }
 
   /**
@@ -3579,14 +9961,82 @@ class desk_module extends LetcBox {
    * and putting the sidebar highlight back afterwards either way.
    */
   _showAdminUnlockModal() {
-    return Wm.openFeatureLock({ feature: "admin_console" })
+    // ALREADY UP -> LEAVE IT STANDING.
+    //
+    // Nothing covers this card's own trigger: the wrapper-modal is
+    // `inset: 0` inside .window-manager, which begins below the topbar, so on
+    // desktop the Admin Console button stays clickable with the card open and
+    // gets pressed again. Without this the second press ran the whole open
+    // again — `Wm.confirm` feeds the host, which tears the standing card down
+    // and builds an identical one in its place.
+    //
+    // That rebuild is what the user actually sees go wrong. It is also pure
+    // waste: the answer cannot change between two clicks a second apart, since
+    // the gate was already decided before the first one.
+    //
+    // The backdrop half of the same problem is fixed in confirm() itself
+    // (manager.js, the overlay owner stamp), because it belongs to every
+    // caller of the shared host and not to this one. This guard is why THIS
+    // card no longer gets there at all.
+    //
+    // The highlight is still put back, exactly as the then/catch arms below
+    // do it: the press that got here has already lit the item up, so
+    // returning early without this would leave it lit over the wrong content.
+    if (this._featureLockCard()) {
+      this._restoreCurrentSidebarHighlight();
+      return Promise.resolve();
+    }
+
+    // BACKDROP: the app's frosted glass.
+    //
+    // This passed "none" until now, on the argument that an upsell is not a
+    // decision about the screen behind it. What that missed is where the card
+    // actually lands: a desk full of file and folder tiles, against which an
+    // unbacked card reads as one more floating panel among them. The busier
+    // the workspace the less it looks like the topmost thing it is.
+    //
+    // "blur" AND NOT confirm()'s "scrim" default, which was the first attempt
+    // and was rejected on sight: scrim-overlay is a flat var(--overlay-bg)
+    // — rgba(0,0,0,.4) — and a hard black wash over the desk is not what this
+    // product looks like anywhere else. `blur` is drumee.glass-overlay, the
+    // treatment every other modal fed through THIS SAME host already uses:
+    // wm/index.js openRequestAccessModal stamps it by hand, and the reward and
+    // guided flows both describe it as "the app's frosted-glass overlay" while
+    // opting out of it. A white card on it is the proven combination, not a
+    // new one — request_access_modal is exactly that — and the card carries
+    // its own 1px border and `0 14px 42px` shadow (window/confirm/skin) to sit
+    // on it. It is also theme-aware without a branch here: the mixin swaps to
+    // rgba(11, 10, 33, .55) under html[data-theme="dark"].
+    //
+    // Still spelled out rather than dropped: __wrapperModal is SHARED, and
+    // confirm() documents the failure an explicit value guards against — one
+    // left behind by the previous dialog. Naming it keeps this caller's
+    // backdrop a decision rather than an inherited default.
+    //
+    // NO POSITIONING RISK in the switch, which is the one thing worth checking
+    // here: the glass rule adds a backdrop-filter, and a backdrop-filter makes
+    // its element the containing block for fixed-position descendants — while
+    // window/confirm/skin pins its card `position: fixed` at <= 1024px. At
+    // exactly those breakpoints desk/wm/skin already pins this wrapper
+    // `position: fixed; inset: 0` (wrapper-modal-mobile-centre), i.e. to the
+    // viewport, so the card resolves against the same box either way; that
+    // mixin's own comment was written about this very filter. Above 1024px the
+    // card is absolutely positioned inside a wrapper that is already
+    // `position: absolute`, which a filter does not change. Hit testing is
+    // untouched: the wrapper was always there and always took clicks, it
+    // simply did not paint.
+    //
+    // The one thing a PAINTING host broke is the utility tooltip that hangs
+    // down off the topbar into it — see the z-index note in desk/skin, which
+    // was written on the premise that this host is always transparent.
+    return Wm.openFeatureLock({ feature: "admin_console", overlay: "blur" })
       .then(() => {
         // Defence in depth behind the card's own CTA gate: it only renders the
         // button when canUpgradePlan() passes, so reaching here without it
         // means the plan changed while the card sat open. Same guard, same
         // rule, one source — libs/billing.
         if (!canUpgradePlan()) return this._restoreCurrentSidebarHighlight();
-        return this.openBillingPage().then(() =>
+        return this.openBillingPage({ intent: "upgrade" }).then(() =>
           this._restoreCurrentSidebarHighlight()
         );
       })
@@ -3614,14 +10064,29 @@ class desk_module extends LetcBox {
   }
 
   /**
-   * Enforce mutual exclusion between sidebar panels. Keep-alive slots
+   * Enforce mutual exclusion between THE SLIDE-OUT PANELS. Keep-alive slots
    * just flip `data-anim` to "out"; other slots get cleared. Activity
    * panel uses `setState` because it predates the anim pattern.
+   *
+   * settings-main-slot is deliberately NOT in this list. Contacts, Trash and
+   * Notifications live in the right panel-container at z 10001 and the
+   * full-canvas slot sits at 1500, so a slide-out already paints OVER a
+   * section screen — closing that screen was policy, not a stacking
+   * requirement, and it is the wrong policy: pressing Contacts from the
+   * Personal Calendar tore the calendar down and slid the panel over whatever
+   * the desk canvas happened to hold underneath. Usually the workspace pane,
+   * which looks deliberate; sometimes nothing at all, which reads as a blank
+   * background (see Wm._releaseCanvas for how the canvas got emptied).
+   *
+   * A full-canvas screen still replaces the OTHER full-canvas screens — that
+   * is togglePanel feeding one slot — and navigating to a workspace or Home
+   * still clears it through closeMainPanels(), which is what closeAllPanels()
+   * pairs this with.
    */
   closeOtherSidebarPanels(except) {
     if (!this._pendingKinds) this._pendingKinds = {};
     if (!this._closeTimers) this._closeTimers = {};
-    const slots = ["chat-panel", "settings-main-slot", "trash-panel"];
+    const slots = ["chat-panel", "trash-panel"];
     const tasks = slots
       .filter((pn) => pn !== except)
       .map((pn) => {
@@ -3631,11 +10096,11 @@ class desk_module extends LetcBox {
         }
         return this.ensurePart(pn).then((p) => {
           if (!p || p.isEmpty()) return;
-          if (this._isKeepAliveSlot(pn)) {
+          if (this._slotKeepsChild(pn, p)) {
             this._hidePanel(p);
           } else {
             this._pendingKinds[pn] = null;
-            p.clear();
+            this._clearSlotKeepingParked(pn, p);
           }
         });
       });
@@ -3658,6 +10123,16 @@ class desk_module extends LetcBox {
   closeMainPanels() {
     if (!this._pendingKinds) this._pendingKinds = {};
     if (!this._closeTimers) this._closeTimers = {};
+    // The topbar icons for the screens about to go — see _clusterUnlight.
+    // HERE rather than in _leaveSectionScreen, which is only the rail's way in:
+    // loadHome closes these same slots too, and an icon left lit over a screen
+    // Home just closed is the same disagreement arriving by a different door.
+    this._clusterUnlight();
+    // Every deliberate way out of a section screen comes through here (the
+    // rail, a workspace switch, a sidebar folder, search) — so the breadcrumb's
+    // section hold is released HERE, before the caller's path paint, which would
+    // otherwise be refused as a late echo (breadcrumb/section-hold).
+    RADIO_BROADCAST.trigger("breadcrumb:leave-section");
     const slots = ["settings-main-slot", "trash-panel", "chat-panel"];
     return Promise.all(
       slots.map((pn) => {
@@ -3667,11 +10142,11 @@ class desk_module extends LetcBox {
         }
         return this.ensurePart(pn).then((p) => {
           if (!p || p.isEmpty()) return;
-          if (this._isKeepAliveSlot(pn)) {
+          if (this._slotKeepsChild(pn, p)) {
             this._hidePanel(p);
           } else {
             this._pendingKinds[pn] = null;
-            p.clear();
+            this._clearSlotKeepingParked(pn, p);
           }
         });
       }),
@@ -3709,6 +10184,13 @@ class desk_module extends LetcBox {
     if (pointerDragged || !window.Wm) {
       return;
     }
+    // A topbar utility icon: spin it and lock its siblings until its screen is
+    // up. The inner call is this same method, told apart by _utilityInner.
+    if (this._utilityInner !== cmd && this._isUtilityBtn(cmd)) {
+      return this._runUtilityBusy(cmd, service, () =>
+        this.onUiEvent(cmd, args),
+      );
+    }
     this.debug("AAA:830", service);
     // Mobile: tapping a navigational sidebar item dismisses the drawer so
     // the resulting panel/content is visible. on_click items (e.g. logout)
@@ -3718,23 +10200,51 @@ class desk_module extends LetcBox {
     if (Visitor.isMobile()) {
       this._maybeDismissMobileDrawer(service);
     }
+    // A rail row was pressed — __nav-main or __footer, both of which carry
+    // `railRow` (skeleton/sidebar.js). Transient cards that must not outlive a
+    // navigation gesture go now, BEFORE the switch below runs the service: the
+    // footer's own Invite row feeds the very host this dismisses, and doing it
+    // after would tear down the popup that row had just opened.
+    //
+    // Off the CLICKED VIEW, not off `service`: a synthetic dispatch
+    // (_deskServiceShim, _restoreScreen) carries the same service
+    // strings without anyone having touched the rail, and those must not count
+    // as a navigation gesture.
+    if (cmd && _.isFunction(cmd.mget) && cmd.mget("railRow")) {
+      this._dismissFeatureLock();
+      // A __nav-main row is going to a workspace tab, so the slide-outs the
+      // topbar opened (Notifications / Contacts / Trash) go with the gesture,
+      // and their icons stop claiming them. Same "clicked view, not service"
+      // rule as above: a synthetic rail-* dispatch leaves them alone.
+      if (RAIL_NAV_SERVICES.has(service)) this._closeUtilityPanelsForRail();
+    }
     switch (service) {
       // "Open Workspace" on the post-sign-in invited-workspace dialog. Opens the
       // hub exactly as clicking the "<name> invited you to <workspace>" activity
       // row does — panel/activity/widget/item/index.js, case hub_invite — by
       // handing Wm.route() the same deep link, rather than reaching for
       // loadWorkspace directly and re-deriving what that route already does.
+      // That row now lands DOCKED, and so does this: same route, same landing.
       //
-      // Do NOT "simplify" this to Wm.loadWorkspace({hub_id}). That was tried and
-      // reverted: loadWorkspace mounts the workspace as a HEADLESS pane, and a
-      // headless folder topbar deliberately drops the zoom and minimize chrome
+      // ⚠️ THIS DELIBERATELY REVERSES AN EARLIER DECISION, so that it is not
+      // "fixed" back. This used to point at "#/desk/wm/open/" and the comment
+      // here said not to dock it, because docking had been tried and reverted:
+      // a headless pane's folder topbar drops the zoom and minimize chrome
       // (folder/skeleton/topbar.js — `headless ? "" : zoomMenu(ui)`), so the
-      // window opened from this dialog lost its zoom control. This route launches
-      // a normal popup window_folder, which keeps the full chrome.
+      // window lost its zoom control.
+      //
+      // That objection no longer holds. Missing zoom/minimize is not a defect of
+      // the docked pane, it is the 2.0 desk: EVERY other way into a workspace —
+      // the sidebar, the workspace switcher, and now every notification — mounts
+      // exactly this headless pane. Leaving this one entry point on a floating
+      // popup made a brand-new guest's FIRST screen the only one in the product
+      // that looks pre-2.0. Docked on Duy's call, 2026-09-04.
       //
       // nid=0 is required, not decorative: it is the server's "this hub's root"
-      // value, and openFileLocation would otherwise fetch media.attributes with an
-      // undefined nid — see Wm._rootNid for what that costs.
+      // value, and the opener would otherwise fetch media.attributes with an
+      // undefined nid — see Wm._rootNid for what that costs. It also keeps
+      // openNotificationLocation on its no-navigation path, which is right here:
+      // the target IS the workspace root, so there is no sub-folder to enter.
       //
       // The hub comes off the field set when the dialog was armed, NOT off the
       // button's dataset: toolkit's button() does not pass attrOpt, so an
@@ -3750,7 +10260,7 @@ class desk_module extends LetcBox {
         }
         if (hub_id) {
           location.hash =
-            `#/desk/wm/open/?hub_id=${hub_id}&nid=0&filetype=folder&pid=0&ts=${Date.now()}`;
+            `#/desk/wm/reveal/?hub_id=${hub_id}&nid=0&filetype=folder&pid=0&ts=${Date.now()}`;
         }
         return;
       }
@@ -3824,7 +10334,7 @@ class desk_module extends LetcBox {
         // Same reason, different cause: a view/chat member of the CURRENT
         // workspace cannot upload into it, and a picker that can only end in a
         // 403 is worse than no picker.
-        if (this._guardWorkspaceWrite()) return;
+        if (this._guardWorkspaceWrite(LOCALE.PERMISSION_ACTION_UPLOAD)) return;
         return Wm.handleUpload();
       }
 
@@ -3835,7 +10345,7 @@ class desk_module extends LetcBox {
         this.closeDeskNewMenu(cmd);
         // A Drive import writes into the current workspace (it lands on the same
         // upload path), so it needs the same right as "From device".
-        if (this._guardWorkspaceWrite()) return;
+        if (this._guardWorkspaceWrite(LOCALE.PERMISSION_ACTION_IMPORT)) return;
         const workspace = (Wm && Wm._curWorkspace) || {};
         return Kind.waitFor("migrate_gdrive_popup").then(() => {
           Wm.launch(
@@ -3859,46 +10369,123 @@ class desk_module extends LetcBox {
           { explicit: 1, singleton: 1 },
         );
 
-      // Also the create sub-screen's back arrow — returning to the actions
-      // list is the same thing as opening it.
+      // ── The phone's bottom sheets (Option A) ────────────────────────────
+      // Every sheet row fires mobile-sheet-go with its REAL service as
+      // goTarget: close the sheet, then re-dispatch so the row lands on the
+      // exact handler the desktop surface already has. `args.service` wins
+      // over cmd.get(service) in this switch, which is what makes the
+      // re-dispatch land on the target instead of back here; the cmd rides
+      // along so per-row fields (wsHubId, the office template name) still
+      // read with mget.
+      case "mobile-sheet-go": {
+        const target = cmd.mget("goTarget");
+        this._closeMobileSheet();
+        if (!target) return;
+        if (target === "do-logout") return Butler.logout();
+        return this.onUiEvent(cmd, { ...args, service: target });
+      }
+
+      case "mobile-sheet-close":
+        return this._closeMobileSheet();
+
+      case "mobile-workspace-sheet":
+        return this._openWorkspaceSheet();
+
+      // The header's action button. It replaces the LIST with the workspace's
+      // own actions and turns itself into a close button — the phone's answer
+      // to the desktop header's ⋯, which floats a panel beside its card. There
+      // is no card to float beside in a bottom sheet, so the sheet becomes the
+      // panel instead of growing a second one.
+      //
+      // Re-feeding the whole sheet rather than toggling two pre-built halves:
+      // the rows come off the workspace's grid tile and may need the grid
+      // fetching first (_resolveWorkspaceActions), so there is nothing to
+      // pre-build at open time.
+      case "mobile-ws-actions":
+        return this._openWorkspaceSheetActions();
+
+      case "mobile-ws-actions-close":
+        return this._openWorkspaceSheet();
+
+      // One of those action rows. Same two steps "mobile-sheet-go" takes —
+      // close, then dispatch — but the dispatch lands on the workspace's MEDIA
+      // ITEM, not on the desk: that is the object the folder menu has always
+      // acted on, and the one that carries move/trash/download at all.
+      // `onDesk` rows (Rename, Manage access) are the exceptions the desktop
+      // menu already makes, and they are answered here.
+      case "mobile-ws-action": {
+        const svc = cmd.mget("goTarget");
+        const onDesk = cmd.mget("onDesk");
+        this._closeMobileSheet();
+        if (!svc) return;
+        if (onDesk) return this.onUiEvent(cmd, { ...args, service: svc });
+        const resolved = this._resolveWorkspaceActions();
+        const target = resolved && resolved.target;
+        if (!target || !_.isFunction(target.onUiEvent)) return;
+        return target.onUiEvent(cmd, { ...args, service: svc });
+      }
+
+      case "mobile-goto-sheet":
+        return this._openMobileSheet(
+          "goto",
+          require("./skeleton/mobile-sheets").gotoSheet(this),
+        );
+
+      case "mobile-account-sheet":
+        return this._openMobileSheet(
+          "account",
+          require("./skeleton/mobile-sheets").accountSheet(this),
+        );
+
+      // Kept as an alias: anything still emitting the old drawer's
+      // "mobile-show-add" lands on the create sheet.
       case "mobile-show-add":
-        return this.openMobileDrawer("actions");
+      case "mobile-new-sheet":
+        return this._openMobileSheet(
+          "new",
+          require("./skeleton/mobile-sheets").newSheet(this, {
+            mayWrite: this._curWorkspaceCanWrite(),
+            mayManage: this._curWorkspaceCanManage(),
+            locked: require("libs/over-limit").isLocked(),
+          }),
+        );
 
-      // The "Add new" row's destination: the five create options as their own
-      // drawer screen (skeleton/sidebar.js createCreateNav). A screen swap, not
-      // a write, so it takes no guard of its own — every row inside it lands on
-      // a case that carries one.
-      case "mobile-show-create":
-        return this.openMobileDrawer("create");
-
-      case "mobile-show-menu":
-        return this.openMobileDrawer("nav");
-
-      // The backdrop is shared between the drawer and the search card, so one
-      // tap has to dismiss whichever layer is actually up. Both closers are
-      // no-ops when their layer is already closed.
-      case "mobile-close-drawer":
-        this._closeMobileSearch();
-        return this._closeMobileDrawer();
-
-      // Hand off to the card without touching the backdrop — it stays lit
-      // across the swap, and _openMobileSearch performs the only write.
+      // The search card lights the shared backdrop itself; the sheet has its
+      // own dim, so the only handoff left is closing the sheet first.
       case "open-mobile-search":
-        this._closeMobileDrawer(1);
+        this._closeMobileSheet();
         return this._openMobileSearch();
 
       case "close-mobile-search":
+        return this._closeMobileSearch();
+
+      // A tap on the shared __overlay backdrop, which on mobile is lit only by
+      // the search card (skeleton/index.js wires this service onto it). Without
+      // a handler the backdrop was inert, so the card could be dismissed only
+      // by its own X — the tap-outside the backdrop exists for did nothing.
+      //
+      // The service KEEPS its drawer-era name: widget/chat-p2p and
+      // widget/address-book each test for "mobile-close-drawer" by name to stop
+      // a backdrop tap from also closing the panel standing behind the card.
+      // Renaming it here would silently re-break those two.
+      case "mobile-close-drawer":
         return this._closeMobileSearch();
 
       case "toggle-sidebar-pin":
         return this._toggleSidebarPin();
 
       case "toggle-activity":
+        // Pressed while its panel is open: close it. See _closeUtilityPanel.
+        if (this._utilityPanelOpen(service)) return this._closeUtilityPanel(service);
         // Activity predates togglePanel — release the wm modal lift here too.
         this._dismissWmModal();
         return this.ensurePart("activity-panel").then((p) => {
           const state = p.mget(_a.state) ? 0 : 1;
           p.activityState = state;
+          // Deliberately does NOT end an in-window tour, unlike togglePanel:
+          // notifications are a glance, and the tour (e.g. migrate) stays up
+          // underneath. The skin lifts the panel over it — see
+          // `[data-window-tour="1"] … __panel-container.right` in desk/skin.
           p.setState(state);
           if (state) {
             this.closeOtherSidebarPanels("activity-panel");
@@ -3907,16 +10494,50 @@ class desk_module extends LetcBox {
             // this desk toggle (setState directly), not the panel's own open
             // handler, so the refresh must be triggered here.
             if (typeof p.refreshFeed === "function") p.refreshFeed();
+            this._announceActivityCrumb();
+          } else {
+            // AND PUT THE PATH BACK, which only this case has to do by hand.
+            //
+            // Every other section screen lives in one of the three main slots,
+            // so leaving it runs through Desk._leaveSectionScreen →
+            // closeMainPanels(), which rebuilds the workspace path on the way
+            // out. The activity panel is deliberately NOT one of those — it is
+            // a side panel, and closeMainPanels() neither closes it nor hears
+            // about it. Without this branch the bell's own second press would
+            // hide the panel and leave the bar still reading "Notifications"
+            // over the workspace, with nothing left on screen to explain it.
+            //
+            // _restoreCurrentPath, not loadDefault: it resolves the pane (or
+            // _curWorkspace) and repaints the real path, and falls back to
+            // loadDefault itself when no workspace is open yet.
+            const crumb = _.isFunction(this.getPart)
+              ? this.getPart("breadcrumb")
+              : null;
+            if (crumb && _.isFunction(crumb._restoreCurrentPath)) {
+              crumb._restoreCurrentPath();
+            }
           }
         });
 
       case "toggle-inbox":
       case "toggle-chat":
-        return this.togglePanel("chat_p2p", "chat-panel");
+        RADIO_BROADCAST.trigger("breadcrumb:context", {
+          filename: LOCALE.INBOX,
+          ico: "top-inbox",
+        });
+        // Full-canvas, so the rail no longer describes the screen — see
+        // _railUnlight. Beside the breadcrumb retitle and for the same reason:
+        // both say "you are not in the workspace any more".
+        this._railUnlight();
+        return this.togglePanel("chat_p2p", INBOX_SLOT, true);
 
       case "toggle-contacts":
+        // Pressed while its panel is open: close it, and do not retitle the
+        // bar on the way out. See _closeUtilityPanel.
+        if (this._utilityPanelOpen(service)) return this._closeUtilityPanel(service);
         RADIO_BROADCAST.trigger("breadcrumb:context", {
           filename: LOCALE.CONTACTS,
+          ico: "top-contacts",
         });
         return this.togglePanel("address_book", "chat-panel");
 
@@ -3927,14 +10548,307 @@ class desk_module extends LetcBox {
       case "toggle-settings":
         RADIO_BROADCAST.trigger("breadcrumb:context", {
           filename: LOCALE.SETTINGS,
+          // No `top-*` twin: Settings is reached from the rail and the account
+          // menu, never the utility cluster. The rail's own id, so the crumb
+          // still matches the control that opened it.
+          ico: "sidebar_settings",
         });
         // Open-only — clicking Settings (sidebar) or the bottom Profile
         // item never closes the panel; the close icon inside Settings
         // handles closing.
         return this.togglePanel("settings_main", "settings-main-slot", true);
 
+      // Personal Calendar — full-canvas screen in the same slot as Settings /
+      // Get help / Billing, so it inherits their mutual exclusion and their
+      // reload-restore; like Settings and Get help it is kept mounted when
+      // closed (KEEP_ALIVE_MAIN_KINDS) and re-reads its window on re-show.
+      // Open-only, matching its sidebar neighbours.
+      case "toggle-calendar": {
+        RADIO_BROADCAST.trigger("breadcrumb:context", {
+          // The screen names itself "Personal Calendar" (its own page title,
+          // panel/calendar/skeleton/index.js), so the breadcrumb says the same
+          // thing. LOCALE.CALENDAR stays on the topbar button and the mobile
+          // sheet tile, which label the launcher, not the screen.
+          filename: LOCALE.PERSONAL_CALENDAR,
+          ico: "top-calendar",
+        });
+        // See _railUnlight — the calendar covers the workspace pane entirely.
+        // Before _openCalendar, which always reaches togglePanel (there is no
+        // early return to guard against), so the rail goes out whichever of
+        // its two paths — fresh mount or focusView on a parked screen — runs.
+        this._railUnlight();
+        // Most callers — the rail, the topbar cluster, the phone go-to grid,
+        // the reload-restore — want the screen as the user left it, so they
+        // name no view and the keep-alive reveal is unchanged. The Daily
+        // Reminder card names one: `day`, because the card is about today.
+        return this._openCalendar(args.calendarView);
+      }
+
+      // Switcher header ⋯ → the open workspace's own menu, built the way a
+      // right-click builds one. Its rows dispatch to the workspace WINDOW.
+      case "workspace-menu":
+        return this._toggleWorkspaceMenu(cmd);
+
+
+      // Switcher row → open that workspace. Same entry point the sidebar list
+      // used, so area handling, panel cleanup and the breadcrumb update are
+      // all unchanged.
+      // onUiEvent is not async, so the lookup is chained rather than awaited.
+      // _fetchWorkspaces is cached, so this resolves immediately in practice.
+      case "switch-workspace":
+        // THE PANEL GOES WITH THE GESTURE. Picking a row used to leave the
+        // dropdown standing over the workspace it had just opened, and the
+        // only way out was to click somewhere else. See
+        // _closeWorkspaceSwitcher for why this is done here rather than by
+        // relaxing the menu's `persistence`.
+        this._closeWorkspaceSwitcher();
+        // NOT _switchWorkspace directly: a switcher row both ENDS the tour
+        // drawn on the workspace being left and OFFERS the one the workspace
+        // it opens begins on. See _switchWorkspaceAndOffer for why only this
+        // gesture does the second half.
+        return this._switchWorkspaceAndOffer(cmd.mget("wsKey"));
+
+      // An org view CARD — the same gesture as a switcher row, from a screen
+      // whose listing is not the switcher's. It arrives with the ROW rather
+      // than a wsKey because the org view is fed org_workspaces, which the
+      // desk's own key rule has never seen; deriving the key here is what
+      // keeps one definition of "which workspace is this".
+      case "switch-workspace-row":
+        return this._switchWorkspaceRow(args.row);
+
+      // The rail's LOGO — a temporary Home (Lexis, 2026-09-15). Its
+      // destination is not a constant, so it is resolved in _railHome rather
+      // than named here.
+      case "rail-home":
+        return this._railHome();
+
+      // ── Workspace rail (Figma 43:23955) ────────────────────────────────
+      // Files / Chat / Task / Meet are the folder window's own tabs; Access is
+      // its manage-access panel. The rail is global but these are per-window,
+      // so the target is resolved at click time rather than cached.
+      // NO TOUR HERE, unlike the three rail cases below.
+      //
+      // Files briefly raised the migrate tour, on the reasoning that its first
+      // screen IS this pane. It reads better one step earlier: the tour is now
+      // chained to the END of the post-signup workspace tour, once the
+      // workspace that tour created is actually on screen (see
+      // _chainMigrateTour in desk/tutorial/index.js). A new account therefore
+      // meets it as the continuation of the walkthrough it is already in,
+      // rather than on a rail press it may not make for days — and pressing
+      // Files stays a navigation, not a full-screen interruption.
+      case "rail-files": {
+        // Contextual tour, on a press of Files in the rail — the gesture this
+        // tour is actually about, and the one place a user with an empty
+        // workspace goes looking for somewhere to put their files.
+        //
+        // BEFORE the tab, not after — see _railTabWithTour. The Files pane
+        // this tour introduces used to render first, and the tour then
+        // appeared on top of it.
+        return this._railTabWithTour("files", "migrate");
+      }
+      case "rail-chat": {
+        // Contextual tour, on the first press of Chat in the rail.
+        //
+        // `chat` has described itself as "fired the first time someone opens a
+        // workspace's Chat" since 2.0 pulled its five screens out of the folder
+        // step (tutorial/tours.js), but no trigger site was ever written: the
+        // tour was reachable only from `full` or ?tutorial=chat, so the one tour
+        // about threads never ran for anyone who did not ask for the whole
+        // product tour — exactly the gap rail-meet was added to close.
+        //
+        // BEFORE the tab, not after — see _railTabWithTour. Nothing is
+        // remembered here: the kill switch, the mobile check, the once-ever
+        // seen-set and single-flight all live in libs/tutorial-tours, so a
+        // fourth trigger surface can neither duplicate nor lose the gate.
+        //
+        // IN THE WINDOW now, not on the desk. This tour is about a workspace's
+        // threads, so it is drawn over the real chat pane the click just
+        // opened rather than over a mock of one.
+        //
+        // The `_activeWorkspace()` pre-check that used to gate it is gone with
+        // the desk host it protected: it existed because _railTab falls back to
+        // _openDefaultWorkspace(), and "a chat tour over the home grid explains
+        // a screen the user is not looking at". An in-window tour cannot land
+        // on the home grid — it is drawn on a window or not at all — and if
+        // that fallback did open a workspace, the chat pane is exactly what the
+        // user is now looking at.
+        return this._railTabWithTour(_a.chat, _a.chat);
+      }
+      case "rail-task": {
+        // Contextual tour, on the first press of Task in the rail.
+        //
+        // This is the gesture the tour is actually about — five tracker views
+        // and the New task dialog. Its other trigger surfaces (wm/index.js on
+        // a workspace/folder tile, workspace-list/index.js on a sidebar row)
+        // only infer an interest in tasks from having opened a folder, so a
+        // user who went straight to the rail would never have seen it.
+        //
+        // BEFORE the tab, not after — see _railTabWithTour. Nothing is
+        // remembered here: the kill switch, the mobile check, the once-ever
+        // seen-set and single-flight all live in libs/tutorial-tours, so a
+        // fourth entry point can neither duplicate nor lose the gate.
+        //
+        // IN THE WINDOW now, not on the desk. This tour ends by opening the
+        // panel's real New task form, which only the in-window host can reach
+        // (its CTA raises `window-tutorial:act`, and the desk host has no
+        // window to dispatch it at). Drawn over the real tracker rather than a
+        // mock of one.
+        //
+        // The `_activeWorkspace()` pre-check that used to gate it is gone with
+        // the desk host it protected: it existed because _railTab falls back to
+        // loadHome(), and "a tracker tour over the home grid explains a screen
+        // the user is not looking at". An in-window tour cannot land on the
+        // home grid — it is drawn on a window or not at all.
+        //
+        // WHETHER THE USER IS DONE is the seen-set's answer, as ever. This tour
+        // is `mark_on: "success"` and has exactly one way forward, so the flag
+        // is written when — and only when — "Create your first task" is
+        // pressed. Until then the claim keeps succeeding and the rail keeps
+        // offering it.
+        return this._railTabWithTour(_a.task, "folder_task");
+      }
+      case "rail-meet": {
+        // Contextual tour, on a press of Meet in the rail — the gesture this
+        // tour is about, and until recently the only one it had: `meeting` was
+        // reachable from the full product tour alone.
+        //
+        // BEFORE the tab, not after — see _railTabWithTour. Nothing is
+        // remembered here: the kill switch, the mobile check, the
+        // account-scoped once-ever seen-set and single-flight all live in
+        // libs/tutorial-tours — and the seen-set is the whole answer to
+        // "has the user finished with it". This tour is `mark_on: "success"`
+        // with one way forward, so its flag is written when, and only when,
+        // "Schedule your first meeting" is pressed.
+        //
+        // The `_activeWorkspace()` pre-check that used to gate it is gone with
+        // the desk host it protected: it existed because _railTab falls back to
+        // loadHome(), and "a meeting tour over the home grid explains a screen
+        // the user is not on". An in-window tour cannot land on the home grid —
+        // it is drawn on a window or not at all — and _onTourTrigger is what
+        // routes this one there.
+        return this._railTabWithTour("meeting", "meeting");
+      }
+      // The rail's Access and the switcher header's link icon do the identical
+      // thing — hand `folder-manage-access` to the active workspace window,
+      // which routes an external workspace to the secure-share panel. Two
+      // service names, one implementation: the header's icon is shown only for
+      // share/dmz, so it always lands on the link panel, while the rail is
+      // global and can also reach the members panel.
+      case "rail-access":
+        // members: the rail's Access is the "who has access" control, so it
+        // shows the permissions matrix for every workspace — external ones
+        // included, which used to get the link builder instead.
+        return this._railAccess({ members: 1 });
+
+      // Same destination, but wrapped so the header's icon can show it is
+      // working — see _workspaceAccessFromHeader. The rail is deliberately NOT
+      // wrapped: it is global, so it can also land on permission_restricted,
+      // which is not a lazy kind and has nothing to wait for.
+      case "workspace-access": {
+        // A TOGGLE. Lit while the secure-share view is up, and a press then
+        // closes it exactly as the panel's ✕ does (slide-out, then the chat
+        // panel back) — at once, without the chunk warm-up and the tour wait
+        // that only an OPEN needs.
+        const w = this._railWorkspace();
+        if (w && w.activeTab === SECURE_SHARE_TAB && _.isFunction(w.onUiEvent)) {
+          return w.onUiEvent(w, { service: SECURE_SHARE_CLOSE });
+        }
+        return this._workspaceAccessFromHeader(cmd);
+      }
+
+      // Switcher header ⋯ → Rename. Lexis, 2026-09-05: edit the NAME in place,
+      // the way the old desk edited a tile's label — no dialog.
+      case "workspace-rename": {
+        if (this._renameWorkspaceInline()) return;
+        // The inline editor could not start (no chip, no slot, no tile).
+        // Rather than leave the row doing nothing — the exact failure this
+        // menu had before — fall back to the tile's dialog, which needs no
+        // desk chrome of its own.
+        const w = this._activeWorkspace();
+        const _cur = (window.Wm && window.Wm._curWorkspace) || null;
+        const wsHub = w && w.mget && w.mget(_a.hub_id);
+        const tile = wsHub && this._workspaceMediaItem(
+          wsHub,
+          _cur && `${_cur.hub_id}` === `${wsHub}` ? _cur.nid : w.mget(_a.nid),
+        );
+        if (tile && _.isFunction(tile._renameWorkspacePrompt)) {
+          this.warn("Workspace rename: inline editor unavailable, using the dialog");
+          return tile._renameWorkspacePrompt();
+        }
+        return this.warn("Workspace rename: no way to collect a name");
+      }
+
+      // Value/commit events from that inline editor.
+      case "workspace-rename-input":
+        return this._onWorkspaceRenameInput(cmd);
+
+      case "workspace-rename-save":
+        return this._saveWorkspaceRename();
+
+      // Mute popup CARDS for every workspace — an empty hub_id is the global
+      // scope in activity/mute.js. It suppresses the interrupting card only:
+      // the Notification Center keeps every row, the badge and the counts.
+      //
+      // The cache is refreshed from the server's own response inside setMute,
+      // never from what we asked for, so it cannot drift from the database.
+      // Nothing is written optimistically and the menu is only re-rendered on
+      // success — a failed write must not leave a row claiming "Unmute" when
+      // nothing is muted.
+      case "toggle-mute-all": {
+        const { setMute, muteState } = require("builtins/panel/activity/mute");
+        const next = !(muteState() || {}).global;
+        return setMute(this, "", next).then(({ ok }) => {
+          if (!ok) return Wm.alert(LOCALE.MUTE_FAILED);
+          // Rebuild the topbar so the row reflects the new state; the menu has
+          // already closed itself (persistence: once) by the time this lands.
+          if (_.isFunction(this._syncWorkspaceTopbar)) this._syncWorkspaceTopbar();
+          return RADIO_BROADCAST.trigger("breadcrumb:content");
+        });
+      }
+
       case "toggle-help":
         return this._openGetHelp();
+
+      // Language switch from the account menu / mobile account sheet.
+      //
+      // Reload, not a live re-render. LOCALE is read at render time so
+      // swapping the table is cheap, but nothing re-renders itself on a
+      // language change: every window, panel and skeleton already on screen
+      // keeps the strings it was built with, and there is no invalidation
+      // channel for them. A reload is the only way the WHOLE UI comes up in
+      // one language — which is the actual requirement here, since a
+      // half-switched desk is worse than no switch at all.
+      //
+      // localStorage is written BEFORE the request, and the reload happens
+      // whether or not the request lands: storage is what the boot path
+      // reads (locale/index.js runs long before yp.get_env answers), so the
+      // switch must work offline, in the DMZ and for an account whose
+      // profile write fails. `drumate.set_lang` is the durable half — it
+      // persists profile.lang so the choice follows the user to another
+      // browser, and drumee.js reconciles storage from it on every boot.
+      case "set-ui-language": {
+        const uiLang = require("locale/supported");
+        const next = uiLang.normalize(cmd.mget("langCode"));
+        if (next === uiLang.current()) return;
+        uiLang.store(next);
+        // Reloading is only worth anything if the choice actually persisted:
+        // storage refused (private mode, site data blocked) means the next
+        // boot reads nothing and comes back in the OLD language, so a reload
+        // would look like the switch silently did nothing. Say so instead.
+        if (uiLang.stored() !== next) return Wm.alert(LOCALE.LANGUAGE_SWITCH_FAILED);
+        const done = () => location.reload();
+        // A signed-out/DMZ desk has no drumate endpoint; don't block the
+        // switch on it, and don't let a rejection swallow the reload. The
+        // profile is the durable half only — since drumee.js now lets the
+        // choice recorded here outrank it, a failed POST costs cross-device
+        // sync, not this browser's language.
+        if (!SERVICE.drumate || !SERVICE.drumate.set_lang) return done();
+        return this.postService({
+          service: SERVICE.drumate.set_lang,
+          Xlang: next,
+          hub_id: Visitor.id,
+        }).then(done, done);
+      }
 
       // "Contact Support" on the Get help screen — opens a live conversation
       // with the support account. help_main handles the false return by
@@ -3954,7 +10868,7 @@ class desk_module extends LetcBox {
         // Upgrade button is gated by canUpgradePlan() (deployment can sell AND
         // this reader may buy) — see builtins/widget/feature-lock.
         if (needsAdminConsoleUpgrade()) {
-          return this._showAdminUnlockModal();
+          return this._showAdminUnlockOverTour();
         }
         // Admin Console — the full in-desk console (apps_main) now lives in the
         // @drumee/admin-console plugin. Load it on demand, then render it in the
@@ -3962,7 +10876,13 @@ class desk_module extends LetcBox {
         // privilege gating (upsell for non-admins), so the item stays visible to all.
         RADIO_BROADCAST.trigger("breadcrumb:context", {
           filename: LOCALE.ADMIN_CONSOLE,
+          ico: "top-apps",
         });
+        // See _railUnlight. AFTER the upsell gate above — a personal plan gets
+        // a modal over the workspace it is still looking at, not a screen — and
+        // beside the breadcrumb retitle, which already commits to the console
+        // before the plugin chunk lands and is the same bet on the same hop.
+        this._railUnlight();
         // `tab` rides in from desk:open-admin-console — the storage overage
         // asks for the Storage tab, where the per-workspace cleanup is. The
         // plugin validates it against the tabs this role may see and falls
@@ -3978,9 +10898,37 @@ class desk_module extends LetcBox {
           .catch((e) => this.warn && this.warn("admin-console load failed", e));
       }
 
+      // ── Organisation (Figma 104:33055) ────────────────────────────────
+      // The org dropdown's "Open" → the organisation screen, in the same slot
+      // as Settings / Get help / Calendar so it inherits their mutual
+      // exclusion and their destroy-on-close. Open-only, like its neighbours.
+      case "open-org-view":
+        return this._openOrgView();
+
+      // "New department" from the topbar's + New menu. The org view owns the
+      // entry — this only has to make sure that screen is up.
+      //
+      // settings-main-slot is not a keep-alive slot, so togglePanel returns
+      // early for an already-mounted kind and never applies `opt`. Hence the
+      // split: mount it with the intent, or, when it is already the screen the
+      // user is on, tell it.
+      case "new-department": {
+        if (
+          this._pendingKinds
+          && this._pendingKinds["settings-main-slot"] === "desk_org_view"
+        ) {
+          return RADIO_BROADCAST.trigger("org:new-department");
+        }
+        return this._openOrgView({ armNewDepartment: 1 });
+      }
+
       case "toggle-trash":
+        // Pressed while its panel is open: close it, and do not retitle the
+        // bar on the way out. See _closeUtilityPanel.
+        if (this._utilityPanelOpen(service)) return this._closeUtilityPanel(service);
         RADIO_BROADCAST.trigger("breadcrumb:context", {
           filename: LOCALE.TRASH,
+          ico: "top-trash",
         });
         return this.togglePanel("panel_trash", "trash-panel");
 
@@ -3992,7 +10940,23 @@ class desk_module extends LetcBox {
         // (libs/billing): ignore stray triggers (deep links, stale UI, an
         // install with no payment backend) that could otherwise dead-end.
         if (!canUpgradePlan()) return;
-        return this.openBillingPage();
+        // Every entry point NAMED upgrade means buy, so the default carries
+        // that intent and the billing page opens straight on checkout wherever
+        // it can work out which plan is meant — settings_billing
+        // ._settleUpgradeIntent, which falls back to the plans grid whenever it
+        // cannot.
+        //
+        // TWO CALLERS REACH THIS SERVICE WITHOUT MEANING BUY, and both say so
+        // by declaring some other intent: settings_main's "Manage subscription"
+        // card ('manage'), and _restoreScreen replaying the screen after
+        // a reload ('restore'). Testing for "declared something else" rather
+        // than for either name keeps the next such caller from having to be
+        // remembered here.
+        return this.openBillingPage(
+          args && args.intent && args.intent !== "upgrade"
+            ? undefined
+            : { intent: "upgrade" },
+        );
 
       // Display mode (light/dark/system) moved to Settings → Appearance.
       // See builtins/widget/settings/main + utils router/theme.js.
@@ -4072,6 +11036,25 @@ class desk_module extends LetcBox {
         Wm.loadWorkspace(cmd);
         return;
 
+      // The switcher's "New workspaces" button. Same preamble as the shared
+      // case below — close the menu behind the modal, refuse while over limit —
+      // but tells Wm to open the WORKSPACE form regardless of what is open.
+      //
+      // Delegating rather than feeding media_form here on purpose: Wm's case
+      // owns the wrapper-modal plumbing (the data-state / data-overlay stamps
+      // and the _closeWhenEmpty hook that waits for the whole media_form ->
+      // permission_* chain to empty). A second copy of that is what drifts.
+      case "new-workspace-form": {
+        this.closeDeskNewMenu(cmd);
+        if (require("libs/over-limit").guardWrite("write")) return;
+        return Wm.onUiEvent(cmd, {
+          ...args,
+          service: "new-workspace",
+          force_workspace: 1,
+          ...this._createFormOverrides(),
+        });
+      }
+
       case "new-workspace": {
         this.closeDeskNewMenu(cmd);
         // Create workspace is a write — block at the UI before media_form /
@@ -4093,7 +11076,7 @@ class desk_module extends LetcBox {
         if (require("libs/over-limit").guardWrite("write")) return;
         // A note is saved into the current workspace (media.save asks for the
         // write bit), so refuse here rather than open an editor that cannot save.
-        if (this._guardWorkspaceWrite()) return;
+        if (this._guardWorkspaceWrite(LOCALE.PERMISSION_ACTION_CREATE_NOTE)) return;
         Wm.windowsLayer.append({
           kind: "editor_markdown",
           uiHandler: [this],
@@ -4108,7 +11091,7 @@ class desk_module extends LetcBox {
         // "network error" path that the plugin's own error handler shows.
         if (require("libs/over-limit").guardWrite("write")) return;
         // Same for a viewer who simply lacks write in this workspace.
-        if (this._guardWorkspaceWrite()) return;
+        if (this._guardWorkspaceWrite(LOCALE.PERMISSION_ACTION_CREATE_DOCUMENT)) return;
         Wm.newDocument(cmd);
         return;
       }
@@ -4122,7 +11105,7 @@ class desk_module extends LetcBox {
         // Managing members needs the ADMIN bit (hub.invite is `src: admin`), so
         // refuse with words rather than open a popup whose submit can only 403.
         if (!this._curWorkspaceCanManage()) {
-          this._sayWeakPrivilege();
+          this._sayWeakPrivilege(LOCALE.PERMISSION_ACTION_INVITE, _K.permission.admin);
           return;
         }
         return this._openInvitePopup(cmd);
@@ -4261,12 +11244,7 @@ class desk_module extends LetcBox {
 
       case "activity-update":
         if (args.unread_count == null) return;
-        return this.ensurePart("activity-count").then((p) => {
-          let content = args.unread_count || 0;
-          if (parseInt(content) > 99) content = "99+";
-          p.el.innerText = content;
-          p.el.dataset.count = content;
-        });
+        return this._writeActivityCount(args.unread_count);
 
       // default:
       // Wm.unselect();
@@ -4307,28 +11285,154 @@ class desk_module extends LetcBox {
     }
   }
 
+  /**
+   * Light or unlight the rail's Invite row, following the popup's lifetime.
+   *
+   * Invite is the one rail row outside the shared `sidebar-radio` group
+   * (skeleton/sidebar.js `soloState`), because it opens a popup OVER the
+   * current tab rather than replacing it — so the tab keeps its own highlight
+   * and this row carries its own. Nothing else writes this row's state, which
+   * is why every close path has to reach here.
+   *
+   * getPart, never ensurePart: the desktop rail does not mount on a phone (the
+   * bottom bar has no Invite row — it lives in the mobile sheet), and
+   * ensurePart never resolves for a part that will not mount on this device.
+   * Same idiom, same reason, as _readActivityCount and _resetRailToFiles.
+   *
+   * @param {Number} on 1 to light the row, 0 to clear it
+   */
+  _setInviteRowState(on) {
+    if (!_.isFunction(this.getPart)) return;
+    const p = this.getPart("sidebar-invite");
+    if (!p || !p.el || (p.isDestroyed && p.isDestroyed())) return;
+    if (_.isFunction(p.setState)) p.setState(on ? 1 : 0);
+  }
+
+  /**
+   * Spinner on the rail's Invite row while the popup is on its way.
+   *
+   * A sibling of _setInviteRowState rather than part of it: that one is the
+   * HIGHLIGHT (the popup is up), this one is the WAIT (the popup is coming).
+   * They are briefly both on and they clear on different signals — the
+   * highlight on the popup's destroy, this one on the feed.
+   *
+   * Same part lookup and the same guards, for the same reason: ensurePart
+   * never resolves for a part that will not mount on this device, so the row
+   * may simply not be there.
+   *
+   * @param {Number} on 1 to spin the row, 0 to clear it
+   */
+  _setInviteRowLoading(on) {
+    if (!_.isFunction(this.getPart)) return;
+    const p = this.getPart("sidebar-invite");
+    if (!p || !p.el || (p.isDestroyed && p.isDestroyed())) return;
+    if (on) {
+      p.el.dataset.loading = "1";
+    } else {
+      delete p.el.dataset.loading;
+    }
+  }
+
+  /**
+   * Clear the Invite row's spinner AND cancel a grace timer that has not
+   * fired yet. Safe on a path that never armed one.
+   */
+  _clearInviteRowLoading() {
+    if (this._inviteLoadingTimer) {
+      clearTimeout(this._inviteLoadingTimer);
+      this._inviteLoadingTimer = null;
+    }
+    this._setInviteRowLoading(0);
+  }
+
   async _openInvitePopup(cmd) {
     if (typeof Wm === "undefined" || !Wm || !Wm.__wrapperModal) return;
     if (this._invitePopup && !this._invitePopup.isDestroyed()) {
       Wm.__wrapperModal.clear();
       Wm.__wrapperModal.el.dataset.state = "closed";
       this._invitePopup = null;
+      this._setInviteRowState(0);
       return;
     }
     // Free: solo — no invites (silent). Seat cap is org-members only
     // (Admin member_add); hub.invite is not gated by Team seat headcount.
     const { isFreeSoloPlan, showFreeSoloLimit } = require("libs/billing");
     if (isFreeSoloPlan()) return showFreeSoloLimit();
+
+    // COMING FROM A SECTION SCREEN? LAND ON FILES FIRST.
+    //
+    // Plan / Settings / Get help / Calendar / Inbox / Trash / Apps mount in
+    // their own slot and the rail lights their row. Opening this popup lifts
+    // the window manager over that slot (see _dismissWmModal), so the screen
+    // silently became "the workspace + the popup" while the slot stayed
+    // mounted underneath, the breadcrumb still read "Billing & subscription"
+    // and the rail lit Plan AND Invite at once. Reported by Duy.
+    //
+    // _railTab("files") is the desk's own "leave the section screen and show
+    // workspace content" path — it closes the slot, rebuilds the breadcrumb off
+    // the workspace and shows the tab — so the screen becomes what the popup is
+    // actually sitting on. _resetRailToFiles then lights Files, which the click
+    // cannot do by itself: Invite is outside the rail's radio group by design
+    // (see _setInviteRowState), so nothing else would unlight Plan.
+    //
+    // ONLY from a section screen. With a workspace tab already showing there is
+    // nothing to leave, and forcing Files would yank the user off the Chat or
+    // Task they are looking at — the opposite of the "popup over the current
+    // tab" behaviour this row is meant to have.
+    if (_.isFunction(this._currentScreenService) && this._currentScreenService()) {
+      this._railTab("files");
+      this._resetRailToFiles();
+    }
+
+    // SPIN THE ROW, BUT NOT STRAIGHT AWAY.
+    //
+    // What is being waited for is the lazy chunk behind Kind.waitFor — the
+    // kind is a webpack import() (seeds.js `invite_popup`), so a cold click
+    // is a network fetch. reward-flow budgets 8s for this very chunk, so the
+    // wait is real and worth showing.
+    //
+    // It is only real ONCE. Every later click is answered from the module
+    // cache in a microtask, and stamping unconditionally would flash a
+    // spinner for a single frame on every open after the first. So the stamp
+    // is armed on a short delay and simply never fires on a warm click.
+    // Cancel an orphan first. Two clicks inside this 120ms window both get
+    // past the toggle guard above (_invitePopup is not set until the feed),
+    // and the first timer would otherwise survive to stamp a row that the
+    // second open has already finished with.
+    this._clearInviteRowLoading();
+    this._inviteLoadingTimer = setTimeout(() => {
+      this._inviteLoadingTimer = null;
+      this._setInviteRowLoading(1);
+    }, 120);
+
     return Kind.waitFor("invite_popup").then(() => {
+      this._clearInviteRowLoading();
       const ws = (Wm && Wm._curWorkspace) || {};
       Wm.__wrapperModal.feed({
         kind: "invite_popup",
         hub_id: ws.hub_id || Visitor.id,
+        // The sidebar's Invite row opens the popup about the CURRENT workspace
+        // (Figma 785:74990) — see libs/invite-scope. Every other caller of
+        // "invite-member" (topbar, context menu, the guided tours) keeps the
+        // organisation-wide popup with its "Invite to" tree.
+        ...inviteWorkspaceScope({
+          cmd,
+          ws,
+          rows: this._workspaces,
+          visitorId: Visitor.id,
+          wmName:
+            (Wm && _.isFunction(Wm.mget) && (Wm.mget(_a.hub_name) || Wm.mget(_a.filename))) || "",
+        }),
         uiHandler: [this],
       });
       this._invitePopup = Wm.__wrapperModal.children.last();
+      this._setInviteRowState(1);
       this._invitePopup.once(_e.destroy, () => {
         this._invitePopup = null;
+        // Every close lands here — the X, Escape, a click outside, the rail
+        // dismissing it on the way to another tab, and the toggle above (which
+        // unlights before this fires, so the two agree either way).
+        this._setInviteRowState(0);
         // Same pair as the "invitation-sent" relay above: whichever guided flow
         // asked for this popup needs to know it has gone, and only one of them
         // can be running.
@@ -4339,6 +11443,12 @@ class desk_module extends LetcBox {
           this._activateFlow.onInvitePopupClosed();
         }
       });
+    }).catch((err) => {
+      // A chunk that 404s, or a feed that throws, would otherwise leave the
+      // row spinning for the rest of the session — no popup, and nothing to
+      // clear it but a reload.
+      this._clearInviteRowLoading();
+      this.warn("[desk] invite popup failed to open", err);
     });
   }
 
@@ -4514,12 +11624,47 @@ class desk_module extends LetcBox {
   _focusSearch(e) {
     const chat = this._bigchatFor(e && e.target);
     if (chat) return this._openChatSearch(chat);
+    // On desktop the file search is the WORKSPACE toolbar's field, owned by the
+    // folder window (window/skeleton/toolkit workspaceSearchBox) — it searches
+    // that one workspace, and the desk holds no box of its own there. The desk's
+    // own `_searchBoxInner` is the mobile search card, which is global.
+    if (this._focusWorkspaceSearch()) return true;
     if (!this._searchBoxInner || !_.isFunction(this._searchBoxInner.focus)) {
       return false;
     }
     // focusin on the box already opens the suggestions list (see onPartReady).
     this._searchBoxInner.focus();
     return true;
+  }
+
+  // Focus the search field of the workspace window the user is looking at: the
+  // one containing focus, else the last-opened popup, else the workspace pane
+  // itself (`headless`, the full-area window behind any popup). False when no
+  // folder window is open or its <input> has not been built yet, so the key
+  // falls through to whatever else can answer it.
+  _focusWorkspaceSearch() {
+    const wm = window.Wm;
+    if (!wm || !_.isFunction(wm.getItemsByKind)) return false;
+    let open;
+    try {
+      open = wm.getItemsByKind("window_folder") || [];
+    } catch (err) {
+      return false;
+    }
+    const live = open.filter(
+      (w) =>
+        w &&
+        !(_.isFunction(w.isDestroyed) && w.isDestroyed()) &&
+        _.isFunction(w.focusWorkspaceSearch),
+    );
+    if (!live.length) return false;
+    const node = document.activeElement;
+    const focused = node
+      ? live.find((w) => w.el && _.isFunction(w.el.contains) && w.el.contains(node))
+      : null;
+    const popups = live.filter((w) => !w.mget(_a.headless));
+    const target = focused || popups[popups.length - 1] || live[0];
+    return !!target.focusWorkspaceSearch();
   }
 
   // The chat window containing `target`, or null. Keyed on focus rather than on
@@ -4775,11 +11920,37 @@ class desk_module extends LetcBox {
       "panel_activity",
       "chat_p2p",
       "address_book",
-      "apps_main",
       "settings_main",
     ]) {
       Kind.waitFor(k);
     }
+    // Screens and panes a switch reaches first — the top bar's Calendar /
+    // Help / org view and the workspace pane's chat and task board. Each was a
+    // plain import() paid on its FIRST click (chunk fetch + parse, and a
+    // runtime <style> injection that restyles the document) behind a
+    // placeholder. One per idle slot, so warming them never competes with
+    // whatever the user is actually doing.
+    const idle = (fn) =>
+      typeof window.requestIdleCallback === "function"
+        ? window.requestIdleCallback(fn, { timeout: 4000 })
+        : setTimeout(fn, 300);
+    const warm = [
+      "widget_chat",
+      "tasks_panel",
+      "calendar_main",
+      "help_main",
+      "desk_org_view",
+    ];
+    const next = () => {
+      const k = warm.shift();
+      if (!k) return;
+      try {
+        const p = Kind.waitFor(k);
+        if (p && typeof p.catch === "function") p.catch(() => { });
+      } catch (e) { }
+      idle(next);
+    };
+    idle(next);
   }
 }
 

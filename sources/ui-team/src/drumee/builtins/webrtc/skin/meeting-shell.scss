@@ -61,6 +61,10 @@
     // inline top/left/width/height from `style` actually positions it as a
     // free window in the Wm pool (the relative default above is for the
     // embedded folder-tab case). Marker set in onDomRefresh.
+    //
+    // SHARED WITH window_connect, which is still a floating 1:1 call window.
+    // The team meeting is NOT — it fills the desk canvas, and overrides all of
+    // this in window/meeting/skin/index.scss. Don't move that override in here.
     &[data-standalone="1"] {
       position: absolute;
       border-radius: 8px;
@@ -159,38 +163,16 @@
     background: #ffffff;
   }
 
-  &__chat-close {
-    width: 32px;
-    height: 32px;
-    padding: 9px;
-    border-radius: 6px;
-    cursor: pointer;
-    color: #65656c;
-    flex-shrink: 0;
-    transition:
-      background 0.15s ease,
-      color 0.15s ease;
-
-    svg {
-      width: 14px;
-      height: 14px;
-    }
-
-    &:hover {
-      background: rgba(0, 0, 0, 0.06);
-      color: #0b0a21;
-    }
-  }
-
   &__chat-widget {
     flex: 1;
     min-height: 0;
   }
 
   // ── Side-panel tabs (Participants | Chat) ───────────────────────────────
-  // The header holds the tab switch (flex:1) and the close button. Active tab
-  // is reflected via [data-state="1"]; the panel root's [data-tab] flips which
-  // pane is visible (see below).
+  // The header holds the tab switch (flex:1) and nothing else — the ✕ that sat
+  // beside it is gone, the panel is collapsed from the topbar pill that opened
+  // it. Active tab is reflected via [data-state="1"]; the panel root's
+  // [data-tab] flips which pane is visible (see below).
   &__chat-tabs {
     flex: 1;
     min-width: 0;
@@ -483,10 +465,9 @@
   }
   }
 
-  // Narrow window: fold chat + people into the "more" overflow menu so the
-  // primary controls (hand, reactions, fullscreen, camera, mic, screen, leave)
-  // still fit. Reactions and fullscreen stay in the bar; only the two controls
-  // the overflow menu can stand in for are dropped.
+  // Narrow canvas: fold chat + people into the "more" overflow menu so the
+  // primary controls (hand, reactions, camera, mic, screen, leave) still fit.
+  // Only the two controls the overflow menu can stand in for are dropped.
   &__ui[data-narrow="1"] {
     @include meeting-overflow-fold($pfx);
   }
@@ -1016,68 +997,6 @@
 
     span {
       cursor: pointer;
-    }
-  }
-
-  // ── Window-resize dropdown ─────────────────────────────────────────────
-  &__resize-menu {
-    position: relative;
-    flex-shrink: 0;
-
-    // The menu widget wraps the trigger; keep it inline with the buttons.
-    .menu-topic-trigger {
-      display: flex;
-      align-items: center;
-    }
-
-    .menu-topic-items {
-      background: #ffffff;
-      border-radius: 8px;
-      box-shadow: 0 1px 11px rgba(0, 0, 0, 0.13);
-      z-index: 300;
-    }
-  }
-
-  &__resize-items {
-    width: 180px;
-    padding: 12px;
-    gap: 0;
-  }
-
-  &__resize-item {
-    display: flex;
-    box-sizing: border-box;
-    align-items: center;
-    gap: 8px;
-    padding: 8px;
-    border-radius: 8px;
-    cursor: pointer;
-    color: var(--primary-purple-100, #0b0a21);
-    transition: background 0.12s ease;
-
-    svg {
-      width: 17px;
-      height: 17px;
-      flex-shrink: 0;
-      fill: currentColor;
-    }
-
-    .note-content {
-      @include drumee.typo(
-        $size: 12px,
-        $line: 17px,
-        $weight: 400,
-        $color: #0b0a21
-      );
-      white-space: nowrap;
-
-      section {
-        white-space: nowrap;
-      }
-    }
-
-    &:hover {
-      background: rgba(0, 0, 0, 0.05);
     }
   }
 
@@ -1992,7 +1911,7 @@
     margin: 0 4px;
   }
 
-  // Generic square icon buttons: hand / reactions / chat / people / fullscreen.
+  // Generic square icon buttons: hand / reactions / chat / people / more.
   // Button.Svg roots are plain divs (no framework flex) — display:flex is
   // required or the inner svg sits top-left instead of centered.
   &__ctrl-btn {
@@ -2020,11 +1939,6 @@
     }
 
     &:hover {
-      background: rgba(0, 0, 0, 0.05);
-    }
-
-    // Fullscreen sits on a subtle filled chip (Figma Overlay/light mode).
-    &.fullscreen {
       background: rgba(0, 0, 0, 0.05);
     }
 
@@ -2113,6 +2027,47 @@
         flex-shrink: 0;
         fill: currentColor;
       }
+
+      // Blocked-permission badge (room _setMediaDeniedUi appends it). The
+      // control keeps its own mic / camera glyph — the warning sits on the
+      // corner instead, so the button still says what it toggles.
+      // pointer-events:none is load-bearing: ui-core only fires a widget's
+      // service when the innermost element under the pointer carries it, so a
+      // hit-testable child here would swallow every click on the toggle.
+      .media-denied-badge {
+        position: absolute;
+        top: -2px;
+        right: -2px;
+        display: flex;
+        width: 13px;
+        height: 13px;
+        align-items: center;
+        justify-content: center;
+        pointer-events: none;
+        border-radius: 50%;
+        // Ring in the bar's own background so the badge reads as a badge
+        // rather than as part of the glyph behind it.
+        background: var(--default-bg, #fff);
+        color: var(--eorange, #fa8540);
+
+        svg {
+          width: 11px;
+          height: 11px;
+          fill: currentcolor;
+        }
+      }
+
+      // Blocked: the toggle is inert (its service is nulled in
+      // _setMediaDeniedUi — this is the matching cursor half). Only the glyph
+      // dims: dimming the whole control would take the warning badge down with
+      // it, and the badge is the message.
+      &[data-denied="1"] {
+        cursor: not-allowed;
+
+        > svg {
+          opacity: 0.45;
+        }
+      }
     }
 
     // Device caret: interactive button on both camera and mic pills.
@@ -2148,6 +2103,21 @@
 
       .ctrl-button {
         color: var(--signal-error, #d74e49);
+      }
+    }
+
+    // Blocked by the browser or the operating system — amber, and AFTER the
+    // red rule so it wins at equal specificity. A blocked device is also an
+    // "off" device, so without this the two states are the same red pill: one
+    // is the user's own choice, the other is something they must go and fix.
+    // The glyph itself becomes apps-warning (room _setMediaDeniedUi).
+    &:has(.ctrl-video[data-denied="1"]),
+    &:has(.ctrl-audio[data-denied="1"]) {
+      background: rgba(250, 133, 64, 0.18);
+      color: var(--eorange, #fa8540);
+
+      .ctrl-button {
+        color: var(--eorange, #fa8540);
       }
     }
   }
@@ -2218,7 +2188,17 @@
     overflow: hidden;
     border: 1px solid rgba(255, 255, 255, 0.14);
     box-shadow: 0 12px 32px rgba(0, 0, 0, 0.32);
-    cursor: pointer;
+    // GRAB, NOT POINTER. The whole tile is both the drag handle and the button
+    // that returns to the call (window/meeting _bindCallTileDrag): a press that
+    // travels moves it, a press that does not brings the call back. `grab` is
+    // the affordance for the move; the cover's "Return to call" label is the
+    // one for the click, and between them the tile explains both.
+    cursor: grab;
+    // Let a touch drag move the tile instead of scrolling the screen behind it.
+    touch-action: none;
+    // A drag across the tile would otherwise select its own labels, which then
+    // stay highlighted over the video.
+    user-select: none;
     // Keep the tile's internal reflow out of the page's: the desk is navigating
     // while this resizes, and without containment that layout work landed in
     // the same frame as the screen the user just asked for.
@@ -2254,6 +2234,19 @@
       justify-content: center;
       gap: 8px;
       background: rgba(11, 10, 33, 0.55);
+      // The scrim is `inset: 0` with an opaque-ish background, so it paints a
+      // SQUARE sheet over the tile's rounded corners the moment it fades in —
+      // the tile is round at rest and square on hover, which is the tell.
+      //
+      // The tile's own `overflow: hidden` normally clips this; the radius here
+      // makes it correct on its own too.
+      //
+      // A LITERAL, NOT `inherit`: this element's PARENT is `__main`, which
+      // carries no radius of its own — the 12px lives two levels up, on
+      // `__ui[data-call-tile="1"]`. `border-radius: inherit` reads the parent's
+      // computed value, so it would resolve to 0 here and quietly do nothing.
+      // Keep this in step with the tile radius in that block.
+      border-radius: 12px;
       opacity: 0;
       transition: opacity 0.15s ease;
 
@@ -2272,6 +2265,31 @@
 
     &:hover .#{$pfx}__call-tile-live {
       opacity: 0;
+    }
+
+    // ── While it is being dragged ─────────────────────────────────────────
+    // `data-call-drag` is stamped on the window root (and on the desk dock) for
+    // the duration of a real drag — not on press: under the slop threshold the
+    // gesture is still a click, and flashing this would make every click on the
+    // tile blink.
+    &[data-call-drag="1"] {
+      cursor: grabbing;
+      // Picked up off the surface, so it is clearly the thing being moved.
+      box-shadow: 0 20px 44px rgba(0, 0, 0, 0.45);
+      border-color: rgba(255, 255, 255, 0.28);
+    }
+
+    // The pointer is still over the tile the whole way, so the hover cover
+    // would sit there through the drag inviting a click that is not coming.
+    // Same specificity as the :hover rule above (0,4,0) and later in the file.
+    &[data-call-drag="1"] .#{$pfx}__call-tile-cover {
+      opacity: 0;
+    }
+
+    // ...and with the cover down, the LIVE mark comes back, so what the user
+    // drags always reads as a running call.
+    &[data-call-drag="1"] .#{$pfx}__call-tile-live {
+      opacity: 1;
     }
   }
 
@@ -2312,6 +2330,18 @@
   &__call-tile-ico {
     width: 22px;
     height: 22px;
+    // BOTH, and `color` is the one that does the work for the current glyph.
+    //
+    // The sprite has two kinds of symbol. --icon-meet-expand (the old glyph)
+    // carries no paint attribute at all, so its paths inherit this `fill`.
+    // --icon-rail-meet paints with `fill="currentColor"`, and a presentation
+    // attribute on the path beats a `fill` inherited from the <svg> — so
+    // `fill: #fff` alone leaves it whatever colour `color` happens to resolve
+    // to. `color` is what currentColor reads.
+    //
+    // Keep the pair: it renders white for either kind of symbol, so swapping
+    // the ico again cannot silently change the colour.
+    color: #fff;
     fill: #fff;
   }
 

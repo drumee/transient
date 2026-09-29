@@ -143,7 +143,9 @@ module.exports = function (ui, contacts) {
     const name = fullName(c);
     const sub = subtitle(c, name);
     const status = c.status || "active";
-    const isReceived = status === "received";
+    // Both pending incoming statuses, same rule the detail panel applies —
+    // see contact-detail.js for why "invitation" counts as an invite.
+    const isReceived = status === "received" || status === "invitation";
     const isSent = status === "sent";
     const isArchived = c.is_archived === 1 || status === "archived";
     const isBlocked = c.is_blocked === 1 || status === "blocked";
@@ -167,7 +169,8 @@ module.exports = function (ui, contacts) {
       ];
     } else if (isSent) {
       actionKids = [
-        iconBtn(fig, "danger", "cross", LOCALE.CANCEL_INVITE || LOCALE.CANCEL, "delete-contact", { contactId: key }, ui),
+        // See contact-detail.js: `confirmKind` picks the cancel-invite copy.
+        iconBtn(fig, "danger", "cross", LOCALE.CANCEL_INVITE || LOCALE.CANCEL, "delete-contact", { contactId: key, confirmKind: "cancel-invite" }, ui),
       ];
     } else {
       actionKids = [
@@ -222,7 +225,10 @@ module.exports = function (ui, contacts) {
   const listBody = contacts.length
     ? Skeletons.Box.Y({
         className: `${fig}__contact-list`,
-        kids: contacts.map(item),
+        // WINDOWED — see the note on ui.contactWindow(). `contacts.length`
+        // above still gates the empty state, so a non-empty book can never
+        // render the "no contacts" note.
+        kids: contacts.slice(0, ui.contactWindow()).map(item),
       })
     : Skeletons.Note({
         className: `${fig}__empty`,

@@ -1,8 +1,34 @@
-const { canUpgradePlan, billingAvailable } = require("libs/billing");
+const {
+  canUpgradePlan, billingAvailable, planRank, planKey,
+  PROMO_YEARLY_PCT, promoYearlyEndsAt, promoYearlySecondsLeft, promoYearlyCountdown,
+} = require("libs/billing");
 
 const TAB_MONTHLY = 0;
 const TAB_YEARLY = 1;
 const TAB_CHECKOUT = 2;
+
+// The September 2026 campaign's window, percentage and countdown all live in
+// libs/billing.js: this page and the promo_yearly modal both count the same
+// campaign down and must never disagree about it.
+
+// Where the campaign modal records that it has been shown today.
+//
+// localStorage, so it is PER BROWSER. promo-launch30 deliberately used a
+// server flag and its header says why — clearing the cache must not re-offer a
+// promo that was already claimed. That reasoning does not carry here: this
+// modal grants nothing and claims nothing, it is an advert, and the worst a
+// cleared cache can do is show an advert one extra time. Making it per account
+// would mean a new service and table in server-team + schemas, which is not a
+// trade worth making for a 19-day campaign. If it ever needs to be per
+// account, this is the single place that changes.
+const PROMO_YEARLY_SEEN_KEY = "drumee.promo.yearly.shown-on";
+
+// How long the subdomain field stays quiet before its availability is checked.
+// Long enough that an ordinary typist produces one request per word rather
+// than one per letter; short enough that the verdict is there before the hand
+// reaches Proceed to Checkout. payment.validate_org_ident is a DB-only read
+// (one proc + one count query), so this costs nothing Stripe-shaped.
+const ORG_IDENT_DEBOUNCE_MS = 450;
 
 const formatCurrency = (amount) => {
   return `$${amount.toFixed(2)}`;
@@ -77,6 +103,9 @@ class settings_billing extends LetcBox {
 
   onBeforeDestroy() {
     this.unbindEvent(_a.live);
+    clearTimeout(this._motionTimer);
+    clearTimeout(this._orgIdentTimer);
+    this._stopPromoCountdown();
     if (this._onVisibility) {
       document.removeEventListener("visibilitychange", this._onVisibility);
       this._onVisibility = null;
@@ -126,6 +155,36 @@ class settings_billing extends LetcBox {
     // Stripe mirror (LAUNCH30 org) — keep it for cancel-consequence copy.
     this._memberCount = ~~(raw && raw.member_count);
     const sub = this._subscription;
+    // DOES THE STRIPE MIRROR STILL DESCRIBE THE PLAN THIS CALLER HOLDS?
+    //
+    // `plan` on this row is the last Stripe receipt; `entitlement_plan` is
+    // yp.quota -- the row every quota check in the product actually reads. The
+    // two come apart, because the mirror is only dropped by the
+    // customer.subscription.deleted webhook: a subscription cancelled in the
+    // Stripe dashboard, one whose deletion event never landed, and one
+    // superseded by a hand-granted tier all leave the row behind as status
+    // 'canceled' long after the entitlement has moved on.
+    //
+    // Live on prod 2026-09-16 -- entitlement 'business', mirror 'pro'
+    // /'canceled' -- and the page announced Pro, marked the Pro card "Your
+    // current plan" (disabled, so it could not even be re-bought) and left the
+    // Business tier the account actually held looking unowned.
+    //
+    // A MISSING entitlement KEEPS the mirror. A server one release behind that
+    // does not select the column, and a payer with no quota row at all, both
+    // arrive here empty -- and "unknown" must never read as "stale", or such a
+    // deployment would disown every live subscription on it.
+    //
+    // SO DOES A LIVE ONE, and that is the guardrail that matters: while Stripe
+    // is still charging for this subscription the caller holds it, whatever the
+    // quota row says. Without this, any disagreement at all could hide a plan
+    // somebody is paying for -- a legacy entitlement name is enough, since
+    // planKey folds 'advanced' onto free -- and taking a paid tier off a paying
+    // customer's screen is a far worse failure than the stale label this fixes.
+    // Only a subscription Stripe is NOT charging for can be disowned.
+    const liveMirror = !!(sub && /^(active|trialing|past_due)$/.test(sub.status || ""));
+    this._mirrorIsCurrent = !sub || !sub.plan || !sub.entitlement_plan || liveMirror
+      || planKey(sub.plan) === planKey(sub.entitlement_plan);
     const now = Math.floor(Date.now() / 1000);
     this._periodEnd = (sub && Number(sub.period_end)) || 0;
     // Pending cancel = mirror status 'canceled' with the paid period still in
@@ -134,14 +193,14 @@ class settings_billing extends LetcBox {
     this._isCanceling = !!(sub && sub.status === "canceled" && this._periodEnd > now);
     this._hasPaidSub = !!(sub && sub.subscription_id);
     this._isPromoTrial = false;
-    // Live subscription = nothing left to buy self-serve. The tier ladder is
-    // free < team < (business | sovereign = sales-led), so a Team subscriber
-    // has no higher self-serve tier to reach and no reason to re-buy the one
-    // they hold. "Live" includes the PENDING-CANCEL window: it mirrors as
-    // 'canceled' but Stripe still holds an active subscription carrying
-    // cancel_at_period_end, so buying now would run two paid subscriptions at
-    // once. That caller resumes (the banner offers it); only once the paid
-    // period lapses may they buy again.
+    // Live subscription = a purchase from here is a REPLACEMENT, not a new
+    // buy. This no longer closes the Checkout tab (it never should have -- see
+    // _checkoutTabAllowed); it routes the plan cards and the Pay button into
+    // the replace-confirm instead, so the old subscription is always ended as
+    // the new one starts. "Live" includes the PENDING-CANCEL window: it
+    // mirrors as 'canceled' but Stripe still holds an active subscription
+    // carrying cancel_at_period_end, so a plain second purchase would run two
+    // paid subscriptions at once. Resuming is offered in the banner.
     // past_due is live as well: Stripe retries that invoice for weeks before
     // giving up, so the caller still holds a subscription and must not be sent
     // to checkout to buy a second one. Counting it here routes them to the
@@ -168,25 +227,41 @@ class settings_billing extends LetcBox {
   }
 
   /**
-   * May the Checkout tab be entered at all? False once a subscription is
-   * live: the server refuses such a checkout (ALREADY_SUBSCRIBED), and
-   * without this the tab walked the user through a purchase flow that could
-   * only dead-end -- or, before the server guard, charge them twice.
+   * May the Checkout tab be entered? Yes whenever this deployment sells plans
+   * and this caller is allowed to buy at all. **A live subscription no longer
+   * closes it.**
+   *
+   * It used to, and the reasoning was sound as far as it went: a live
+   * subscriber has no higher self-serve tier to reach, and `payment.checkout`
+   * refuses them outright. But the flag that says so (`_hasActiveSub`) is
+   * filled by `_loadSubscription()`, so the tab could only be taken away
+   * AFTER it had been shown -- which is what a person experiences as "I
+   * opened Billing and the Checkout tab disappeared on me" (Lexis,
+   * 2026-09-16, an org on Business monthly). A tab that moves under the user
+   * is its own defect, and no amount of making it move FASTER fixes it.
+   *
+   * So the tier gate moves off the tab and onto the button that actually
+   * spends money: `_proceedToCheckout` routes a live subscriber into the plan
+   * REPLACEMENT warning the plan cards have always used, which is the one
+   * path the server admits (`supersede`).
+   *
+   * 🔒 NOTHING IS LOOSENED. `payment.checkout` still refuses a live
+   * subscriber that arrives without `supersede`; the buyer still reads and
+   * accepts "your current plan will be canceled immediately, remaining time
+   * is not carried over" before any charge; the webhook still cancels the
+   * replaced subscription as the new one is paid, so the two never bill in
+   * parallel. Buying the exact plan+cycle already held is still refused. What
+   * changed is only WHERE the user is told -- on the button, with an
+   * explanation, instead of by a tab silently vanishing.
+   *
+   * The two shortcuts this method used to carry (an accepted `supersede`, and
+   * a LAUNCH30 trial with no Stripe row) both returned `_mayCheckout()` as
+   * well, so they are folded into the single answer rather than deleted.
+   *
    * @returns {boolean}
    */
   _checkoutTabAllowed() {
-    // A replacement in progress is the one case where a live subscriber may
-    // reach checkout: they accepted the warning, and the server admits them on
-    // the supersede flag.
-    if (this.state && this.state.checkout && this.state.checkout.supersede) {
-      return this._mayCheckout();
-    }
-    // LAUNCH30 trial has no Stripe subscription. Checkout must stay open so
-    // the user can convert with an MKT outreach partner code (trial + % off).
-    if (this._isPromoTrial && !this._hasPaidSub) {
-      return this._mayCheckout();
-    }
-    return this._mayCheckout() && !this._hasActiveSub;
+    return this._mayCheckout();
   }
 
   /**
@@ -208,7 +283,26 @@ class settings_billing extends LetcBox {
     const c = opt.cycle != null ? String(opt.cycle).toLowerCase() : "";
     const cycle = /^year/.test(c) ? "yearly" : (/^month/.test(c) ? "monthly" : null);
     const tab = opt.tab != null ? String(opt.tab).toLowerCase() : "";
-    if (!plan && !cycle && !tab) return;
+    // The coupon a campaign CTA carries (analytics-server SEGMENT_COUPON).
+    //
+    // SHAPE-CHECKED HERE because billing-deep-link.js deliberately does not:
+    // that lib runs before a module exists and stays dumb so a malformed param
+    // cannot break the boot. `[A-Za-z0-9_-]` and 64 chars are what
+    // yp.mkt_coupon.code actually stores (ascii, and the dashboard's own
+    // field); anything else is dropped silently, which degrades to "no coupon"
+    // rather than posting junk to preview_coupon.
+    const rawPromo = opt.promo != null ? String(opt.promo).trim() : "";
+    const promo = /^[A-Za-z0-9_-]{1,64}$/.test(rawPromo) ? rawPromo : null;
+    // An Upgrade CTA knows WHERE it wants to go but not WHAT to buy. Kept
+    // apart from `tab` for exactly that reason: `tab: "checkout"` names a
+    // destination the caller has already committed to and needs a `plan`
+    // beside it, while this is a request for THIS screen to work the plan out
+    // once the subscription mirror lands. Resolved in _settleUpgradeIntent.
+    const intent = opt.intent != null ? String(opt.intent).toLowerCase() : "";
+    // `intent` joins the guard for the same reason `promo` did -- an
+    // intent-only open carries none of the other three.
+    if (!plan && !cycle && !tab && !promo && !intent) return;
+    this._upgradeIntent = intent === "upgrade";
 
     if (cycle) {
       this.state.plansTab.cycle = cycle;
@@ -228,14 +322,72 @@ class settings_billing extends LetcBox {
       this._deepLinkCheckout = true;
       this.state.currentTab = TAB_CHECKOUT;
     }
+    if (promo) {
+      // SEEDS THE FIELD ONLY. skeleton/checkout.js renders the input from
+      // `promoCode`, so this makes the code appear in the box — and nothing
+      // more.
+      //
+      // `checkout.promo` is deliberately NOT written. That object means
+      // "previewed and accepted by the server", and it is what draws the
+      // Applied chip and the discounted total. Setting it here would show a
+      // reader a discount the server has never seen, and the first they would
+      // learn otherwise is the amount they are charged. Only _applyPromoCode,
+      // via payment.preview_coupon, may write it.
+      this.state.checkout.promoCode = promo;
+      this._deepLinkPromo = promo;
+    }
+  }
+
+  /**
+   * Apply the coupon a campaign CTA arrived with, once the screen has settled.
+   *
+   * SEEDING THE FIELD IS NOT APPLYING THE CODE — see _applyDeepLink. This is
+   * the half that asks the server, and it is separate from the seed because it
+   * can only run once three things are true, none of which hold when the
+   * preselect is read:
+   *
+   *   the plan is known      _applyPromoCode posts checkout.selectedPlan, which
+   *                          _applyDeepLink seeds from plan=team;
+   *   the subscription is    a checkout deep link opens the tab BEFORE
+   *   known                  _loadSubscription answers, and _settleDeepLinkTab
+   *                          then bounces an account that cannot buy back to
+   *                          the plans view — previewing a coupon on that
+   *                          screen offers a discount with nothing to spend it
+   *                          on;
+   *   exactly once           preview_coupon is a POST, and renderContent runs
+   *                          on every tab change, seat tweak and WS
+   *                          plan_updated.
+   *
+   * Called from the END of _settleDeepLinkTab, which is the one moment all
+   * three hold, and which already owns the once-latch for the tab decision.
+   * This keeps its own latch so the two concerns stay separable.
+   *
+   * ARMED ONLY BY A LINK. A user who opens billing normally with a stale
+   * promoCode in state must never have it silently re-applied — the flag is
+   * set in _applyDeepLink and nowhere else.
+   */
+  _autoApplyDeepLinkPromo() {
+    if (!this._deepLinkPromo || this._deepLinkPromoApplied) return;
+    // The tab has settled by now; honour its verdict rather than overriding it.
+    if (this.state.currentTab !== TAB_CHECKOUT) return;
+    this._deepLinkPromoApplied = true;
+    // Reused unchanged: it already reads checkout.promoCode when the input is
+    // not yet bound, already posts plan + hub_id, already maps every server
+    // refusal to a readable message, and already repaints the summary. A second
+    // apply path here would be a second copy of all of that.
+    return this._applyPromoCode();
   }
 
   /**
    * A checkout deep link opens the tab before the subscription is known (see
-   * _applyDeepLink). Once it has loaded, honour the same guard the tab bar uses:
-   * an account that cannot check out (already subscribed / upgrades off) falls
-   * back to the plans view on the chosen cycle instead of dead-ending. Runs at
-   * most once.
+   * _applyDeepLink). Once it has loaded, honour the same guard the tab bar
+   * uses: an account that may not buy here at all (upgrades off for this
+   * deployment, or not the org owner) falls back to the plans view on the
+   * chosen cycle instead of dead-ending. Runs at most once.
+   *
+   * Holding a subscription is NOT such a case any more -- that caller may
+   * enter checkout and switch plan, and _proceedToCheckout asks them to
+   * confirm the replacement first.
    */
   _settleDeepLinkTab() {
     if (!this._deepLinkCheckout || this._deepLinkSettled) return;
@@ -245,6 +397,71 @@ class settings_billing extends LetcBox {
       this.state.currentTab = cycle === "yearly" ? TAB_YEARLY : TAB_MONTHLY;
       this.tab = this.state.currentTab;
     }
+    // AFTER the tab decision above, never before: a coupon must not be
+    // previewed onto a screen this method just decided has no checkout on it.
+    this._autoApplyDeepLinkPromo();
+  }
+
+  /**
+   * "Upgrade" clicked somewhere that cannot name a plan.
+   *
+   * Every upgrade CTA outside this screen -- the sidebar entry, the Settings
+   * storage row, the admin console's capacity card, the quota-exceeded card,
+   * the feature lock -- lands on the plans grid. That is the right answer for
+   * somebody shopping and the wrong one for somebody whose plan has just
+   * lapsed: they are shown the ladder again and made to re-pick the tier they
+   * already chose once and paid for (reported 2026-09-16).
+   *
+   * THE PLAN THEY LOST is the only thing that makes this decidable, and a
+   * disowned mirror is precisely that record -- a receipt for a tier the
+   * entitlement no longer grants (see _loadSubscription). Where there is none
+   * the grid stays up, deliberately: a clean lapse deletes the mirror row
+   * outright and a first-time buyer never had one, and neither should be
+   * dropped into a payment form for a plan nobody has proposed to them.
+   *
+   * Runs once, after _loadSubscription, and defers to the same
+   * _checkoutTabAllowed() gate the tab bar and the deep link use -- so it can
+   * no more dead-end an account than they can. It also stands aside for an
+   * explicit checkout deep link, which has already named both plan and tab.
+   */
+  _settleUpgradeIntent() {
+    if (!this._upgradeIntent || this._upgradeIntentSettled) return;
+    this._upgradeIntentSettled = true;
+    if (this._deepLinkCheckout) return;
+    if (this._mirrorIsCurrent !== false) return;
+    const mirrorPlan = String((this._subscription || {}).plan || "");
+    // planKey() falls back to Visitor.quota() when given nothing, which would
+    // name the plan they HAVE rather than the one they lost. _mirrorIsCurrent
+    // being false already implies a non-empty mirror plan; this keeps that
+    // implication local instead of resting on a check thirty lines away.
+    if (!mirrorPlan) return;
+    const lost = planKey(mirrorPlan);
+    // Neither end of the ladder is a purchase: free has no checkout, and
+    // sovereign is sales-led.
+    if (!/^(pro|team|business)$/.test(lost)) return;
+    // Nothing to sell in this environment -- the card itself says so rather
+    // than walking the buyer to a NO_PRICE failure, and so does this.
+    if (!this._catSellable(lost)) return;
+    if (!this._checkoutTabAllowed()) return;
+    // The RHYTHM they were on, too. fetchPlanData only re-seeds the cycle
+    // while the caller is NOT on the checkout tab, and this puts them on it —
+    // so without this line a lapsed yearly subscriber is quoted the monthly
+    // price (the state default) for the plan they are being offered back, on a
+    // screen they never asked to be taken to. Same two keys _applyDeepLink
+    // writes for a cycle, so leaving checkout lands on the matching tab.
+    const period = String((this._subscription || {}).period || "");
+    if (/^year/.test(period) || /^month/.test(period)) {
+      const cycle = /^year/.test(period) ? "yearly" : "monthly";
+      this.state.plansTab.cycle = cycle;
+      this.state.checkout.billingCycle = cycle;
+      // Keep fetchPlanData's first-paint seed from overriding the rhythm we
+      // just chose, exactly as _applyDeepLink does for an explicit cycle.
+      this._cycleSeeded = true;
+    }
+    this.state.plansTab.selectedPlan = lost;
+    this.state.checkout.selectedPlan = lost;
+    this.state.currentTab = TAB_CHECKOUT;
+    this.tab = TAB_CHECKOUT;
   }
 
   // Human-readable consequence list for the cancel-confirm modal.
@@ -492,7 +709,6 @@ class settings_billing extends LetcBox {
     const currentTitle = label(current);
     const targetTitle = label(targetPlan);
     const when = this._periodEnd ? Dayjs(this._periodEnd * 1000).format("MMM D, YYYY") : "";
-    const rank = { free: 0, pro: 1, team: 2, business: 3, sovereign: 4 };
 
     // Three shapes for three different situations (product spec 2026-07-29):
     //  - same plan, other cycle  → DEFERRED: the current cycle runs to its
@@ -509,7 +725,16 @@ class settings_billing extends LetcBox {
     let title;
     let message;
     let confirm_type = "danger";
-    if (samePlan && period === currentPeriod) return; // already exactly this
+    // Already exactly this plan+cycle: there is nothing to replace. Say so
+    // rather than returning silently -- this used to be unreachable (the card
+    // for the plan you hold is disabled), but the Checkout tab now opens to a
+    // live subscriber with their CURRENT plan preselected, and a Pay button
+    // that quietly does nothing is exactly the kind of dead end this whole
+    // change exists to remove. Same wording the server's own refusal gets.
+    if (samePlan && period === currentPeriod) {
+      if (Wm && Wm.alert) Wm.alert(LOCALE.ALREADY_SUBSCRIBED);
+      return;
+    }
     // A cycle change is charged like any other plan change: at checkout, now.
     // It used to be deferred — the new cycle idled on a Stripe trial until the
     // paid period lapsed — which took no money on the day and so had its own
@@ -523,7 +748,7 @@ class settings_billing extends LetcBox {
           || "Switch to the {0} {1} plan for {2}{3}?\n\nYour current {4} {5} subscription will be canceled immediately, and any remaining subscription time will not be carried over. Your {0} {1} plan will start right away.")
           .format(targetTitle, cycleWord(period), price, per, currentTitle, cycleWord(currentPeriod)),
       ];
-      if ((rank[targetPlan] ?? 0) < (rank[current] ?? 0)) {
+      if (planRank(targetPlan) < planRank(current)) {
         lines.push(this._downgradeConsequences(targetPlan));
       }
       title = (LOCALE.PLAN_SWITCH_CYCLE_TITLE || "Switch to {0} {1}")
@@ -534,7 +759,7 @@ class settings_billing extends LetcBox {
       // quoted — "for $X/month or $Y/year" — because the plan card the user
       // clicked sells the plan, not a cycle; the checkout tab still lets them
       // pick either before paying.
-      const down = (rank[targetPlan] ?? 0) < (rank[current] ?? 0);
+      const down = planRank(targetPlan) < planRank(current);
       const mPrice = this._money(this._catPrice(targetPlan, "month"));
       const yPrice = this._money(this._catPrice(targetPlan, "year"));
       if (down) {
@@ -587,6 +812,37 @@ class settings_billing extends LetcBox {
   }
 
   /**
+   * Arm the entrance animations for the NEXT render pass only.
+   *
+   * Every surface on this page is rebuilt by a full feed(), and feed() runs on
+   * background events too — the catalog landing a few hundred ms after first
+   * paint, a payment.plan_updated WS message, the visibilitychange re-sync.
+   * Ungated, the cards would replay their entrance on each of those, seconds
+   * apart, with the user having done nothing. So motion is opt-in per render:
+   * the skeletons read _motion while they are BUILT (synchronously, in the
+   * same task as the feed() call that follows), and the timeout below clears
+   * it before any later render can see it. Armed only where a person actually
+   * changed what is on screen — first paint, a Monthly/Yearly switch, entering
+   * Checkout.
+   */
+  _armMotion() {
+    this._motion = true;
+    clearTimeout(this._motionTimer);
+    this._motionTimer = setTimeout(() => {
+      this._motion = false;
+    }, 0);
+  }
+
+  /**
+   * Class suffix the skeletons append to a container whose entrance should
+   * animate on this render.
+   * @returns {string} " is-anim" while a render is armed, "" otherwise
+   */
+  _motionClass() {
+    return this._motion ? " is-anim" : "";
+  }
+
+  /**
    * Re-initialize UI when DOM is refreshed
    */
   async onDomRefresh() {
@@ -599,6 +855,8 @@ class settings_billing extends LetcBox {
       this.state.currentTab = TAB_MONTHLY;
     }
     this.tab = this.state.currentTab;
+    // First paint is the one render nobody has to ask for — let it animate in.
+    this._armMotion();
     // Render immediately with Visitor.quota()'s cached plan/seats/storage and
     // the hardcoded fallback catalog prices — was two sequential awaited
     // fetches (catalog, then subscription) BEFORE the first feed(), so the
@@ -608,19 +866,40 @@ class settings_billing extends LetcBox {
     this.fetchPlanData();
     // Catalog (live Stripe prices) and subscription mirror (status,
     // period_end, seats — also computes the pending-cancel banner flags) are
-    // independent reads; fetch them concurrently instead of one after the
-    // other and re-render once both are in.
-    const [catalog] = await Promise.all([
-      this.fetchService(SERVICE.payment.catalog, { hub_id: Visitor.id })
-        .then((d) => (d && d.plans) || null)
-        .catch(() => null),
-      this._loadSubscription(),
-    ]);
-    this._catalog = catalog;
+    // independent reads, so both are in flight at once. They are NOT awaited
+    // together, though: `Promise.all` used to gate the correcting render on
+    // the SLOWER of the two, and they are nothing alike. The mirror is a DB
+    // read (~250 ms); the catalog walks the plan rows and asks Stripe for each
+    // price one after another (payment.catalog: 8 sequential prices.retrieve
+    // calls — measured ~2 s on stage, and it is a live third-party round trip,
+    // so several seconds is normal).
+    //
+    // That mattered because the mirror is what settles the two things first
+    // paint can only guess: which plan is actually current, and whether the
+    // Checkout tab may be entered at all. Waiting on the catalog left a
+    // subscriber reading "You are on the Free plan" beside a live Checkout tab
+    // for seconds — and then watched the plan change and the tab vanish under
+    // them ("open Billing, 5 s later the checkout button disappears",
+    // 2026-09-08). The prices need no such wait: _catPrice already renders
+    // from its offline fallback map until the catalog lands.
+    const catalogRead = this.fetchService(SERVICE.payment.catalog, { hub_id: Visitor.id })
+      .then((d) => (d && d.plans) || null)
+      .catch(() => null);
+    await this._loadSubscription();
+    if (this.isDestroyed()) return;
     // The subscription is now loaded, so checkout eligibility is knowable:
     // settle any checkout deep link (stepping down to the plans view if this
     // account can't buy) before the render below.
     this._settleDeepLinkTab();
+    // Same moment, same reason: an Upgrade CTA's intent can only be turned
+    // into a plan once the mirror is known.
+    this._settleUpgradeIntent();
+    // Correct the screen NOW rather than at the end of the method: everything
+    // this render fixes is already known, and the awaits that follow are the
+    // slow ones. The final fetchPlanData() below still runs, with the prices.
+    this.fetchPlanData();
+    this._catalog = await catalogRead;
+    if (this.isDestroyed()) return;
     // LAUNCH30 (design doc 2026-07-30) trigger B: "Opens Billing page".
     // Self-gated server-side (SERVICE.promo.get_state) — safe to call
     // unconditionally on every mount, including a re-render after tab focus.
@@ -643,6 +922,12 @@ class settings_billing extends LetcBox {
       };
       document.addEventListener("visibilitychange", this._onVisibility);
     }
+    // After the catalog AND the subscription mirror, never before: the gate
+    // reads both (is the discount real, is this caller already on yearly), and
+    // asking early would answer from the offline fallback prices and the
+    // not-yet-known plan. Not awaited — the modal is an overlay, and holding
+    // the page's last render behind a bundle fetch would be backwards.
+    this._maybeShowPromoYearly();
     return this.fetchPlanData();
   }
 
@@ -666,10 +951,20 @@ class settings_billing extends LetcBox {
       // the mirror whenever
       // there is a live subscription row; quota stays the source for everyone
       // else (a free account has no mirror row at all).
-      const mirrored = String((this._subscription || {}).plan || "");
-      const planName = (mirrored || plan || "free").toLowerCase();
+      //
+      // ...and only for as long as that mirror IS the caller's plan. A
+      // superseded row (see _loadSubscription's _mirrorIsCurrent) is a receipt
+      // for a tier they no longer hold, so the ENTITLEMENT takes over: the
+      // server's own reading of yp.quota first, the Visitor cache after it.
+      // The cycle below rides on the same decision -- a period lifted off a
+      // disowned receipt would label the billing rhythm of a plan it does not
+      // describe.
+      const subRow = this._subscription || {};
+      const mirrored = this._mirrorIsCurrent === false ? "" : String(subRow.plan || "");
+      const entitled = String(subRow.entitlement_plan || "");
+      const planName = (mirrored || entitled || plan || "free").toLowerCase();
       if (mirrored) {
-        const p = String((this._subscription || {}).period || "");
+        const p = String(subRow.period || "");
         if (/^year/.test(p)) billing_cycle = "yearly";
         else if (/^month/.test(p)) billing_cycle = "monthly";
       }
@@ -777,12 +1072,33 @@ class settings_billing extends LetcBox {
         break;
       case `${this.fig.family}__checkout-org-ident-input`:
         this.__orgIdentInput = child;
+        // Check whatever the field is SHOWING, including the auto-suggested
+        // subdomain nobody typed — that one is derived from the username and
+        // is just as able to be taken. Deduped on the value in
+        // _checkOrgIdent, so the re-renders this page does on its own never
+        // re-ask the same question.
+        this._scheduleOrgIdentCheck(
+          this.state?.checkout?.orgIdent != null
+            ? this.state.checkout.orgIdent
+            : this._defaultOrgIdent(),
+        );
+        break;
+
+      case `${this.fig.family}__checkout-org-ident-msg`:
+        this.__orgIdentMsg = child;
         break;
       case `${this.fig.family}__checkout-promo-code-input`:
         this.__promoCodeInput = child;
         break;
       case `${this.fig.family}__redeem-code-input`:
         this.__redeemCodeInput = child;
+        break;
+      case `${this.fig.family}__promo-countdown`:
+        // Re-point at the freshly rendered chip (the old one's node is gone)
+        // and make sure exactly one interval is running — _startPromoCountdown
+        // is a no-op when it already is.
+        this.__promoCountdown = child;
+        this._startPromoCountdown();
         break;
         // case `${this.fig.family}__checkout-storage-input`:
         //   this._setupInputChangeListener(child, "storage");
@@ -1090,6 +1406,239 @@ class settings_billing extends LetcBox {
   }
 
   /**
+   * What twelve months of a plan cost when bought one month at a time.
+   *
+   * Nothing is ever SOLD at this figure — it is the reference the yearly
+   * saving is measured against, and the struck-through number on a discounted
+   * card (Figma 692-128029, which strikes $60/$348/$1,188 — exactly 12x the
+   * $5/$29/$99 monthly prices). Derived rather than stored so it cannot drift
+   * away from the monthly price it is a multiple of.
+   * @param {string} code - plan code ('pro' | 'team' | 'business')
+   * @returns {number} amount in currency units, 0 when the plan has no price
+   */
+  _yearlyListPrice(code) {
+    const monthly = this._catPrice(code, "month");
+    return monthly > 0 ? monthly * 12 : 0;
+  }
+
+  /**
+   * How much a yearly subscription saves against twelve monthly ones, as a
+   * whole percent.
+   *
+   * READ FROM THE CATALOG, never hardcoded. This used to be a literal 16.5 in
+   * skeleton/header.js, which was only true while yearly sat at 10x monthly:
+   * the moment a campaign moves the Stripe prices, a hardcoded badge either
+   * understates the offer or — far worse — advertises a discount the checkout
+   * does not honour. The amounts here come from the same _catPrice() the cards
+   * and the confirm dialog quote, so the badge, the strike and the price the
+   * buyer is actually charged cannot disagree.
+   *
+   * FLOORED, so the copy can only ever under-promise: the standing 10x deal is
+   * 16.67% and reads "16%". Same safe direction the published 16.5% figure
+   * chose.
+   *
+   * Across plans it takes the SMALLEST saving, and counts a plan that saves
+   * nothing as a real 0 rather than skipping it — the tab badge is one claim
+   * covering every plan, so it has to be true of the worst of them. Only plans
+   * with no price in this environment are ignored, because there is no claim
+   * to make about something that is not for sale here.
+   * @param {string} [code] - a single plan, or omit for the whole catalogue
+   * @returns {number} whole percent, 0 when there is no saving to report
+   */
+  _yearlySavingPct(code) {
+    const codes = code ? [code] : ["pro", "team", "business"];
+    const pcts = [];
+    for (const c of codes) {
+      const list = this._yearlyListPrice(c);
+      const yearly = this._catPrice(c, "year");
+      // Not priced in this deployment — no opinion, not a zero.
+      if (list <= 0 || yearly <= 0) continue;
+      pcts.push(yearly >= list ? 0 : Math.floor(((list - yearly) / list) * 100));
+    }
+    if (!pcts.length) return 0;
+    return Math.min(...pcts);
+  }
+
+  /**
+   * Is the September 50%-off-yearly campaign both LIVE and actually honoured?
+   *
+   * Two independent gates, and the catalog one is the important half: the
+   * banner claims a specific number ("50% OFF YEARLY PLAN", and the ticket
+   * artwork has "50%" baked into it), so it may only appear once Stripe is
+   * really giving at least that much. Before the prices are changed the page
+   * simply shows no banner instead of a false one; after they are restored it
+   * disappears on its own. The date is the backstop that retires the campaign
+   * even if the prices are left in place.
+   *
+   * Until the catalog lands, _catPrice() answers from its offline fallback map
+   * (the standing 10x prices), which scores 16% — so the first paint of a
+   * cold load shows nothing and the banner appears with the real prices. That
+   * is the right way round: never flash a claim we cannot yet stand behind.
+   * @returns {boolean}
+   */
+  _promoYearlyActive() {
+    if (Math.floor(Date.now() / 1000) >= promoYearlyEndsAt()) return false;
+    return this._yearlySavingPct() >= PROMO_YEARLY_PCT;
+  }
+
+  /**
+   * Whole seconds left in the campaign, floored at 0.
+   * @returns {number}
+   */
+  _promoSecondsLeft() {
+    return promoYearlySecondsLeft();
+  }
+
+  /**
+   * The countdown chip's text — "21 DAYS 06:48:00" (Figma 692-128029).
+   * Drops the day count entirely on the last day rather than printing
+   * "0 DAYS", which reads as an expired offer.
+   * @returns {string}
+   */
+  _promoCountdownText() {
+    return promoYearlyCountdown();
+  }
+
+  /**
+   * Local calendar day, as the throttle's stamp. Local rather than UTC so
+   * "once a day" turns over at the reader's midnight, which is also when the
+   * campaign's own countdown rolls.
+   * @returns {string}
+   */
+  _promoDayStamp() {
+    const d = new Date();
+    return `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`;
+  }
+
+  /**
+   * Has the campaign modal already been shown today?
+   *
+   * Every localStorage access is wrapped: it throws in a private window and
+   * can be disabled outright, and the honest failure there is to SHOW the
+   * modal (an extra advert) rather than to suppress it silently.
+   * @returns {boolean}
+   */
+  _promoShownToday() {
+    try {
+      return window.localStorage.getItem(PROMO_YEARLY_SEEN_KEY) === this._promoDayStamp();
+    } catch (e) {
+      return false;
+    }
+  }
+
+  _markPromoShownToday() {
+    try {
+      window.localStorage.setItem(PROMO_YEARLY_SEEN_KEY, this._promoDayStamp());
+    } catch (e) { /* storage unavailable — it simply shows again next visit */ }
+  }
+
+  /** Is this caller already billed yearly? */
+  _isOnYearlyPlan() {
+    return String(this._subscription?.period || "").startsWith("year");
+  }
+
+  /**
+   * Open the campaign modal, at most once a day (Lexis, 2026-09-11: "auto
+   * hiện mỗi ngày 1 lần mỗi khi user click vào trang Plan").
+   *
+   * Who sees it, and why each exclusion:
+   *  - the campaign must be live AND the catalog must really be giving the
+   *    advertised cut — the same gate the banner uses, so the modal can never
+   *    be the one surface making a claim Stripe does not honour;
+   *  - _mayCheckout() — a member who cannot change the plan is being sold
+   *    something they are not allowed to buy;
+   *  - NOT already on yearly. Stripe pins a price per subscription item, so an
+   *    existing yearly subscriber's own renewal does NOT get cheaper. Offering
+   *    them "Get 50% OFF" would read as a discount on the plan they already
+   *    hold, which is the one thing it is not.
+   */
+  async _maybeShowPromoYearly() {
+    if (this.isDestroyed()) return;
+    if (!this._promoYearlyActive()) return;
+    if (!this._mayCheckout()) return;
+    if (this._isOnYearlyPlan()) return;
+    if (this._promoShownToday()) return;
+    try {
+      await Kind.waitFor("promo_yearly");
+    } catch (e) {
+      // Bundle did not load: nothing was shown, so nothing is marked — the
+      // next visit can still honour the campaign.
+      return;
+    }
+    if (this.isDestroyed() || !this._promoYearlyActive()) return;
+    // Marked as soon as it is actually launched, not on dismiss: closing it,
+    // clicking through, or navigating away all count as "shown today".
+    this._markPromoShownToday();
+    Wm.launch({
+      kind: "promo_yearly",
+      origin: this,
+      pct: this._yearlySavingPct(),
+      hub_id: Visitor.id,
+      wm_unique_id: "promo_yearly",
+    }, { explicit: 1, singleton: 1 });
+  }
+
+  /**
+   * The modal's CTA landed: show the yearly prices it was advertising.
+   * Mirrors handleSelectPlan's tab switch — renderContent() re-feeds the tab
+   * bar as well as the cards, so the pill moves with them.
+   */
+  showYearlyFromPromo() {
+    if (this.isDestroyed()) return;
+    if (this.state.currentTab === TAB_YEARLY) return;
+    this.state.currentTab = TAB_YEARLY;
+    this.state.plansTab.cycle = "yearly";
+    this.tab = TAB_YEARLY;
+    this._armMotion();
+    this.renderContent();
+  }
+
+  /**
+   * Drive the countdown chip once a second.
+   *
+   * ONE interval for the whole widget lifetime, never one per render: every
+   * surface on this page is rebuilt by a full feed() (the catalog landing, a
+   * WS plan_updated, a tab switch), so the chip is destroyed and recreated
+   * constantly and starting a timer per part would stack them silently.
+   * onPartReady just re-points _promoCountdown at the live part.
+   */
+  _startPromoCountdown() {
+    if (this._promoTimer) return;
+    this._promoTimer = setInterval(() => this._tickPromoCountdown(), 1000);
+  }
+
+  _stopPromoCountdown() {
+    clearInterval(this._promoTimer);
+    this._promoTimer = null;
+  }
+
+  /**
+   * One tick. Stops itself whenever the chip is no longer on screen (the
+   * Checkout tab, or any render that dropped the banner) so a hidden page
+   * costs nothing; onPartReady starts it again when the chip comes back.
+   */
+  _tickPromoCountdown() {
+    const part = this.__promoCountdown;
+    // isConnected, not a stored flag: the part object outlives its DOM node
+    // across a re-render, and the node is the only thing that knows.
+    if (this.isDestroyed() || !part?.el?.isConnected) {
+      this._stopPromoCountdown();
+      return;
+    }
+    // The campaign ran out while the page sat open. Re-render once so the
+    // banner and the tab badge go with it, rather than freezing on 00:00:00.
+    if (!this._promoYearlyActive()) {
+      this._stopPromoCountdown();
+      this.__promoCountdown = null;
+      this.fetchPlanData();
+      return;
+    }
+    const { promoCountdownNote } = require("./skeleton");
+    if (typeof part.softClear === "function") part.softClear();
+    part.feed(promoCountdownNote(this));
+  }
+
+  /**
    * Handle proceed to checkout: call payment API and open payment window
    */
   // Auto organization name for the org bootstrap: "<user's name> Workspace".
@@ -1123,6 +1672,117 @@ class settings_billing extends LetcBox {
       .replace(/^-+|-+$/g, "")
       .slice(0, 63)
       .replace(/-+$/g, "");
+  }
+
+  /**
+   * Keep an org bootstrap field's typed value in state.
+   *
+   * The `watch` option on those entries fires on input/change/paste/cut, so
+   * this catches a mouse paste as well as typing — the keyup path the seats
+   * field uses would miss it. Deliberately does NOT re-render: the value is
+   * only read back when something ELSE rebuilds the tab, and re-rendering per
+   * keystroke would take the caret out of the field.
+   *
+   * @param {string} key - "orgName" or "orgIdent"
+   * @param {Object} args - the watch payload ({ value })
+   */
+  _onOrgFieldTyped(key, args = {}) {
+    const checkout = this.state.checkout || (this.state.checkout = {});
+    const value = String(args.value != null ? args.value : "");
+    checkout[key] = value;
+    if (key === "orgIdent") this._scheduleOrgIdentCheck(value);
+  }
+
+  /**
+   * Ask, a short pause after the typing stops, whether this subdomain is free.
+   *
+   * Emptying the field clears the verdict rather than asking about "" — the
+   * server would answer IDENT_INVALID, which is not a useful thing to say
+   * about a field the shopper is in the middle of retyping.
+   *
+   * @param {string} raw - the field's current text
+   */
+  _scheduleOrgIdentCheck(raw) {
+    clearTimeout(this._orgIdentTimer);
+    const ident = String(raw || "").trim().toLowerCase();
+    if (!ident) {
+      this._orgIdentChecked = "";
+      this._setOrgIdentMsg("", false);
+      return;
+    }
+    this._orgIdentTimer = setTimeout(
+      () => this._checkOrgIdent(ident),
+      ORG_IDENT_DEBOUNCE_MS,
+    );
+  }
+
+  /**
+   * Run payment.validate_org_ident and show the verdict under the field.
+   *
+   * The same call Proceed to Checkout makes, so the two can never disagree;
+   * this only moves the answer to where it is useful. `_orgIdentChecked` both
+   * de-duplicates (a re-render, or retyping the same value, asks nothing) and
+   * settles races: it holds the ident whose answer is still wanted, so a slow
+   * reply for an abandoned value is dropped instead of labelling the field
+   * the shopper has since changed.
+   *
+   * @param {string} ident - normalised subdomain label
+   */
+  async _checkOrgIdent(ident) {
+    if (this.isDestroyed() || ident === this._orgIdentChecked) return;
+    this._orgIdentChecked = ident;
+    const v = await this.postService(SERVICE.payment.validate_org_ident, {
+      hub_id: Visitor.id,
+      ident,
+    }).catch(() => null);
+    if (this.isDestroyed() || this._orgIdentChecked !== ident) return;
+    if (!v) {
+      // A failed round trip says nothing about the subdomain. Stay silent and
+      // let the check on Pay be the one that blocks — claiming "taken" here
+      // over a dropped connection would send the shopper renaming their org
+      // for no reason. Forget it, so the next keystroke asks again.
+      this._orgIdentChecked = "";
+      this._setOrgIdentMsg("", false);
+      return;
+    }
+    const ok = v.status === "OK";
+    this._setOrgIdentMsg(
+      ok
+        ? (LOCALE.ORG_IDENT_AVAILABLE || "")
+        : this._orgIdentError(v.status),
+      ok,
+    );
+  }
+
+  /**
+   * Record the subdomain verdict and repaint it.
+   * @param {string} msg - message to show, "" for none
+   * @param {boolean} ok - true when the subdomain is available
+   */
+  _setOrgIdentMsg(msg, ok) {
+    const checkout = this.state.checkout || (this.state.checkout = {});
+    const text = msg || "";
+    if (checkout.orgIdentMsg === text && checkout.orgIdentOk === !!ok) return;
+    checkout.orgIdentMsg = text;
+    checkout.orgIdentOk = !!ok;
+    this._paintOrgIdentMsg();
+  }
+
+  /**
+   * Feed the verdict into its slot — the ONE surface that changes, so the
+   * inputs beside it keep their caret and their text.
+   */
+  _paintOrgIdentMsg() {
+    const part = this.__orgIdentMsg;
+    if (!part || !part.el || !part.el.isConnected) return;
+    const { orgIdentMsgNote } = require("./skeleton/checkout");
+    if (typeof part.softClear === "function") part.softClear();
+    const note = orgIdentMsgNote(this);
+    // Keep the collapse flag in step with what is actually in the slot — see
+    // the skeleton: a Box with no kids still holds ui-core's `blank` widget,
+    // so only this attribute can tell the skin the slot has nothing to show.
+    part.el.dataset.empty = note ? 0 : 1;
+    if (note) part.feed(note);
   }
 
   // Map an org-ident validation status to its user-facing message.
@@ -1374,13 +2034,31 @@ class settings_billing extends LetcBox {
     // returns 403 PERMISSION_DENIED. Send the caller's own hub so the owner
     // check resolves correctly (verified: missing hub_id -> 403, present -> 200).
     const payload = { hub_id: Visitor.id, entity_type, plan, period };
-    // Set by _confirmReplacePlan after the caller accepted losing their current
-    // plan. Without it the server refuses a live subscriber, which is the guard
-    // against an accidental second subscription.
-    if (checkout.supersede) {
-      const sub = this._subscription || {};
-      const curPlan = String(sub.plan || "");
-      const curPeriod = /^year/.test(String(sub.period || "")) ? "year" : "month";
+    // THE TIER GATE LIVES HERE, not on the Checkout tab.
+    //
+    // The tab is open to everyone who may buy and never withdraws itself (see
+    // _checkoutTabAllowed -- a tab that vanishes under the user is its own
+    // defect). So this is the point where a caller who already holds a
+    // subscription has to be told, and it is the better point: they are told
+    // what will happen and asked, instead of watching a tab disappear.
+    //
+    // `liveMirror` is deliberately `_hasPaidSub && _hasActiveSub`, which is
+    // exactly the condition payment.checkout refuses on
+    // (`current?.subscription_id && live`). _hasActiveSub ALONE is not it: a
+    // LAUNCH30 trial sets that flag with no Stripe row behind it, and such a
+    // caller is an ordinary first purchase that must not be sent through a
+    // replacement warning for a subscription they do not have.
+    const sub = this._subscription || {};
+    const held = {
+      plan: String(sub.plan || ""),
+      period: /^year/.test(String(sub.period || "")) ? "year" : "month",
+    };
+    const liveMirror = !!(this._hasPaidSub && this._hasActiveSub);
+    // `supersede` is set by _confirmReplacePlan once the caller has accepted
+    // losing their current plan. Without it the server refuses a live
+    // subscriber, and that refusal is the guard against an accidental second
+    // subscription -- so it is never set here, only carried.
+    if (liveMirror || checkout.supersede) {
       // The checkout tab lets the caller flip plan and cycle after the popup,
       // so the intent is derived HERE, from what is actually being bought:
       //  - the exact subscription they already hold → nothing to buy (without
@@ -1388,10 +2066,19 @@ class settings_billing extends LetcBox {
       //    and mint a duplicate);
       //  - anything else (other plan, or the same plan on the other cycle) →
       //    immediate replacement, charged at checkout.
-      if (plan === curPlan && period === curPeriod) {
+      if (plan === held.plan && period === held.period) {
         if (Wm && Wm.alert) Wm.alert(LOCALE.ALREADY_SUBSCRIBED);
         return;
       }
+      // Not confirmed yet: hand over to the SAME warning the plan cards use.
+      // It spells out that the current plan is canceled immediately and that
+      // remaining time is not carried over, and on accept it sets `supersede`
+      // and comes back into checkout -- so the buyer presses Pay again having
+      // read what they are agreeing to. Doing it here rather than after a
+      // round trip also spares them the server's USE_SUBSCRIPTION_UPDATE
+      // bounce, which drops them back on the Monthly tab first; that handler
+      // stays as the backstop for a stale client (it re-reads the mirror).
+      if (!checkout.supersede) return this._confirmReplacePlan(plan, period);
       payload.supersede = 1;
     }
     // TEAM bootstrap: the payer is still on the default domain — the org
@@ -1417,9 +2104,21 @@ class settings_billing extends LetcBox {
         ident,
       }).catch(() => null);
       if (!v || v.status !== "OK") {
-        if (Wm && Wm.alert) Wm.alert(this._orgIdentError(v && v.status));
+        const reason = this._orgIdentError(v && v.status);
+        // Leave a real verdict ON the field, not only in an alert the shopper
+        // has to dismiss before they can see which field it was about. A
+        // failed round trip (`v` null) gets the alert only — pinning "something
+        // went wrong" under the subdomain would blame the field for the
+        // network.
+        if (v) {
+          this._orgIdentChecked = ident;
+          this._setOrgIdentMsg(reason, false);
+        }
+        if (Wm && Wm.alert) Wm.alert(reason);
         return;
       }
+      this._orgIdentChecked = ident;
+      this._setOrgIdentMsg(LOCALE.ORG_IDENT_AVAILABLE || "", true);
       payload.ident = v.ident;
       payload.org_name = org_name;
     }
@@ -1568,6 +2267,9 @@ class settings_billing extends LetcBox {
           this.state.plansTab.cycle =
             posNum === TAB_MONTHLY ? "monthly" : "yearly";
           this.tab = posNum;
+          // Every price on screen is about to change: animate the cards back
+          // in so the switch reads as one movement instead of a hard cut.
+          this._armMotion();
           this.renderContent();
         }
       }
@@ -1885,13 +2587,16 @@ class settings_billing extends LetcBox {
         this._updateRightPanelContent()
         break;
       case "checkout":
-        // The tab is not rendered while a subscription is live, but a stale
-        // render or a queued click can still land here -- refuse rather than
-        // walking into a checkout the server will reject.
+        // The pill is not rendered to a caller who may not buy here at all,
+        // but a stale render or a queued click can still land here -- refuse
+        // rather than walking into a checkout the server will reject. A live
+        // SUBSCRIBER is admitted: the tab is theirs too, and the replacement
+        // confirm happens on the Pay button (_proceedToCheckout).
         if (!this._checkoutTabAllowed()) return false;
         if (this.state.currentTab !== TAB_CHECKOUT) {
           this.state.currentTab = TAB_CHECKOUT;
           this.tab = TAB_CHECKOUT;
+          this._armMotion();
           this.renderContent();
         }
         return false;
@@ -1933,6 +2638,16 @@ class settings_billing extends LetcBox {
       case "select-bundle":
         return this._handleSelectBundle(cmd, args);
 
+      // The org bootstrap fields mirror themselves into state as they are
+      // edited — see orgFieldValue() in skeleton/checkout for why they have to.
+      case "org-name-typed":
+        this._onOrgFieldTyped("orgName", args);
+        return false;
+
+      case "org-ident-typed":
+        this._onOrgFieldTyped("orgIdent", args);
+        return false;
+
       case "input-seats":
         if (/^(Backspace|)$/.test(cmd.status)) {
           return
@@ -1960,6 +2675,13 @@ class settings_billing extends LetcBox {
       case "resume-subscription":
         // Undo a scheduled cancellation.
         this._resumeSubscription();
+        return false;
+
+      // Footer contact card. Reuses the sales-led plans' own handler so the
+      // enquiry arrives identified and the no-mail-client fallback (the
+      // address in an alert) is the same one the Sovereign CTA already has.
+      case "contact-sales":
+        this._openSalesMail(LOCALE.ENTERPRISE || "enterprise");
         return false;
 
       case "manage-billing":

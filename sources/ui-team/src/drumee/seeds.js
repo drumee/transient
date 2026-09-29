@@ -8,6 +8,11 @@ module.exports = {
   panel_activity_item: function () {
     return import("./builtins/panel/activity/item");
   },
+  // Personal Calendar — full-canvas screen, mounted by the desk into
+  // settings-main-slot (the slot Settings / Get help / Billing already share).
+  calendar_main: function () {
+    return import("./builtins/panel/calendar");
+  },
   addressbook_widget_notification: function () {
     return import("./builtins/window/addressbook/widget/notification");
   },
@@ -128,6 +133,9 @@ module.exports = {
   tutorial_folder: function () {
     return import("./modules/desk/tutorial/folder");
   },
+  tutorial_chat: function () {
+    return import("./modules/desk/tutorial/chat");
+  },
   tutorial_task: function () {
     return import("./modules/desk/tutorial/task");
   },
@@ -143,11 +151,23 @@ module.exports = {
   tutorial_migrate: function () {
     return import("./modules/desk/tutorial/migrate");
   },
+  window_tutorial: function () {
+    return import("./builtins/window/tutorial");
+  },
   desk_breadcrumb: function () {
     return import("./modules/desk/breadcrumb");
   },
+  desk_home_empty: function () {
+    return import("./modules/desk/home-empty");
+  },
   desk_breadcrumb_item: function () {
     return import("./modules/desk/breadcrumb/item");
+  },
+  desk_org_tab: function () {
+    return import("./modules/desk/org-tab");
+  },
+  desk_org_view: function () {
+    return import("./modules/desk/org-view");
   },
   workspace_item: function () {
     return import("./modules/desk/workspace-item");
@@ -175,6 +195,23 @@ module.exports = {
   },
   editor_note: function () {
     return import("./builtins/editor/note");
+  },
+  // webpackPrefetch: the Casual editors weigh several MB (Univer, the .docx
+  // layout engine); fetched lazily on first use they left a first-time
+  // visitor staring at an empty window for as long as the download took.
+  // Prefetch hints let the browser pull them at idle after the desk is up,
+  // so the first open reads from cache.
+  editor_sheet: function () {
+    return import(/* webpackPrefetch: true */ "./builtins/editor/sheet");
+  },
+  sheet_state: function () {
+    return import(/* webpackPrefetch: true */ "./builtins/editor/sheet/state");
+  },
+  editor_docs: function () {
+    return import(/* webpackPrefetch: true */ "./builtins/editor/docs");
+  },
+  docs_state: function () {
+    return import(/* webpackPrefetch: true */ "./builtins/editor/docs/state");
   },
   email_input_item: function () {
     return import("./builtins/widget/email-input-item/index");
@@ -242,11 +279,17 @@ module.exports = {
   migrate_gdrive_popup: function () {
     return import("./builtins/widget/migrate-gdrive-popup");
   },
+  daily_reminder_popup: function () {
+    return import("./builtins/widget/daily-reminder-popup");
+  },
   rating_survey_popup: function () {
     return import("./builtins/widget/rating-survey-popup");
   },
   promo_launch30: function () {
     return import("./builtins/widget/promo-launch30");
+  },
+  promo_yearly: function () {
+    return import("./builtins/widget/promo-yearly");
   },
   over_limit_popup: function () {
     return import("./builtins/widget/over-limit-popup");
@@ -280,6 +323,9 @@ module.exports = {
   },
   module_sandbox: function () {
     return import("./modules/sandbox");
+  },
+  module_sheet: function () {
+    return import("./modules/sheet");
   },
   module_welcome: function () {
     return import("./modules/welcome");

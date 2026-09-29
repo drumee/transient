@@ -1,5 +1,5 @@
 const { button } = require("../../../../../skeleton/toolkit");
-const { canUpgradePlan } = require("libs/billing");
+const { canUpgradePlan, nextPlan } = require("libs/billing");
 
 /**
  * Build the plan catalogue for display. Text comes from LOCALE; prices come
@@ -20,14 +20,41 @@ function getOptions(ui, cycle = "monthly") {
   const period = isYear ? "year" : "month";
   // Team and Business are the self-serve tiers (July 2026 final table made
   // Business purchasable), so both read their Stripe price from the catalog.
-  // Sovereign stays sales-led: its amount is the published figure, shown so
-  // the ladder reads as a ladder, with a sales CTA instead of checkout.
+  // Sovereign stays sales-led and no longer shows a figure at all: it is a
+  // deployment, not a product with a price, and "Start from $499.00 /month"
+  // was read as the price of the thing rather than as a floor (product
+  // 2026-09-06). It carries the plain "Contact sales" line instead.
   const proPrice = money(ui._catPrice("pro", period) ?? (isYear ? 50 : 5));
   const teamPrice = money(ui._catPrice("team", period));
   const businessPrice = money(
     ui._catPrice("business", period) ?? (isYear ? 990 : 99),
   );
-  const sovereignPrice = money(isYear ? 4990 : 499); // yearly = 10x monthly, two months free
+
+  // The struck-through list price on a discounted yearly card (Figma
+  // 692-128029: "$60 $348 $1,188" struck beside "$30 $174 $594"). The struck
+  // figure is twelve monthly payments — what the same year costs bought one
+  // month at a time — so it is DERIVED from the monthly price rather than
+  // written down, and the pair can never contradict each other.
+  //
+  // Returns null unless there is a real saving to show, which is what keeps
+  // this honest: on the monthly tab, on a plan with no yearly discount, and
+  // on any deployment whose catalog has no price for the plan, the card falls
+  // back to the plain single price it has always shown.
+  //
+  // Gated on the CAMPAIGN as well, not merely on "is yearly cheaper". Yearly
+  // is permanently cheaper — it is 10x monthly the rest of the year — so
+  // without this gate the cards would start advertising "was $60" the day
+  // this ships, months before anyone approved that framing, and keep doing it
+  // after the promotion ends. The strike and the campaign banner appear and
+  // disappear together, which is also how the design presents them.
+  const strike = (code) => {
+    if (!isYear) return null;
+    if (!ui._promoYearlyActive?.()) return null;
+    const list = ui._yearlyListPrice(code);
+    const actual = ui._catPrice(code, period);
+    if (list <= 0 || actual <= 0 || actual >= list) return null;
+    return money(list);
+  };
 
   const perMonth = LOCALE.PER_MONTH;
   const perYear = LOCALE.PER_YEAR;
@@ -54,7 +81,6 @@ function getOptions(ui, cycle = "monthly") {
       priceAmount: money(0),
       pricePeriod: per,
       buttonTitle: LOCALE.CTA_START_FREE,
-      buttonKind: "secondary",
       subText: LOCALE.PLAN_FREE_DESC,
       features: [
         row("1", LOCALE.FEAT_UNIT_HUB),
@@ -81,10 +107,10 @@ function getOptions(ui, cycle = "monthly") {
     // admin console — the card lists what it HAS, per the house style.
     pro: {
       title: LOCALE.PRO,
+      priceStrike: strike("pro"),
       priceAmount: proPrice,
       pricePeriod: per,
       buttonTitle: LOCALE.CTA_GO_PRO,
-      buttonKind: "primary",
       subText: LOCALE.PLAN_PRO_DESC,
       features: [
         row("1", LOCALE.FEAT_UNIT_HUB),
@@ -108,10 +134,10 @@ function getOptions(ui, cycle = "monthly") {
     // The entry ORG paid tier.
     team: {
       title: LOCALE.TEAM,
+      priceStrike: strike("team"),
       priceAmount: teamPrice,
       pricePeriod: per,
       buttonTitle: LOCALE.CTA_START_WORKSPACE,
-      buttonKind: "primary",
       badge: 1,
       subText: LOCALE.PLAN_TEAM_DESC,
       features: [
@@ -131,10 +157,10 @@ function getOptions(ui, cycle = "monthly") {
     // live subscription) like Team instead of pointing at sales.
     business: {
       title: LOCALE.BUSINESS,
+      priceStrike: strike("business"),
       priceAmount: businessPrice,
       pricePeriod: per,
       buttonTitle: LOCALE.CTA_START_BUSINESS,
-      buttonKind: "dark",
       subText: LOCALE.PLAN_BUSINESS_DESC,
       features: [
         row(LOCALE.MULTIPLE, LOCALE.FEAT_UNIT_HUBS),
@@ -150,11 +176,11 @@ function getOptions(ui, cycle = "monthly") {
     },
     sovereign: {
       title: LOCALE.SOVEREIGN,
-      priceLabel: LOCALE.START_FROM,
-      priceAmount: sovereignPrice,
-      pricePeriod: per,
+      // No priceLabel/priceAmount: priceText takes the whole price slot. The
+      // blank label row is still rendered by priceHeader() on every card, so
+      // the five tinted headers stay the same height (see the note there).
+      priceText: LOCALE.CONTACT_SALES,
       buttonTitle: LOCALE.CTA_GET_SOVEREIGN_NODE,
-      buttonKind: "dark",
       subText: LOCALE.PLAN_SOVEREIGN_DESC,
       features: [
         row(LOCALE.FULL_OS, LOCALE.FEAT_UNIT_HUBS),
@@ -208,6 +234,29 @@ function popularHighlight(ui, badge) {
 }
 
 /**
+ * Which pill this card's CTA wears.
+ *
+ * Exactly ONE column is primary (blue): the tier directly above the plan the
+ * caller holds — free→Pro, pro→Team, team→Business, business→Sovereign. Every
+ * other column is dark (product rule 2026-09-06). Before this, the kind was a
+ * constant per card, so Pro and Team were painted blue at every tier at once:
+ * a Team subscriber was shown "Go Pro" — a DOWNGRADE — in the same colour the
+ * page uses to say "this is your next step", beside a Business column in
+ * black. The blue is the recommendation, so it has to move with the caller.
+ *
+ * Free's card is included in "every other column": it is only ever a CTA for
+ * someone on a paid tier, where it means cancel, and a cancel is not the
+ * recommended step. Rank comes from libs/billing so this and the
+ * upgrade/downgrade wording in _confirmReplacePlan read one ladder.
+ * @param {Object} ui - UI instance
+ * @param {string} opt - plan key
+ * @returns {string} button kind for the toolkit's `priority`
+ */
+function ctaKind(ui, opt) {
+  return nextPlan(ui.currentPlanName || "free") === opt ? "primary" : "dark";
+}
+
+/**
  * Price-header box: tinted rounded panel holding the plan name, price (label +
  * amount + period) or a plain "Contact sales" line, and the Popular badge.
  * @param {Object} ui - UI instance
@@ -216,7 +265,7 @@ function popularHighlight(ui, badge) {
  * @returns {Object} Skeletons component
  */
 function priceHeader(ui, fig, option, isCurrent) {
-  const { title, priceLabel, priceAmount, pricePeriod, priceText, badge } = option;
+  const { title, priceLabel, priceStrike, priceAmount, pricePeriod, priceText, badge } = option;
 
   const priceKids = [];
   // The label row is rendered on EVERY card, blank where the plan has none.
@@ -225,10 +274,24 @@ function priceHeader(ui, fig, option, isCurrent) {
   // line up and neither did the prices. Reserving the row equalises them by
   // construction, so it survives a change of font size or label; pinning
   // min-height to today's 97px would silently drift apart again.
+  //
+  // The struck-through list price takes this same reserved row (Figma
+  // 692-128029 puts it exactly there, directly above the amount). Reusing the
+  // row rather than adding a fourth element is what keeps the five tinted
+  // headers the same height while a promotion runs: a discounted card fills a
+  // line every other card already reserves, so nothing shifts when Pro, Team
+  // and Business gain a strike while Free and Sovereign do not.
+  //
+  // Three states for one row, so it reads as three cases rather than a
+  // ternary inside a ternary: a struck list price, a real label, or the
+  // invisible spacer that holds the row open.
+  let labelState = " is-placeholder";
+  if (priceStrike) labelState = " is-strike";
+  else if (priceLabel) labelState = "";
   priceKids.push(
     Skeletons.Note({
-      className: `${fig}-price-label${priceLabel ? "" : " is-placeholder"}`,
-      content: priceLabel || " ",
+      className: `${fig}-price-label${labelState}`,
+      content: priceStrike || priceLabel || " ",
     }),
   );
   if (priceAmount) {
@@ -244,8 +307,22 @@ function priceHeader(ui, fig, option, isCurrent) {
       }),
     );
   } else if (priceText) {
+    // Same row, same -price-amount class as a real price: the sales-led card
+    // has no figure, and this line takes the amount's place rather than
+    // sitting beside it. Carrying that class is what makes the header the
+    // same height as the priced ones at every breakpoint — the amount's line
+    // box is already tuned in five container queries, and this inherits all
+    // five. -price-text then overrides nothing but the type (see the skin).
     priceKids.push(
-      Skeletons.Note({ className: `${fig}-price-text`, content: priceText }),
+      Skeletons.Box.X({
+        className: `${fig}-price-row`,
+        kids: [
+          Skeletons.Note({
+            className: `${fig}-price-amount ${fig}-price-text`,
+            content: priceText,
+          }),
+        ],
+      }),
     );
   }
 
@@ -292,7 +369,7 @@ function priceHeader(ui, fig, option, isCurrent) {
  * @returns {Object} Skeletons component
  */
 function ctaButton(ui, fig, opt, option) {
-  const { buttonKind } = option;
+  const buttonKind = ctaKind(ui, opt);
   let { buttonTitle } = option;
   const isCurrent = isCurrentSubscription(ui, opt);
   if (!isCurrent && (ui.currentPlanName || "free") === opt) {
@@ -401,7 +478,7 @@ function ctaButton(ui, fig, opt, option) {
  * @returns {Object} Skeletons component
  */
 function item(ui, opt, option) {
-  const { buttonTitle, buttonKind, subText, features, badge } = option;
+  const { subText, features, badge } = option;
   const fig = `${ui.fig.family}__plan`;
   const isCurrent = isCurrentSubscription(ui, opt);
 
@@ -488,7 +565,11 @@ function billing_content(ui, cycle = "monthly") {
       // revealed this layout also forced `display: flex !important`; removing
       // that query took the flex context with it.
       Skeletons.Box.X({
-        className: `${fig}-narrow`,
+        // is-anim (settings_billing._motionClass) is added only for a render
+        // a person asked for — first paint, or a Monthly/Yearly switch. The
+        // stagger and the price roll hang off it, so the background re-syncs
+        // that re-feed this same row repaint it silently.
+        className: `${fig}-narrow${ui._motionClass ? ui._motionClass() : ""}`,
         kids: [
           item(ui, "free", options.free),
           item(ui, "pro", options.pro),

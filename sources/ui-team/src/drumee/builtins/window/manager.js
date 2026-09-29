@@ -9,10 +9,13 @@ if (window.innerWidth > 900) {
 }
 const Rectangle = require("rectangle-node");
 const mfsInteract = require("./interact");
+const snap = require("./snap");
 const pseudo_media = require("media/pseudo");
 const { xhRequest, dataTransfer } = require("@drumee/ui-essentials");
 const { createQrcode } = require("@drumee/ui-essentials");
 const { filesize } = require("@drumee/ui-essentials");
+/** filecap.category shared by every archive extension (see media/core). */
+const ARCHIVE_FILETYPE = "zip";
 const DEFAULT_WIDTH = 800;
 const DEFAULT_HEIGHT = 600;
 // Live call windows. They are the one kind that has to outlive desk
@@ -289,51 +292,22 @@ class __window_manager extends mfsInteract {
     return !!(_K.permission.write & privilege);
   }
 
-  _rejectUploadTarget() {
+  _rejectUploadTarget(target) {
     // Say the right thing: while over-limit the refusal has nothing to do
     // with the dropper's privilege, and "insufficient privilege" sends the
     // user asking an admin for rights nobody can grant.
+    // Both answer with the app's popup (Butler), like every other refusal —
+    // not a corner toast.
     const OverLimit = require("libs/over-limit");
-    this._showUploadDeniedToast(
-      OverLimit.isLocked() ? OverLimit.blockedMessage("write") : LOCALE.WEAK_PRIVILEGE,
+    if (OverLimit.isLocked()) {
+      OverLimit.notifyBlocked("write");
+      return;
+    }
+    const privilege =
+      target && target.mget && (target.mget(_a.privilege) || target.mget(_a.permission));
+    require("libs/permission-denied").sayWeakPrivilege(
+      LOCALE.PERMISSION_ACTION_UPLOAD, privilege, _K.permission.write,
     );
-  }
-
-  _showUploadDeniedToast(message) {
-    const render = (wrapper) => {
-      if (!wrapper || (wrapper.isDestroyed && wrapper.isDestroyed())) {
-        Butler.say(message);
-        return;
-      }
-      if (
-        this._uploadDeniedToast &&
-        (!this._uploadDeniedToast.isDestroyed || !this._uploadDeniedToast.isDestroyed())
-      ) {
-        this._uploadDeniedToast.suppress();
-      }
-      wrapper.append(
-        Skeletons.Box.X({
-          className: `${this.fig.group}__drop-denied-toast`,
-          kids: [
-            Skeletons.Note({
-              className: `${this.fig.group}__drop-denied-toast-icon`,
-              content: "!",
-            }),
-            Skeletons.Note({
-              className: `${this.fig.group}__drop-denied-toast-text`,
-              content: message,
-            }),
-          ],
-        }),
-      );
-      this._uploadDeniedToast = wrapper.children.last();
-      this._uploadDeniedToast.selfDestroy({ timeout: Visitor.timeout(2200) });
-    };
-
-    if (this.tooltipsWrapper) return render(this.tooltipsWrapper);
-    this.ensurePart("wrapper-tooltips").then(render).catch(() => {
-      Butler.say(message);
-    });
   }
 
   /**
@@ -381,7 +355,7 @@ class __window_manager extends mfsInteract {
     }
 
     if (!this._canUploadToTarget(target)) {
-      this._rejectUploadTarget();
+      this._rejectUploadTarget(target);
       return;
     }
     if (!roots.length) {
@@ -502,65 +476,189 @@ class __window_manager extends mfsInteract {
     if (this.isWm) {
       this.$el.css({ width: "" });
     }
-    // Clamp every open window into the visible work area — the WM's container
-    // (offset by the sidebar rail and topbar), not the full viewport. Measured
-    // via getBoundingClientRect so it holds whether the windows layer is
-    // position:fixed or absolute.
+    this.clampWindows({ dw, dh });
+  }
+
+  /**
+   * Re-fit every open window to the CURRENT work area.
+   *
+   * The work area is the WM's container (`.desk-module__wm-container`) — the
+   * desk body minus the sidebar column and the top bar — and it changes
+   * WITHOUT a browser resize event: pinning / unpinning the sidebar rail
+   * swaps its reserved width between 64px and 231px, which moves the
+   * container's left edge and shrinks its width by 167px. Windows carry
+   * inline PIXEL geometry (zoom, tile, default bounds), so nothing brings
+   * them back inside on their own: a maximised window keeps its old width
+   * while its origin shifts right, so its whole right side — toolbar, close
+   * button, chat panel — lands past the viewport edge, where
+   * `.desk-module__body { overflow: hidden }` clips it out of reach.
+   *
+   * Two steps, in this order:
+   *   1. `clampWindows` — every window is pulled back inside the area, so
+   *      nothing is left hanging off an edge.
+   *   2. `desk:chrome` — windows that own a layout preset (a zoomed or tiled
+   *      folder window) then recompute that preset against the new area
+   *      themselves, so they GROW back too when the area widens again;
+   *      clamping alone only ever shrinks. Second on purpose: their re-fit is
+   *      animated, and a clamp landing mid-animation would fight it.
+   */
+  reflowWorkArea() {
+    if (this.isDestroyed && this.isDestroyed()) return;
+    if (this._isResizing) return;
+    this.clampWindows();
+    if (this.$el) this.$el.trigger("desk:chrome");
+  }
+
+  /**
+   * Clamp every open window into the visible work area — the WM's container
+   * (offset by the sidebar rail and topbar), not the full viewport. Measured
+   * via getBoundingClientRect so it holds whether the windows layer is
+   * position:fixed or absolute.
+   *
+   * Every layer is walked, not `getWindowsPool()`: that answers headlessLayer
+   * alone whenever a workspace pane is open, which would leave every floating
+   * window behind the pane overflowing — and the call layer is never in it.
+   */
+  clampWindows(opt = {}) {
+    if (this._isResizing) return;
     const host = this.el.parentElement || this.el;
     const area = host.getBoundingClientRect();
-    const pool = this.getWindowsPool();
-    pool.children.each((c) => {
-      // Window rect in viewport coords (wr) + its CSS offset (pos). The
-      // viewport↔CSS delta is constant: newCssLeft = pos.left + (target - wr.left).
-      const wr = c.el.getBoundingClientRect();
-      const pos = c.$el.position();
-      const cw = wr.width;
-      const ch = wr.height;
-      const headerH = c.topbarHeight || 40;
-      const opt = {};
+    if (!area.width || !area.height) return;
+    for (const pool of [this.windowsLayer, this.headlessLayer, this.callLayer]) {
+      if (!pool || (pool.isDestroyed && pool.isDestroyed())) continue;
+      if (!pool.children) continue;
+      pool.children.each((c) => this._clampWindow(c, area, opt));
+    }
+  }
 
-      if (c.mget(_a.kind) === "audio_player") {
-        let o = c.$el.position();
-        if (Visitor.isMobile()) {
-          o.left = 0;
-          o.top = 0;
-        }
-        c.$el.css({ left: o.left + dw });
-        c.$el.css({ top: o.top + dh });
-      }
+  /**
+   * Pull one window inside `area`.
+   *
+   * Skipped: minimized windows (display:none, so they measure 0×0 — clamping
+   * that would rewrite their restore offset with garbage) and viewers docked
+   * into a folder frame (window/frame.js owns their geometry and re-docks them
+   * from its own ResizeObserver).
+   */
+  _clampWindow(c, area, o = {}) {
+    if (!c || !c.el || (c.isDestroyed && c.isDestroyed())) return;
+    if (c.mget(_a.minimize)) return;
+    if (c._frameTracking) return;
+    // Browser fullscreen ignores inline geometry until it exits; the window
+    // re-applies its own bounds on `fullscreenchange`.
+    if (document.fullscreenElement === c.el) return;
+    // A window parked in a "fill the work area" preset has to FOLLOW the new
+    // area, not merely be clamped into it — clamping only ever shrinks, so a
+    // maximised window would stay narrow for good once the sidebar rail is
+    // collapsed again. Folder windows do this themselves (they track their
+    // tile presets too) through the `desk:chrome` event; the players only
+    // know about zoom, and snap.applyBounds is the very call their own zoom
+    // button makes.
+    if (c._zoomed && !c._deskChromeBound) {
+      snap.applyBounds(c, {
+        left: 0,
+        top: 0,
+        width: Math.round(area.width),
+        height: Math.round(area.height),
+      });
+      return;
+    }
+    const { dw = 0, dh = 0 } = o;
+    // Window rect in viewport coords (wr) + its CSS offset (pos). The
+    // viewport↔CSS delta is constant: newCssLeft = pos.left + (target - wr.left).
+    let wr = c.el.getBoundingClientRect();
+    if (!wr.width || !wr.height) return;
+    let pos = c.$el.position();
 
-      // Width: never wider than the work area.
-      if (cw > area.width) opt.width = Math.round(area.width);
+    if (c.mget(_a.kind) === "audio_player") {
+      let p = c.$el.position();
+      if (Visitor.isMobile()) {
+        p.left = 0;
+        p.top = 0;
+      }
+      c.$el.css({ left: p.left + dw });
+      c.$el.css({ top: p.top + dh });
+    }
 
-      // Left: keep inside [area.left, area.right]. A window wider than the
-      // section (intrinsic min-width) is right-aligned so its toolbar/close
-      // and a grabbable header stay on-screen instead of overflowing right.
-      let vpLeft = wr.left;
-      if (cw > area.width) {
-        vpLeft = area.right - cw;
-      } else {
-        vpLeft = Math.max(area.left, Math.min(vpLeft, area.right - cw));
-      }
-      const newLeft = pos.left + (vpLeft - wr.left);
-      if (Math.abs(newLeft - pos.left) >= 1) opt.left = Math.round(newLeft);
+    // ── 1. Size ──────────────────────────────────────────────────────────
+    // Never wider/taller than the work area.
+    const size = {};
+    if (wr.width > area.width) size.width = Math.round(area.width);
+    if (wr.height > area.height) size.height = Math.round(area.height);
 
-      // Height: never taller than the work area; keep the header reachable.
-      if (ch > area.height) opt.height = Math.round(area.height);
-      const vpTop = Math.max(area.top, Math.min(wr.top, area.bottom - headerH));
-      const newTop = pos.top + (vpTop - wr.top);
-      if (Math.abs(newTop - pos.top) >= 1) opt.top = Math.round(newTop);
+    // An inline minimum WINS over the width we are about to write (snap and
+    // frame pin one to hold a tile below the 600px stylesheet floor), so a
+    // shrinking work area would otherwise leave the window stuck at its old
+    // size and still overflowing. Lower the floor to the area, and keep the
+    // resizable option in step so a manual drag right after this doesn't snap
+    // it back up.
+    if (size.width != null) {
+      const minW = parseFloat(c.el.style.minWidth);
+      if (Number.isFinite(minW) && minW > size.width) {
+        c.$el.css({ minWidth: size.width });
+        try {
+          c.$el.resizable(_a.option, "minWidth", size.width);
+        } catch (e) {}
+      }
+    }
+    if (size.height != null) {
+      const minH = parseFloat(c.el.style.minHeight);
+      if (Number.isFinite(minH) && minH > size.height) {
+        c.$el.css({ minHeight: size.height });
+        try {
+          c.$el.resizable(_a.option, "minHeight", size.height);
+        } catch (e) {}
+      }
+    }
 
-      if (Object.keys(opt).length) {
-        c.$el.css(opt);
-        c.style.set(opt);
+    if (Object.keys(size).length) {
+      c.$el.css(size);
+      c.style.set(size);
+      if (c.size) {
+        c.size = {
+          ...c.size,
+          width: size.width != null ? size.width : c.size.width,
+          height: size.height != null ? size.height : c.size.height,
+        };
       }
-      if (c.syncGeometry) {
-        c.syncGeometry();
-      }
-      if (c.setupInteract) {
-        c.setupInteract();
-      }
-    });
+      // Re-measure before placing: whether the window ENDED UP inside the work
+      // area is not knowable in advance — the stylesheet floor
+      // (`.window__ui { min-width: 600px }`) and the content's own min-content
+      // width can both refuse the size just written. Placing from a stale
+      // measurement is what used to slide a maximised window left by its whole
+      // overhang and park it under the sidebar.
+      wr = c.el.getBoundingClientRect();
+      pos = c.$el.position();
+    }
+
+    // ── 2. Place ─────────────────────────────────────────────────────────
+    // A window that still doesn't fit is right-aligned on purpose: its
+    // toolbar, close button and a grabbable header stay on screen and the
+    // overflow goes off the LEFT (under the sidebar), never off the right edge
+    // where `.desk-module__body { overflow: hidden }` puts it out of reach.
+    const opt = {};
+    const headerH = c.topbarHeight || 40;
+    const vpLeft =
+      wr.width > area.width
+        ? area.right - wr.width
+        : Math.max(area.left, Math.min(wr.left, area.right - wr.width));
+    const newLeft = pos.left + (vpLeft - wr.left);
+    if (Math.abs(newLeft - pos.left) >= 1) opt.left = Math.round(newLeft);
+
+    // Keep the header reachable when the window is taller than the area.
+    const vpTop = Math.max(area.top, Math.min(wr.top, area.bottom - headerH));
+    const newTop = pos.top + (vpTop - wr.top);
+    if (Math.abs(newTop - pos.top) >= 1) opt.top = Math.round(newTop);
+
+    if (Object.keys(opt).length) {
+      c.$el.css(opt);
+      c.style.set(opt);
+    }
+    if (c.syncGeometry) {
+      c.syncGeometry();
+    }
+    if (c.setupInteract) {
+      c.setupInteract();
+    }
   }
 
   /**
@@ -715,6 +813,14 @@ class __window_manager extends mfsInteract {
           this.trigger("top-level-ready");
         });
         return this.buildIconsList(child, pn);
+      // Deliberately NOT one of the window layers below: that case installs
+      // onAddKid, which is window bookkeeping (overlap-avoidance shifting, a
+      // dmz host-redirect on destroy, and clearing the layer's inline size).
+      // A meeting card is a fixed-position toast, not a window — running any
+      // of that against it would move the card off centre.
+      case "meeting-toast-layer":
+        this.meetingToastLayer = child;
+        break;
       case "windows-layer":
       case "headless-layer":
       case "upload-progress-layer":
@@ -740,6 +846,24 @@ class __window_manager extends mfsInteract {
             this._viewportResizeTimer = setTimeout(() => this.responsive(), 150);
           };
           window.addEventListener("resize", this._onViewportResize);
+        }
+        // A browser resize is NOT the only thing that resizes the work area:
+        // pinning / collapsing the sidebar rail (64px ↔ 231px), a slide-out
+        // panel, or the desk hiding its top bar all reflow the WM container
+        // with no `resize` event to hook. Watch the container itself so any of
+        // them re-fits the open windows. Debounced on the trailing edge: the
+        // rail width is a 0.18s CSS transition, so this fires once the new
+        // size has settled instead of on all ~11 animation frames.
+        if (!this._workAreaBound && typeof ResizeObserver !== "undefined") {
+          const area = this.el && (this.el.parentElement || this.el);
+          if (area) {
+            this._workAreaBound = true;
+            this._workAreaRo = new ResizeObserver(() => {
+              clearTimeout(this._workAreaTimer);
+              this._workAreaTimer = setTimeout(() => this.reflowWorkArea(), 150);
+            });
+            this._workAreaRo.observe(area);
+          }
         }
         child.onAddKid = (c) => {
           c.once(_e.destroy, () => {
@@ -1183,19 +1307,56 @@ class __window_manager extends mfsInteract {
   }
 
   /**
+   * Container for the meeting popup — above every window layer, and outside
+   * the two layers the active-window lift moves. Falls back to windowsLayer
+   * so an older skeleton (no such part) still shows the card rather than
+   * silently dropping it; that fallback is the pre-fix behaviour.
+   */
+  getMeetingToastPool() {
+    return this.meetingToastLayer || this.windowsLayer;
+  }
+
+  /**
    *
    */
   _launchApp(media, args) {
     const item = this.getWindowPreset(media, args);
     const fType = media.mget(_a.filetype);
     let app = require("./configs/application")(fType, item);
+    // NO PLAYER FOR THIS FILE TYPE — offer the download instead of spinning.
+    //
+    // configs/application answers `{kind: undefined}` for every filetype it
+    // doesn't map: `zip` (zip/rar/7z/tar/gz/tgz/bz2 — filecap.category), plus
+    // `application` (exe/deb/dmg/xz) and `other` (iso/pkg). The old fallback
+    // named "props_viewer", a kind NO seed registers — so Kind.waitFor()
+    // warned and RESOLVED (with null, it never rejects), append() rendered the
+    // "Snippet not found" failover into the windows pool, the catch below never
+    // ran, and nothing ever called media.wait(0). The tile's spinner therefore
+    // ran forever and the file looked broken: reported by Lexis 2026-09-09 for
+    // zip uploads, but every viewer-less type had it since the gitlab import.
     if (_.isEmpty(app) || !app.kind) {
-      app = { ...app, kind: "props_viewer", media };
+      this.showProperties(media);
+      return true;
     }
     app.style = this.getWindowPosition(media);
     if (app) {
       let launchTag = _.uniqueId();
-      Kind.waitFor(app.kind).then(() => {
+      const onDeadEnd = (e) => {
+        // Same dead end one level down. `schedule_viewer` and `editor_diagram`
+        // ARE named by configs/application yet registered by no seed, and a
+        // lazy chunk can also fail to load — both land here, where waitFor
+        // hands back null (or rejects) rather than throwing inside the try.
+        this.warn(`No widget for kind=${app.kind}`, e);
+        this.showProperties(media);
+      };
+      Kind.waitFor(app.kind).then((widgetClass) => {
+        // Ask the registry the same question the pool is about to ask:
+        // CollectionView.childView() swaps in the "Snippet not found" failover
+        // whenever Kind.get() comes back empty. Only then is appending
+        // pointless. Deliberately NOT `!widgetClass` alone — waitFor reads
+        // `.default` off the loaded chunk, and a widget whose module shape
+        // doesn't expose one would be perfectly launchable yet answer null.
+        if (!widgetClass && !Kind.get(app.kind)) return onDeadEnd();
         try {
           app.launchTag = launchTag;
           this.getWindowsPool().append(app);
@@ -1208,7 +1369,7 @@ class __window_manager extends mfsInteract {
           Wm.alert(LOCALE.INTERNAL_ERROR);
           media.wait(0);
         }
-      });
+      }, onDeadEnd);
       return true;
     }
     return false;
@@ -1243,6 +1404,20 @@ class __window_manager extends mfsInteract {
         window.open(media.srcUrl(), "_blank");
         break;
 
+      // An archive has no viewer, and what a user wants from one is its
+      // contents — so a click offers to extract it rather than dead-ending in
+      // the download prompt. Confirmed first, always: extracting writes files
+      // into the folder, and a single click should not do that unasked
+      // (Natrix, 2026-09-10). openArchive owns the whole flow, including
+      // releasing the tile's wait latch.
+      case ARCHIVE_FILETYPE:
+        if (media.canUnzip && media.canUnzip()) return media.openArchive();
+        // No unzip on offer — no permission to write here, or a server that
+        // does not publish the service. Fall through to what a viewer-less
+        // file has always done: offer the download.
+        this._launchApp(media, args);
+        return;
+
       case _a.skeleton:
         xhRequest(media.actualNode().url)
           .then((skl) => {
@@ -1276,6 +1451,19 @@ class __window_manager extends mfsInteract {
           return;
         }
 
+        // One viewer per picture: clicking an image whose viewer is already
+        // ON SCREEN (or minimised to the dock) raises it instead of cascading
+        // a second copy. Only a visible one counts — a viewer docked into a
+        // folder's Files column is hidden while that folder shows another tab
+        // (window/frame.js), and raising it would be a click that shows
+        // nothing, so that case opens a fresh viewer exactly as before.
+        if (fType === _a.image && this._imageViewerShown(media)) {
+          if (this.checkAlreadyOpened(media)) {
+            if (_.isFunction(media.wait)) media.wait(0);
+            return;
+          }
+        }
+
         if (fType == _a.audio) {
           let w = this.getItemByKind("audio_player");
           if (w) {
@@ -1294,11 +1482,26 @@ class __window_manager extends mfsInteract {
   }
 
   /**
+   * Dead end for a file no player can open: release the tile's open latch,
+   * then offer the one thing such a file is good for — the download.
    *
-   * @param {*} media
+   * Written at the gitlab import but never called until _launchApp's
+   * "props_viewer" dead end was routed here, so it needed three guards it
+   * never had: mget(extension) is undefined on rows that alias the column as
+   * `ext` (and `.printf` on undefined throws, which would have swapped one
+   * stuck spinner for another), the wait latch has to be cleared whichever
+   * way the user answers, and a read-only member has no download to be
+   * offered — asking them would only produce a 403.
    */
   showProperties(media) {
-    this.confirm(media.mget(_a.extension).printf(LOCALE.NO_PLAYER_FOR_X_FILE))
+    if (media && _.isFunction(media.wait)) media.wait(0);
+    if (!media || !_.isFunction(media.download)) return;
+    const ext = (media.mget(_a.ext) || media.mget(_a.extension) || "").toString();
+    if (_.isFunction(media.canDownload) && !media.canDownload()) {
+      this.alert(LOCALE.UNABLE_TO_GENERATE_PREVIEW);
+      return;
+    }
+    this.confirm(ext.printf(LOCALE.NO_PLAYER_FOR_X_FILE))
       .then(() => {
         media.download();
       })
@@ -1310,6 +1513,20 @@ class __window_manager extends mfsInteract {
    * @param {*} media
    * @returns
    */
+  /**
+   * An image viewer for this file is open AND visible (or parked in the dock,
+   * which checkAlreadyOpened wakes).
+   */
+  _imageViewerShown(media) {
+    const pool = this.getWindowsPool();
+    if (!pool || !pool.children) return false;
+    const w = pool.children.find((r) => r.mget(_a.nid) == media.mget(_a.nid));
+    if (!w || (w.isDestroyed && w.isDestroyed()) || !w.el) return false;
+    if (w.mget(_a.kind) === "window_folder") return false;
+    if (w.mget(_a.minimize)) return true;
+    return w.el.getClientRects().length > 0;
+  }
+
   checkAlreadyOpened(media) {
     let w = this.getWindowsPool().children.find(
       (r) => r.mget(_a.nid) == media.mget(_a.nid),
@@ -1568,9 +1785,27 @@ class __window_manager extends mfsInteract {
       };
     }
     let w = opt.wrapper || this.__wrapperModal;
+    // Backdrop treatment, overridable per call. "scrim" is the default so every
+    // existing caller keeps the dim it has today; a caller confirming an action
+    // ON a panel the user is reading can ask for "none" instead — dimming the
+    // surface the prompt is about makes it harder to check, not easier.
+    //
+    // "none" rather than dropping the attribute, matching wm/index.js
+    // openQuotaExceeded: this host is SHARED, so a value left behind by a
+    // previous dialog would dim the desk behind a card that never asked for it.
+    // Explicitly off, not merely not-on.
+    //
+    // Pulled OUT of the skeleton (`rest`) rather than passed through: it
+    // addresses the host, not the card, and the window model has no `overlay`
+    // prop to receive it.
+    const { overlay: overlayOpt, ...rest } = skl;
+    const overlay = overlayOpt == null ? "scrim" : overlayOpt;
     return new Promise(function (resolve, reject) {
       Kind.waitFor(kind).then((a) => {
-        const s = w.feed({ ...skl, kind });
+        // Read BEFORE w.feed(), which may replace a dialog already in the host
+        // and so start its teardown. See where this is stamped below.
+        const seq = String((~~(w && w.el && w.el.dataset.overlaySeq)) + 1);
+        const s = w.feed({ ...rest, kind });
         // The host is only SIZED by its [data-state="open"] rule (wm/skin:
         // position:absolute, inset:0, 100%x100%). Without the attribute it is an
         // auto-sized box, and the dialog inside resolves max-width:100% /
@@ -1586,14 +1821,35 @@ class __window_manager extends mfsInteract {
         // The wrapper's own behavior clears it again when it empties.
         if (w && w.el) {
           w.el.dataset.state = "open";
-          // Backdrop behind the card. "scrim", not the "blur" glass the other
-          // modals through this host use (openRequestAccessModal,
-          // reward-flow, create-folder): the confirm takes the flat
-          // `--overlay-bg` treatment the activity panel puts behind its mobile
-          // card. The skin does the work — wm/skin's `[data-overlay="scrim"]`
+          // Backdrop behind the card. The default "scrim" is not the "blur"
+          // glass the other modals through this host use
+          // (openRequestAccessModal, reward-flow, create-folder): the confirm
+          // takes the flat `--overlay-bg` treatment the activity panel puts
+          // behind its mobile card. The skin does the work — wm/skin's
+          // `[data-overlay="scrim"]`
           // includes drumee.scrim-overlay, and --overlay-bg is theme-aware on
           // its own, so there is no dark-mode branch to keep in step here.
-          w.el.dataset.overlay = "scrim";
+          //
+          // "none" matches neither that rule nor the blur one, so the host
+          // keeps its [data-state="open"] `background: transparent;
+          // backdrop-filter: none` — sized and centring, but not painting.
+          w.el.dataset.overlay = overlay;
+          // Stamp WHO owns that backdrop, so the clear below can tell.
+          //
+          // Raising a second confirm while a first one is still up settles the
+          // first: `w.feed()` above replaces the dialog, and the outgoing one's
+          // onBeforeDestroy rejects its promise (window/confirm ask()). That
+          // rejection is delivered as a MICROTASK, i.e. after this synchronous
+          // block has already stamped the new dialog's backdrop — so the
+          // outgoing settle would clear a value it no longer owns and leave the
+          // incoming card standing on a bare host.
+          //
+          // Live symptom, reported on the Admin Console upsell: its topbar
+          // button is not covered by this host on desktop, so it can be clicked
+          // again with the card already up — and the second click dissolved the
+          // backdrop while the card stayed. A counter is enough to tell the two
+          // apart; the value cannot, since both calls write "blur".
+          w.el.dataset.overlaySeq = seq;
         }
         // Clear the backdrop when the prompt settles, whichever way it goes.
         //
@@ -1603,11 +1859,17 @@ class __window_manager extends mfsInteract {
         // NEXT card, which never asked for it. data-state is cleared for us
         // when the wrapper empties; data-overlay is not.
         //
+        // ONLY IF THIS CALL STILL OWNS THE HOST — see the stamp above. A
+        // dialog that has already been replaced clears nothing.
+        //
         // Two-arg then(), not .then().catch(): a .catch() placed after would
         // also swallow anything resolve() itself throws, and turn a caller's
         // bug into a silent rejection of this promise.
         const settle = (fn) => (v) => {
-          if (w && w.el) w.el.dataset.overlay = "";
+          if (w && w.el && w.el.dataset.overlaySeq === seq) {
+            w.el.dataset.overlay = "";
+            delete w.el.dataset.overlaySeq;
+          }
           return fn(v);
         };
         s.ask().then(settle(resolve), settle(reject));
@@ -1644,9 +1906,15 @@ class __window_manager extends mfsInteract {
    * The card decides for itself whether to draw a CTA at all
    * (`canUpgradePlan()`), so callers pass what is locked, never what to draw.
    *
+   * `overlay` rides straight through to confirm(), which owns the backdrop —
+   * see its own comment. Left undefined here rather than defaulted, so a gate
+   * that says nothing keeps confirm's "scrim" and this helper holds no second
+   * opinion about what the default is.
+   *
    * @param {Object} opt
    * @param {String} opt.feature key into feature-lock's FEATURES map
    * @param {Array} [opt.args] substituted into the description via `.format()`
+   * @param {String} [opt.overlay] backdrop: "scrim" (default) | "blur" | "none"
    * @returns {Promise} resolve = CTA taken, reject = dismissed
    */
   openFeatureLock(opt = {}) {
@@ -1654,6 +1922,7 @@ class __window_manager extends mfsInteract {
     return this.confirm({
       mode: "b",
       body: featureLockBody(opt.feature, opt.args),
+      overlay: opt.overlay,
     });
   }
 

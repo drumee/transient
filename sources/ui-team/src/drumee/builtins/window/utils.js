@@ -6,11 +6,8 @@ const Rectangle = require("rectangle-node");
 const { TimelineMax, Expo, TweenMax } = require("@drumee/ui-core/vendor");
 const EDITABLES = require('../player/document/editable');
 const {
-  GROUP_ORDER,
-  GROUP_LABEL,
-  groupOf,
   bucketByGroup,
-  isGrouped,
+  sectionsFor,
 } = require("./skeleton/toolkit/file-group");
 
 // Filetypes that open as a CONTAINER window rather than a file viewer — the
@@ -33,6 +30,35 @@ const SECTION_CLASSES = [
   "file-section",
   "group-section",
 ];
+// A MutationRecord that can affect partitioning (see _setupPartitionObserver):
+// any data-filetype attribute change, or a childList change whose target is
+// NOT inside a tile (i.e. the list, its container or a section wrapper).
+// "Inside a tile" is bounded to the list: an ANCESTOR of the list that happens
+// to carry data-filetype (a window root) must not make every record look like
+// a tile-internal one, or partitioning would silently stop.
+const isPartitionRecord = (r, listEl) => {
+  if (!r || r.type === "attributes") return true;
+  const t = r.target && (r.target.nodeType === 1 ? r.target : r.target.parentElement);
+  if (!t || !t.closest) return true;
+  const tile = t.closest("[data-filetype]");
+  if (!tile) return true;
+  if (!listEl || !listEl.contains(tile) || tile === listEl) return true;
+  return false;
+};
+
+// The container's settled layout. Written only when it differs: this runs on
+// every partition pass, and each redundant style write is a style
+// invalidation on the element that holds the whole grid.
+const setPartitionedStyle = (scrollEl) => {
+  const st = scrollEl.style;
+  if (st.display !== "flex") st.display = "flex";
+  if (st.flexDirection !== "column") st.flexDirection = "column";
+  if (st.alignItems !== "stretch") st.alignItems = "stretch";
+  if (st.justifyContent !== "flex-start") st.justifyContent = "flex-start";
+  if (st.visibility !== "visible") st.visibility = "visible";
+  if (scrollEl.dataset.partitioning !== "0") scrollEl.dataset.partitioning = 0;
+};
+
 const isSectionElement = (el) =>
   SECTION_CLASSES.some((className) => el.classList.contains(className));
 
@@ -500,7 +526,20 @@ class __window_mfs extends DrumeeMFS {
     if (this._partitionDebounce) {
       cancelAnimationFrame(this._partitionDebounce);
     }
-    this._partitionObserver = new MutationObserver(() => {
+    this._partitionObserver = new MutationObserver((records) => {
+      // Only mutations that can change WHICH SECTION a tile sits in matter:
+      // a tile added/removed/moved at the container or section level, or a
+      // tile's data-filetype flipping. The subtree option also reports every
+      // change INSIDE a tile — a thumbnail landing, a badge, a notify count,
+      // a rename — and each one used to schedule a full partition pass over
+      // every loaded tile. Those records are dropped here.
+      if (
+        records &&
+        records.length &&
+        !records.some((r) => isPartitionRecord(r, listPart.el))
+      ) {
+        return;
+      }
       const scrollEl = listPart.el.querySelector(".smart-container");
       if (scrollEl?.querySelector(":scope > .media-grid__ui")) {
         scrollEl.dataset.partitioning = 1;
@@ -613,7 +652,7 @@ class __window_mfs extends DrumeeMFS {
     );
   }
 
-  _doGroupPartition(listPart, scrollEl) {
+  _doGroupPartition(listPart, scrollEl, sections) {
     const collection = listPart.collection;
     const rankOf = new Map();
     const groupOfEl = new Map();
@@ -624,7 +663,9 @@ class __window_mfs extends DrumeeMFS {
         if (!view || !view.el || !view.model) return;
         const index = collection.indexOf(view.model);
         if (index >= 0) rankOf.set(view.el, index);
-        groupOfEl.set(view.el, groupOf(view.model.toJSON()));
+        // attributes, not toJSON(): groupOf only reads fields, and toJSON
+        // cloned every tile's model on every pass.
+        groupOfEl.set(view.el, sections.groupOf(view.model.attributes));
         if (view.el.dataset?.filetype && scrollEl.contains(view.el)) {
           items.add(view.el);
         }
@@ -652,7 +693,11 @@ class __window_mfs extends DrumeeMFS {
       const value = rankOf.get(el);
       return value == null ? Number.MAX_SAFE_INTEGER : value;
     };
-    const byGroup = bucketByGroup(items, (item) => groupOfEl.get(item));
+    const byGroup = bucketByGroup(
+      items,
+      (item) => groupOfEl.get(item),
+      sections,
+    );
 
     const existing = new Map();
     for (const child of [...scrollEl.children]) {
@@ -660,7 +705,14 @@ class __window_mfs extends DrumeeMFS {
       existing.set(child.dataset.group, child);
     }
 
-    for (const key of GROUP_ORDER) {
+    // MOVE ONLY WHAT IS OUT OF PLACE. This pass runs again on every relevant
+    // mutation (each upload, each page of a paged listing), and it used to
+    // re-append every tile and every section each time — O(loaded tiles) DOM
+    // moves per pass, each one detaching a tile and invalidating its layout.
+    // A section whose tiles are already in order is left untouched, and the
+    // sections themselves are only re-appended when their order is wrong.
+    const wanted = [];
+    for (const key of sections.order) {
       const groupedItems = byGroup.get(key).sort((a, b) => rank(a) - rank(b));
       let wrap = existing.get(key);
       if (!groupedItems.length) {
@@ -678,10 +730,23 @@ class __window_mfs extends DrumeeMFS {
         title.className = "group-section-title";
         wrap.prepend(title);
       }
-      title.textContent = LOCALE[GROUP_LABEL[key]];
-      groupedItems.forEach((item) => wrap.appendChild(item));
-      scrollEl.appendChild(wrap);
+      const label = LOCALE[sections.label[key]];
+      if (title.textContent !== label) title.textContent = label;
+      const current = [...wrap.children].filter((el) => el !== title);
+      const inOrder =
+        current.length === groupedItems.length &&
+        current.every((el, i) => el === groupedItems[i]);
+      if (!inOrder) groupedItems.forEach((item) => wrap.appendChild(item));
+      wanted.push(wrap);
     }
+    // Sections must sit, in order, at the END of the container (anything else
+    // left in it — legacy wrappers, stray nodes — is removed or precedes them).
+    const tail = [...scrollEl.children].slice(-wanted.length);
+    const placed =
+      wanted.length > 0 &&
+      tail.length === wanted.length &&
+      tail.every((el, i) => el === wanted[i]);
+    if (!placed) wanted.forEach((wrap) => scrollEl.appendChild(wrap));
 
     // Moving every media view above empties any legacy three-tier wrappers.
     // Remove them only after the move so a mode transition cannot discard a view.
@@ -690,13 +755,19 @@ class __window_mfs extends DrumeeMFS {
         child.remove();
       }
     }
+    // Same for a section left over from the OTHER set (Group view ↔ Media
+    // tab): its tiles have just moved out, and only a bare title would remain.
+    for (const child of [...scrollEl.children]) {
+      if (
+        child.classList.contains("group-section") &&
+        !sections.order.includes(child.dataset.group) &&
+        !child.querySelector(":scope > [data-filetype]")
+      ) {
+        child.remove();
+      }
+    }
 
-    scrollEl.style.display = "flex";
-    scrollEl.style.flexDirection = "column";
-    scrollEl.style.alignItems = "stretch";
-    scrollEl.style.justifyContent = "flex-start";
-    scrollEl.style.visibility = "visible";
-    scrollEl.dataset.partitioning = 0;
+    setPartitionedStyle(scrollEl);
     this._partitionListPart = null;
     listPart.el.style.visibility = "visible";
     return true;
@@ -706,8 +777,10 @@ class __window_mfs extends DrumeeMFS {
     const scrollEl = listPart.el.querySelector(".smart-container");
     if (!scrollEl) return false;
 
-    if (isGrouped(this)) {
-      return this._doGroupPartition(listPart, scrollEl);
+    // Group view, or the Media tab's Images / Videos / Audio split.
+    const sections = sectionsFor(this);
+    if (sections) {
+      return this._doGroupPartition(listPart, scrollEl, sections);
     }
 
     // A mode transition normally rebuilds the list. If an observer from the
@@ -796,12 +869,7 @@ class __window_mfs extends DrumeeMFS {
       wrap.insertBefore(item, before);
     });
 
-    scrollEl.style.display = "flex";
-    scrollEl.style.flexDirection = "column";
-    scrollEl.style.alignItems = "stretch";
-    scrollEl.style.justifyContent = "flex-start";
-    scrollEl.style.visibility = "visible";
-    scrollEl.dataset.partitioning = 0;
+    setPartitionedStyle(scrollEl);
 
     this._partitionListPart = null;
     listPart.el.style.visibility = "visible";
@@ -835,12 +903,21 @@ class __window_mfs extends DrumeeMFS {
   acknowledge(msg = LOCALE.ACK_COPY_LINK) {
     var c = require("@drumee/ui-core/letc/preset/ack")(this, msg);
     c.className = `${c.className} ${this.fig.group}-topbar__copy-link-ack`;
-    this.append(c);
-    const l = this.children.last();
+    const host = this._acknowledgeHost();
+    host.append(c);
+    const l = host.children.last();
     var f = () => {
       return l.suppress();
     };
     return setTimeout(f, Visitor.timeout());
+  }
+
+  /**
+   * Where `acknowledge` mounts its toast. The window itself by default; a
+   * window whose own children must not be re-rendered overrides it.
+   */
+  _acknowledgeHost() {
+    return this;
   }
 
   /**
@@ -921,6 +998,65 @@ class __window_mfs extends DrumeeMFS {
   }
 
   /**
+   * Is `path` the node at `ancestor`, or something inside it?
+   *
+   * REPLACES `new RegExp("^" + filepath)`, which was wrong three ways:
+   *
+   *   - UNESCAPED. A workspace named "test(1)" built /^\/test(1)/, which
+   *     matches "/test1" and not "/test(1)" — so deleting it closed nothing.
+   *     Any of ( ) [ ] { } + * ? . ^ $ | \ in a filename did something like
+   *     this, silently.
+   *   - THROWING. An unbalanced bracket ("test)") made the RegExp constructor
+   *     raise SyntaxError, which escaped removeContent and aborted the echo for
+   *     every OTHER open window too.
+   *   - TOO BROAD. "^/a" also matches "/abc", so deleting /a closed a window
+   *     sitting in the unrelated /abc.
+   *
+   * Compared by SEGMENT, which is what "inside" actually means: equal, or
+   * prefixed by the ancestor plus a separator. No pattern is compiled, so no
+   * filename can be read as syntax.
+   *
+   * @param {String} path      where this window is
+   * @param {String} ancestor  what was deleted
+   * @returns {Boolean}
+   */
+  _pathIsUnder(path, ancestor) {
+    if (path == null || ancestor == null) return false;
+    // Trailing slashes are noise: the same node is written "/a" and "/a/"
+    // depending on which proc produced it. The root stays "/".
+    const trim = (v) => {
+      const s = `${v}`;
+      if (!s) return "";
+      const t = s.replace(/\/+$/, "");
+      return t === "" ? "/" : t;
+    };
+    const p = trim(path);
+    const a = trim(ancestor);
+    if (!p || !a) return false;
+    if (p === a) return true;
+    if (a === "/") return p.startsWith("/");
+    return p.startsWith(`${a}/`);
+  }
+
+  /**
+   * Where this window is, whatever named the field.
+   *
+   * `filepath` is mfs_show_node_by's column, so grid TILES have it. A headless
+   * workspace pane is fed from media.attributes → mfs_node_attr, which emits
+   * `file_path` and no `filepath` at all — so `mget(_a.filepath)` was undefined
+   * on exactly the view that had to close itself when its hub was deleted.
+   * `ownpath` is the third spelling, set by loadWorkspace.
+   */
+  _ownPath() {
+    return (
+      this.mget(_a.filepath) ||
+      this.mget(_a.file_path) ||
+      this.mget(_a.ownpath) ||
+      null
+    );
+  }
+
+  /**
    *
    */
   removeContent(args) {
@@ -969,12 +1105,57 @@ class __window_mfs extends DrumeeMFS {
      * item's tile from the grid, which is what that pass does.
      */
     if (typeof Wm !== "undefined" && this === Wm) return;
-    let re = new RegExp("^" + filepath);
-    let path = this.mget(_a.filepath);
-    if (this.mget(_a.hub_id) == hub_id && re.test(path) && path != "/") {
-      this.goodbye();
+
+    const sameHub = this.mget(_a.hub_id) == hub_id;
+
+    // A DELETED HUB TAKES ITS WHOLE WINDOW, path be damned.
+    //
+    // This case cannot be decided by the path test below and never could. The
+    // echo's filepath is the hub's placeholder row in the user's HOME
+    // ("/test(1)"), while a window showing that workspace is at the root
+    // INSIDE the hub, whose own path is "/" — two unrelated strings. So the
+    // prefix test could not match, and `path != "/"` would have vetoed it even
+    // if it had.
+    //
+    // hub_id plus `filetype: hub` on the echo is already unambiguous: the hub
+    // this window belongs to no longer exists, so nothing it is showing does
+    // either. That echo shape is what confirmRemoveHub and confirmLeaveHub
+    // both send (desk/wm), and what the server broadcasts for delete_hub.
+    //
+    // This is the fix for the reported bug: after deleting a workspace its
+    // headless pane stayed mounted, which left Wm._curWorkspace set (it is
+    // cleared only by that pane's destroy handler), the topbar breadcrumb
+    // naming the dead workspace, and _snapshotWorkspace persisting it for the
+    // next page load to reopen.
+    if (sameHub && args.filetype === _a.hub) {
+      this.goodbye(this._goodbyeArgs());
       return;
     }
+
+    // Otherwise: close only if this window is sitting AT or INSIDE the node
+    // that was deleted. `_ownPath` because the field has three spellings and a
+    // pane only has one of them; `_pathIsUnder` because the old
+    // `new RegExp("^" + filepath)` mis-parsed any name with regex syntax in it.
+    const path = this._ownPath();
+    if (sameHub && path && path !== "/" && this._pathIsUnder(path, filepath)) {
+      this.goodbye(this._goodbyeArgs());
+      return;
+    }
+  }
+
+  /**
+   * How this window leaves when the node it shows is removed under it.
+   *
+   * A popup shrinks towards its trigger (ui-core goodbye: 0.5s scale to 0.2),
+   * which reads as "that window closed". A HEADLESS pane fills the canvas and
+   * has no trigger, so the same tween shrank the whole workspace into the
+   * top-left corner for half a second — the "flash" seen when deleting the
+   * open workspace, right before the replacement faded in. A pane goes at
+   * once, the way a workspace switch already drops the outgoing pane
+   * (headlessLayer.feed). undefined keeps goodbye()'s own defaults.
+   */
+  _goodbyeArgs() {
+    return this.mget(_a.headless) ? { now: true } : undefined;
   }
 
   /**
@@ -1062,6 +1243,35 @@ class __window_mfs extends DrumeeMFS {
       if (!c) return false;
       c.handleDownload(args);
     });
+  }
+
+  /**
+   * Progress for an unzip, routed to the archive's own tile.
+   *
+   * Keyed on `nid` rather than on a transaction id because the tile is what
+   * draws the bar and `nid` is what identifies it — the same lookup
+   * downloadContent does with zipid. The worker puts nid on every message for
+   * exactly this.
+   */
+  unzipContent(args = {}) {
+    if (!args.nid) return;
+    this.getItemsByAttr(_a.nid, args.nid).filter((c) => {
+      if (!c || !_.isFunction(c.handleUnzip)) return false;
+      c.handleUnzip(args);
+    });
+    // SHOW the user where the files went (Lexis, 2026-09-10). Highlight and
+    // scroll to the new folder — deliberately NOT open it; she asked for the
+    // pointer, not the trip.
+    //
+    // _highlightNode is the same reveal a notification deep link uses, and it
+    // already solves the hard part: the cell is created by the `media.new`
+    // broadcast, which is a DIFFERENT Redis delivery from this completion
+    // message, so it may not have rendered yet. That helper polls by nid for
+    // ~3.6s and gives up quietly, which is the right failure — a missing
+    // highlight is a missed nicety, never a broken unzip.
+    if (args.phase === "completed" && args.folder_nid) {
+      this._highlightNode(args.folder_nid);
+    }
   }
 
   /**
@@ -1190,6 +1400,10 @@ class __window_mfs extends DrumeeMFS {
 
       case SERVICE.hub.update_name:
         this.updateSettings(data);
+        break;
+
+      case "media.unzip":
+        this.unzipContent(data);
         break;
 
       case "media.status":
@@ -1547,14 +1761,66 @@ class __window_mfs extends DrumeeMFS {
   _highlightNode(nid, tries = 24) {
     if (!nid || `${nid}` === "0") return;
     const seek = (n) => {
-      const item = this._findMediaByNid(nid);
-      // Only a real grid cell can be revealed — never the container window
-      // (which shares the folder's nid). Cells expose _setNotifyHighlight.
-      if (item && item._setNotifyHighlight) return this._applyReveal([item], true);
-      if (n <= 0) return;
+      const item = this._findMediaCellByNid(nid);
+      if (item) return this._applyReveal([item], true);
+      if (n <= 0) {
+        // Give up loudly enough to be diagnosable. Silence here is what made
+        // the unzip reveal take four wrong theories to find: no highlight, no
+        // error, nothing in the console to say a reveal had even been asked
+        // for. Still only a warn — a missed highlight must never look like a
+        // failed operation to the user.
+        return this.warn(`[reveal] no cell for nid=${nid} after ${tries} tries`);
+      }
       setTimeout(() => seek(n - 1), 150);
     };
     seek(tries);
+  }
+
+  /**
+   * The ON-SCREEN cell for a nid.
+   *
+   * The pane renders BOTH view modes at once — `.window-manager__icons-list`
+   * and the grid — and hides the inactive one with `display:none`. So a single
+   * node has TWO media cells, identical in kind and both exposing
+   * _setNotifyHighlight; only one is laid out. Measured on a live desk after
+   * an unzip: `[0]` was the hidden one at 0x0 with a null offsetParent, `[1]`
+   * the visible one at 120x144.
+   *
+   * That is why revealing appeared to do nothing. Every attribute and class
+   * landed correctly — data-ui-highlight set, the flash animation resolved,
+   * the ::before fill computed to rgb(228,227,255) — on an element with no
+   * box. Picking `[0]`, or "the first that is a cell", both choose the hidden
+   * twin about half the time; being a cell was never the property that
+   * mattered. Being VISIBLE is.
+   *
+   * Returns null rather than falling back to a hidden twin, so _highlightNode
+   * keeps polling: right after an insert the visible cell may not have laid
+   * out yet, and settling for the invisible one would end the poll on a
+   * highlight nobody can see.
+   *
+   * _findMediaByNid is left alone: the deep-link path deliberately wants the
+   * WINDOW when the nid names one.
+   */
+  _findMediaCellByNid(nid) {
+    const key = `${nid}`;
+    const num = Number(key);
+    // Same string/number tolerance as _findMediaByNid — a grid cell's nid may
+    // be a number from the JSON listing while ours arrived as a string.
+    const forms = [nid, key];
+    if (key !== "" && !isNaN(num)) forms.push(num);
+    for (const form of forms) {
+      const hit = Wm.getItemsByAttr(_a.nid, form).find(
+        (c) =>
+          c &&
+          _.isFunction(c._setNotifyHighlight) &&
+          c.el &&
+          // offsetWidth/Height are 0 for anything under display:none, which is
+          // exactly how the inactive view mode is parked.
+          (c.el.offsetWidth > 0 || c.el.offsetHeight > 0),
+      );
+      if (hit) return hit;
+    }
+    return null;
   }
 
   /**
@@ -1687,12 +1953,17 @@ class __window_mfs extends DrumeeMFS {
    */
   contentRectangle() {
     let r = this.__list || this;
-    return new Rectangle(
-      r.$el.offset().left,
-      r.$el.offset().top,
-      r.$el.width(),
-      r.$el.height(),
-    );
+    // `offset()` was called TWICE, once per coordinate. Each call is its own
+    // getBoundingClientRect plus computed-style read, and the first of them
+    // flushes pending style for the whole document. Read it once.
+    //
+    // Deliberately still jQuery `.offset()` / `.width()` / `.height()` rather
+    // than one getBoundingClientRect: offset() is document-relative and
+    // border-box, while .width()/.height() are CONTENT box. A rect built from
+    // getBoundingClientRect would include padding and border in the size and
+    // silently change what counts as inside the selection.
+    const o = r.$el.offset();
+    return new Rectangle(o.left, o.top, r.$el.width(), r.$el.height());
   }
 
   /**
