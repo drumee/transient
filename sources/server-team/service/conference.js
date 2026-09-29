@@ -20,6 +20,13 @@ const { isArray, isEmpty, map } = require("lodash");
 
 const __yp = require("./yp");
 const { roomDeadline, clearRoomStart } = require("./lib/meeting-limit");
+const {
+  claimStartAnnouncement,
+  touchStartAnnouncement,
+  workspaceMemberIds,
+  onlyMembers,
+  onRoomEmptied,
+} = require("./lib/meeting-lifecycle");
 const { markFeatureUsage } = require("./lib/feature-usage");
 class conference extends __yp {
 
@@ -189,21 +196,62 @@ class conference extends __yp {
     const isFirstJoiner = attendees.length === 0;
     if ((user.role == "host" || isFirstJoiner) && user.uid == this.uid) {
       await this.inform({ recipients, payload }, "conference.start");
-      if (room_type == Attr.meeting) {
+      // Tell the WORKSPACE only when the meeting actually starts. This branch is
+      // also entered by a host REjoining (reload, network blip, media Retry) and
+      // by a member promoted to host in a room whose host stepped out — both
+      // join a meeting that is already running, and announcing them is what
+      // popped "X started a meeting" at people for meetings long under way.
+      // isFirstJoiner rules those out; the per-room marker also rules out the
+      // first join after a server restart wiped yp.conference mid-call. See
+      // service/lib/meeting-lifecycle.
+      if (
+        room_type == Attr.meeting &&
+        isFirstJoiner &&
+        (await claimStartAnnouncement(room_id))
+      ) {
         try {
           const hub_id = this.hub.get(Attr.id);
-          const hubMembers = await this.yp.await_proc('entity_sockets', { hub_id, exclude: [socket_id] });
-          if (hubMembers && toArray(hubMembers).length) {
+          // Members only: entity_sockets matches any permission row in the hub,
+          // including people who were only ever shared one file from it.
+          const hubMembers = onlyMembers(
+            await this.yp.await_proc('entity_sockets', { hub_id, exclude: [socket_id] }),
+            await workspaceMemberIds(this.db),
+          );
+          if (hubMembers.length) {
             // `details` is mfs_node_attr(room_id) against THIS hub's db, but a
             // hub node lives in its owner's db — so for a meeting (room_id ==
             // hub_id) it comes back empty and details.filename, which the
             // notification used to render, is undefined. Carry the workspace
             // name explicitly.
+            // Who is actually IN the room, for the card's "N joined" line.
+            // `attendees` is everyone already present — the joiner was
+            // filtered out of it above — so the starter is added back: they
+            // are, by definition, in the meeting they just started.
+            //
+            // Trimmed to what the card renders (a name, which Avatar hashes
+            // for its fallback colour) rather than forwarding whole
+            // conference rows, which carry socket ids, permissions and quota.
+            //
+            // This is what lets the client tell "N joined" from "N invited":
+            // a schedule notice has an invitee list and nobody in the room,
+            // a started meeting has people in it. No extra query — both
+            // values were already in hand.
+            const roster = [...toArray(attendees), user]
+              .filter(Boolean)
+              .map((a) => ({
+                uid: a.uid,
+                name:
+                  [a.firstname, a.lastname].filter(Boolean).join(' ') ||
+                  a.username ||
+                  '',
+              }));
             const startPayload = {
               ...user, details, room_type, hub_id,
               hub_name: this.hubDisplayName(),
+              attendees: roster,
+              joined: roster.length,
             };
-            await RedisStore.sendData(this.payload(startPayload, { service: 'conference.start' }), toArray(hubMembers));
+            await RedisStore.sendData(this.payload(startPayload, { service: 'conference.start' }), hubMembers);
           }
         } catch (e) {
           this.warn('conference.start: hub member notify failed', e && e.message);
@@ -294,6 +342,16 @@ class conference extends __yp {
     let room_id = this.input.need(Attr.room_id);
     let socket_id = this.input.need(Attr.socket_id);
     let r = await this.yp.await_func('is_socket_bound', socket_id, this.session.sid());
+    // Read BEFORE conference_leave deletes it: which workspace this room lives
+    // in and what kind of room it is, for the last-one-out cleanup below. The
+    // row can already be gone (released on disconnect, or wiped by a server
+    // restart) — then fall back to what the client sent.
+    const mine = toArray(
+      await this.yp.await_proc("conference_of_socket", socket_id)
+    ).find((c) => c && `${c.room_id}` === `${room_id}`);
+    const metadata = this.input.get(Attr.metadata) || {};
+    const room_type = (mine && mine.type) || metadata.type || this.input.get(Attr.type);
+    const room_hub_id = (mine && mine.hub_id) || (this.hub && this.hub.get(Attr.id));
     let remaining = await this.yp.await_proc("conference_leave", room_id, socket_id);
     if (remaining && !isArray(remaining)) remaining = [remaining];
     const recipients = (remaining || []).filter(
@@ -320,6 +378,12 @@ class conference extends __yp {
       // room, minus this caller — the same list the notify above uses — so
       // "nobody to tell" and "nobody left" are by definition the same fact.
       await clearRoomStart(room_id);
+      // Same fact, for the meeting itself: the next join is a NEW meeting (and
+      // may be announced again), and the "started a meeting" card must stop
+      // offering Join — the client flips it only from a clean teardown.
+      if (room_type == Attr.meeting) {
+        await onRoomEmptied(this.yp, { hub_id: room_hub_id, room_id });
+      }
     }
     let peers;
     if (!r) {
@@ -354,6 +418,38 @@ class conference extends __yp {
     let metadata = this.input.need(Attr.metadata);
     let event = this.input.get('event');
     let hub_id = this.hub.get(Attr.id);
+    // Client-side audio diagnostics (ui-team webrtc/room/jitsi.js
+    // postAudioDiagnostics): mic device + label, local audio level, outbound /
+    // inbound RTP counters, selected ICE pair, browser. Kept in the service log
+    // so a "they could not hear me" report can be investigated after the call:
+    // yp.conference rows are deleted on leave, so the DB retains nothing.
+    // A pure diagnostics ping (event=diag) is log-only. It carries no state
+    // change, so there is nothing to persist or to fan out to every socket of
+    // the hub every 30 seconds per participant.
+    if (metadata && typeof metadata === "object" && metadata.diag) {
+      const diag = metadata.diag;
+      delete metadata.diag;
+      let line;
+      try {
+        line = JSON.stringify({
+          room_id,
+          socket_id,
+          uid: this.uid,
+          participant_id: metadata.participant_id,
+          ...diag,
+        }).slice(0, 6000);
+      } catch (e) {
+        line = `unserializable diagnostics: ${e && e.message}`;
+      }
+      this.debug("[conference.diag]", line);
+      // The ping doubles as the room's heartbeat: while anyone is still in it,
+      // its start stays announced (see service/lib/meeting-lifecycle).
+      await touchStartAnnouncement(room_id);
+      if (event === "diag") {
+        this.output.data();
+        return;
+      }
+    }
     let user = await this.yp.await_proc("socket_get", socket_id);
     let exclude = [socket_id];
     if (user.user_id == this.uid) {

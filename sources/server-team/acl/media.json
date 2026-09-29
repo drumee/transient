@@ -120,6 +120,362 @@
         }
       ]
     },
+    "upload_init": {
+      "doc": "Chunked upload step 1 - open a resumable session for a large file; quota and folder permission are checked here before any content is sent",
+      "scope": "hub",
+      "permission": {
+        "src": "write",
+        "preproc": {
+          "checker": "pre_upload"
+        }
+      },
+      "params": {
+        "nid": {
+          "type": "string",
+          "required": true,
+          "doc": "Destination folder ID (0 = hub home)"
+        },
+        "filename": {
+          "type": "string",
+          "required": true,
+          "maxLength": 126,
+          "doc": "Original filename"
+        },
+        "filesize": {
+          "type": "number",
+          "required": true,
+          "doc": "Total file size in bytes"
+        },
+        "replace": {
+          "type": "number",
+          "required": false,
+          "enum": [
+            0,
+            1
+          ],
+          "default": 0,
+          "doc": "Replace existing file (1) or create new (0)"
+        },
+        "ownpath": {
+          "type": "string",
+          "required": false,
+          "doc": "Absolute path within hub (parent folders are created if missing)"
+        }
+      },
+      "returns": {
+        "upload_id": {
+          "type": "string",
+          "doc": "Session id to send with every following call"
+        },
+        "chunk_size": {
+          "type": "number",
+          "doc": "Bytes per chunk (16 MB)"
+        },
+        "total": {
+          "type": "number",
+          "doc": "Number of chunks the client must send"
+        },
+        "received": {
+          "type": "array",
+          "doc": "Always empty for a new session"
+        }
+      },
+      "errors": [
+        {
+          "code": "INVALID_FILESIZE",
+          "message": "filesize is missing or not a positive integer",
+          "http_status": 400
+        },
+        {
+          "code": "INSUFFICIENT_STORAGE",
+          "message": "Not enough storage quota",
+          "http_status": 507
+        },
+        {
+          "code": "PERMISSION_DENIED",
+          "message": "No write permission on destination folder",
+          "http_status": 403
+        },
+        {
+          "code": "OWNPATH_INCONSISTENT",
+          "message": "ownpath must use home_id as base",
+          "http_status": 400
+        }
+      ]
+    },
+    "upload_chunk": {
+      "doc": "Chunked upload step 2 - store one chunk of an open session at its offset; the body is streamed like media.upload (request carries upload=1) and chunks may arrive in any order or in parallel",
+      "scope": "hub",
+      "permission": {
+        "src": "write",
+        "preproc": {
+          "checker": "pre_upload"
+        }
+      },
+      "params": {
+        "nid": {
+          "type": "string",
+          "required": true,
+          "doc": "Destination folder ID (0 = hub home)"
+        },
+        "upload_id": {
+          "type": "string",
+          "required": true,
+          "doc": "Session id returned by upload_init"
+        },
+        "index": {
+          "type": "number",
+          "required": true,
+          "doc": "Zero-based chunk index"
+        },
+        "file": {
+          "type": "file",
+          "required": true,
+          "doc": "Chunk content (application/octet-stream), exactly chunk_size bytes except for the last chunk"
+        }
+      },
+      "returns": {
+        "upload_id": {
+          "type": "string",
+          "doc": "Session id"
+        },
+        "index": {
+          "type": "number",
+          "doc": "Index just stored"
+        },
+        "received": {
+          "type": "array",
+          "doc": "Indices of the chunks already stored on the server"
+        }
+      },
+      "errors": [
+        {
+          "code": "UPLOAD_SESSION_NOT_FOUND",
+          "message": "No open session with this upload_id (expired after 48h or aborted)",
+          "http_status": 404
+        },
+        {
+          "code": "PERMISSION_DENIED",
+          "message": "Session belongs to another user or hub",
+          "http_status": 403
+        },
+        {
+          "code": "BAD_CHUNK_INDEX",
+          "message": "index is outside 0..total-1",
+          "http_status": 400
+        },
+        {
+          "code": "BAD_CHUNK_SIZE",
+          "message": "Chunk body length does not match the expected length for this index",
+          "http_status": 400
+        }
+      ]
+    },
+    "upload_status": {
+      "doc": "Chunked upload - which chunks of a session have already landed; the client calls it after a reload to resume with only the missing chunks",
+      "scope": "hub",
+      "permission": {
+        "src": "write",
+        "preproc": {
+          "checker": "pre_upload"
+        }
+      },
+      "params": {
+        "nid": {
+          "type": "string",
+          "required": true,
+          "doc": "Destination folder ID (0 = hub home)"
+        },
+        "upload_id": {
+          "type": "string",
+          "required": true,
+          "doc": "Session id returned by upload_init"
+        }
+      },
+      "returns": {
+        "upload_id": {
+          "type": "string",
+          "doc": "Session id"
+        },
+        "filename": {
+          "type": "string",
+          "doc": "Filename given at upload_init"
+        },
+        "filesize": {
+          "type": "number",
+          "doc": "Total size given at upload_init"
+        },
+        "chunk_size": {
+          "type": "number",
+          "doc": "Bytes per chunk"
+        },
+        "total": {
+          "type": "number",
+          "doc": "Number of chunks"
+        },
+        "received": {
+          "type": "array",
+          "doc": "Indices of the chunks already stored on the server"
+        }
+      },
+      "errors": [
+        {
+          "code": "UPLOAD_SESSION_NOT_FOUND",
+          "message": "No open session with this upload_id (expired after 48h or aborted)",
+          "http_status": 404
+        },
+        {
+          "code": "PERMISSION_DENIED",
+          "message": "Session belongs to another user or hub",
+          "http_status": 403
+        }
+      ]
+    },
+    "upload_complete": {
+      "doc": "Chunked upload step 3 - commit the assembled file into the MFS through the same store path as media.upload (quota, changelog, live update, indexing); when chunks are still missing the reply carries error INCOMPLETE and their indices instead",
+      "scope": "hub",
+      "permission": {
+        "src": "write",
+        "preproc": {
+          "checker": "pre_upload"
+        }
+      },
+      "params": {
+        "nid": {
+          "type": "string",
+          "required": true,
+          "doc": "Destination folder ID (0 = hub home)"
+        },
+        "upload_id": {
+          "type": "string",
+          "required": true,
+          "doc": "Session id returned by upload_init"
+        },
+        "filename": {
+          "type": "string",
+          "required": true,
+          "maxLength": 126,
+          "doc": "Original filename"
+        },
+        "filesize": {
+          "type": "number",
+          "required": true,
+          "doc": "Total file size in bytes (quota check)"
+        },
+        "replace": {
+          "type": "number",
+          "required": false,
+          "enum": [
+            0,
+            1
+          ],
+          "default": 0,
+          "doc": "Replace existing file (1) or create new (0)"
+        },
+        "ownpath": {
+          "type": "string",
+          "required": false,
+          "doc": "Absolute path within hub"
+        }
+      },
+      "returns": {
+        "id": {
+          "type": "string",
+          "doc": "New file node ID"
+        },
+        "nid": {
+          "type": "string",
+          "doc": "New file node ID (alias)"
+        },
+        "filename": {
+          "type": "string",
+          "doc": "Stored filename"
+        },
+        "filesize": {
+          "type": "number",
+          "doc": "File size in bytes"
+        },
+        "error": {
+          "type": "string",
+          "doc": "INCOMPLETE when chunks are missing (then no file is created)"
+        },
+        "missing": {
+          "type": "array",
+          "doc": "Indices still to send, only with error INCOMPLETE"
+        }
+      },
+      "errors": [
+        {
+          "code": "UPLOAD_SESSION_NOT_FOUND",
+          "message": "No open session with this upload_id (expired after 48h or aborted)",
+          "http_status": 404
+        },
+        {
+          "code": "PERMISSION_DENIED",
+          "message": "Session belongs to another user or hub",
+          "http_status": 403
+        },
+        {
+          "code": "UPLOAD_CORRUPTED",
+          "message": "Assembled file size does not match filesize; the session was dropped, start over",
+          "http_status": 500
+        },
+        {
+          "code": "INSUFFICIENT_STORAGE",
+          "message": "Not enough storage quota",
+          "http_status": 507
+        },
+        {
+          "code": "FAILED_CREATE_FILE",
+          "message": "File creation failed",
+          "http_status": 500
+        }
+      ]
+    },
+    "upload_abort": {
+      "doc": "Chunked upload - cancel a session and delete its partial file",
+      "scope": "hub",
+      "permission": {
+        "src": "write",
+        "preproc": {
+          "checker": "pre_upload"
+        }
+      },
+      "params": {
+        "nid": {
+          "type": "string",
+          "required": true,
+          "doc": "Destination folder ID (0 = hub home)"
+        },
+        "upload_id": {
+          "type": "string",
+          "required": true,
+          "doc": "Session id returned by upload_init"
+        }
+      },
+      "returns": {
+        "upload_id": {
+          "type": "string",
+          "doc": "Session id"
+        },
+        "aborted": {
+          "type": "number",
+          "doc": "Always 1"
+        }
+      },
+      "errors": [
+        {
+          "code": "UPLOAD_SESSION_NOT_FOUND",
+          "message": "No open session with this upload_id (expired after 48h or aborted)",
+          "http_status": 404
+        },
+        {
+          "code": "PERMISSION_DENIED",
+          "message": "Session belongs to another user or hub",
+          "http_status": 403
+        }
+      ]
+    },
     "download": {
       "doc": "Download file from MFS",
       "scope": "hub",
@@ -499,6 +855,13 @@
           "default": 1,
           "min": 1,
           "doc": "Page number for pagination"
+        },
+        "sort": {
+          "type": "string",
+          "required": false,
+          "default": "latest",
+          "enum": ["latest", "earliest", "expiring"],
+          "doc": "latest: most recently deleted first. earliest: oldest deletion first. expiring: only items with 5 days or less left before auto-purge, fewest days first."
         }
       },
       "returns": {
@@ -1214,6 +1577,142 @@
       },
       "returns": {}
     },
+    "archive_info": {
+      "doc": "Report how big an archive is without extracting it: file and folder counts, total uncompressed size, and whether it is small enough to extract without asking. Reads the archive table of contents only; creates nothing.",
+      "scope": "hub",
+      "permission": {
+        "src": "read"
+      },
+      "params": {
+        "nid": {
+          "type": "string",
+          "required": true,
+          "doc": "Node ID of the archive to inspect"
+        }
+      },
+      "returns": {
+        "nid": {"type": "string", "doc": "Node ID of the archive"},
+        "filename": {"type": "string", "doc": "Archive name without extension"},
+        "extension": {"type": "string", "doc": "Archive extension"},
+        "files": {"type": "number", "doc": "Number of files the archive holds"},
+        "folders": {"type": "number", "doc": "Number of folders the archive holds"},
+        "size": {"type": "number", "doc": "Total uncompressed size in bytes"},
+        "small": {"type": "boolean", "doc": "True when the archive is small enough to extract without confirmation"}
+      },
+      "errors": [
+        {"code": "NOT_AN_ARCHIVE", "message": "The file is not an archive Drumee can extract", "http_status": 400},
+        {"code": "ARCHIVE_FORMAT_UNSUPPORTED", "message": "Drumee cannot extract this archive format", "http_status": 400},
+        {"code": "NODE_NOT_FOUND", "message": "The archive does not exist", "http_status": 404},
+        {"code": "ARCHIVE_UNREADABLE", "message": "The archive is corrupt or not a supported format", "http_status": 400},
+        {"code": "ARCHIVE_ENCRYPTED", "message": "The archive is password protected", "http_status": 400},
+        {"code": "ARCHIVE_EMPTY", "message": "The archive holds no files", "http_status": 400},
+        {"code": "ARCHIVE_UNSAFE_PATH", "message": "The archive holds entries that point outside the destination", "http_status": 400}
+      ]
+    },
+    "unzip": {
+      "doc": "Extract an uploaded archive into a folder. Inspects the archive inline (type, encryption, entry count, uncompressed size, quota) and refuses with a reason; extraction and node creation run detached in offline/media/unzip.js and report progress over the socket.",
+      "scope": "hub",
+      "permission": {
+        "src": "read",
+        "dest": "write"
+      },
+      "params": {
+        "nid": {
+          "type": "string",
+          "required": true,
+          "doc": "Node ID of the archive to extract"
+        },
+        "pid": {
+          "type": "string",
+          "required": true,
+          "doc": "Destination folder ID. The ACL checks write permission on this node, so it must be the folder the archive is actually extracted into"
+        },
+        "socket_id": {
+          "type": "string",
+          "required": true,
+          "doc": "WebSocket ID that receives progress and completion"
+        }
+      },
+      "returns": {
+        "nid": {
+          "type": "string",
+          "doc": "Node ID of the archive"
+        },
+        "transactionid": {
+          "type": "string",
+          "doc": "Correlates the socket progress messages with this call"
+        },
+        "files": {
+          "type": "number",
+          "doc": "Number of files the archive holds"
+        },
+        "folders": {
+          "type": "number",
+          "doc": "Number of folders the archive holds"
+        },
+        "size": {
+          "type": "number",
+          "doc": "Total uncompressed size in bytes"
+        }
+      },
+      "errors": [
+        {
+          "code": "NOT_AN_ARCHIVE",
+          "message": "The file is not an archive Drumee can extract",
+          "http_status": 400
+        },
+        {
+          "code": "ARCHIVE_FORMAT_UNSUPPORTED",
+          "message": "Drumee cannot extract this archive format",
+          "http_status": 400
+        },
+        {
+          "code": "NODE_NOT_FOUND",
+          "message": "The archive does not exist",
+          "http_status": 404
+        },
+        {
+          "code": "ARCHIVE_UNREADABLE",
+          "message": "The archive is corrupt or not a supported format",
+          "http_status": 400
+        },
+        {
+          "code": "ARCHIVE_ENCRYPTED",
+          "message": "The archive is password protected",
+          "http_status": 400
+        },
+        {
+          "code": "ARCHIVE_EMPTY",
+          "message": "The archive holds no files",
+          "http_status": 400
+        },
+        {
+          "code": "ARCHIVE_TOO_MANY_ENTRIES",
+          "message": "The archive holds too many files to extract",
+          "http_status": 400
+        },
+        {
+          "code": "ARCHIVE_TOO_LARGE",
+          "message": "The archive is too large to extract",
+          "http_status": 400
+        },
+        {
+          "code": "ARCHIVE_UNSAFE_PATH",
+          "message": "The archive holds entries that point outside the destination",
+          "http_status": 400
+        },
+        {
+          "code": "your_limit_exceeded",
+          "message": "Your storage limit exceeded",
+          "http_status": 507
+        },
+        {
+          "code": "limit_exceeded",
+          "message": "Organization storage limit exceeded",
+          "http_status": 507
+        }
+      ]
+    },
     "save": {
       "doc": "Save text content to file (text editor function)",
       "scope": "hub",
@@ -1625,6 +2124,162 @@
         }
       },
       "method": "workspace_move"
+    },
+    "copy_workspace": {
+      "doc": "Duplicate a workspace. Creates a NEW workspace named after the source and copies its files and folders into it. The SOURCE IS NEVER TOUCHED - this is a copy, so a failure anywhere leaves at worst an extra workspace, never damaged data. FILES ONLY: chat, tasks, meetings, share links, trash, version history and the MEMBER LIST are not copied, so the caller is the new workspace sole member. Copying members was considered and refused - it would let an editor of some other workspace hand people access to it by merging in a workspace they own, bypassing the admin bar every invite service asks for. Nothing that identifies the source is carried over either: no secure-share or DMZ tokens, no share box, no invite tracking, no subscription rows, no services log, no notifications, and disk usage is recomputed from what actually lands. The new workspace is allocated from the pre-built entity pool exactly as desk.create_hub does, so no database is ever created inside a request, and storage is checked against the owner allowance BEFORE anything is created.",
+      "scope": "hub",
+      "permission": {
+        "src": "owner"
+      },
+      "method": "copy_workspace",
+      "params": {
+        "hub_id": {
+          "type": "string",
+          "required": true,
+          "doc": "The workspace to duplicate. It is left exactly as it was"
+        }
+      },
+      "returns": {
+        "status": {
+          "type": "string",
+          "doc": "COPIED when the new workspace was created, whether or not it received any content"
+        },
+        "hub_id": {
+          "type": "string",
+          "doc": "Id of the workspace that was created"
+        },
+        "filename": {
+          "type": "string",
+          "doc": "Name of the new workspace, made unique against the caller desk"
+        },
+        "home_id": {
+          "type": "string",
+          "doc": "ROOT node of the new workspace. This, not hub_id, is what the desk reopens a workspace from"
+        },
+        "area": {
+          "type": "string",
+          "doc": "Area of the new workspace, always the same as the source"
+        },
+        "requested": {
+          "type": "number",
+          "doc": "How many top level nodes the source had"
+        },
+        "copied": {
+          "type": "number",
+          "doc": "How many of them arrived, MEASURED in the new workspace rather than inferred"
+        },
+        "source_hub_id": {
+          "type": "string",
+          "doc": "The source, unchanged"
+        }
+      },
+      "errors": [
+        {
+          "code": "WRONG_ENTITY_TYPE",
+          "message": "The source is not a workspace",
+          "http_status": 400
+        },
+        {
+          "code": "MERGE_AREA_NOT_ALLOWED",
+          "message": "Only private and share workspaces may be duplicated",
+          "http_status": 403
+        },
+        {
+          "code": "your_limit_exceeded",
+          "message": "Your storage limit exceeded",
+          "http_status": 507
+        },
+        {
+          "code": "limit_exceeded",
+          "message": "Organization storage limit exceeded",
+          "http_status": 507
+        }
+      ]
+    },
+    "merge_workspace": {
+      "doc": "Merge one workspace into another. Everything at the top level of the source workspace is moved into a new folder, named after the source, inside the destination. THE SOURCE WORKSPACE SURVIVES, EMPTIED - nothing is deleted and no database is dropped. Only files and folders cross. Chat threads stay in the database that owns them, the same rule workspace_move applies; tasks stay because task.nid addresses media rows in the source database; meetings, share links, trash and version history stay too. Members do NOT cross - the destination member list is untouched, so anyone who reached these files only through the source workspace loses them. That is the same outcome as moving a single file across workspaces today, and it keeps granting access an explicit admin-gated act rather than a side effect of a move. Asks owner on the source because it empties somebody whole workspace - deliberately stricter than hub.delete_hub, which moved to admin on 2026-09-17, and not to be aligned with it without a decision of its own; asks only write on the destination, the bar workspace_move uses to receive files, because it adds nobody to it.",
+      "scope": "hub",
+      "permission": {
+        "src": "owner",
+        "dest": "write"
+      },
+      "method": "merge_workspace",
+      "params": {
+        "hub_id": {
+          "type": "string",
+          "required": true,
+          "doc": "Source workspace - the one being merged away and left empty"
+        },
+        "recipient_id": {
+          "type": "string",
+          "required": true,
+          "doc": "Destination workspace that receives the new folder"
+        },
+        "pid": {
+          "type": "string",
+          "required": true,
+          "doc": "Node in the destination workspace under which the folder is created, normally that workspace home node"
+        }
+      },
+      "returns": {
+        "status": {
+          "type": "string",
+          "doc": "MERGED when content moved, SOURCE_EMPTY when the source had nothing to move"
+        },
+        "merged": {
+          "type": "number",
+          "doc": "How many top level nodes were moved"
+        },
+        "folder": {
+          "type": "object",
+          "doc": "The folder created in the destination, null when nothing was moved",
+          "properties": {
+            "nid": {
+              "type": "string",
+              "doc": "Node id of the created folder"
+            },
+            "filename": {
+              "type": "string",
+              "doc": "Folder name, made unique against its siblings"
+            }
+          }
+        },
+        "source_hub_id": {
+          "type": "string",
+          "doc": "The emptied source workspace, which still exists"
+        },
+        "recipient_id": {
+          "type": "string",
+          "doc": "The destination workspace"
+        }
+      },
+      "errors": [
+        {
+          "code": "INVALID_DATA",
+          "message": "Destination missing, or source and destination are the same workspace",
+          "http_status": 400
+        },
+        {
+          "code": "WRONG_ENTITY_TYPE",
+          "message": "Source or destination is not a workspace",
+          "http_status": 400
+        },
+        {
+          "code": "MERGE_AREA_NOT_ALLOWED",
+          "message": "Only private and share workspaces may be merged",
+          "http_status": 403
+        },
+        {
+          "code": "your_limit_exceeded",
+          "message": "Your storage limit exceeded",
+          "http_status": 507
+        },
+        {
+          "code": "limit_exceeded",
+          "message": "Organization storage limit exceeded",
+          "http_status": 507
+        }
+      ]
     },
     "move_cross_hub": {
       "scope": "hub",

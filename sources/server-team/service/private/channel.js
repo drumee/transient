@@ -19,10 +19,13 @@ const {
   Attr, RedisStore, toArray, Constants, sysEnv, Script
 } = require("@drumee/server-essentials");
 const { Entity, MfsTools } = require("@drumee/server-core");
-const { remove_node, move_node, copy_node } = MfsTools;
+const { remove_node, move_node } = MfsTools;
+const { copyNodeStorage } = require("./_node-storage");
 const { stampAuthorIdentity } = require("../lib/message-author");
+const { pruneToCurrentReaders } = require("../lib/seen-readers");
 const { movePlanRows } = require("./_move-plan");
 const { memberCan, CAN_CHAT } = require("../lib/member-capability");
+const {admit: admitMobilePush} = require('../lib/mobile-push');
 const { markFeatureUsage } = require("../lib/feature-usage");
 
 const { stringify, parse: jsonParse } = JSON;
@@ -123,6 +126,10 @@ class __private_channel extends Entity {
     const order = this.input.use(Attr.order, "asc");
     const page = this.input.use(Attr.page) || 1;
     const nid = this.input.use(Attr.nid);
+    // `mark_read: 0` — the client is showing the history, not reading it (a
+    // workspace team chat mounted beside the file grid). Absent = the old
+    // behaviour, so every other caller still marks read on load.
+    const markRead = `${this.input.use("mark_read", 1)}` !== "0";
     let data = await this.db.await_proc(
       "channel_list_messages",
       this.uid,
@@ -203,13 +210,15 @@ class __private_channel extends Entity {
     for (const m of messages) {
       if (!newest || (m.ctime || 0) > (newest.ctime || 0)) newest = m;
     }
-    if (newest && newest.message_id) {
+    if (markRead && newest && newest.message_id) {
       await this.db.await_proc(
         "channel_read_messages",
         newest.message_id,
         this.uid,
       );
     }
+    // Former members stay in _seen_ forever; show only current readers.
+    await pruneToCurrentReaders(this, messages);
     let dest = await this.yp.await_proc("entity_sockets", hub_id);
     dest = toArray(dest).filter((e) => {
       return e.uid != this.uid;
@@ -310,9 +319,18 @@ class __private_channel extends Entity {
     message_id,
     copy_only = false,
     folderNids = null,
+    staged = false,
   ) {
     let src = [];
     message_id = [message_id];
+    // `staged`: every source is a node the caller verified to sit in the hub's
+    // chat staging folder (_classify_staged_attachment). Such a node exists
+    // only to become this message's attachment, so it is MOVED into the sbox
+    // — mfs_move_all re-parents (same DB) or re-creates and deletes (cross
+    // DB) the row, and move_node renames the storage folder, O(1) whatever
+    // the file size — instead of being copied and then purged from staging.
+    // That copy-then-purge pair is what raced and left empty sbox folders,
+    // and what made a post cost the full copy time of every attachment.
     // Sources promoted into the folder: tag their sbox copy with the folder file
     // nid so reply-in-thread and the folder's "View Chat Threads" resolve to ONE
     // thread (keyed by the folder file F, not the per-message sbox copy C).
@@ -354,8 +372,15 @@ class __private_channel extends Entity {
             tempattachment.push(entry);
           }
           if (copy_only) {
-            await copy_node(src, dest, 1);
+            await copyNodeStorage(src, dest);
           } else {
+            // A hub that has never held a file has no __storage__ yet, and
+            // mv() needs the parent of the destination to exist.
+            if (node.des_mfs_root) {
+              try {
+                mkdirSync(node.des_mfs_root, { recursive: true });
+              } catch (_) {}
+            }
             await move_node(src, dest);
           }
           break;
@@ -373,7 +398,7 @@ class __private_channel extends Entity {
             }
             tempattachment.push(entry);
           }
-          await copy_node(src, dest, 1);
+          await copyNodeStorage(src, dest);
       }
     }
 
@@ -390,14 +415,93 @@ class __private_channel extends Entity {
         }
       }
     }
+    // A move inside one hub (team or share hub: its sbox is the hub itself)
+    // only re-parents the rows — mfs_move_all reports it as 'show'/'same'
+    // with no 'move' row, the node keeps its id and its storage folder — so
+    // the attachment entries are the sources themselves.
+    if (staged && `${this.hub.get(Attr.id)}` === `${sbox.hub_id}`) {
+      for (let media of attachment) {
+        tempattachment.push({ nid: `${media}`, hub_id: sbox.hub_id });
+      }
+    }
     // In copy_only mode the originals still exist alongside the sbox copies;
-    // pushing both here would render each attachment twice in the chat.
-    if (!copy_only && this.hub.get(Attr.id) != this.uid) {
+    // pushing both here would render each attachment twice in the chat. A
+    // staged source moved to another hub no longer exists, so it has nothing
+    // to reference either.
+    if (!copy_only && !staged && this.hub.get(Attr.id) != this.uid) {
       for (let media of attachment) {
         tempattachment.push({ nid: media, hub_id: this.hub.get(Attr.id) });
       }
     }
     return tempattachment;
+  }
+
+  /**
+   * Put a post's attachments into the message's sbox folder.
+   *
+   * Verified staging nodes (`stagedNids`) are moved there — cheap and final.
+   * Anything else (a file promoted into the scoped folder, or a node the
+   * classifier did not vouch for) is copied so the original stays where it
+   * is. Returns the attachment entries in the order the client sent them.
+   */
+  async _attach_to_sbox(
+    sbox,
+    desdir,
+    attachment,
+    message_id,
+    copy_only,
+    promoted,
+    stagedNids,
+  ) {
+    const stagedSet = new Set(toArray(stagedNids).map(String));
+    const toMove = [];
+    const toCopy = [];
+    for (const nid of toArray(attachment)) {
+      (stagedSet.has(`${nid}`) ? toMove : toCopy).push(nid);
+    }
+    const entries = {};
+    if (!isEmpty(toCopy)) {
+      const rows = await this.move_attachemnt(
+        sbox,
+        desdir,
+        toCopy,
+        message_id,
+        copy_only,
+        promoted,
+      );
+      // move_attachemnt reports destination ids only; a copied node keeps its
+      // source order in the plan, so pair them positionally.
+      toCopy.forEach((nid, i) => {
+        if (rows[i]) entries[`${nid}`] = rows[i];
+      });
+      // Legacy branch of move_attachemnt may append source references after
+      // the destinations; keep them, they carry no source nid to pair with.
+      for (const row of rows.slice(toCopy.length)) {
+        entries[`${row.hub_id}:${row.nid}`] = row;
+      }
+    }
+    if (!isEmpty(toMove)) {
+      const rows = await this.move_attachemnt(
+        sbox,
+        desdir,
+        toMove,
+        message_id,
+        false,
+        null,
+        true,
+      );
+      toMove.forEach((nid, i) => {
+        if (rows[i]) entries[`${nid}`] = rows[i];
+      });
+    }
+    const ordered = [];
+    for (const nid of toArray(attachment)) {
+      if (entries[`${nid}`]) ordered.push(entries[`${nid}`]);
+    }
+    for (const key of Object.keys(entries)) {
+      if (key.includes(":")) ordered.push(entries[key]);
+    }
+    return ordered;
   }
 
   /**
@@ -414,12 +518,22 @@ class __private_channel extends Entity {
     const staging_id = mfs_home && mfs_home.chat_upload_id;
     if (!staging_id) return res;
     const wanted = new Set(toArray(folder_attachment).map(String));
-    for (let nid of toArray(attachment)) {
-      let rows = await this.db.await_query(
-        "SELECT id, parent_id, owner_id, origin_id, category FROM media WHERE id=?",
-        `${nid}`,
-      );
-      let node = toArray(rows)[0];
+    const nids = toArray(attachment).map(String).filter(Boolean);
+    if (isEmpty(nids)) return res;
+    // One round trip for the whole list: a 36-file post used to spend 36
+    // queries here.
+    const rows = await this.db.await_query(
+      `SELECT id, parent_id, owner_id, origin_id, category FROM media WHERE id IN (${nids
+        .map(() => "?")
+        .join(",")})`,
+      ...nids,
+    );
+    const byId = {};
+    for (const row of toArray(rows)) {
+      if (row && row.id) byId[`${row.id}`] = row;
+    }
+    for (let nid of nids) {
+      let node = byId[nid];
       // Anchor on the actual staging parent — not a file_path substring,
       // which a user-created folder literally named __chat__ could spoof.
       if (!node || `${node.parent_id}` !== `${staging_id}`) continue;
@@ -1407,6 +1521,28 @@ class __private_channel extends Entity {
   /**
    *
    */
+  /**
+   * Display name of the folder a chat message belongs to, for the real-time
+   * toast's location chip. Mirrors room.js `_meeting_folder_name`:
+   * `mfs_node_attr` answers with the WORKSPACE name when the node is the hub
+   * root, which is the right label for a workspace-level chat.
+   *
+   * Internal plumbing names (`__like_this__`) are withheld, and any failure
+   * yields null rather than disturbing the post.
+   */
+  async _chat_folder_name(nid) {
+    try {
+      const id = nid || this.hub.get(Attr.id);
+      if (!id || `${id}` === '0') return null;
+      const a = await this.db.await_proc('mfs_node_attr', id);
+      const name = a && a.filename;
+      if (!name || /^__.*__$/.test(name) || name.indexOf('__') === 0) return null;
+      return name;
+    } catch (e) {
+      return null;
+    }
+  }
+
   async post() {
     // Chat starts at the "View & chat" tier: view (privilege 3) must not post,
     // chat (7) / edit (15) / admin (31) / owner (63) may. acl/channel.json asks
@@ -1544,13 +1680,14 @@ class __private_channel extends Entity {
         "mfs_make_dir",
         `'${sbox.chat_id}','${stringify([message_id])}',1`,
       );
-      attachment = await this.move_attachemnt(
+      attachment = await this._attach_to_sbox(
         sbox,
         desdir,
         attachment,
         message_id,
         copy_only,
         promoted,
+        staged.workspace,
       );
     }
     input.author_id = this.uid;
@@ -1593,9 +1730,8 @@ class __private_channel extends Entity {
       data.is_attachment = 1;
     }
     // Only after the message and its attachment records are committed:
-    // remove the now-redundant staging copies and surface the promoted
-    // files in everyone's open folder window.
-    await this._purge_staged_copies(staged.workspace);
+    // surface the promoted files in everyone's open folder window. Staged
+    // copies were moved into the sbox, so there is nothing left to purge.
     await this._notify_folder_new_nodes(promoted, nid);
 
     if (!isEmpty(thread_id)) {
@@ -1605,6 +1741,18 @@ class __private_channel extends Entity {
     stampAuthorIdentity(this.user, data);
     data.hub_id = this.hub.get(Attr.id);
     if (nid) data.nid = nid;
+    // Name the folder on the push itself. The Round 3 chat toast shows WHERE a
+    // message came from, and the recipient has no way to work that out: the
+    // payload carried only ids, the server's normalized `folder_name` exists
+    // solely on FEED rows, and resolving it client-side meant a per-recipient
+    // round trip that silently yielded nothing whenever the lookup was denied
+    // or the node was not readable from the panel's scope.
+    //
+    // One `mfs_node_attr` per posted message, at human typing rate, in exchange
+    // for a deterministic label. Best-effort by design: a failure here must
+    // never cost someone their message, so it is caught and dropped, and the
+    // client keeps its own fallbacks for a server that predates this.
+    data.folder_name = await this._chat_folder_name(nid);
     data.echoId = this.input.get("echoId");
     const meetingMatch = /^\[\[MEETING:\s*(start|end)\s*:/.exec(data.message);
     if (meetingMatch) data.message_type = `meeting.${meetingMatch[1]}`;
@@ -1640,6 +1788,16 @@ class __private_channel extends Entity {
         );
       }
     }
+
+    await admitMobilePush({
+      type: 'channel.post',
+      actor_id: this.uid,
+      hub_id,
+      key_id: message_id,
+      occurred_at: data.ctime,
+      scope_nid: nid || '',
+      recipient_uids: toArray(mention_ids),
+    });
 
     this.output.data(data);
     // Core function -> the Chat bar. Same feature as chat.js post(): a
@@ -1745,6 +1903,7 @@ class __private_channel extends Entity {
         );
       }
     }
+    await pruneToCurrentReaders(this, data);
     this.output.list(data);
   }
 
@@ -1993,12 +2152,14 @@ class __private_channel extends Entity {
         "mfs_make_dir",
         `'${sbox.chat_id}','${stringify([message_id])}',1`,
       );
-      attachment = await this.move_attachemnt(
+      attachment = await this._attach_to_sbox(
         sbox,
         desdir,
         attachment,
         message_id,
         copy_only,
+        promoted,
+        staged.workspace,
       );
     }
 
@@ -2053,7 +2214,8 @@ class __private_channel extends Entity {
       );
       data.is_attachment = 1;
     }
-    await this._purge_staged_copies(staged.workspace);
+    // Staged copies were moved into the sbox; only the promoted files need
+    // announcing to open folder windows.
     await this._notify_folder_new_nodes(promoted, folder_nid);
 
     // Refresh thread summary + root card metadata (reply_count, last_message, mtime).
@@ -2158,11 +2320,14 @@ class __private_channel extends Entity {
 
     this.output.data(data);
     // Core function -> the Chat bar. A file-thread reply is a message and
-    // counts here. It ALSO belongs to the Aha-moment page's "chat threads in
-    // files" metric, which is a different question over the same event --
-    // that page is still a mockup, and when it is wired it needs its own
-    // signal rather than borrowing this one.
+    // counts here.
     markFeatureUsage(this, "chat");
+    // Aha moment -> the "chat threads in files" bar. GATED ON is_new, so hits
+    // counts threads STARTED, not messages posted in them -- which is what
+    // "Avg chat threads/user" divides down. A user who replies in ten threads
+    // and starts none is not an adopter of this signal: the moat is stitching
+    // context to a file, and starting the thread is the act that does it.
+    if (is_new) markFeatureUsage(this, "file_thread");
   }
 
   /**

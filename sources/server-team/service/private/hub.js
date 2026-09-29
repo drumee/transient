@@ -28,9 +28,14 @@ const {
   ID_NOT_FOUND,
 } = Constants;
 const { resolve } = require("path");
-const { notifyMemberJoined } = require("../lib/notify-member-joined");
+const { notifyMemberJoined, notifyMembersChanged, notifyInvitationsChanged } = require("../lib/notify-member-joined");
 const { butlerFrom } = require("../lib/mail-sender");
+const { mailFailure } = require("../lib/mail-result");
 const { resolveHubInviteName } = require("../lib/hub-invite-name");
+const { resolveHubDisplayName } = require("../lib/hub-display-name");
+const {
+  CAN_CHAT, CHAT_UPLOAD_GRANT, privilegeAllows
+} = require("../lib/member-capability");
 const { MfsTools } = require("@drumee/server-core");
 const { remove_dir } = MfsTools;
 const { toArray } = utils;
@@ -51,6 +56,15 @@ const EXTERNAL_AREAS = ["share", "dmz"];
 // account; only the body copy varies (internal vs external workspace).
 // Replaces the former hub-invite-added / hub-invite-link / hub-invite-signup trio.
 const WORKSPACE_INVITE_TPL = "workspace-invite-member";
+// Invite emails go out this many at a time. Each message opens its own SMTP
+// session to the relay, and the session costs ~4 s before a byte of mail is
+// sent (connect + STARTTLS 1.8 s, AUTH 2.3 s - measured 2026-09-22), against
+// ~1 s for the message itself. Sessions opened together pay that once, in
+// parallel: 5 at a time measured 5.8 s per batch, the same as one message,
+// so a 30-address invite still took 35 s. 25 keeps two concurrent hub.invite
+// calls (the popup fires one per selected workspace) under Postfix's default
+// 50 connections per client IP.
+const INVITE_MAIL_BATCH = 25;
 
 /**
  * True when a workspace area is shared outside the member circle.
@@ -75,6 +89,22 @@ function isExternalArea(area) {
 }
 
 const Hub = require("../hub");
+/**
+ * The invite endpoints accept an "entity" that may be an email address OR a
+ * bare user id. invite_track is keyed by (hub_id, email) — the same key
+ * yp.pending_invitation uses — so anything that is not an address must resolve
+ * to null rather than be stored as one: a row keyed by a uid could never be
+ * matched by an acceptance, and would sit in `invites_sent` as a permanently
+ * pending invitation that nobody can redeem.
+ *
+ * @param {*} v
+ * @returns {string|null}
+ */
+function asEmail(v) {
+  const s = `${v == null ? "" : v}`.trim();
+  return s.indexOf("@") !== -1 ? s : null;
+}
+
 class __private_hub extends Hub {
   constructor(...args) {
     super(...args);
@@ -340,6 +370,48 @@ class __private_hub extends Hub {
     const base = `${this._endpointBase()}/#/welcome/signin`;
     if (!hub_id) return base;
     const q = [`hub_id=${encodeURIComponent(hub_id)}`];
+    if (hubname) q.push(`name=${encodeURIComponent(hubname)}`);
+    return `${base}?${q.join("&")}`;
+  }
+
+  /**
+   * The Accept and Decline links in an invitation email.
+   *
+   * Built on the SAME route the CTA uses, and carrying the same `?invite=`
+   * parameter the front end has understood since the token flow shipped
+   * (modules/welcome, _redeemInviteThenEnter) — so an Accept link is the
+   * existing, exercised redemption path with nothing new behind it. What is new
+   * is `invite_action`, which tells the page which of the two answers was
+   * pressed.
+   *
+   * 🚨 ACCEPT AND DECLINE HAVE DIFFERENT AUTHENTICATION NEEDS, and the front
+   * end is where that is enforced, not here:
+   *
+   *   accept   requires a session. Membership is granted to an ACCOUNT, so
+   *            there has to be one; the welcome route signs them in (or up)
+   *            first and redeems afterwards, which is what it already did.
+   *   decline  requires none. Holding the secret is the authorisation, and
+   *            hub.decline_invite is scoped accordingly. Demanding a sign-in to
+   *            say no would mean the one answer that needs no account could
+   *            only be given by creating one.
+   *
+   * `hub_id` and `name` ride along for the same reason the CTA carries them —
+   * the desk can name and open the workspace once the answer is in — and grant
+   * nothing on their own.
+   *
+   * @param {string} token   the invitation's secret
+   * @param {string} hub_id  the workspace being invited to
+   * @param {string} [hubname] workspace display name, for the page's copy
+   * @param {string} action  "accept" | "decline"
+   * @returns {string} absolute URL
+   */
+  _inviteAnswerLink(token, hub_id, hubname, action) {
+    const base = `${this._endpointBase()}/#/welcome/signin`;
+    const q = [
+      `invite=${encodeURIComponent(token)}`,
+      `invite_action=${encodeURIComponent(action)}`,
+    ];
+    if (hub_id) q.push(`hub_id=${encodeURIComponent(hub_id)}`);
     if (hubname) q.push(`name=${encodeURIComponent(hubname)}`);
     return `${base}?${q.join("&")}`;
   }
@@ -690,7 +762,18 @@ class __private_hub extends Hub {
         fullname,
         from_fullname: fullname,
         message: meta.message || null,
-        privilege: meta.privilege || null
+        privilege: meta.privilege || null,
+        // WHAT MAKES THE ROW ANSWERABLE. Present only on rows written by
+        // _notifyInvitee — a real invitation — and absent on the receipt
+        // _grantMembership writes when an admin adds somebody directly
+        // (add_contributors), which is not an invitation and has nothing to
+        // accept. The client keys its Accept/Decline buttons on it, so an
+        // older row simply renders as it always did.
+        //
+        // Safe to hand over: it is this user's own invitation, the same secret
+        // their email already carries, and notification_hub_invites is scoped
+        // to the recipient.
+        invite_token: meta.token || null
       };
     });
     this.output.list(out);
@@ -702,13 +785,24 @@ class __private_hub extends Hub {
   async add_contributors() {
     let users = this.input.need(Attr.users);
     const username = this.user.get("fullname");
-    const hubname = this.hub.get(Attr.name);
     const privilege = this.input.use(Attr.privilege) || this.hub.get(Attr.settings).default_privilege;
     const hours = this.input.use(Attr.hours, 0)
     const days = this.input.use(Attr.days, 0);
     const expiry = hours * 1 + days * 24;
     const lang = this.user.language() || this.input.app_language();
     let mfs_home = await this.db.await_proc("mfs_home");
+    // This used to be this.hub.get(Attr.name) alone, which is yp.hub.hubname --
+    // the HEX ID. Everything downstream inherited it: the invitation email, the
+    // two audit lines, and (through _grantMembership) the workspace name stored
+    // on the invitee's notification, where a hex id renders as no name at all.
+    // Same resolver and same chain as invite(); mfs_home was already fetched
+    // here for the chat-upload grant, so this costs no extra query.
+    const hubname = resolveHubDisplayName(
+      mfs_home,
+      this.hub.get(Attr.hubname),
+      this.hub.get(Attr.name),
+      this.hub.get(Attr.id),
+    );
     let msg = Cache.message("_x_add_you_to_team", lang).format(
       username,
       hubname
@@ -891,16 +985,127 @@ class __private_hub extends Hub {
    * @param {string} from_fullname  tên người mời (để ghi log activity)
    * @returns {object|null} row từ add_member
    */
+  /**
+   * Refresh this workspace's member count in yp.workspace_members, which is
+   * what "Avg team size" on the dashboard's Viral loop page divides down.
+   *
+   * WHY A ROLLUP EXISTS AT ALL: membership is not stored in yp. It lives in
+   * each hub's own `permission` table (resource_id = '*'), the rows
+   * hub_get_members_by_type reads, so counting it system-wide means visiting
+   * every hub database — which the dashboard's read path must never do.
+   * yp.membership looks like the table for this and is not: zero rows on every
+   * install checked, nothing writes it.
+   *
+   * TAKES NO COUNT. workspace_members_set does its own COUNT against the hub's
+   * permission table, so this cannot pass a number taken before its own write,
+   * and the live writers can never disagree with the backfill crawl — they run
+   * the same query.
+   *
+   * NEVER THROWS. Tracking must not be able to break the membership change that
+   * triggered it: an invitation that succeeded and then reported a failure
+   * because a counter could not be written is strictly worse than a stale
+   * count, which the next mutation (or a backfill re-run) corrects anyway.
+   *
+   * @param {string} hub_id
+   */
+  async _trackWorkspaceMembers(hub_id) {
+    if (!hub_id) return;
+    try {
+      await this.yp.await_proc("workspace_members_set", hub_id);
+    } catch (err) {
+      this.warn(
+        "[hub] workspace member tracking failed for", hub_id,
+        err && err.message
+      );
+    }
+  }
+
+  /**
+   * Record that a workspace invitation was SENT, for the Viral loop page.
+   *
+   * 🚨 TWO PROCEDURES, AND THE CALLER MUST SAY WHICH. They differ on one rule:
+   * what had_account = 1 implies.
+   *
+   *   invite_track_mark     stamps accept_time = sent_time for an existing
+   *                         account, because the caller GRANTED membership on
+   *                         the spot — the invitation was accepted by
+   *                         construction and no later answer is coming.
+   *   invite_track_mark_v2  leaves accept_time NULL, because the caller SENT an
+   *                         invitation the recipient must answer.
+   *
+   * `answerable` picks between them, and it DEFAULTS TO THE OLD ONE on purpose.
+   * invite() opts in; invite_with_roles still grants immediately and must keep
+   * the old semantics, or every one of its grants would be recorded as an
+   * invitation nobody ever answered. A default that silently changed under it
+   * is exactly the failure mode the _v2 split exists to prevent, and it would
+   * be invisible — same arity, no error, wrong number.
+   *
+   * had_account IS STILL NOT COSMETIC: it separates invitations that had to
+   * talk somebody into opening an account from ones that only had to be said
+   * yes to, and viral_loop reports both rates.
+   *
+   * NEVER THROWS, for the same reason as _trackWorkspaceMembers: a failed
+   * counter must not fail an invitation that actually went out.
+   *
+   * @param {object} o
+   * @param {string} o.hub_id       workspace invited into
+   * @param {string} o.email        address invited
+   * @param {string} [o.invitee_uid] set when the invitee already has an account
+   * @param {boolean} o.had_account true when the invitee already had an account
+   * @param {string} o.source       which call site wrote it
+   * @param {boolean} [o.answerable] true when the recipient must accept before
+   *   becoming a member — routes to invite_track_mark_v2. Default false keeps
+   *   the instant-grant semantics for callers that still grant.
+   */
+  async _trackInviteSent({ hub_id, email, invitee_uid, had_account, source, answerable = false }) {
+    if (!hub_id || !email) return;
+    try {
+      await this.yp.await_proc(
+        answerable ? "invite_track_mark_v2" : "invite_track_mark",
+        this.uid, hub_id, email, invitee_uid || null,
+        had_account ? 1 : 0, source || "hub_invite"
+      );
+    } catch (err) {
+      this.warn(
+        "[hub] invite tracking failed for", email, err && err.message
+      );
+    }
+  }
+
+  /**
+   * Write membership: add_member, the permission grants, the audit line, the
+   * "you are in" notification and the member-count rollup.
+   *
+   * 🚨 NOT REACHED BY hub.invite ANY MORE. Inviting mints an invitation and
+   * stops; membership is written when the person accepts, by accept_invite,
+   * which does its own add_member with the seat and over-limit guards an
+   * answered invitation needs. The remaining callers are the paths that add
+   * somebody DIRECTLY, without asking: add_contributors (an admin picking an
+   * existing contact) and the dead invite_with_roles.
+   *
+   * The `hub_invite_received` row it writes therefore means what it always
+   * meant HERE — a receipt for a membership that now exists — and not the
+   * answerable invitation _notifyInvitee writes. That one carries a token; this
+   * one does not, which is what the notification row keys its Accept/Decline
+   * buttons on.
+   */
   async _grantMembership(uid, privilege, expiry, message, mfs_home, hub_name, from_fullname) {
     const r = await this.db.await_proc("add_member", uid, privilege, expiry);
     if (!r || !r.db_name) return null;
     await this.db.await_proc(
       "permission_grant", "*", uid, expiry, privilege, "system", message
     );
-    await this.db.await_proc(
-      "permission_grant", mfs_home.chat_upload_id, uid, 0, 4,
-      "no_traversal", "chat upload permission"
-    );
+    // Chat attachments stage in a hidden folder before they become a message.
+    // A member who may chat has to write there even though the role carries no
+    // write bit for the workspace at large -- 'no_traversal' keeps that raised
+    // access on this one folder. A view-only member may not chat, so granting
+    // it would hand them an upload path they are not entitled to.
+    if (privilegeAllows(privilege, CAN_CHAT)) {
+      await this.db.await_proc(
+        "permission_grant", mfs_home.chat_upload_id, uid, 0, CHAT_UPLOAD_GRANT,
+        "no_traversal", "chat upload permission"
+      );
+    }
     await writeAudit(this, {
       db: this.hub.get(Attr.db_name),
       uid: this.uid,
@@ -929,9 +1134,10 @@ class __private_hub extends Hub {
     }
     // Notify online members (admins with the Folder settings permission matrix
     // open) so the new member appears immediately without a manual reload.
-    // Covers both callers of _grantMembership: invite() branch B (drumate
-    // already exists) and add_contributors().
     await notifyMemberJoined(this, this.hub.get(Attr.id), uid);
+    // Single choke point for granting, so no second place to forget when
+    // another caller is added later.
+    await this._trackWorkspaceMembers(this.hub.get(Attr.id));
     return r;
   }
 
@@ -1273,11 +1479,15 @@ class __private_hub extends Hub {
     const hubId = this.hub.get(Attr.id);
     // mfs_home reads yp.hub.name directly (the actual display name);
     // this.hub.get(Attr.name/hubname) returns yp.hub.hubname (a technical id).
+    // The chain itself now lives in service/lib/hub-display-name.js, because
+    // the other two invite endpoints got it wrong by each carrying their own.
     const mfs_home = await this.db.await_proc("mfs_home");
-    const hubname = (mfs_home && mfs_home.name)
-      || this.hub.get(Attr.hubname)
-      || this.hub.get(Attr.name)
-      || hubId;
+    const hubname = resolveHubDisplayName(
+      mfs_home,
+      this.hub.get(Attr.hubname),
+      this.hub.get(Attr.name),
+      hubId,
+    );
     const area = this.hub.get(Attr.area);
     // The ONE axis the email body varies on: internal (private) vs external
     // (shared) workspace. Also decides whether the workspace preview is redacted.
@@ -1311,102 +1521,196 @@ class __private_hub extends Hub {
     // list, and a caller may repeat an address; remember each person once.
     const remembered = new Set();
     const toRemember = [];
-    const results = [];
+    // Indexed by position so the reply lists invitees in the order they were
+    // typed, even though the email step below runs in batches.
+    const results = new Array(invitees.length);
+    // Everyone whose membership/pending work succeeded, waiting for the mail
+    // step. The DB work is milliseconds per address; the mail is not.
+    const mailQueue = [];
 
-    for (const email of invitees) {
+    for (const [idx, email] of invitees.entries()) {
+      // WHAT ACTUALLY LANDED before the email step, so a mail failure can say
+      // so rather than reading as "nothing happened" — see _inviteFailureReason
+      // and the catch at the bottom of this loop. Reset per invitee: one bad
+      // address must not colour the next one's report.
+      let granted = false;
+      let pending = false;
       try {
         let drumate = await this.yp.await_proc("drumate_exists", email);
         if (isArray(drumate)) drumate = drumate[0];
         const isDrumate = drumate && drumate.id;
 
-        // --- Functional work, still keyed on account status (NOT the email) ---
+        // --- ONE INVITATION, WHATEVER THE ACCOUNT STATUS ---
+        //
+        // 🚨 AN EXISTING ACCOUNT USED TO BE ADDED TO THE WORKSPACE RIGHT HERE,
+        // by _grantMembership, before the email had even been composed. The
+        // recipient was never asked: the first they knew of it was a workspace
+        // appearing in their sidebar, and the email that followed announced
+        // something already done. There was no accept and no decline because
+        // there was nothing left to answer.
+        //
+        // Both branches now MINT AN INVITATION and stop. Membership is written
+        // by hub.accept_invite, when the person says yes — from the email's
+        // Accept link or from the Accept button on the notification row.
+        //
+        // What is left of the account-status branch is one thing only: whether
+        // there is a Drumee user to notify. Everything else — the token, the
+        // pending row, the audit line, the tracking, the email — is identical
+        // for both, which is the point. Two half-shaped invitations that had to
+        // be told apart everywhere downstream are now one.
+        //
+        // THE TOKEN IS THE INVITATION. It is what Accept redeems and what
+        // Decline closes, and its secret has to reach the recipient: by email
+        // for everyone, and additionally inside the notification row for
+        // somebody who already has an account.
+        const token = await this._addInviteToken(email, hubId, privilege, expiryTs);
+        // THE PENDING ROW IS WHAT SIGNUP GRANTS FROM. create_account calls
+        // _resolve_pending_invitation(email), which reads
+        // pending_invitation_get_by_email and adds the new account to each hub;
+        // nothing redeems the TOKEN during sign-up. So an invitation that
+        // writes only a token leaves a newcomer with no membership at all —
+        // that was the share-workspace bug, where the invitee signed up and
+        // landed on a desk showing only the three default workspaces.
+        //
+        // Written for an existing account too, and harmlessly: that row is only
+        // ever read at account creation, which has already happened for them.
+        // It is also what makes them visible to the admin console's Pending
+        // Invites, which was blind to this branch while it granted on the spot.
+        // hub.decline_invite and hub.accept_invite both delete it
+        // (pending_invitation_delete), so a refusal cannot be undone by signing
+        // up afterwards.
+        await this.yp.await_proc(
+          "yp_add_pending_invitation", hubId, 0, privilege, email
+        );
+        pending = true;
+        // Now written for BOTH branches. The existing-account branch left no
+        // audit line at all while it granted instead of inviting, so an
+        // administrator reading the workspace's log saw only 'added' with no
+        // invitation before it.
+        await writeAudit(this, {
+          db: this.hub.get(Attr.db_name),
+          uid: this.uid,
+          action: 'invite_sent',
+          category: 'member',
+          notify_to: 'admin',
+          entity_id: hubId,
+          log: `Invite sent to ${email} for workspace '${hubname}'`,
+        });
+        // _v2, and the version is the whole point: the old procedure stamps
+        // accept_time = sent_time whenever had_account = 1, because its caller
+        // granted membership itself. Nothing is granted here, so an invitation
+        // to an existing account is as unanswered as any other until it is
+        // accepted. See invite_track_mark_v2.
+        await this._trackInviteSent({
+          hub_id: hubId,
+          email,
+          invitee_uid: isDrumate ? drumate.id : null,
+          had_account: !!isDrumate,
+          source: "hub_invite",
+          answerable: true,
+        });
         if (isDrumate) {
-          // Existing account: grant membership now and push it over the socket, so
-          // the workspace shows up in a live session without a reload.
-          const r = await this._grantMembership(drumate.id, privilege, 0, message, mfs_home, hubname, username);
-          if (r) {
-            try {
-              const hub = await this.yp.await_proc(
-                `${r.db_name}.mfs_access_node`, drumate.id, hubId
-              );
-              if (hub) {
-                hub.message = message;
-                hub.ownpath = '/';
-                hub.hub_id = hub.actual_hub_id;
-                hub.db_name = hub.actual_db;
-                const sockets = await this.yp.await_proc('user_sockets', drumate.id);
-                await RedisStore.sendData(this.payload(hub, { service: "hub.invite_received" }), sockets);
-                await RedisStore.sendData(this.payload(hub, { service: "hub.add_contributors" }), sockets);
-              }
-            } catch (err) {
-              this.warn("[hub] invite: ws notify failed for", drumate.id, err && err.message);
-            }
-          }
-        } else {
-          // No account yet: mint an invite token so the address can be redeemed
-          // after sign-up, AND record a pending invitation so the membership is
-          // actually granted when the account appears.
-          //
-          // The pending row is what does the granting: signup's create_account
-          // calls _resolve_pending_invitation(email), which reads
-          // pending_invitation_get_by_email and adds the new user to each hub.
-          // Nothing anywhere redeems the invite TOKEN during sign-up — it is for
-          // the link flow — so an invite that writes only a token leaves the
-          // person with no membership at all.
-          //
-          // This used to be gated on `!isShareLink`, which excluded exactly the
-          // external (area === "share") workspaces: an invitee with no account
-          // signed up, was never added, and landed on a desk showing only the
-          // three default workspaces. Opening the workspace they were invited to
-          // then failed with "the file you requested does not exist", which is
-          // what a hub with no grant looks like from the client.
-          //
-          // Internal is unaffected: it already took the branch that writes this
-          // row, and it still writes exactly the same row.
-          await this._addInviteToken(email, hubId, privilege, expiryTs);
-          await this.yp.await_proc(
-            "yp_add_pending_invitation", hubId, 0, privilege, email
-          );
-          await writeAudit(this, {
-            db: this.hub.get(Attr.db_name),
-            uid: this.uid,
-            action: 'invite_sent',
-            category: 'member',
-            notify_to: 'admin',
-            entity_id: hubId,
-            log: `Invite sent to ${email} for workspace '${hubname}'`,
+          await this._notifyInvitee(drumate.id, {
+            hub_id: hubId,
+            hub_name: hubname,
+            message,
+            from_fullname: username,
+            privilege,
+            token,
           });
         }
 
-        // --- One email for everyone, varying only by workspace scope ---
-        await this._sendInviteEmail(
-          WORKSPACE_INVITE_TPL,
+        // The email itself is sent after this loop, in batches — see below.
+        // `token` rides along: unlike the rest of the email it is PER PERSON.
+        mailQueue.push({ idx, email, granted, pending, drumate, token, had_account: !!isDrumate });
+      } catch (err) {
+        this.warn("[hub] invite failed for", email, err && err.message);
+        results[idx] = {
           email,
-          workspace_external
-            ? `${username} shared ${hubname} with you`
-            : `${username} added you to ${hubname}`,
-          {
-            inviter_name: username,
-            workspace_name: hubname,
-            link: ctaLink,
-            workspace_external,
-            preview_items,
-            recent_messages,
-          },
-        );
-        results.push({ email, status: "ok" });
+          status: "failed",
+          // The caller needs these to know whether "failed" means "nothing
+          // happened" or "everything happened except the email".
+          granted,
+          pending,
+          reason: this._inviteFailureReason(email, hubname, granted, pending, err),
+        };
+      }
+    }
+
+    // --- One email per invitee, sent in batches ---
+    // Batched, not one awaited send per invitee: each send is a full SMTP
+    // handshake with the relay (~4.5 s measured on production), and paying it
+    // serially made the request time grow linearly with the guest list — a
+    // 30-address invite held the popup for over two minutes.
+    //
+    // 🚨 NOT ONE MESSAGE TO THE WHOLE BATCH. The Accept and Decline links carry
+    // each invitee's OWN token, so every recipient needs their own rendering —
+    // sending one body to the batch would hand everybody the first person's
+    // invitation. The batch is therefore sent as concurrent single-recipient
+    // sends. Same connection profile as a multi-recipient send: Messenger keeps
+    // one module-level transport and posts one sendMail per recipient either
+    // way, so INVITE_MAIL_BATCH still bounds the open SMTP sessions.
+    //
+    // THE SUBJECT NO LONGER CLAIMS THE DEED IS DONE. "added you to" was
+    // literally true while this granted membership on the spot; it is a lie
+    // now, and the one line of the email most people read.
+    const subject = workspace_external
+      ? `${username} invited you to ${hubname}`
+      : `${username} invited you to join ${hubname}`;
+    const mailData = (token) => ({
+      inviter_name: username,
+      workspace_name: hubname,
+      // Kept, and still the target of the workspace preview's own links, so an
+      // email opened by somebody who has already answered is not a dead end.
+      link: ctaLink,
+      // The two answers. Both carry the token and nothing else identifying —
+      // holding the secret IS the authorisation, exactly as it already was for
+      // redemption.
+      accept_link: this._inviteAnswerLink(token, hubId, hubname, "accept"),
+      decline_link: this._inviteAnswerLink(token, hubId, hubname, "decline"),
+      workspace_external,
+      preview_items,
+      recent_messages,
+    });
+    for (let i = 0; i < mailQueue.length; i += INVITE_MAIL_BATCH) {
+      const batch = mailQueue.slice(i, i + INVITE_MAIL_BATCH);
+      // One verdict per invitee: an Error, or null when it was delivered.
+      const verdicts = await Promise.all(batch.map(async ({ email, token }) => {
+        try {
+          const rejected = await this._sendInviteEmails(
+            WORKSPACE_INVITE_TPL, [email], subject, mailData(token),
+          );
+          return rejected.has(String(email).trim().toLowerCase())
+            ? new Error(`Email delivery to ${email} failed: the MTA rejected ${email}`)
+            : null;
+        } catch (err) {
+          // Nothing was dispatched (no MTA, unknown reply shape).
+          return new Error(`Email delivery to ${email} failed: ${err.message}`);
+        }
+      }));
+      batch.forEach(({ idx, email, granted, pending, drumate, had_account }, j) => {
+        const err = verdicts[j];
+        if (err) {
+          this.warn("[hub] invite failed for", email, err.message);
+          results[idx] = {
+            email,
+            status: "failed",
+            granted,
+            pending,
+            reason: this._inviteFailureReason(email, hubname, granted, pending, err),
+          };
+          return;
+        }
+        results[idx] = { email, status: "ok", granted, pending, had_account };
         // Queue for address-book bookkeeping — only invitees whose branch
-        // actually succeeded (a failure throws above and must leave no contact).
+        // actually succeeded (a failure must leave no contact).
         // Deliberately deferred until every invite is done, see below.
         const key = String(email).trim().toLowerCase();
         if (!remembered.has(key)) {
           remembered.add(key);
           toRemember.push({ email, drumate });
         }
-      } catch (err) {
-        this.warn("[hub] invite failed for", email, err && err.message);
-        results.push({ email, status: "failed", reason: err && err.message });
-      }
+      });
     }
 
     // Bookkeeping runs LAST, never interleaved with invite work. Reason: the
@@ -1422,13 +1726,22 @@ class __private_hub extends Hub {
       await this._rememberInvitee(email, drumate, contactBook);
     }
 
-    this.output.data({ results });
+    this.output.data({ results: results.filter(Boolean) });
   }
 
   /**
-   * Mint a hub_invite token for an address with no Drumee account yet, so the
-   * invite can be redeemed after sign-up (accept_invite). Token only — the email
-   * is sent once by invite(), the same one every invitee gets.
+   * Mint a hub_invite token: the invitation itself, and the only thing that can
+   * redeem or refuse one. Every invitee gets one now, not just an address with
+   * no Drumee account — see invite().
+   *
+   * THE SECRET IS RETURNED, and callers need it. It is what the email's Accept
+   * and Decline links carry, and what the notification row hands back to
+   * hub.accept_invite / hub.decline_invite. Before invitations could be
+   * answered this only had to exist, so nothing read it.
+   *
+   * REPLACE semantics live in token_hub_invite_add: re-inviting the same
+   * address to the same workspace as the same inviter supersedes the previous
+   * token, so a refusal does not block a later invitation.
    */
   async _addInviteToken(email, hubId, privilege, expiryTs) {
     const { randomBytes } = require("crypto");
@@ -1438,6 +1751,83 @@ class __private_hub extends Hub {
     await this.yp.await_proc(
       "token_hub_invite_add", email, "", secret, method, this.uid, metadata, expiryTs
     );
+    // ONE LIVE INVITATION PER PERSON PER WORKSPACE. The REPLACE above only
+    // covers a re-send by the SAME admin — its unique key carries inviter_id —
+    // so a second admin inviting the same address leaves the first row beside
+    // the new one, refusals included. token_hub_invite_decline parks a refusal
+    // with expiry 0 so it never ages out, and hub_invitations reports the
+    // newest row that still qualifies: once the NEW invitation lapses, the old
+    // undying refusal is the only one left and the panel says "Declined" for an
+    // invitation the person never answered. Superseding here is also what was
+    // asked for — re-inviting somebody who declined turns their row back to
+    // Pending instead of stacking a second one.
+    //
+    // Best-effort: the invitation itself is already minted and must not fail
+    // because a tidy-up did. The worst case is the stale row this removes.
+    try {
+      await this.yp.await_proc(
+        "token_hub_invite_supersede", email, method, secret
+      );
+    } catch (err) {
+      this.warn("[hub] invite: superseding older tokens failed", err && err.message);
+    }
+    return secret;
+  }
+
+  /**
+   * Tell an invitee who already has an account that they have been invited.
+   *
+   * THE NOTIFICATION IS THE INVITATION on this branch, not a receipt for
+   * something already done. It used to be written by _grantMembership, after
+   * the membership had been created — "you are in" — and the row carried no way
+   * to answer because there was nothing to answer. It now carries the token, so
+   * the row can offer Accept and Decline (activity item skeleton reads
+   * `invite_token`).
+   *
+   * 🚨 `hub.add_contributors` IS NOT PUSHED HERE, and its absence is the
+   * feature. That is the client's "you are now a member" signal — window/utils
+   * newContent() adds the workspace tile on it — and pushing it for somebody who
+   * has not accepted would put the workspace on their desk, which is exactly
+   * the auto-join being removed. Only `hub.invite_received` goes out: the
+   * activity panel refreshes its feed on it, which is how the invitation
+   * appears without a reload.
+   *
+   * NEVER THROWS. A notification is not the invitation's record — the token and
+   * the pending row are — so a socket that is not there, or a contact_activity
+   * write that fails, must not fail an invitation whose email is about to go
+   * out. The invitee still gets the email, and the row is rebuilt from
+   * contact_activity on their next feed read.
+   */
+  async _notifyInvitee(uid, { hub_id, hub_name, message, from_fullname, privilege, token }) {
+    try {
+      await this.yp.await_proc(
+        "contact_log_activity", this.uid, uid, "hub_invite_received",
+        {
+          hub_id,
+          hub_name,
+          message,
+          from_fullname,
+          privilege,
+          // Read back out by activity.mapHubInviteRow and
+          // hub.invite_received_get, both of which surface it as
+          // `invite_token`. Safe to hand to this user: it is their own
+          // invitation, the same secret their email already carries, and the
+          // feed procs are scoped to the recipient.
+          token,
+        }
+      );
+    } catch (err) {
+      this.warn("[hub] invite: activity row failed for", uid, err && err.message);
+    }
+    try {
+      const sockets = await this.yp.await_proc('user_sockets', uid);
+      await RedisStore.sendData(
+        this.payload({ hub_id, hub_name }, { service: "hub.invite_received" }),
+        sockets
+      );
+    } catch (err) {
+      this.warn("[hub] invite: ws notify failed for", uid, err && err.message);
+    }
   }
 
   /**
@@ -1506,6 +1896,11 @@ class __private_hub extends Hub {
     // scope:hub/src:owner).
     if (held >= permission) {
       await this.yp.await_proc('token_hub_invite_set_status', secret, 'accepted', keep_meta);
+      // The invitation is ANSWERED even though nothing was granted, so it has
+      // to stop being pending: the panel would keep listing somebody who is
+      // already a member, and their bell would keep offering them buttons.
+      // Access itself is deliberately untouched here — see the note above.
+      await this._closeInvitation(hub_id, tokenRow.email, { accepted: 1 });
       return this.output.data({ hub_id, already_member: 1 });
     }
 
@@ -1557,7 +1952,51 @@ class __private_hub extends Hub {
       `${db_name}.permission_grant`,
       '*', this.uid, 0, permission, 'system', 'Redeemed hub invite token'
     );
+    // 🚨 THE CHAT STAGING GRANT, which this path has never written.
+    //
+    // A member whose role is Chat has no write bit for the workspace, by
+    // design, and is meant to get write on the hidden '/__chat__/__upload__'
+    // folder alone so an attachment can be staged before it becomes a message.
+    // _grantMembership writes that grant; redeeming a token did not, so anybody
+    // who joined by link could not attach a file to a chat — the same 403 that
+    // was chased and fixed on the other path (schemas 2026-09-17,
+    // chat_upload_grant_repair).
+    //
+    // It was survivable while token redemption was the rare branch. It is now
+    // how EVERY member joins, so leaving it out would reintroduce that bug as
+    // the normal case, on the one path nobody had looked at.
+    //
+    // Gated on CAN_CHAT exactly as _grantMembership gates it: a view-only
+    // member may not chat, so handing them an upload path would give them
+    // something their role does not carry. 'no_traversal' keeps the raised
+    // access on that one folder and stops user_permission letting it reach
+    // anything inside.
+    //
+    // mfs_home() reads DATABASE(), which inside a routine is the routine's OWN
+    // database — so the cross-database call resolves the INVITED workspace's
+    // staging folder, not the caller's. Never allowed to fail the join: a
+    // member without this grant has a working workspace and a chat that cannot
+    // attach, which is strictly better than an invitation that would not
+    // redeem.
+    if (privilegeAllows(permission, CAN_CHAT)) {
+      try {
+        const home = await this.yp.await_proc(`${db_name}.mfs_home`);
+        if (home && home.chat_upload_id) {
+          await this.yp.await_proc(
+            `${db_name}.permission_grant`,
+            home.chat_upload_id, this.uid, 0, CHAT_UPLOAD_GRANT,
+            'no_traversal', 'chat upload permission'
+          );
+        }
+      } catch (err) {
+        this.warn(
+          "[hub] accept_invite: chat upload grant failed for", this.uid,
+          err && err.message
+        );
+      }
+    }
     await this.yp.await_proc('token_hub_invite_set_status', secret, 'accepted', keep_meta);
+    await this._closeInvitation(hub_id, tokenRow.email, { accepted: 1 });
     await writeAudit(this, {
       db: db_name,
       uid: this.uid,
@@ -1572,6 +2011,188 @@ class __private_hub extends Hub {
     // the Folder settings matrix open were stuck with a stale member list.
     await notifyMemberJoined(this, hub_id, this.uid);
     this.output.data({ hub_id });
+  }
+
+  /**
+   * Everything an ANSWERED invitation has to stop being, whichever answer it
+   * got. Called by accept_invite and decline_invite so the two cannot drift
+   * into closing different halves of the same thing.
+   *
+   * The answer itself is recorded by the caller — the token's status is what
+   * says accepted or declined — and this is the cleanup around it:
+   *
+   *   pending_invitation   🚨 THE ONE THAT MATTERS. That table is not a record
+   *     of an invitation, it is the QUEUE signup grants membership from
+   *     (_resolve_pending_invitation, in both signup.js and butler.js). Leave
+   *     the row behind after a REFUSAL and the invitee declines, creates their
+   *     account, and is put into the workspace they just turned down. Leave it
+   *     after an ACCEPTANCE and signup grants a membership that already exists
+   *     — harmless today because add_member is idempotent, but the invitation
+   *     also goes on reading as unanswered to everything that counts that
+   *     table, including the admin console's Pending Invites.
+   *
+   *   contact_activity     takes the row out of the invitee's bell. Cannot be
+   *     left to the client: an answer given from the EMAIL knows only the
+   *     token, never the notification's id, so the row would survive and keep
+   *     offering Accept and Decline on a spent token.
+   *
+   *   invite_track         the analytics outcome, per workspace. Both
+   *     procedures are the per-hub variants for the reason spelled out in
+   *     invite_track_accept_hub: the per-address ones would answer somebody's
+   *     OTHER pending invitations on the strength of this one.
+   *
+   * NEVER THROWS. The answer has already been written by the time this runs —
+   * membership granted, or the token marked declined — so a failure here must
+   * not turn a completed answer into an error the user sees and retries. Each
+   * step is independently guarded so one failing does not skip the rest.
+   *
+   * @param {string} hub_id     the workspace answered about
+   * @param {string} email      the address the invitation was sent to; may be
+   *   absent on an old token, in which case only the notification is cleared
+   * @param {object} o
+   * @param {boolean} [o.accepted] true for accept, false/absent for decline
+   */
+  async _closeInvitation(hub_id, email, { accepted = false } = {}) {
+    if (!hub_id) return;
+    if (email) {
+      try {
+        await this.yp.await_proc('pending_invitation_delete', hub_id, email);
+      } catch (err) {
+        this.warn("[hub] invitation cleanup: pending row", err && err.message);
+      }
+    }
+    if (this.uid) {
+      try {
+        await this.yp.await_proc(
+          'contact_activity_dismiss_hub_invite', this.uid, hub_id
+        );
+      } catch (err) {
+        this.warn("[hub] invitation cleanup: notification", err && err.message);
+      }
+    }
+    if (email) {
+      try {
+        if (accepted) {
+          await this.yp.await_proc(
+            'invite_track_accept_hub', hub_id, email, this.uid || null
+          );
+        } else {
+          await this.yp.await_proc('invite_track_decline', hub_id, email);
+        }
+      } catch (err) {
+        this.warn("[hub] invitation cleanup: tracking", err && err.message);
+      }
+    }
+    // LAST, so the panels it wakes read the rows written above. Never throws.
+    await notifyInvitationsChanged(this, hub_id);
+  }
+
+  /**
+   * Turn down a workspace invitation.
+   *
+   * 🚨 NO SESSION IS REQUIRED, and that is deliberate rather than an oversight.
+   * HOLDING THE SECRET IS THE AUTHORISATION, exactly as it already is for
+   * redemption — and this is the strictly less dangerous of the two, because
+   * accepting with a secret GRANTS access to a workspace while declining only
+   * destroys an invitation addressed to one email.
+   *
+   * Requiring a sign-in would mean the one answer that needs no account could
+   * only be given by creating one: an invitation is most often sent to somebody
+   * who has no Drumee account, and "no thanks" must not cost them a signup.
+   *
+   * WHAT IT CANNOT DO is as important as what it can. It never removes
+   * membership — leaving a workspace is desk.leave_hub, a different act behind
+   * a different permission — and token_hub_invite_decline refuses anything that
+   * is not an ACTIVE hub_invite token, so a stale link pressed after joining
+   * cannot rewrite how somebody got in.
+   *
+   * IDEMPOTENT by construction: declining twice keeps the first answer (the
+   * proc's own WHERE clause), and so does invite_track_decline. The second
+   * press reports the same `declined` rather than an error, because from the
+   * user's side nothing is wrong — they said no, twice.
+   */
+  async decline_invite() {
+    const secret = this.input.need('token');
+    const rows = await this.yp.await_proc('token_hub_invite_decline', secret);
+    const tokenRow = isArray(rows) ? rows[0] : rows;
+    // No row at all: not a hub-invite token, or one already swept away by the
+    // expiry cleanup in token_hub_invite_add. Nothing to answer.
+    if (!tokenRow || !tokenRow.secret) {
+      return this.output.data({ status: 'invalid' });
+    }
+    const hub_id = tokenRow.hub_id
+      || String(tokenRow.method || '').slice('hub_invite:'.length);
+    // Already accepted — say so rather than claiming a refusal that did not
+    // happen. The proc left the token alone, and the person is a member.
+    if (tokenRow.status === 'accepted') {
+      return this.output.data({ status: 'already_used', hub_id });
+    }
+    await this._closeInvitation(hub_id, tokenRow.email, { accepted: false });
+    // Audited on the WORKSPACE, so its administrators can see that an
+    // invitation they sent was turned down — the Pending Invitations list shows
+    // the state, this records the moment. Best-effort: the refusal is already
+    // written and must not be undone by a logging failure, and the hub db may
+    // not resolve for a caller with no session.
+    try {
+      const db_name = await this.yp.await_func('get_db_name', hub_id);
+      if (db_name) {
+        await writeAudit(this, {
+          db: db_name,
+          uid: this.uid || null,
+          action: 'invite_declined',
+          category: 'member',
+          notify_to: 'admin',
+          entity_id: hub_id,
+          log: `Invite declined — ${tokenRow.email} turned down the invitation`,
+        });
+      }
+    } catch (err) {
+      this.warn("[hub] decline_invite: audit failed", err && err.message);
+    }
+    this.output.data({ status: 'declined', hub_id });
+  }
+
+  /**
+   * The invitations this workspace is still waiting on, plus the ones that were
+   * turned down — the "Pending Invitations" section of the Access panel.
+   *
+   * 🚨 CURRENT MEMBERS ARE FILTERED OUT HERE, and they have to be filtered
+   * somewhere. hub_invitations reads yp, and membership lives in the
+   * workspace's own database, so the procedure cannot know. The usual case it
+   * catches: an address invited while an older invitation of its own was still
+   * active, then added straight to the workspace by add_contributors — which
+   * asks nobody and leaves the invitation open. Without this the panel would
+   * list the same person under Pending and under Members at once.
+   *
+   * Matched on the ADDRESS, lowercased on both sides, because an invitation has
+   * no uid to match on until the invitee has an account.
+   */
+  async invitations() {
+    const hub_id = this.hub.get(Attr.id);
+    const rows = toArray(await this.yp.await_proc('hub_invitations', hub_id));
+    let members = [];
+    try {
+      // Through _members_by_type, not a bare proc call: it is the one place
+      // that knows a PERSONAL entity's database has no hub_get_members_by_type
+      // at all, and that calling it there raises ER_SP_DOES_NOT_EXIST and tears
+      // down this request's DB connection.
+      members = toArray(await this._members_by_type('all', 1));
+    } catch (err) {
+      // A member list we could not read is not a reason to hide the
+      // invitations: showing one row too many is recoverable by the admin,
+      // showing nothing looks like the invitations were never sent.
+      this.warn("[hub] invitations: member list failed", err && err.message);
+    }
+    const seated = new Set(
+      members
+        .map((m) => String((m && m.email) || "").trim().toLowerCase())
+        .filter(Boolean)
+    );
+    this.output.list(
+      rows.filter(
+        (r) => !seated.has(String(r.email || "").trim().toLowerCase())
+      )
+    );
   }
 
   /**
@@ -1651,23 +2272,103 @@ class __private_hub extends Hub {
   }
 
   /**
-   * Gửi 1 email mời theo template app-local service/private/templates/butler/<tpl>.html
+   * WHAT TO TELL THE CALLER when one invitee's turn threw.
+   *
+   * The loop above is ordered mint-then-notify, so where the throw happened
+   * decides what is true afterwards:
+   *
+   *   - after the pending row   → the invitation EXISTS. It is in the Pending
+   *     Invitations list, and an invitee who already has an account can still
+   *     accept it from their notification row even if the email never left.
+   *   - before it               → nothing happened.
+   *
+   * 🚨 `granted` IS ALWAYS FALSE NOW and the branch that read it is dead code
+   * kept deliberately. Nothing in invite() grants membership any more — that
+   * moved to hub.accept_invite — so no throw here can leave somebody a member.
+   * The parameter stays because the result shape is part of this service's
+   * contract with three callers (the Access panel, the rail's Invite popup and
+   * the folder window), and because reviving the grant behind this function's
+   * back would otherwise report "nothing was granted" while the person had
+   * access.
+   *
+   * Reporting all three as a bare "the MTA rejected <address>" is wrong in the
+   * direction that costs the admin the most: they read it as "the invite did
+   * not go through", re-invite, get the identical failure, and never learn the
+   * person already has access — while the permissions matrix in front of them
+   * shows no new row, because the panel treats `status: "failed"` as "nothing
+   * to refetch". State what LANDED first, then what did not.
+   *
+   * @param {String} email    the invitee
+   * @param {String} hubname  workspace display name, for the message
+   * @param {Boolean} granted membership was written
+   * @param {Boolean} pending an invitation was recorded for a future signup
+   * @param {Error}  err      whatever threw
+   * @returns {String} the `reason` the caller surfaces
    */
-  async _sendInviteEmail(tpl, recipient, subject, data) {
+  _inviteFailureReason(email, hubname, granted, pending, err) {
+    const why = (err && err.message) || "unknown error";
+    const ws = hubname ? `'${hubname}'` : "this workspace";
+    // Kept to one sentence of consequence each: what failed, then what stands.
+    // The advice that used to follow ("tell them another way", "do not
+    // re-invite") is what the fact already implies, and it pushed the card past
+    // the height its message deserves.
+    if (granted) {
+      return `${why}. Membership was actually granted: ${email} HAS been added `
+        + `to ${ws} and can open it now.`;
+    }
+    if (pending) {
+      return `${why}. The invitation to ${ws} is recorded — ${email} can still `
+        + `accept it, and it will be honoured when they sign up.`;
+    }
+    return `${why}. Nothing was invited — ${email} has no invitation to ${ws}.`;
+  }
+
+  /**
+   * Send the SAME invite email (service/private/templates/butler/<tpl>.html)
+   * to a batch of addresses at once.
+   *
+   * Messenger.send accepts an array of recipients, posts them concurrently on
+   * one transport and answers `{ recipient, error }`, where `error` lists the
+   * addresses whose sendMail rejected (null when every one was delivered).
+   *
+   * AWAITED, and the reply judged by SHAPE rather than by a truthy `.error`
+   * — see service/lib/mail-result for why that distinction is the whole bug.
+   * dispatch() returns undefined before the mail reaches an MTA, and send()
+   * returns the rendered HTML when no transport is configured; both read as
+   * success under an `.error` test, which is how an invite came to report
+   * status:"ok" while nothing ever left the box.
+   *
+   * @param {string}   tpl        template name under templates/butler
+   * @param {string[]} recipients addresses for this batch
+   * @param {string}   subject
+   * @param {Object}   data       template data, the same for every recipient
+   * @returns {Promise<Set<string>>} addresses (lowercased) the MTA rejected
+   * @throws {Error} when nothing in the batch was dispatched at all
+   */
+  async _sendInviteEmails(tpl, recipients, subject, data) {
     const tplPath = resolve(__dirname, "templates", "butler", `${tpl}.html`);
-    const msg = new Messenger({ subject, recipient, handler: this.exception.email });
+    const msg = new Messenger({
+      subject,
+      recipient: recipients,
+      handler: this.exception.email,
+    });
     const html = msg.renderFrom(tplPath, data);
     // Display-name From ("Drumee" <contact@drumee.org>) so the inbox shows
     // "Drumee", matching the contact-add emails.
     const from = butlerFrom();
-    // Messenger.send() always resolves { recipient, error } — it never rejects
-    // (errors are routed to the handler). Inspect `error` so an SMTP-time
-    // rejection (e.g. unknown mailbox -> 550) surfaces as a failed invitee
-    // instead of a silent status:"ok".
-    const result = msg.dispatch({ html, from });
-    if (result && result.error) {
-      throw new Error(`Email delivery to ${recipient} failed: ${result.error}`);
+    const result = await msg.send({ html, from });
+    const perRecipient = !!(result && Array.isArray(result.error));
+    const reason = mailFailure(result);
+    if (reason && !perRecipient) {
+      throw new Error(reason);
     }
+    const rejected = new Set();
+    if (perRecipient) {
+      for (const r of result.error) {
+        rejected.add(String(r).trim().toLowerCase());
+      }
+    }
+    return rejected;
   }
 
   /**
@@ -1763,16 +2464,32 @@ class __private_hub extends Hub {
         continue;
       }
 
-      // Hub display name for notification message
-      const hubInfo = await this.yp.await_proc('get_hub', hub_id);
-      const hubname = (hubInfo && (hubInfo.hubname || hubInfo.name)) || hub_id;
-      const msg = Cache.message('_x_add_you_to_team', lang).format(username, hubname);
-
-      // mfs_home needed for chat_upload_id permission grant
+      // mfs_home is needed for the chat_upload_id permission grant below, and
+      // it is also the ONLY thing here that knows the workspace's display name:
+      // get_hub returns `IF(_exists, h.hubname, _org_name) AS name`, so both of
+      // its name columns are the hex id. Reading them is why this endpoint used
+      // to mail "<inviter> added you to team 218881d8218881dc". Fetched before
+      // the name now; the get_hub call stays because it is what creates a hub's
+      // yp.disk_usage row on demand, and it still supplies the last-resort
+      // fallbacks for a workspace whose yp.hub.name is genuinely NULL.
       const mfs_home = await this.yp.await_proc(`${hub_db}.mfs_home`);
+      const hubInfo = await this.yp.await_proc('get_hub', hub_id);
+      const hubname = resolveHubDisplayName(
+        mfs_home,
+        hubInfo && hubInfo.hubname,
+        hubInfo && hubInfo.name,
+        hub_id,
+      );
+      const msg = Cache.message('_x_add_you_to_team', lang).format(username, hubname);
 
       const members = []; // UIDs to add immediately
       const rows = []; // Results from add_member (for WebSocket notify)
+      // uid -> address it was invited at, for invite_track. The immediate-grant
+      // branches resolve an entity (which may be an email OR a uid) down to a
+      // uid, but invite_track is keyed by (hub_id, email) — the same key
+      // pending_invitation uses — so the address has to be carried forward
+      // rather than re-derived after the fact.
+      const memberEmail = new Map();
 
       // Resolve each user entity
       for (const entity of users) {
@@ -1784,6 +2501,7 @@ class __private_hub extends Hub {
             if (contact.status === 'active') {
               // Known active contact → add immediately
               members.push(contact.uid);
+              memberEmail.set(contact.uid, contact.email || asEmail(entity));
             } else {
               // Pending contact → store for deferred grant
               await this.yp.await_proc(
@@ -1798,6 +2516,12 @@ class __private_hub extends Hub {
                 notify_to: 'admin',
                 entity_id: hub_id,
                 log: `Invite sent to ${entity} for workspace '${hubname}'`,
+              });
+              await this._trackInviteSent({
+                hub_id,
+                email: asEmail(entity),
+                had_account: false,
+                source: "invite_with_roles",
               });
             }
           } else {
@@ -1818,6 +2542,7 @@ class __private_hub extends Hub {
             if (sameDomain) {
               // Exists on same domain → add immediately
               members.push(drumate.id);
+              memberEmail.set(drumate.id, drumate.email || asEmail(entity));
             } else {
               // Unknown user or different domain → pending + invite email
               await this.yp.await_proc(
@@ -1832,6 +2557,12 @@ class __private_hub extends Hub {
                 notify_to: 'admin',
                 entity_id: hub_id,
                 log: `Invite sent to ${entity} for workspace '${hubname}'`,
+              });
+              await this._trackInviteSent({
+                hub_id,
+                email: asEmail(entity),
+                had_account: false,
+                source: "invite_with_roles",
               });
 
               // Only send email if entity looks like an email address
@@ -1885,6 +2616,17 @@ class __private_hub extends Hub {
           entity_id: uid,
           log: `Member added to workspace '${hubname}'`,
         });
+        // Same shape as invite()'s existing-account branch: granted on the
+        // spot, so accept_time equals sent_time. Skipped when the entity was a
+        // bare uid with no resolvable address — invite_track is keyed by email
+        // and a row without one could never be matched by an acceptance.
+        await this._trackInviteSent({
+          hub_id,
+          email: memberEmail.get(uid),
+          invitee_uid: uid,
+          had_account: true,
+          source: "invite_with_roles",
+        });
 
         // Grant resource-level permission on hub root
         await this.yp.await_proc(
@@ -1892,19 +2634,26 @@ class __private_hub extends Hub {
           '*', uid, expiry, privilege, 'system', msg
         );
 
-        // Grant chat upload permission if chat folder exists
-        if (mfs_home && mfs_home.chat_upload_id) {
+        // Write access to the chat staging folder only, and only for a role
+        // that may chat -- see _grantMembership for why it is scoped this way.
+        if (mfs_home && mfs_home.chat_upload_id &&
+            privilegeAllows(privilege, CAN_CHAT)) {
           await this.yp.await_proc(
             `${hub_db}.permission_grant`,
             mfs_home.chat_upload_id,
             uid,
             0,    // no expiry on chat upload
-            4,    // read+write for uploads
+            CHAT_UPLOAD_GRANT,
             'no_traversal',
             'chat upload permission'
           );
         }
       }
+
+      // Grants here bypass _grantMembership (this endpoint writes add_member and
+      // permission_grant itself), so the rollup refresh that lives there does
+      // not fire — refresh once per workspace after its members are in.
+      if (members.length) await this._trackWorkspaceMembers(hub_id);
 
       // WebSocket notify each successfully added member
       for (const recipient of toArray(rows)) {
@@ -2432,6 +3181,16 @@ class __private_hub extends Hub {
       // assignee. task.update_assignee is what the task panel already listens to
       // for a live reload, so reuse it rather than inventing a new signal.
       await this._broadcast_task_unassign(hub_id);
+      // Avg team size has to fall when people leave, not only rise when they
+      // join — a rollup refreshed on one side only climbs forever.
+      await this._trackWorkspaceMembers(hub_id);
+      // media.remove and hub.member_removed above went to the removed members
+      // only. Every remaining member with the permission matrix open still
+      // showed them; tell the hub, last, so the refetch reads the final list.
+      await notifyMembersChanged(this, hub_id, {
+        change: "removed",
+        users: members,
+      });
     }
     users = await this._members_by_type("not_owner", 1);
     this.output.list(users);
@@ -2550,15 +3309,25 @@ class __private_hub extends Hub {
     for (let uid of users) {
       await this.db.await_proc("permission_set", uid, privilege);
 
-      await this.db.await_proc(
-        "permission_grant",
-        mfs_home.chat_upload_id,
-        uid,
-        0,
-        4,
-        "no_traversal",
-        "chat upload permission"
-      );
+      // A role change has to move the chat staging grant in BOTH directions.
+      // Granting on the way up is what lets a chat member attach a file;
+      // revoking on the way down is what stops a member demoted to view-only
+      // from keeping an upload path the new role does not carry.
+      if (privilegeAllows(privilege, CAN_CHAT)) {
+        await this.db.await_proc(
+          "permission_grant",
+          mfs_home.chat_upload_id,
+          uid,
+          0,
+          CHAT_UPLOAD_GRANT,
+          "no_traversal",
+          "chat upload permission"
+        );
+      } else {
+        await this.db.await_proc(
+          "permission_revoke", mfs_home.chat_upload_id, uid
+        );
+      }
 
       hub = {};
       hub.privilege = privilege;
@@ -2567,6 +3336,13 @@ class __private_hub extends Hub {
       let sockets = await this.yp.await_proc("user_sockets", uid);
       await RedisStore.sendData(this.payload(hub), sockets);
     }
+    // The pushes above reach only the members being changed, for their own
+    // windows. Everybody else with the permission matrix open is told here,
+    // once, after every write has landed.
+    await notifyMembersChanged(this, this.hub.get(Attr.id), {
+      change: "privilege",
+      users,
+    });
     this.output.data(users);
   }
 

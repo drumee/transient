@@ -17,8 +17,10 @@
 
 const { Attr, RedisStore, toArray } = require('@drumee/server-essentials');
 const { isEmpty } = require('lodash');
-const { Entity } = require('@drumee/server-core');
+const { Entity, MfsTools } = require('@drumee/server-core');
+const { remove_node } = MfsTools;
 const { notifyTaskEvent } = require('../lib/activity-mailer');
+const {admit: admitMobilePush} = require('../lib/mobile-push');
 const { markFeatureUsage } = require('../lib/feature-usage');
 
 // Built-in Kanban columns. Custom columns live in the task_column table and
@@ -67,11 +69,11 @@ class __private_task extends Entity {
 
   /**
    * A status key is valid when it's one of the built-in columns or the id of
-   * an existing column (task_column row) in the SAME folder scope.
+   * an existing column (task_column row) in this workspace.
    *
-   * The scope matters: built-in ids are literal status keys stored once per
-   * scope, so an unscoped lookup would accept a key that only exists on some
-   * other board.
+   * `nid` is still taken and still passed through, but task_column_get_v2
+   * resolves the single workspace scope itself now — there is one set of
+   * columns per workspace, so a key either exists here or it does not.
    */
   async _isValidStatus(status, nid) {
     if (VALID_STATUSES.includes(status)) return true;
@@ -82,9 +84,9 @@ class __private_task extends Entity {
 
   /**
    * Whether a status/column key is a "done" column (is_done = 1) in this
-   * folder scope. Completion is column-driven, so this replaces the old
-   * literal `status === 'complete'` checks — a renamed or user-created done
-   * column still counts as complete.
+   * workspace. Completion is column-driven, so this replaces the old literal
+   * `status === 'complete'` checks — a renamed or user-created done column
+   * still counts as complete.
    */
   async _isDoneColumn(status, nid) {
     try {
@@ -98,13 +100,21 @@ class __private_task extends Entity {
 
   /**
    * Broadcast a task event to every socket connected to the current hub
-   * (sender excluded). Silently no-ops if hub_id is missing.
+   * (the originating socket excluded; every socket of the caller when no
+   * socket_id was sent). Silently no-ops if hub_id is missing.
    */
   async _broadcast(service, data) {
     const hub_id = this.hub && this.hub.get(Attr.id);
     if (!hub_id) return;
     let dest = await this.yp.await_proc('entity_sockets', hub_id);
-    dest = toArray(dest).filter((e) => e.uid != this.uid);
+    // Skip the socket that made this call — it already has the answer — but
+    // keep the caller's OTHER sessions, so a second tab sees its own user's
+    // change live. A client that sends no socket_id keeps the old behaviour
+    // (every socket of the caller skipped), as in chat.react.
+    const socket_id = this.input.get(Attr.socket_id);
+    dest = toArray(dest).filter((e) =>
+      socket_id ? e.socket_id != socket_id : e.uid != this.uid,
+    );
     if (isEmpty(dest)) return;
     await RedisStore.sendData(this.payload(data, { service }), dest);
   }
@@ -119,7 +129,7 @@ class __private_task extends Entity {
    * 'reply' — a reply to your comment); omitted for real @-mentions, so their
    * stored data stays exactly as before.
    */
-  async _notifyMentions(data, mentionUids, kind = null) {
+  async _notifyMentions(data, mentionUids, kind = null, extra = null) {
     const uids = toArray(mentionUids).filter((u) => u && u !== this.uid);
     if (isEmpty(uids)) return;
     const hub_id = this.hub && this.hub.get(Attr.id);
@@ -133,6 +143,10 @@ class __private_task extends Entity {
       nid: (data && data.nid) || null,
     };
     if (kind) meta.kind = kind;
+    // Kind-specific fields (the new priority, the destination column). Written
+    // only for the kinds that carry them, so a plain @-mention's stored data is
+    // byte-for-byte what it has always been.
+    if (extra) Object.assign(meta, extra);
     for (const target_uid of uids) {
       try {
         await this.yp.await_proc(
@@ -162,12 +176,98 @@ class __private_task extends Entity {
     }
     // Email leg for offline recipients — same theme and rules as the hub
     // activity mail. Deliberately not awaited.
-    notifyTaskEvent(this, {
-      uids,
-      title: meta.title,
-      taskId: task_id,
-      kind: kind === 'reply' ? 'reply' : 'mention',
-    }).catch((e) => this.warn('[task._notifyMentions] mail failed:', e && e.message));
+    //
+    // ONLY for the two kinds the mail templates have copy for. The kinds added
+    // on 2026-08-21 (comment / priority / moved) are in-app notifications that
+    // nobody asked to be emailed, and notifyTaskEvent falls back to the
+    // "assigned you the task" wording for an unrecognised kind — so passing one
+    // through would send a mail that says the wrong thing. Opt in explicitly if
+    // those should mail too.
+    if (kind === null || kind === undefined || kind === 'reply') {
+      notifyTaskEvent(this, {
+        uids,
+        title: meta.title,
+        taskId: task_id,
+        kind: kind === 'reply' ? 'reply' : 'mention',
+      }).catch((e) => this.warn('[task._notifyMentions] mail failed:', e && e.message));
+    }
+    // Mobile push is an in-app notification leg, not mail — the mail-copy gate
+    // above deliberately does not apply to it.
+    await admitMobilePush({
+      type: 'task.mention',
+      actor_id: this.uid,
+      hub_id,
+      key_id: task_id,
+      occurred_at: Date.now(),
+      scope_nid: meta.nid || '',
+      recipient_uids: uids,
+    });
+  }
+
+  /**
+   * Notify a task's ASSIGNEES about something that happened to their task
+   * (Duy 2026-08-21 — issues 5, 6 and 8: a status move, a comment, and a
+   * priority change all went unnotified).
+   *
+   * Rides the existing `task_mention` event with a `kind` discriminator, exactly
+   * as the "replied to your comment" notification already does. That is a
+   * deliberate reuse, not a shortcut: it inherits the Task bucket, the unread
+   * proc, the feed merge, the per-tab mark-as-read and the dismiss routing, so
+   * these three notifications need NO schema change at all. The client matches
+   * every kind before its generic mention branch, so none of them can read as
+   * "mentioned you".
+   *
+   * Never touches _notifyColumnWatchers: the column-watch feature keeps working
+   * exactly as it does today, and its coalesce-per-column dedupe is wrong for a
+   * per-task notification anyway (two tasks moved through the same column would
+   * collapse into one row and the assignee of the first would lose theirs).
+   *
+   * Best-effort and self-excluding: moving/commenting on your own task notifies
+   * nobody but the other assignees.
+   */
+  async _notifyAssigneesOfChange(taskId, kind, extra = null, exclude = []) {
+    try {
+      if (!taskId || !kind) return;
+      const rows = toArray(await this.db.await_run(
+        'SELECT uid FROM task_assignee WHERE task_id = ?', [taskId],
+      ));
+      const skip = new Set(toArray(exclude).map((u) => String(u)));
+      const uids = rows
+        .map((r) => r && r.uid)
+        .filter((u) => u && !skip.has(String(u)));
+      if (isEmpty(uids)) return;
+      const t = toArray(await this.db.await_run(
+        'SELECT id, title, nid FROM task WHERE id = ?', [taskId],
+      ))[0];
+      if (!t) return;
+      // _notifyMentions drops `this.uid` itself and dedupes nothing else, so a
+      // person assigned twice cannot happen (task_assignee is keyed per uid).
+      await this._notifyMentions(
+        { id: t.id, title: t.title || '', nid: t.nid || null },
+        uids,
+        kind,
+        extra,
+      );
+    } catch (e) {
+      this.warn('[task._notifyAssigneesOfChange] failed:', e && e.message);
+    }
+  }
+
+  /**
+   * The display name of a column key, for the "moved to <Column>" sentence.
+   * Built-in keys resolve client-side from LOCALE (they have no task_column row
+   * on most boards — the table is empty on a board that never customised one),
+   * so this only reports a STORED name, i.e. a user-created or renamed column.
+   * Returns null when there is nothing stored, and the client localises the
+   * built-in key instead.
+   */
+  async _columnName(status, nid) {
+    try {
+      const col = toArray(await this.db.await_proc('task_column_get_v2', status, nid))[0];
+      return (col && col.name) || null;
+    } catch (e) {
+      return null;
+    }
   }
 
   /**
@@ -231,6 +331,15 @@ class __private_task extends Entity {
       taskId: task_id,
       kind: 'assigned',
     }).catch((e) => this.warn('[task._notifyAssignees] mail failed:', e && e.message));
+    await admitMobilePush({
+      type: 'task.assigned',
+      actor_id: this.uid,
+      hub_id,
+      key_id: task_id,
+      occurred_at: Date.now(),
+      scope_nid: meta.nid || '',
+      recipient_uids: uids,
+    });
   }
 
   /**
@@ -400,28 +509,46 @@ class __private_task extends Entity {
    * Params: nid, include_unscoped (mirror task.list), limit (default 30).
    */
   async activity() {
+    // workspace=1 → every row in the workspace, matching task.list. The board's
+    // Project Health feed is workspace-level like the board itself; '*' is
+    // task_activity_list's sentinel for it.
+    const workspace = this.input.use('workspace', 0) ? 1 : 0;
     const nid = this.input.use('nid', null);
     const include_unscoped = this.input.use('include_unscoped', 0) ? 1 : 0;
     const limit = Number(this.input.use('limit', 30)) || 30;
     const data = await this.db.await_run(
       'CALL task_activity_list(?, ?, ?)',
-      [nid, include_unscoped, limit]
+      [workspace ? '*' : nid, include_unscoped, limit]
     );
     this.output.list(data);
   }
 
   /**
-   * List tasks scoped to a folder node.
-   * Params: nid (folder node id; null/absent = legacy unscoped), include_unscoped
-   * (1 on the workspace-root view to also surface legacy nid-less tasks).
+   * List a board's tasks.
+   *
+   * Params:
+   *   workspace        1 = the WHOLE workspace, every task in this database
+   *                    regardless of the folder it was created in. This is what
+   *                    the board asks for now: tasks are workspace-level
+   *                    (Figma 43:23955), and a workspace IS a database.
+   *   nid              folder node id — folder-scoped listing. Retained for
+   *                    callers that still want one folder's tasks; ignored when
+   *                    `workspace` is set.
+   *   include_unscoped 1 also surfaces legacy nid-less tasks. Only meaningful
+   *                    for a folder-scoped call; workspace scope returns them
+   *                    anyway because it filters on nothing.
    */
   async list() {
+    const workspace = this.input.use('workspace', 0) ? 1 : 0;
     const nid = this.input.use('nid', null);
     const include_unscoped = this.input.use('include_unscoped', 0) ? 1 : 0;
+    // '*' is task_list's workspace sentinel — a sentinel rather than a third
+    // parameter because MariaDB procedures take no default arguments, so a new
+    // IN would break every existing two-argument CALL.
     // await_run (not await_proc) preserves a JS null nid when binding.
     const data = await this.db.await_run(
       'CALL task_list(?, ?)',
-      [nid, include_unscoped]
+      [workspace ? '*' : nid, include_unscoped]
     );
     this.output.list(data);
   }
@@ -613,6 +740,25 @@ class __private_task extends Entity {
       return this.exception.user('INVALID_PRIORITY');
     }
 
+    // Snapshot the priority BEFORE the write so the assignees are told only
+    // about a real change (Duy 2026-08-21, issue 8). Re-saving the same value —
+    // which the editor does on every unrelated field edit, since it posts the
+    // whole form — must stay silent. Read only when a priority was actually
+    // submitted; on failure `prevPriority` stays undefined and the comparison
+    // below simply does not fire, so a lookup problem cannot produce a false
+    // notification.
+    let prevPriority;
+    if (priority != null) {
+      try {
+        const before = toArray(await this.db.await_run(
+          'SELECT priority FROM task WHERE id = ?', [id],
+        ))[0];
+        if (before) prevPriority = before.priority;
+      } catch (e) {
+        this.warn('[task.update] prior priority lookup failed:', e && e.message);
+      }
+    }
+
     const reporter_uid = await this._validateReporter();
     if (reporter_uid === null) return; // invalid reporter — exception raised
 
@@ -660,6 +806,11 @@ class __private_task extends Entity {
     await this._broadcast('task.update', data);
     // Client sends only the newly-added mentions in `mention_uids`.
     await this._notifyMentions(data, this.input.use('mention_uids', null));
+    // Assignees hear about a priority change. Guarded on a genuine change so a
+    // form save that leaves priority alone notifies nobody.
+    if (priority != null && prevPriority !== undefined && prevPriority !== priority) {
+      await this._notifyAssigneesOfChange(id, 'priority', { priority });
+    }
     this.output.data(data);
   }
 
@@ -694,17 +845,37 @@ class __private_task extends Entity {
       return this.exception.user('TASK_NOT_FOUND');
     }
     const row = Array.isArray(data) ? data[0] : data;
+    // nid is unchanged by a column move, so the task's folder still scopes the
+    // done-column lookup correctly. Resolved ONCE — both the activity log and
+    // the assignee notification below need it.
+    const isDone = await this._isDoneColumn(status, prev.nid);
     await this._logActivity(
       id,
-      // nid is unchanged by a column move, so the task's folder still scopes
-      // the done-column lookup correctly.
-      (await this._isDoneColumn(status, prev.nid)) ? 'complete' : 'status',
+      isDone ? 'complete' : 'status',
       { title: row && row.title, status },
     );
     await this._broadcast('task.update_status', data);
     const cols =
       prevStatus && prevStatus !== status ? [status, prevStatus] : [status];
     await this._notifyColumnWatchers(row, cols, 'moved');
+    // The task's assignees are told too (Duy 2026-08-21, issue 5). Column
+    // WATCHERS were the only audience before, and watching is an opt-in bell
+    // nobody had switched on — 2 such rows existed in the whole stage DB — so in
+    // practice a status change notified no one. Only fires on a real move, so
+    // re-saving the same column stays silent.
+    //
+    // Deliberately BEFORE the parent rollup below: that branch returns early,
+    // so notifying after it would silently skip every subtask whose move
+    // completes its parent — exactly the moves people most want to hear about.
+    if (prevStatus !== status) {
+      await this._notifyAssigneesOfChange(id, 'moved', {
+        column_key: status,
+        column_name: await this._columnName(status, prev.nid),
+        // Completion is column-driven, so the client cannot infer it from the
+        // key: a renamed or user-created done column still counts.
+        is_done: isDone ? 1 : 0,
+      });
+    }
 
     // Parent auto-complete. Returned alongside the moved row rather than left
     // to a client reload: peers pick the change up from the broadcast above,
@@ -774,7 +945,10 @@ class __private_task extends Entity {
     const meta = await this._taskColMeta(id);
     // Log BEFORE the delete — task_activity_log snapshots the task's nid/title.
     await this._logActivity(id, 'update', { deleted: 1 });
+    // Read the attachments BEFORE task_delete drops the rows that name them.
+    const attached = await this._taskAttachedNids(id);
     const data = await this.db.await_proc('task_delete', id);
+    await this._purgeUnlinkedFiles(attached);
     const row = Array.isArray(data) ? data[0] : data;
     // The SP returns the children as a comma-separated string (GROUP_CONCAT),
     // NULL when there were none. Normalise to an array so the client never has
@@ -785,6 +959,112 @@ class __private_task extends Entity {
     const result = { id, ...(row || {}), subtask_ids };
     await this._broadcast('task.delete', result);
     this.output.data(result);
+  }
+
+  /**
+   * Drop an attachment's media node once nothing points at it any more.
+   *
+   * Only files the task panel UPLOADED are touched. Those live in the hub's
+   * hidden task folder (/__chat__/__task__ — see mfs_home), which exists so an
+   * attachment does not appear in the workspace's Files tab beside the real
+   * documents. A file LINKED from the workspace body is a document in its own
+   * right and is left exactly where it is; the file_path test below is what
+   * tells the two apart, and mfs_attachment_remove re-checks '^/__chat__'
+   * itself, so a wrong nid reaching here still cannot delete someone's file.
+   *
+   * Without this, an attachment outlived every task that referenced it, in a
+   * folder no listing shows, with no way for anyone to reclaim the space.
+   *
+   * NEVER THROWS: failing to reclaim a file must not fail the unlink or the
+   * delete that the user actually asked for.
+   */
+  async _purgeUnlinkedFiles(file_nids) {
+    const nids = [...new Set(toArray(file_nids).map(String).filter(Boolean))];
+    if (!nids.length) return;
+    let home;
+    try {
+      home = await this.db.call_proc('mfs_home');
+    } catch (err) {
+      this.warn('task: mfs_home failed, keeping orphan attachments', err && err.message);
+      return;
+    }
+    if (!home || !home.home_dir) return;
+    for (const nid of nids) {
+      try {
+        // Still referenced by another task, or by a comment on one? Then it is
+        // not an orphan. Both tables are checked: a file can be attached to the
+        // task AND quoted in a comment on it, and the last reference wins.
+        const refs = await this.db.await_query(
+          'SELECT 1 AS n FROM task_file WHERE file_nid=? LIMIT 1',
+          `${nid}`
+        );
+        if (!isEmpty(toArray(refs))) continue;
+        const crefs = await this.db.await_query(
+          'SELECT 1 AS n FROM task_comment_file WHERE file_nid=? LIMIT 1',
+          `${nid}`
+        );
+        if (!isEmpty(toArray(crefs))) continue;
+        const rows = await this.db.await_query(
+          'SELECT file_path FROM media WHERE id=?',
+          `${nid}`
+        );
+        const node = toArray(rows)[0];
+        const path = (node && node.file_path) || '';
+        if (!/^\/__chat__\/__task__\//.test(`${path}`)) continue;
+        await this.db.await_proc('mfs_attachment_remove', `${nid}`);
+        await remove_node({
+          nid,
+          hub_id: this.hub && this.hub.get(Attr.id),
+          mfs_root: `${home.home_dir}/__storage__/`,
+        });
+      } catch (err) {
+        this.warn('task: failed to purge orphan attachment', nid, err && err.message);
+      }
+    }
+  }
+
+  /**
+   * Every media nid a task and its subtasks point at, from both the task's own
+   * attachments and its comments' — read BEFORE task_delete removes the rows
+   * that name them, so _purgeUnlinkedFiles still has something to check.
+   */
+  async _taskAttachedNids(task_id) {
+    try {
+      const rows = await this.db.await_query(
+        `SELECT file_nid FROM task_file
+          WHERE task_id = ?
+             OR task_id IN (SELECT id FROM task WHERE parent_task_id = ?)
+         UNION
+         SELECT cf.file_nid FROM task_comment_file cf
+           JOIN task_comment c ON c.id = cf.comment_id
+          WHERE c.task_id = ?
+             OR c.task_id IN (SELECT id FROM task WHERE parent_task_id = ?)`,
+        `${task_id}`, `${task_id}`, `${task_id}`, `${task_id}`
+      );
+      return toArray(rows).map((r) => r && r.file_nid).filter(Boolean);
+    } catch (err) {
+      this.warn('task: could not read attachments before delete', err && err.message);
+      return [];
+    }
+  }
+
+  /**
+   * Every media nid a comment thread points at — the root and its replies, the
+   * same set task_comment_delete removes the links for.
+   */
+  async _commentAttachedNids(comment_id) {
+    try {
+      const rows = await this.db.await_query(
+        `SELECT cf.file_nid FROM task_comment_file cf
+           JOIN task_comment c ON c.id = cf.comment_id
+          WHERE c.id = ? OR c.parent_id = ?`,
+        `${comment_id}`, `${comment_id}`
+      );
+      return toArray(rows).map((r) => r && r.file_nid).filter(Boolean);
+    } catch (err) {
+      this.warn('task: could not read comment attachments before delete', err && err.message);
+      return [];
+    }
   }
 
   /**
@@ -815,6 +1095,8 @@ class __private_task extends Entity {
     const file_nid = this.input.need('file_nid');
 
     const data = await this.db.await_proc('task_unlink_file', task_id, file_nid);
+    // Reclaim the node if that was its last reference — see _purgeUnlinkedFiles.
+    await this._purgeUnlinkedFiles([file_nid]);
     const result = { task_id, file_nid, ...data };
     await this._broadcast('task.unlink_file', result);
     this.output.data(result);
@@ -975,6 +1257,17 @@ class __private_task extends Entity {
     if (repliers.size) {
       await this._notifyCommentMentions(task_id, [...repliers], 'reply');
     }
+    // The task's assignees hear about a comment on their task even when they
+    // were not @-mentioned and are not the person being replied to (Duy
+    // 2026-08-21, issue 6). Anyone already notified above is excluded, so one
+    // person gets exactly one notification per comment — a mention or a reply
+    // wins over the plainer "commented on" wording.
+    await this._notifyAssigneesOfChange(
+      task_id,
+      'comment',
+      null,
+      [...mentionSet, ...repliers],
+    );
     this.output.data(row);
   }
 
@@ -1004,8 +1297,14 @@ class __private_task extends Entity {
   async comment_delete() {
     const id = this.input.need('id');
     const task_id = this.input.need('task_id');
+    // The SP takes the whole thread (root + replies) and their file links with
+    // it, so collect the nids while the links still name them.
+    const attached = await this._commentAttachedNids(id);
     const data = await this.db.await_proc('task_comment_delete', id, this.uid);
     const row = Array.isArray(data) ? data[0] : data;
+    // affected = 0 means a non-author asked: nothing was deleted, nothing to
+    // reclaim — and purging here would let anyone delete another's attachment.
+    if (row && row.affected) await this._purgeUnlinkedFiles(attached);
     const result = {
       id,
       task_id,
@@ -1093,8 +1392,10 @@ class __private_task extends Entity {
   }
 
   /**
-   * Detach a file from one's own comment. The media node itself is untouched —
-   * it lives in the folder body, exactly as with unlink_file.
+   * Detach a file from one's own comment. A file LINKED from the workspace body
+   * is untouched and stays where it is; one the panel uploaded into the hidden
+   * task folder is reclaimed once nothing else points at it — exactly as with
+   * unlink_file (see _purgeUnlinkedFiles).
    * Params: comment_id, file_nid, task_id (required, for the broadcast).
    */
   async comment_unlink_file() {
@@ -1112,6 +1413,7 @@ class __private_task extends Entity {
       this.uid
     );
     const row = Array.isArray(data) ? data[0] : data;
+    await this._purgeUnlinkedFiles([file_nid]);
     const result = { comment_id, file_nid, task_id, affected: row && row.affected };
     await this._broadcast('task.comment_update', { ...comment, task_id });
     this.output.data(result);
@@ -1185,6 +1487,42 @@ class __private_task extends Entity {
       return this.exception.user('COLUMN_NOT_FOUND');
     }
     await this._broadcast('task.column_update', data);
+    this.output.data(data);
+  }
+
+  /**
+   * Flag a column as the board's "done" column (or clear the flag).
+   * Params: id (required); nid (folder scope, nullable); is_done (0 | 1).
+   *
+   * is_done already drives completed_at stamping, the subtask done/total badge
+   * and the completion filters — it just had no writer, so only the seeded
+   * built-in 'complete' was ever a done column and a board that replaced its
+   * columns had none at all. Deliberately its OWN service and its OWN proc
+   * rather than a fourth parameter on column_update: that would be a breaking
+   * signature change on both sides.
+   *
+   * Scoped for the same reason as column_update — built-in ids are literal
+   * status keys stored once per folder.
+   */
+  async column_set_done() {
+    const id = this.input.need(Attr.id);
+    const nid = this.input.use('nid', null);
+    // Anything other than an explicit truthy value clears the flag; the proc
+    // normalises to 0/1 as well, so a bad input can never store a third state.
+    const is_done = Number(this.input.use('is_done', 0)) ? 1 : 0;
+
+    const data = await this.db.await_run(
+      'CALL task_column_set_done(?, ?, ?)',
+      [id, nid, is_done]
+    );
+    // The DB layer swallows SQL errors and returns empty (await_run never
+    // throws), so an empty result is the only failure signal there is — it
+    // means either no such column in this scope, or the proc is not applied to
+    // this hub DB yet. Fail loudly instead of acking a write that never landed.
+    if (isEmpty(data)) {
+      return this.exception.user('COLUMN_NOT_FOUND');
+    }
+    await this._broadcast('task.column_set_done', data);
     this.output.data(data);
   }
 

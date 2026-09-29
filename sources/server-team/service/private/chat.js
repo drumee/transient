@@ -22,6 +22,7 @@ const { stringify } = JSON;
 const { mkdirSync } = require("fs");
 const { isEmpty, isArray, map, includes } = require("lodash");
 const { CAN_CHAT, privilegeAllows } = require("../lib/member-capability");
+const {admit: admitMobilePush} = require('../lib/mobile-push');
 const { markFeatureUsage } = require("../lib/feature-usage");
 
 const ENTITY_ID_RE = /^[0-9a-zA-Z_-]{1,32}$/;
@@ -59,6 +60,11 @@ class privateChat extends Entity {
   async attachment() {
     let message_id = this.input.use(Attr.message_id);
     let peer_id = this.input.use(Attr.peer_id);
+    // The whole list, not a page of five. The chat bubble shows every
+    // attachment of a message and its card list never scrolls, so the old
+    // fixed page hid every file past the fifth. `page` is still read and
+    // echoed on each row because the list widget sends it and the card
+    // model carries it; it no longer selects a slice.
     let page = this.input.use(Attr.page) || 1;
     let attach = {};
     let data = await this.db.await_proc("channel_get", message_id);
@@ -75,7 +81,7 @@ class privateChat extends Entity {
 
     if (!isEmpty(data) && !isEmpty(data.attachment)) {
       data.attachment = this.parseJSON(data.attachment);
-      attach = data.attachment.slice((page - 1) * 5, page * 5);
+      attach = data.attachment;
       if (!isEmpty(attach)) {
         attach = await this._getAttachmentsInfo(attach, this.uid, page);
       }
@@ -865,6 +871,13 @@ class privateChat extends Entity {
     let res = await this._distributeMessage(input, message, thread_id, [
       entity_id,
     ]);
+    await admitMobilePush({
+      type: 'chat.post',
+      actor_id: this.uid,
+      key_id: message_id,
+      occurred_at: Date.now(),
+      recipient_uids: [entity_id],
+    });
     this.output.data(res);
     // Core function -> the Chat bar and Avg messages/user. All three message
     // paths mark 'chat' (p2p here, workspace and file threads in channel.js):

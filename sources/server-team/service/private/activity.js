@@ -3,7 +3,22 @@
 
 const { Entity } = require('@drumee/server-core');
 const { RedisStore, Attr, toArray } = require('@drumee/server-essentials');
+const { createHash } = require('node:crypto');
 const { resolveHubInviteName } = require('../lib/hub-invite-name');
+const { hubInviteStatus } = require('../lib/hub-invite-status');
+const CONTACT_ACTIVITY_CATEGORIES = new Set([
+  'contact_refused',
+  'hub_invite',
+  'task_assigned',
+  'task_mention',
+]);
+const ROLLUP_MUTATION_CATEGORIES = new Set([
+  'chat',
+  'contact',
+  'media',
+  'teamchat',
+  'ticket',
+]);
 
 function firstValue(...values) {
   for (const value of values) {
@@ -14,10 +29,49 @@ function firstValue(...values) {
   return undefined;
 }
 
+// Which identity to look up for a share-open event, or null when the opener is
+// genuinely anonymous. Shared by the resolver and the row builder so the two can
+// never disagree about what was looked up.
+//
+// The recipient's email wins over the actor id when both exist: the email is the
+// identity the row already displays, so resolving THAT keeps the name and the
+// avatar the same person. `ffffffffffffffff` is the anonymous sentinel — an
+// unauthenticated visitor on a public link (same guard as
+// service/private/secure_share.js).
+// The rollup categories that CANNOT survive being read on their own.
+// notification_center_next recomputes them from unread state, so once they are
+// read they are simply never generated again -- unlike contact / hub-invite /
+// mfs rows, which activity_get_feed_all still returns with is_read = 1. These
+// four are therefore the ones captured in the notification_rollup store and the
+// ones merged into the feed in BOTH toggle states.
+//
+// Defined once at module scope on purpose: _notificationRollups decides what to
+// STORE and get_feed decides what to MERGE, and if those two lists ever drifted
+// apart a category would either double-show or vanish entirely.
+const ROLLUP_CATEGORIES = new Set(['chat', 'media', 'teamchat', 'ticket']);
+
+const ANONYMOUS_UID = 'ffffffffffffffff';
+function openerKeyOf(r) {
+  if (!r) return null;
+  if (r.recipient_email) return r.recipient_email;
+  const id = r.actor_id;
+  if (!id || id === ANONYMOUS_UID) return null;
+  return id;
+}
+
 function mapNotificationRow(r) {
+  let keyId = r.key_id;
+  switch (r.category) {
+    case 'chat': keyId = firstValue(r.drumate_id, r.key_id); break;
+    case 'contact': keyId = firstValue(r.contact_id, r.key_id); break;
+    case 'media': keyId = firstValue(r.nid, r.hub_id, r.key_id); break;
+    case 'teamchat': keyId = firstValue(r.key_id, r.nid, r.hub_id); break;
+    case 'ticket': keyId = firstValue(r.key_id, r.hub_id); break;
+  }
   const item = {
     category: r.category,
-    key_id: r.category === 'media' ? firstValue(r.hub_id, r.key_id) : r.key_id,
+    key_id: keyId,
+    source_id: firstValue(r.key_id, r.id),
     hub_id: r.hub_id,
     nid: r.nid,
     parent_id: r.parent_id,
@@ -46,6 +100,13 @@ function mapNotificationRow(r) {
     meeting_action: r.meeting_action,
   };
 
+  // A folder chat rollup names the folder the message was posted in, which is
+  // the chip. The sentence therefore no longer has to carry it — see the
+  // teamchat branch in the row skeleton.
+  if (r.category === 'teamchat') {
+    item.folder_name = item.filename;
+  }
+
   if (r.category === 'media') {
     const targetName = firstValue(
       r.folder_name,
@@ -67,6 +128,13 @@ function mapNotificationRow(r) {
     item.item_filename = r.item_filename;
     item.filename = targetName;
     item.link_label = targetName;
+    // The containing folder/workspace, for the card's folder chip (Figma
+    // component property `folder-name`). On a media rollup `targetName` IS the
+    // destination folder — the uploaded file's own name is item_filename — so
+    // the chip and the sentence read from two different fields and cannot
+    // duplicate each other. Raw mfs_changelog rows carry only the file, and get
+    // this resolved from their parent id instead; see _stampFolderNames.
+    item.folder_name = targetName;
     item.author_id = firstValue(r.author_id, r.owner_id, r.drumate_id);
     item.author_firstname = firstValue(r.author_firstname, r.firstname);
     item.author_lastname = firstValue(r.author_lastname, r.lastname);
@@ -75,6 +143,40 @@ function mapNotificationRow(r) {
 
   return item;
 }
+
+function bookmarkKey(row) {
+  const event = String(row.event || '');
+  let category = String(row.category || row.event_type || event || 'unknown');
+  if (['hub_invite', 'contact_refused', 'task_assigned', 'task_mention'].includes(category)) {
+    category = 'contact';
+  } else if (event.startsWith('media.')) {
+    category = 'mfs';
+  }
+  const key = firstValue(row.key_id, row.history_id, row.id);
+  if (key === undefined) return null;
+  // A rollup's last_id advances whenever another event lands. It must not be
+  // part of the bookmark identity: otherwise a saved card silently becomes
+  // unsaved after refresh, and the durable history row created on read cannot
+  // recover the saved state. category + canonical key + hub identify the same
+  // notification stream across unread and history representations; raw MFS and
+  // contact rows already use their immutable row id as `key`. Contact events
+  // deliberately omit hub_id because their unread adapters may enrich it while
+  // activity_get_feed_all represents the same yp.contact_activity row without
+  // one. The immutable contact-activity id is sufficient and mode-stable.
+  const identity = [
+    category,
+    String(key),
+    ...(category === 'contact' ? [] : [String(row.hub_id || '')]),
+  ];
+  return createHash('sha256').update(JSON.stringify(identity)).digest('hex');
+}
+
+// A saved row's snapshot (bookmark_rows) never keeps per-render or per-state
+// fields: they are recomputed when the row is served back.
+const BOOKMARK_ROW_DROP = ['is_saved', 'is_read', 'day_header', 'pinned_source', 'feed_page_source'];
+// Plenty for any feed row (the largest carry a few hundred bytes of JSON), and
+// small enough that 1000 bookmarks cannot grow a user's database by much.
+const BOOKMARK_ROW_MAX = 16 * 1024;
 
 // Surface task fields at the top level from the nested contact_activity `data`
 // JSON so the client renders the right text and can navigate to the task,
@@ -107,7 +209,63 @@ function flattenTaskFields(rows) {
       // it lets the item say "replied to your comment in" instead of the
       // (untrue) "mentioned you in". Absent on real @-mentions.
       if (r.task_kind == null && meta.kind != null) r.task_kind = meta.kind;
+      // The other kinds that ride this event (Round 3, Duy 2026-08-21) need one
+      // extra field each for their sentence. All optional and all guarded, so a
+      // plain mention or a reply is shaped exactly as before.
+      //   priority → the new priority         ("… to High")
+      //   moved    → the destination column    ("… moved to In progress")
+      //              and whether it is a DONE column ("… marked as completed")
+      if (r.task_priority == null && meta.priority != null) r.task_priority = meta.priority;
+      if (r.column_key == null && meta.column_key != null) r.column_key = meta.column_key;
+      if (r.column_name == null && meta.column_name != null) r.column_name = meta.column_name;
+      if (r.task_is_done == null && meta.is_done != null) r.task_is_done = meta.is_done;
     }
+  }
+  return rows;
+}
+
+function mapTaskNotificationRow(r) {
+  const hubId = firstValue(r.task_hub_id, r.hub_id);
+  const nodeId = firstValue(r.task_nid, r.nid);
+  return {
+    category: r.event,
+    key_id: String(r.id),
+    hub_id: hubId,
+    nid: nodeId,
+    filename: r.task_title || '',
+    last_id: r.id,
+    cnt: 1,
+    ctime: firstValue(r.timestamp, r.ctime),
+  };
+}
+
+// Surface the scheduled-meeting fields from a `meeting_notice` row's nested
+// `data` JSON (written by service/private/room.js) so the client can render the
+// sentence and open the meeting's folder without re-parsing the JSON. Same
+// contract and same idempotence as flattenTaskFields; touches no other event.
+function flattenMeetingNotice(rows) {
+  for (const r of rows) {
+    if (!r || r.event !== 'meeting_notice') continue;
+    let meta = r.data;
+    if (typeof meta === 'string') {
+      try { meta = JSON.parse(meta); } catch (e) { meta = null; }
+    }
+    meta = meta || {};
+    // 'invite' | 'moved' | 'cancelled'. The client defaults an unknown kind to
+    // the invitation wording rather than falling through to contact copy.
+    if (r.meeting_kind == null && meta.kind != null) r.meeting_kind = meta.kind;
+    if (r.meeting_title == null) r.meeting_title = meta.title || '';
+    if (r.meeting_stime == null && meta.stime != null) r.meeting_stime = meta.stime;
+    if (r.meeting_nid == null && meta.nid != null) r.meeting_nid = meta.nid;
+    // The meeting node's PARENT — the folder the click opens. Deliberately not
+    // the node itself: a cancelled meeting's node is hard-deleted
+    // (permission_revoke DELETEs a `schedule` row), so opening it would render
+    // "the file you requested does not exist".
+    if (r.meeting_pid == null && meta.pid != null) r.meeting_pid = meta.pid;
+    if (r.meeting_hub_id == null && meta.hub_id != null) r.meeting_hub_id = meta.hub_id;
+    // The chip. Resolved by room.js at write time from the parent node, because
+    // a cancelled meeting can no longer be looked up when the row is READ.
+    if (r.folder_name == null && meta.folder_name != null) r.folder_name = meta.folder_name;
   }
   return rows;
 }
@@ -136,6 +294,14 @@ function mapHubInviteRow(r) {
     // Shared with hub.invite_received_get so the two surfaces cannot drift
     // apart again — that drift is what left this one rendering a blank name.
     hub_name: resolveHubInviteName(r, meta),
+    // The invitation's own secret, which is what lets the row offer Accept and
+    // Decline. Written only by hub.invite (_notifyInvitee); the row
+    // _grantMembership writes when an admin adds somebody directly is a receipt
+    // for a membership that already exists, carries no token, and correctly
+    // renders without buttons. Surfaced under the same name as in
+    // hub.invite_received_get so the bell and the invitations list cannot
+    // disagree about whether a row can be answered.
+    invite_token: meta.token || null,
   };
 }
 
@@ -153,6 +319,375 @@ function mapContactRefusedRow(r) {
     author_id: r.author_id,
     drumate_id: r.author_id,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Notification buckets — the 5 Notification Center tabs (Round 3 / Sprint 1).
+//
+// The tab a notification belongs to is decided HERE, server-side, and shipped on
+// every row as `bucket`. The client only reads it and never re-derives one: an
+// event maps to exactly one bucket at generation time, so the same event cannot
+// land in two different tabs on two different surfaces.
+//
+// Rows arrive in three different shapes, which is why the checks are ordered
+// instead of being a single lookup:
+//   - notification_center_next rollups → `category` (chat|teamchat|media|ticket|
+//     contact), plus `meeting_action` on teamchat rows
+//   - activity_get_feed_all rows       → `event_type` ('mfs' | 'contact')
+//   - mfs_get_activity_feed rows       → neither, only `event`
+// ---------------------------------------------------------------------------
+const BUCKET = {
+  files: 'files',
+  task: 'task',
+  meeting: 'meeting',
+  chat: 'chat',
+  other: 'other',
+};
+
+// Matched FIRST, by exact event name. Task events live in yp.contact_activity,
+// so their category AND event_type both resolve to 'contact' — without this
+// every task notification would land in Other. The client's getActivityMeta()
+// works around the same trap to pick its copy, so the two must stay in step.
+const BUCKET_BY_EVENT = {
+  task_assigned: BUCKET.task,
+  task_mention: BUCKET.task,
+  task_column_change: BUCKET.task,
+  // A scheduled-meeting notice (invited / rescheduled / cancelled). Another
+  // yp.contact_activity event, so its category resolves to 'contact' and it
+  // would otherwise land in Other.
+  meeting_notice: BUCKET.meeting,
+  // A bare @-mention row (channel.list_notifications, type='mention') carries no
+  // category at all; a chat mention belongs to Chat.
+  mention: BUCKET.chat,
+};
+
+const BUCKET_BY_CATEGORY = {
+  // Files — uploads, folder creates, shares, removes, workspace moves.
+  //
+  // ⚠️ Link-sharing notifications (`share_open`, `media.share`) belong to FILES,
+  // and that is deliberate even though the backlog's row-4 text lists "Files/
+  // Folders's link sharing activity" under Other. Lexis (PO) was asked directly
+  // on 2026-08-19 — including the folder-link case — and ruled Files, because
+  // Other is defined as member invites plus miscellaneous. The PO's call wins
+  // over the sheet's prose; do not "fix" this back from the sheet.
+  media: BUCKET.files,
+  mfs: BUCKET.files,
+  workspace_move: BUCKET.files,
+  share_open: BUCKET.files,
+  // Chat — p2p messages and folder chat. A teamchat rollup carrying a
+  // meeting_action is re-routed to Meeting below, before this lookup runs.
+  chat: BUCKET.chat,
+  teamchat: BUCKET.chat,
+  meeting: BUCKET.meeting,
+  // Other — workspace/team invites, contacts, tickets, access requests and
+  // (via the default) every system alert.
+  contact: BUCKET.other,
+  contact_invite: BUCKET.other,
+  contact_refused: BUCKET.other,
+  hub_invite: BUCKET.other,
+  ticket: BUCKET.other,
+  access_request: BUCKET.other,
+};
+
+// Last resort for rows that carry only an `event`: mfs_get_activity_feed (the
+// Unread-ON feed) returns no category and no event_type whatsoever.
+const BUCKET_BY_EVENT_PREFIX = [
+  ['media.', BUCKET.files],
+  ['secure_share.', BUCKET.files],
+  ['chat.', BUCKET.chat],
+  ['channel.', BUCKET.chat],
+  ['conference.', BUCKET.meeting],
+  ['room.', BUCKET.meeting],
+  ['contact.', BUCKET.other],
+  ['hub.', BUCKET.other],
+];
+
+// Own-property lookup only. `event` / `category` come straight from the DB, so a
+// row whose value happens to be an Object.prototype key ('constructor',
+// 'toString', …) would otherwise resolve to an inherited function and be stamped
+// as the bucket. Not reachable from user input today, but a plain `map[key]`
+// here is a silent correctness hole, not a style question.
+function lookup(map, key) {
+  if (!key) return null;
+  return Object.prototype.hasOwnProperty.call(map, key) ? map[key] : null;
+}
+
+function bucketOf(row) {
+  if (!row) return BUCKET.other;
+  const event = String(row.event || '');
+
+  const byEvent = lookup(BUCKET_BY_EVENT, event);
+  if (byEvent) return byEvent;
+
+  // A folder-chat rollup whose latest unread event is a meeting start/end is a
+  // MEETING, not a chat message. notification_center_next surfaces that as
+  // meeting_action and the client already renders meeting copy for it ("started
+  // a meeting in <folder>"), so the bucket has to agree — otherwise the row
+  // would read as a meeting while sitting in the Chat tab.
+  if (row.meeting_action === 'start' || row.meeting_action === 'end') {
+    return BUCKET.meeting;
+  }
+
+  // A SCHEDULED meeting is a media node (room.book creates a `schedule` node),
+  // so notification_center_next rolls it up as an upload and it used to sit in
+  // Files reading "<organizer> uploaded <Meeting-name>" (Duy 2026-08-21).
+  //
+  // The `cnt <= 1` guard is load-bearing and MUST match the client's: the rollup
+  // groups per folder and reports MAX(item_filetype), so a folder holding a
+  // meeting AND an ordinary file arrives tagged 'schedule' with cnt > 1. Moving
+  // that row to Meeting would hide a real upload behind meeting copy, so a
+  // multi-item rollup keeps its existing Files behaviour untouched.
+  if (isScheduleRollup(row)) return BUCKET.meeting;
+
+  const byCategory = lookup(BUCKET_BY_CATEGORY, row.category || row.event_type || row.type);
+  if (byCategory) return byCategory;
+
+  for (const [prefix, bucket] of BUCKET_BY_EVENT_PREFIX) {
+    if (event.startsWith(prefix)) return bucket;
+  }
+
+  // Anything unrecognised — including every future system alert — falls into
+  // Other. Never drop a row: an unmapped notification must stay reachable.
+  return BUCKET.other;
+}
+
+// Stamp `bucket` on every row, in place. Idempotent, and never overwrites a
+// bucket a row already carries.
+function stampBuckets(rows) {
+  for (const r of rows) {
+    if (r && r.bucket == null) r.bucket = bucketOf(r);
+  }
+  return rows;
+}
+
+// The key notification_dismiss / notification_read act on for a rollup row.
+// It is NOT the rollup's display `key_id`: notification_center_next coalesces
+// key_id from the contact / drumate first, so a media rollup's key_id is the
+// UPLOADER and a p2p chat's is the CONTACT id — while the procs need the folder
+// nid (media) and the peer's drumate id (chat). A media rollup whose folder no
+// longer resolves has nid NULL and falls back to hub_id, which
+// notification_dismiss treats as "the files with no resolvable folder".
+// Shared by mark_all_read and the per-row read so both clear the same thing.
+function rollupDismissKey(r) {
+  if (!r) return null;
+  switch (r.category) {
+    case 'chat':     return r.drumate_id || r.key_id || null;
+    case 'media':    return r.nid || r.hub_id || r.key_id || null;
+    case 'teamchat': return r.key_id || r.nid || r.hub_id || null;
+    case 'contact':  return r.contact_id || r.key_id || null;
+    case 'ticket':   return r.key_id || r.hub_id || null;
+    default:         return null;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Scheduled meetings arrive on TWO channels, and exactly one row must survive.
+//
+//   1. the media rollup for the meeting's `schedule` node — what every workspace
+//      member sees, reading "<Meeting-name> on <time>" (Figma's scheduled card);
+//   2. a targeted `meeting_notice` invitation — what an ATTENDEE sees, reading
+//      "<organizer> invited you to <Meeting-name>".
+//
+// Duy 2026-08-21 asked for the invitation to REPLACE the rollup row, so when
+// both are present for the same meeting the rollup is dropped. The two are
+// matched on (hub, title): notification_center_next does not carry the meeting
+// node's own id, so the title is the only key both channels share.
+//
+// Deciding this from the rows actually present — rather than from "is the viewer
+// an attendee" — is deliberate: room.js writes the notice best-effort, and a
+// failed write must never leave the attendee with NO notification at all.
+//
+// Shared by get_feed and unread_counts so the tab badge can never disagree with
+// the rows the tab shows.
+// ---------------------------------------------------------------------------
+function isScheduleRollup(r) {
+  return !!r
+    && r.item_filetype === 'schedule'
+    && (r.category === 'media' || r.category === 'mfs')
+    && (parseInt(r.cnt, 10) || 0) <= 1;
+}
+
+function meetingNoticeKeys(rows) {
+  const keys = new Set();
+  if (!Array.isArray(rows)) return keys;
+  for (const r of rows) {
+    if (!r || r.event !== 'meeting_notice') continue;
+    // Only an invitation stands in for the rollup. A "rescheduled" or
+    // "cancelled" notice is a different fact and must not hide it.
+    if (r.meeting_kind && r.meeting_kind !== 'invite') continue;
+    const title = r.meeting_title;
+    if (!title) continue;
+    keys.add(`${r.meeting_hub_id || r.hub_id || ''}:${title}`);
+  }
+  return keys;
+}
+
+function isCoveredByNotice(row, keys) {
+  if (!keys || !keys.size || !isScheduleRollup(row)) return false;
+  const title = row.item_filename;
+  // Defence-in-depth, not load-bearing: meetingNoticeKeys never adds a key for
+  // an empty title, so a nameless rollup could not match one anyway. Kept
+  // because the two functions are the only thing standing between "one row per
+  // meeting" and "a notification silently disappears", and a future change to
+  // either side must not be able to make an untitled row droppable.
+  if (!title) return false;
+  return keys.has(`${row.hub_id || ''}:${title}`);
+}
+
+// ---------------------------------------------------------------------------
+// Procedures that may not exist yet.
+//
+// Several merges below call an *_unread procedure that a given database may not
+// have applied. The try/catch around each one does NOT cover that case, and it
+// never did: @drumee/server-essentials' `_handleError` (lib/mariadb.js) logs the
+// failure at WARN, rolls back, calls `this.end()` on the connection and returns
+// UNDEFINED — it only re-throws when `throwOnError` is set or the error is
+// fatal. So a missing procedure never raises; it just logs and drops a
+// connection, on every single call.
+//
+// Measured on the dev endpoint with contact_meeting_notice_unread deliberately
+// unapplied: an ER_SP_DOES_NOT_EXIST (1305) line per call, and 1305 is exactly
+// the signature the PROD alert bot reports (same warning in
+// service/lib/activity-mailer.js).
+//
+// `undefined` is therefore the failure signal — a SUCCESSFUL call always yields
+// a result value, even when it selects no rows. Recording it lets the procedure
+// be skipped for a short cooldown instead of retried on every request.
+//
+// The cooldown is short on purpose: "not deployed" and "one transient failure"
+// are indistinguishable from here, so a real hiccup must cost this one optional
+// source a minute, never a permanent blackout. Process-wide rather than
+// per-user, because whether a routine exists is a property of the database.
+// ---------------------------------------------------------------------------
+// ── Daily-reminder meeting counting ─────────────────────────────────────────
+//
+// room_list_scheduled returns every RECURRING meeting regardless of the window
+// it was asked for -- deliberately, so the client can expand occurrences -- so
+// counting its rows would report a weekly stand-up as "today" every day of the
+// year. This applies the same expansion the client's normalizeMeetings does
+// (folder/skeleton/meeting-schedule.js), so the card and the calendar can
+// never disagree about what "today" contains.
+//
+// metadata.content is DOUBLE-ENCODED: metadata is JSON whose `content` member
+// is itself a JSON *string* (room.book/update write it that way). A single
+// parse yields a string, and reading `.recur` off it silently gives undefined
+// -- which would make every recurring meeting look like a one-off.
+function meetingContent(m) {
+  try {
+    const md = typeof m.metadata === 'string' ? JSON.parse(m.metadata) : m.metadata || {};
+    const c = typeof md.content === 'string' ? JSON.parse(md.content) : md.content || {};
+    return c && typeof c === 'object' ? c : {};
+  } catch (e) {
+    return {};
+  }
+}
+
+// Advance an epoch-seconds instant by n periods, in UTC. Months are handled on
+// the calendar rather than as 30 days, so a monthly meeting stays on its date.
+function addPeriods(epoch, freq, n) {
+  const d = new Date(epoch * 1000);
+  if (freq === 'daily') d.setUTCDate(d.getUTCDate() + n);
+  else if (freq === 'weekly') d.setUTCDate(d.getUTCDate() + 7 * n);
+  else d.setUTCMonth(d.getUTCMonth() + n);
+  return Math.floor(d.getTime() / 1000);
+}
+
+// How many meetings fall inside [start, end)? Counts OCCURRENCES, so a daily
+// stand-up counts once for the day, not once per row.
+function countMeetingsInWindow(rows, start, end) {
+  if (!Array.isArray(rows) || !rows.length) return 0;
+  if (!(end > start)) return 0;
+  let n = 0;
+  for (const m of rows) {
+    if (!m) continue;
+    const content = meetingContent(m);
+    const s = Number(m.stime || content.stime);
+    // A legacy node with no queryable epoch is skipped rather than guessed at
+    // -- the client's expander skips it too.
+    if (!s) continue;
+
+    const recur = content.recur;
+    const freq = recur && recur.freq;
+    if (!freq || freq === 'none') {
+      if (s >= start && s < end) n += 1;
+      continue;
+    }
+    if (freq !== 'daily' && freq !== 'weekly' && freq !== 'monthly') {
+      // An unknown frequency is treated as a one-off rather than expanded: a
+      // wrong guess here repeats a phantom meeting every single day.
+      if (s >= start && s < end) n += 1;
+      continue;
+    }
+
+    const until = Number(recur.until) || 0;
+    // Pure short-circuit, NOT a correctness guard: the walk below re-checks
+    // `until` before counting, so deleting this line changes no answer — a
+    // mutation run proved that. It exists so an ended daily series does not
+    // walk thousands of iterations to reach the same conclusion.
+    if (until && until < start) continue;
+    // Walk from the series start. The window is ONE day, so the guard only
+    // has to survive a long-running series, not a wide range.
+    let occ = s;
+    let guard = 0;
+    const GUARD_MAX = 4000;
+    while (occ < start && guard++ < GUARD_MAX) occ = addPeriods(occ, freq, 1);
+    if (occ >= start && occ < end && (!until || occ <= until)) n += 1;
+  }
+  return n;
+}
+
+// Every yp.contact_activity event that has its own *_unread procedure. This is
+// the ONE list the tab badges (unread_counts), the Unread ON feed and the
+// Unread OFF read state (_alignContactReadState) are built from, so the three
+// cannot disagree about which contact rows are unread. A new contact_activity
+// event that should notify needs its *_unread proc added HERE; one that is not
+// listed is shown as read rather than as an unread row nothing counts.
+const CONTACT_UNREAD_PROCS = [
+  'contact_task_assigned_unread',
+  'contact_task_mention_unread',
+  'contact_task_column_change_unread',
+  'contact_storage_alert_unread',
+  // Claim-reward term ending (offline/workers/rewardExpiryWorker.js).
+  'contact_reward_expiry_unread',
+  // Scheduled-meeting notices (room.book/update/remove) → Meeting.
+  'contact_meeting_notice_unread',
+  // "<X> accepted your invitation" → Other.
+  'contact_invite_accepted_unread',
+];
+
+const MISSING_PROCS = new Map(); // proc name -> epoch ms to retry after
+const PROC_RETRY_MS = 60 * 1000;
+
+// unread_counts `files_since`: the web client's per-workspace "Files tab last
+// opened over" marks, { "<hub_id>": <unix ts> }. Only well-formed entries are
+// kept and the map is capped, so a malformed or oversized value can only mean
+// "no marks" — it never reaches the procedure as anything but a small JSON
+// document, passed as a bound parameter.
+const FILES_SINCE_MAX_KEYS = 500;
+function filesSinceArg(value) {
+  let v = value;
+  if (typeof v === 'string') {
+    try { v = JSON.parse(v); } catch (e) { v = null; }
+  }
+  const out = {};
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return '{}';
+  let n = 0;
+  for (const [hub, ts] of Object.entries(v)) {
+    if (n >= FILES_SINCE_MAX_KEYS) break;
+    if (!/^[0-9a-f]{16}$/.test(hub)) continue;
+    const t = parseInt(ts, 10);
+    if (!Number.isFinite(t) || t <= 0) continue;
+    out[hub] = t;
+    n += 1;
+  }
+  return JSON.stringify(out);
+}
+
+// A caller-supplied bucket is only honoured when it names one of the 5 tabs;
+// anything else (absent, empty, typo'd) means "no bucket scope" and every path
+// keeps its pre-existing, unscoped behaviour.
+function validBucket(value) {
+  return lookup(BUCKET, String(value || '').trim());
 }
 
 // Flatten watched-column metadata so the activity row can render and open the
@@ -185,6 +720,56 @@ class MfsActivity extends Entity {
    * @param {string} procName - Procedure name
    * @param {...any} args - Procedure arguments
    */
+  /**
+   * Call an optional yp procedure. Returns [] instead of throwing when the
+   * routine is absent, and stops calling it after the first such failure — see
+   * MISSING_PROCS above for why the try/catch alone is not enough.
+   *
+   * Any OTHER error is re-thrown to the caller's own catch, so a real failure
+   * (a deadlock, a bad argument) is still reported exactly as before and is
+   * never mistaken for "not deployed yet".
+   */
+  async _optionalYpProc(name, ...args) {
+    const now = Date.now();
+    const retryAfter = MISSING_PROCS.get(name);
+    if (retryAfter && now < retryAfter) return [];
+    // Not wrapped in try/catch on purpose: this path does not raise (see
+    // MISSING_PROCS above). A caller that DOES want to catch still can — the
+    // callers all keep their own try/catch for the fatal/throwOnError cases.
+    const rows = await this.yp.await_proc(name, ...args);
+    if (rows === undefined) {
+      MISSING_PROCS.set(name, now + PROC_RETRY_MS);
+      this.debug(`[ACTIVITY] ${name} failed or is not deployed; skipping it for ${PROC_RETRY_MS / 1000}s`);
+      return [];
+    }
+    // A successful call clears any earlier verdict immediately, so applying the
+    // schema takes effect on the next request rather than after the cooldown.
+    if (retryAfter) MISSING_PROCS.delete(name);
+    return toArray(rows);
+  }
+
+  /**
+   * As _optionalYpProc, but also says WHETHER the routine actually ran.
+   *
+   * Read paths cannot use that distinction — an absent routine and a user with
+   * nothing to report both mean "show nothing" — so they keep calling
+   * _optionalYpProc unchanged. A WRITE path needs it: `[]` is also the
+   * legitimate answer for "you have nothing muted", so without this flag a mute
+   * that never reached the database would be indistinguishable from one that
+   * succeeded, and would be confirmed to the user anyway.
+   *
+   * 🔑 It DELEGATES rather than re-implementing the cooldown, and reads the
+   * verdict back out of MISSING_PROCS afterwards. Two reasons: the bookkeeping
+   * stays in exactly one place, and _optionalYpProc keeps the self-contained
+   * body that two existing suites slice out and run on their own. An entry
+   * under this name after the call means the routine did not answer (or was
+   * still standing down); a successful call removes it.
+   */
+  async _optionalYpProcResult(name, ...args) {
+    const rows = await this._optionalYpProc(name, ...args);
+    return { ok: !MISSING_PROCS.has(name), rows };
+  }
+
   async _callUserProc(procName, ...args) {
     // const argsStr = args.map(arg => {
     //   if (typeof arg === 'string') return `'${arg}'`;
@@ -234,61 +819,184 @@ class MfsActivity extends Entity {
   async mark_all_read() {
 
     const lastId = parseInt(this.input.get('last_id')) || 0;
+    // Round 3: "Mark as all read" acts on the tab the user is looking at.
+    // null = unscoped = clear everything, exactly as before this existed.
+    const bucket = validBucket(this.input.use('bucket'));
+    // The changelog read pointer and the share-open seen flag both back the Files
+    // tab, so they are skipped when the user is clearing a different tab. Without
+    // this, clearing "Chat" would silently mark every file notification read too.
+    const clearFiles = !bucket || bucket === BUCKET.files;
 
-    this.debug(`[MFS_ACTIVITY] Marking all read for user ${this.uid}, last_id: ${lastId}`);
+    this.debug(`[MFS_ACTIVITY] Marking all read for user ${this.uid}, last_id: ${lastId}, bucket: ${bucket || 'all'}`);
 
-    const result = await this._callUserProc('mfs_mark_all_read', this.uid, lastId);
-    const data = toArray(result)[0];
-
-    // "Mark all as read" must also clear share-open notifications, which ride the
-    // feed via secure_share_open_feed / creator_seen_at (not mfs_mark_all_read).
-    // Best-effort — never fail the whole mark-all if this errors.
-    try {
-      await this.yp.await_proc('secure_share_mark_all_open_seen', this.uid);
-    } catch (e) {
-      this.warn('[MFS_ACTIVITY] mark_all_read: secure_share_mark_all_open_seen failed', e && e.message);
-    }
-
+    // Snapshot and clear rollups BEFORE mfs_mark_all_read advances P2P pointers;
+    // otherwise direct-chat rows disappear before durable history captures them.
+    // (Merged with the bucket-scoped flow: mfs_mark_all_read/secure-share stay
+    // AFTER the loop, gated on clearFiles, and `data` is seeded below so a
+    // scoped call that never touches the changelog still answers a stable
+    // payload instead of an undefined last_read_id.)
     // "Mark all as read" must also persist-clear the pinned rollups
     // (media/chat/teamchat/contact/ticket) — otherwise they reappear on reload.
-    // Reuse the already-tested procs: enumerate with notification_center_next,
-    // then notification_dismiss each with the same per-category key resolution the
-    // individual (trash-button) dismiss uses. Server-side loop so the client makes
-    // one call. Best-effort per rollup — never fail the whole mark-all.
+    // Reuse the already-tested procs: enumerate with notification_center_next.
+    // Read-capable rollups snapshot privacy-safe history before advancing their
+    // pointers; media/contact retain their existing clear behavior.
     try {
       const rollups = toArray(await this._callUserProc('notification_center_next'));
       for (const r of rollups) {
         if (!r || !r.category) continue;
-        let keyId;
-        switch (r.category) {
-          case 'chat':     keyId = r.drumate_id || r.key_id; break;
-          case 'media':    keyId = r.nid || r.hub_id || r.key_id; break;
-          case 'teamchat': keyId = r.key_id || r.nid || r.hub_id; break;
-          case 'contact':  keyId = r.contact_id || r.key_id; break;
-          case 'ticket':   keyId = r.key_id || r.hub_id; break;
-          default:         continue; // only rollup categories
-        }
+        // Same bucket rule the tabs are built from, so "clear this tab" clears
+        // exactly the rows that tab shows — a teamchat rollup carrying a
+        // meeting_action is cleared by Meeting, not by Chat.
+        if (bucket && bucketOf(r) !== bucket) continue;
+        // null for anything that is not a rollup category, as before.
+        const keyId = rollupDismissKey(r);
         if (!keyId) continue;
-        try {
+        const category = String(r.category);
+        const args = [
+          category,
+          String(keyId),
+          String(r.hub_id || ''),
+          parseInt(r.last_id || 0),
+        ];
+        if (['chat', 'teamchat', 'ticket'].includes(category)) {
           await this._callUserProc(
-            'notification_dismiss',
-            String(r.category),
-            String(keyId),
-            String(r.hub_id || ''),
-            parseInt(r.last_id || 0)
+            'notification_read',
+            ...args,
+            parseInt(r.ctime || 0),
           );
-        } catch (e) {
-          this.warn('[MFS_ACTIVITY] mark_all_read: rollup dismiss failed', r.category, e && e.message);
+        } else {
+          await this._callUserProc('notification_dismiss', ...args);
         }
       }
     } catch (e) {
-      this.warn('[MFS_ACTIVITY] mark_all_read: rollup enumerate failed', e && e.message);
+      // Do not advance the global MFS/P2P pointers after an enumerate,
+      // snapshot, or per-rollup mutation failure. That would make unread chat
+      // disappear without its durable history row while still reporting
+      // success to the client.
+      this.warn('[MFS_ACTIVITY] mark_all_read: rollup phase failed', e && e.message);
+      return this.exception.server('MARK_ALL_READ_FAILED');
+    }
+
+    // Seeded with the same shape the proc returns, so a scoped call that never
+    // touches the changelog still answers with a stable payload instead of an
+    // undefined last_read_id.
+    let data = { status: 'ok', last_read_id: 0 };
+    if (clearFiles) {
+      const result = await this._callUserProc('mfs_mark_all_read', this.uid, lastId);
+      data = toArray(result)[0];
+    }
+
+    // "Mark all as read" must also clear share-open notifications, which ride the
+    // feed via secure_share_open_feed / creator_seen_at (not mfs_mark_all_read).
+    // Best-effort — never fail the whole mark-all if this errors.
+    if (clearFiles) {
+      try {
+        await this.yp.await_proc('secure_share_mark_all_open_seen', this.uid);
+      } catch (e) {
+        this.warn('[MFS_ACTIVITY] mark_all_read: secure_share_mark_all_open_seen failed', e && e.message);
+      }
+    }
+
+    // Task rows are yp.contact_activity events, NOT notification_center_next
+    // rollups, so the loop above has never been able to clear them — clearing
+    // "all" left them behind. The 5-tab UI makes that visible: a Mark-as-all-read
+    // on the Task tab would appear to do nothing at all.
+    //
+    // Scoped to bucket === 'task' ON PURPOSE. Doing it unscoped would clear rows
+    // the unscoped call has never cleared, which is a behaviour change to a path
+    // that works today — so the capability is added only on the new code path.
+    // Pre-existing unscoped behaviour stays untouched.
+    // Same rule, same reasoning, for the Meeting tab's scheduled-meeting
+    // notices: they are contact_activity rows, so the rollup loop above has
+    // never been able to clear them. Scoped to bucket === 'meeting' ONLY, so the
+    // pre-existing unscoped behaviour is untouched.
+    const CONTACT_CLEAR = {
+      [BUCKET.task]: [
+        'contact_task_assigned_unread',
+        'contact_task_mention_unread',
+        'contact_task_column_change_unread',
+      ],
+      [BUCKET.meeting]: [
+        'contact_meeting_notice_unread',
+      ],
+      // The Other tab counts these too (CONTACT_UNREAD_PROCS), so clearing Other
+      // must clear them, or its badge could never reach zero.
+      [BUCKET.other]: [
+        'contact_storage_alert_unread',
+        'contact_reward_expiry_unread',
+        'contact_invite_accepted_unread',
+      ],
+    };
+    if (bucket && lookup(CONTACT_CLEAR, bucket)) {
+      for (const proc of lookup(CONTACT_CLEAR, bucket)) {
+        try {
+          const rows = await this._optionalYpProc(proc, this.uid);
+          for (const r of rows) {
+            const activityId = parseInt(r && r.id);
+            if (!activityId) continue;
+            try {
+              // Read, not removed: the rows stay in Activity history, exactly
+              // as an unscoped Mark as all read leaves them.
+              await this._markContactRead(activityId);
+            } catch (e) {
+              this.warn('[MFS_ACTIVITY] mark_all_read: contact dismiss failed', bucket, activityId, e && e.message);
+            }
+          }
+        } catch (e) {
+          // A missing proc during a rollout window must not sink the whole call —
+          // same reasoning as the get_feed merge above (debug, not warn, so the
+          // alert bot isn't spammed until the SQL lands).
+          this.debug(`[MFS_ACTIVITY] mark_all_read: ${proc} skipped`, e && e.message);
+        }
+      }
+    }
+
+    // Workspace invitations and refused contact invitations are Other rows too,
+    // but they come from their own rollup procs, not a *_unread one. Both procs
+    // return only the NEWEST undismissed row per group, so dismissing that row
+    // alone would just surface the next older one:
+    //   - hub invites are cleared per workspace, which dismisses every row of
+    //     the group at once (and leaves Accept/Decline alone — those read the
+    //     invitation token, not dismissed_at; see lib/hub-invite-status.js);
+    //   - refused rows are dismissed and re-read until none is left, bounded.
+    if (bucket === BUCKET.other) {
+      try {
+        const invites = toArray(await this._callUserProc('notification_hub_invites'));
+        const hubs = new Set();
+        for (const r of invites) {
+          const hubId = mapHubInviteRow(r || {}).hub_id;
+          if (hubId) hubs.add(hubId);
+        }
+        for (const hubId of hubs) {
+          await this.yp.await_proc('contact_activity_dismiss_hub_invite', this.uid, hubId);
+        }
+      } catch (e) {
+        this.warn('[MFS_ACTIVITY] mark_all_read: hub invites not cleared', e && e.message);
+      }
+      try {
+        for (let pass = 0; pass < 5; pass++) {
+          const refused = toArray(await this._callUserProc('notification_contact_refused'))
+            .map((r) => parseInt(r && r.id))
+            .filter(Boolean);
+          if (!refused.length) break;
+          for (const activityId of refused) {
+            await this._markContactRead(activityId);
+          }
+        }
+      } catch (e) {
+        this.warn('[MFS_ACTIVITY] mark_all_read: refused invitations not cleared', e && e.message);
+      }
     }
 
     if (data && data.status === 'ok') {
       return this.output.data({
         status: 'ok',
-        message: 'All notifications marked as read',
+        // The unscoped wording is unchanged on purpose; only a tab-scoped call
+        // gets different copy, because claiming "all" there would be false.
+        message: bucket
+          ? `Notifications marked as read for ${bucket}`
+          : 'All notifications marked as read',
+        bucket: bucket || null,
         last_read_id: data.last_read_id,
         mtime: data.mtime
       });
@@ -318,6 +1026,9 @@ class MfsActivity extends Entity {
     const page = this.input.use(Attr.page) || 1;
     const filter = this.input.use('filter') || 'all';
     const unreadOnly = parseInt(this.input.use('unread_only') || 0);
+    // Round 3: one of the 5 Notification Center tabs. null = unscoped, i.e. the
+    // exact pre-existing behaviour for every caller that doesn't send it.
+    const bucket = validBucket(this.input.use('bucket'));
     // unread_only=1 → unread-only feed (mfs_get_activity_feed, unchanged).
     // unread_only=0 → full feed (read + unread together) via
     // activity_get_feed_all, which returns the unified log with a correct
@@ -329,17 +1040,15 @@ class MfsActivity extends Entity {
     if (unreadOnly) {
       result = await this._callUserProc('mfs_get_activity_feed', this.uid, page);
     } else {
-      // Fail-safe: if activity_get_feed_all isn't present on this DB instance
-      // yet (schema not applied), degrade to the legacy unified log instead of
-      // erroring out the whole panel. Worst case = prior "off" behaviour.
-      try {
-        result = await this._callUserProc('activity_get_feed_all', this.uid, page);
-      } catch (e) {
-        this.warn('[ACTIVITY] activity_get_feed_all unavailable, falling back to activity_get_log', e);
-        result = await this._callUserProc('activity_get_log', this.uid, page);
-      }
+      // Full-feed callers require real read history. Failing closed is safer
+      // than silently returning the legacy unread/dismissed log under an OFF
+      // toggle, which would misrepresent the selected contract.
+      result = await this._callUserProc('activity_get_feed_all', this.uid, page);
     }
     result = toArray(result);
+    for (const row of result) {
+      if (row) row.feed_page_source = 'base';
+    }
     if (filter === 'mentions') {
       result = result.filter((row) => row.event !== 'media.share');
     } else if (filter === 'shares') {
@@ -355,18 +1064,34 @@ class MfsActivity extends Entity {
     if (filter !== 'mentions' && filter !== 'shares' && page <= 1) {
       try {
         const opens = toArray(await this.yp.await_proc('secure_share_open_feed', this.uid, unreadOnly));
+        // Identify who opened each share, for the row's name AND its avatar:
+        // without this the row reads "Someone opened X" even when we know
+        // exactly who it was, and shows the workspace icon rather than a face.
+        const openers = await this._resolveOpeners(opens);
         for (const r of opens) {
           if (!r) continue;
           let nodeName = '';
+          // Round 3 Phase 1c: the client also needs the shared node's TYPE and
+          // PARENT. Without them it cannot tell a shared file from a shared
+          // folder and was building the deep link with `filetype=folder&pid=0`
+          // hardcoded, so a shared FILE opened a phantom empty folder named
+          // after the file. Both already come back from the mfs_node_attr call
+          // this loop makes anyway (it returns filetype/ftype and parent_id) —
+          // no extra query and no schema change, just stop discarding them.
+          let nodeFiletype = '';
+          let nodeParentId = '';
           if (r.hub_id && r.node_id) {
             try {
               const a = toArray(
                 await this.yp.await_proc('forward_proc', r.hub_id, 'mfs_node_attr', `'${r.node_id}'`)
               )[0] || {};
               if (a.filename) nodeName = a.filename;
+              if (a.filetype || a.ftype) nodeFiletype = a.filetype || a.ftype;
+              if (a.parent_id != null) nodeParentId = String(a.parent_id);
             } catch (e) { /* keep fallback */ }
           }
-          result.push({
+          const opener = openers.get(openerKeyOf(r)) || null;
+          const row = {
             category       : 'share_open',
             event          : 'secure_share.opened',
             id             : r.id,
@@ -374,12 +1099,27 @@ class MfsActivity extends Entity {
             hub_id         : r.hub_id,
             node_id        : r.node_id,
             node_name      : nodeName,
+            // Deliberately NOT named `filetype`/`parent_id`: those keys already
+            // drive isFolder() and the media deep link in the row widget, and
+            // reusing them would change behaviour outside this row type.
+            node_filetype  : nodeFiletype,
+            node_parent_id : nodeParentId,
             recipient_email: r.recipient_email,
-            fullname       : r.recipient_email || 'Someone',
+            // `recipient_email` itself is NOT touched — the client sends it back
+            // to secure_share.mark_open_seen to persist the seen state. Only the
+            // display name falls back through the resolved opener.
+            fullname       : r.recipient_email || (opener && opener.name) || 'Someone',
             is_read        : r.is_read ? 1 : 0,
             timestamp      : r.last_seen_at,
             ctime          : r.last_seen_at,
-          });
+          };
+          // Show the person who opened it instead of the workspace icon. Only
+          // when the lookup actually returned an account: getAuthorId falls back
+          // to hub_id without this, but an id that does not resolve makes the
+          // avatar render the CURRENT user's face — so an unverified id is worse
+          // than no id. Anonymous opens keep the workspace icon, as before.
+          if (opener && opener.id) row.author_id = opener.id;
+          result.push(row);
         }
         result.sort((a, b) => (Number(b.timestamp || b.ctime || 0) - Number(a.timestamp || a.ctime || 0)));
       } catch (e) {
@@ -396,6 +1136,9 @@ class MfsActivity extends Entity {
     // these via activity.list / channel.list_notifications for the unread BADGE —
     // this only changes WHERE they render. Best-effort: a failure never breaks
     // the rest of the feed.
+    // Kept for _alignContactReadState below, so it can reuse this call's
+    // rollups instead of running notification_center_next a second time.
+    let liveRollups = null;
     if (filter !== 'mentions' && filter !== 'shares' && page <= 1) {
       try {
         // chat/media/teamchat/ticket rollups are NOT returned by
@@ -403,8 +1146,9 @@ class MfsActivity extends Entity {
         // hub-invite / refused-invitation rollups ARE returned by
         // activity_get_feed_all (the Unread-OFF feed), so only merge them under
         // Unread ON — otherwise the same event double-shows under Unread OFF.
-        const ALWAYS = new Set(['chat', 'media', 'teamchat', 'ticket']);
+        const ALWAYS = ROLLUP_CATEGORIES;
         const rollups = await this._notificationRollups();
+        liveRollups = rollups;
         for (const r of rollups) {
           if (!r) continue;
           // Shared-workspace membership is not available to every legacy MFS
@@ -431,7 +1175,31 @@ class MfsActivity extends Entity {
           // Item skeleton + sort read `timestamp` first, then `ctime`; rollups
           // only carry ctime, so mirror it to timestamp for correct ordering.
           if (r.timestamp == null) r.timestamp = r.ctime;
+          // Rollups come from unread-only procedures and historically omitted
+          // is_read. The unified mobile contract must not guess their state.
+          if (r.is_read == null) r.is_read = 0;
           result.push(r);
+        }
+        // The rollups that have ALREADY been read. A chat/teamchat/media/ticket
+        // rollup is recomputed from unread state, so reading it makes
+        // notification_center_next stop emitting it entirely -- there is no
+        // "read rollup" to return, which is why the row used to vanish. The
+        // notification_rollup store holds the last state each one had while it
+        // was still live, and anything in the store that is NOT in the live set
+        // above is, by definition, one the user has since read.
+        //
+        // Unread OFF only: under Unread ON the user is explicitly asking for
+        // what they have not read, and these are exactly the rows they are
+        // filtering out.
+        if (!unreadOnly) {
+          const live = new Set(
+            rollups.filter((r) => r && ROLLUP_CATEGORIES.has(r.category))
+              .map((r) => `${r.category}:${r.key_id}`)
+          );
+          for (const st of await this._storedRollups()) {
+            if (live.has(`${st.category}:${st.key_id}`)) continue;
+            result.push({ ...st, is_read: 1 });
+          }
         }
         // Task @-mentions / assignments and admin-console storage alerts live
         // in yp.contact_activity → under Unread OFF they already come from
@@ -443,17 +1211,9 @@ class MfsActivity extends Entity {
         // independently best-effort so a missing/failing one never sinks the
         // others.
         if (unreadOnly) {
-          for (const proc of [
-            'contact_task_assigned_unread',
-            'contact_task_mention_unread',
-            'contact_task_column_change_unread',
-            'contact_storage_alert_unread',
-            // Claim-reward term ending (offline/workers/rewardExpiryWorker.js).
-            // Added with the event, not after it, per the note above.
-            'contact_reward_expiry_unread',
-          ]) {
+          for (const proc of CONTACT_UNREAD_PROCS) {
             try {
-              const rows = toArray(await this.yp.await_proc(proc, this.uid));
+              const rows = await this._optionalYpProc(proc, this.uid);
               for (const r of rows) {
                 if (!r) continue;
                 if (r.timestamp == null) r.timestamp = r.ctime;
@@ -479,8 +1239,740 @@ class MfsActivity extends Entity {
     // assignments, mentions, and watched-column create/move notifications.
     flattenTaskFields(result);
     flattenTaskColumnChange(result);
+    flattenMeetingNotice(result);
 
-    this.output.list(result);
+    // Stamp the tab on every row, then (only when the caller asked for a tab)
+    // narrow to it. Deliberately AFTER every merge above, so a row is judged by
+    // its final shape — the rollup merge is what supplies `category` and
+    // `meeting_action`, and flattenTaskFields runs before this too.
+    //
+    // Filtering the assembled page rather than filtering in SQL matches how the
+    // existing `mentions` / `shares` tabs have always worked (see the filter
+    // branch near the top of this method): a tab's page N holds that tab's share
+    // of feed page N. Same trade-off, no new behaviour — and crucially, without
+    // a `bucket` the output is byte-for-byte what it was before.
+    // Resolve the containing folder for file rows that only carry the file's
+    // own attributes. Must run before the bucket filter only in the sense that
+    // it is cheaper here (one pass over the assembled page); it is independent
+    // of bucketing either way.
+    await this._stampFolderNames(result);
+    // The folder chip for task rows, and the two Round 3 enrichments Duy asked
+    // for on 2026-08-21. Each one is independently best-effort and each only
+    // ADDS fields (except the meeting rollup, which can drop a row that a
+    // targeted invitation already covers), so a failure anywhere leaves the feed
+    // exactly as it renders today.
+    await this._stampTaskFolderNames(result);
+    // Workspace invites: give the raw contact_activity row the category, the
+    // workspace id and the workspace NAME it needs to render as an invitation
+    // rather than as a contact request. See _stampHubInvites -- it is add-only,
+    // so the rollup rows merged above (which already carry all three) pass
+    // through untouched and the two toggle states agree.
+    await this._stampHubInvites(result);
+    await this._stampInviteStatus(result);
+    await this._stampChatMentions(result);
+    result = await this._stampMeetingRollups(result);
+    if (!unreadOnly) await this._alignContactReadState(result, liveRollups);
+
+    stampBuckets(result);
+    if (bucket) {
+      result = result.filter((row) => row && row.bucket === bucket);
+    }
+
+    // Drop what the user removed with the trash button. Applied LAST so it
+    // catches every source that fed `result`, and applied in both toggle states
+    // even though it is a no-op under Unread ON (mfs_get_activity_feed and the
+    // *_unread procs already exclude dismissed rows) -- a filter that is only
+    // correct in one mode is the kind that breaks when the modes change.
+    result = await this._dropDeleted(result);
+
+    this.output.list(await this._decorateBookmarks(result));
+  }
+
+  /**
+   * Unread OFF: a contact_activity row reads as unread ONLY if the badge counts
+   * it, i.e. if one of the sources behind unread_counts / Unread ON returns it.
+   *
+   * activity_get_feed_all marks every undismissed contact_activity row unread
+   * (is_read = dismissed_at IS NULL), but only some events have an unread
+   * source. The rest — invite_sent (a second row logged for the same
+   * invitation), invite_received once the invitation is no longer pending,
+   * older workspace invites superseded by a newer one — showed as unread rows
+   * that no badge counted and Unread ON never listed (Duy 2026-09-26: All
+   * showed 14 over 19 unread-looking rows, Other 0 over 5).
+   *
+   * The unread set is exactly what is counted:
+   *   - the CONTACT_UNREAD_PROCS rows,
+   *   - the workspace-invite and refused-invitation rollups,
+   *   - for a PENDING contact invitation (counted through the `contact`
+   *     rollup), the newest invite_received from that inviter.
+   *
+   * Only ever turns unread into read, never the reverse, and only on rows it
+   * can match. Fails open: if any source cannot be read, the rows are left as
+   * the procedure returned them rather than hiding something real. Costs
+   * nothing unless the page actually holds an unread contact row.
+   */
+  async _alignContactReadState(rows, rollups) {
+    if (!Array.isArray(rows)) return;
+    const candidates = rows.filter((r) => (
+      r && r.feed_page_source === 'base' && r.event_type === 'contact'
+      && Number(r.is_read) === 0 && r.id != null
+    ));
+    if (!candidates.length) return;
+
+    const unread = new Set();
+    let pendingInviters;
+    try {
+      const [procRows, hubInvites, refused, pending] = await Promise.all([
+        Promise.all(CONTACT_UNREAD_PROCS.map((proc) => this._optionalYpProc(proc, this.uid))),
+        this._callUserProc('notification_hub_invites'),
+        this._callUserProc('notification_contact_refused'),
+        // Page 1 already has the rollups, which respect a dismissed contact
+        // invitation exactly as the badge does. Later pages use the light
+        // pending-invitation list instead of recomputing every rollup.
+        rollups ? null : this._callUserProc('contact_notification_get'),
+      ]);
+      // await_proc answers undefined on a SQL error instead of throwing.
+      if (hubInvites === undefined || refused === undefined || pending === undefined) return;
+      for (const list of procRows) {
+        for (const r of list) if (r && r.id != null) unread.add(String(r.id));
+      }
+      for (const r of toArray(hubInvites)) if (r && r.id != null) unread.add(String(r.id));
+      for (const r of toArray(refused)) if (r && r.id != null) unread.add(String(r.id));
+      pendingInviters = new Set(
+        (rollups ? rollups.filter((r) => r && r.category === 'contact') : toArray(pending))
+          .map((r) => r && r.drumate_id)
+          .filter(Boolean)
+          .map(String)
+      );
+    } catch (e) {
+      this.debug('[ACTIVITY] contact read state left as is', e && e.message);
+      return;
+    }
+
+    // The newest undismissed invite_received per pending inviter, as
+    // contact.invite_get pairs them.
+    const newestInvite = new Map();
+    for (const r of candidates) {
+      if (r.event !== 'invite_received' || !pendingInviters.has(String(r.uid))) continue;
+      const cur = newestInvite.get(String(r.uid));
+      const newer = !cur
+        || Number(r.timestamp) > Number(cur.timestamp)
+        || (Number(r.timestamp) === Number(cur.timestamp) && Number(r.id) > Number(cur.id));
+      if (newer) newestInvite.set(String(r.uid), r);
+    }
+    for (const r of newestInvite.values()) unread.add(String(r.id));
+
+    for (const r of candidates) {
+      if (!unread.has(String(r.id))) r.is_read = 1;
+    }
+  }
+
+  async _decorateBookmarks(rows) {
+    let saved = [];
+    try {
+      saved = toArray(await this._callUserProc(
+        'notification_activity_bookmark_list',
+      ));
+    } catch (e) {
+      this.debug('[ACTIVITY] bookmark list unavailable', e && e.message);
+    }
+    const savedKeys = new Set(saved.map(row => row && row.bookmark_key).filter(Boolean));
+    return rows.map(row => {
+      const key = bookmarkKey(row);
+      return {
+        ...row,
+        ...(key ? {bookmark_key: key, is_saved: savedKeys.has(key) ? 1 : 0} : {}),
+      };
+    });
+  }
+
+  /**
+   * Remove the rows the user deleted with the trash button.
+   *
+   * WHY THIS IS NOT TWO WHERE CLAUSES IN activity_get_feed_all. That procedure
+   * serves the whole feed. Teaching it about mfs_dismissed.deleted and
+   * contact_activity.deleted_at would make it raise ER_BAD_FIELD_ERROR on any
+   * database where the patches had not landed -- and await_proc does not
+   * re-throw, it logs, rolls back and returns undefined, which becomes an empty
+   * array and then a COMPLETELY BLANK notification panel with no error surfaced
+   * anywhere. Keeping the dependency in this separate optional call inverts the
+   * failure: if the procedure or the columns are missing we filter nothing, and
+   * the worst case is a deleted row reappearing -- visible and obviously wrong,
+   * rather than silent and total.
+   *
+   * Matched on event_type rather than on id alone because a changelog id and a
+   * contact_activity id are independent sequences that collide constantly.
+   * Rollup and share-open rows carry no event_type and are therefore never
+   * touched here; workspace-move rows deliberately DO carry 'mfs' and an id
+   * that is a real changelog id, so they filter correctly.
+   */
+  async _dropDeleted(rows) {
+    if (!Array.isArray(rows) || !rows.length) return rows;
+    let deleted;
+    try {
+      deleted = toArray(await this._callUserProc('activity_get_deleted_ids', this.uid));
+    } catch (e) {
+      this.debug('[ACTIVITY] activity_get_deleted_ids skipped', e && e.message);
+      return rows;
+    }
+    // undefined is what await_proc returns when the procedure is missing or the
+    // columns are not there yet; an empty array is also the normal answer for a
+    // user who has never pressed trash. Both mean "filter nothing".
+    if (!deleted || !deleted.length) return rows;
+
+    const mfs = new Set();
+    const contact = new Set();
+    const shareOpen = new Set();
+    for (const d of deleted) {
+      if (!d || d.id == null) continue;
+      if (d.kind === 'mfs') mfs.add(String(d.id));
+      else if (d.kind === 'contact') contact.add(String(d.id));
+      else if (d.kind === 'share_open') shareOpen.add(String(d.id));
+    }
+    if (!mfs.size && !contact.size && !shareOpen.size) return rows;
+
+    return rows.filter((row) => {
+      if (!row) return true;
+      // Share-open rows are keyed by the pair the feed row carries and the
+      // procedure acts on, (token_id, recipient_email), NOT by id: their `id` is
+      // a MAX(sys_id) computed over the group, which this side would have to
+      // reproduce exactly to stay in step. `|| ''` matches the IFNULL the
+      // procedure applies, so an anonymous open agrees on both sides -- without
+      // it those rows would never filter. Checked BEFORE the id guard because a
+      // share-open row is identified without needing an id at all.
+      if (row.category === 'share_open') {
+        if (!row.token_id) return true;
+        return !shareOpen.has(`${row.token_id}|${row.recipient_email || ''}`);
+      }
+      if (row.id == null) return true;
+      if (row.event_type === 'mfs') return !mfs.has(String(row.id));
+      if (row.event_type === 'contact') return !contact.has(String(row.id));
+      return true;
+    });
+  }
+
+  /**
+   * Identify the person behind each share-open row: `{ id, name }` per lookup
+   * key, for the row's display name AND its avatar.
+   *
+   * A share-open event records the recipient's email only when the recipient
+   * identified themselves, but it records `actor_id` whenever a signed-in user
+   * opened the link. `drumate_get` accepts EITHER (`WHERE id = _key OR email =
+   * _key`), so one proc covers both and the key is simply whichever we have.
+   *
+   * Why the avatar needs the resolved `id` and not the raw one: an id that does
+   * not resolve makes the client's avatar fall back to the CURRENT user, which
+   * is the "every row shows my own face" bug. So `id` is taken from the row the
+   * proc returned — proof the account exists — and the caller sets author_id
+   * only when it is present.
+   *
+   * `ffffffffffffffff` is the anonymous sentinel: an unauthenticated visitor on
+   * a public link, so there is genuinely nobody to name or depict and the row
+   * must keep saying "Someone" with no face. Same guard as
+   * service/private/secure_share.js. A deleted account or a guest with no
+   * drumate row resolves to nothing and falls back the same way.
+   *
+   * One lookup per DISTINCT person (a page is usually two or three), capped, and
+   * best-effort: any failure leaves the row exactly as it was before.
+   */
+  async _resolveOpeners(opens) {
+    const MAX_LOOKUPS = 12;
+    const found = new Map();
+    if (!Array.isArray(opens) || !opens.length) return found;
+
+    const pending = [];
+    for (const r of opens) {
+      const key = openerKeyOf(r);
+      if (!key || found.has(key)) continue;
+      if (pending.length >= MAX_LOOKUPS) continue;
+      found.set(key, null);
+      pending.push(key);
+    }
+    for (const key of pending) {
+      try {
+        const d = toArray(await this.yp.await_proc('drumate_get', key))[0] || {};
+        if (!d.id) continue; // no such account — stays anonymous
+        const name = String(d.fullname || `${d.firstname || ''} ${d.lastname || ''}`).trim();
+        found.set(key, { id: d.id, name });
+      } catch (e) {
+        this.debug('[ACTIVITY] opener lookup failed', key, e && e.message);
+      }
+    }
+    return found;
+  }
+
+  /**
+   * Stamp `folder_name` on file rows that carry only the FILE's attributes.
+   *
+   * The Figma card shows the containing folder/workspace in a chip next to the
+   * timestamp, so the client needs ONE field it can trust regardless of where a
+   * row came from. Rollup rows already resolve it (mapNotificationRow), but raw
+   * `yp.mfs_changelog` rows embed only the file's own node attributes in
+   * `src`/`dest` — the parent's NAME appears nowhere on them, just its id.
+   *
+   * Resolved per DISTINCT (hub_id, parent_id), not per row: a page of uploads is
+   * normally a handful of folders, so this is a few lookups rather than one per
+   * row. `mfs_node_attr` already returns the WORKSPACE name when the parent is
+   * the hub root, which is exactly what the chip should read for a file dropped
+   * at the top level of a workspace.
+   *
+   * Deliberately conservative:
+   *  - never overwrites a folder_name a rollup already resolved;
+   *  - MAX_LOOKUPS bounds the worst case, so a pathological page can never fan
+   *    out into an unbounded number of queries;
+   *  - internal plumbing folders (`__chat__`, `__upload__`) are dropped rather
+   *    than shown to a user;
+   *  - every failure is swallowed — an absent chip is the pre-existing look,
+   *    whereas throwing here would take out the whole feed.
+   */
+  async _stampFolderNames(rows) {
+    const MAX_LOOKUPS = 12;
+    if (!Array.isArray(rows) || !rows.length) return;
+
+    const asObject = (v) => {
+      if (!v) return null;
+      if (typeof v === 'object') return v;
+      try { return JSON.parse(v); } catch (e) { return null; }
+    };
+    // A name Drumee uses for plumbing, not a folder a person put a file in.
+    const internal = (n) => !n || /^__.*__$/.test(n) || n.indexOf('__') === 0;
+
+    const wanted = new Map(); // "hub:parent" -> { hub_id, parent_id }
+    const targets = [];       // [row, key]
+    for (const r of rows) {
+      if (!r || r.folder_name) continue;
+      if (!/^media\./.test(String(r.event || ''))) continue;
+      // workspace_move already says where it went, in its own sentence.
+      if (r.event === 'media.workspace_move') continue;
+      // Read ACROSS src and dest instead of picking one. `dest` on an upload row
+      // parses to an EMPTY object, which is truthy — so `dest || src` selected
+      // {} and never looked at src, where the parent id actually lives. That
+      // silently left every changelog row without a chip.
+      const dest = asObject(r.dest) || {};
+      const source = asObject(r.src) || {};
+      // media.copy has to read the other way round. The row is filed against
+      // the SOURCE hub, so `hubId` below resolves to the source workspace --
+      // but `dest.parent_id` is a folder in the COPIER's own space. Pairing the
+      // two looked up a destination node id inside the source hub, matched
+      // nothing, and left every copy row without a chip. The folder these
+      // readers care about is the one the file was copied FROM.
+      const fromSource = r.event === 'media.copy';
+      const parentId = r.parent_id
+        || (fromSource
+          ? (source.parent_id || source.pid || dest.parent_id || dest.pid)
+          : (dest.parent_id || dest.pid || source.parent_id || source.pid));
+      const hubId = r.hub_id || dest.hub_id || source.hub_id;
+      if (!parentId || !hubId || `${parentId}` === '0') continue;
+      const key = `${hubId}:${parentId}`;
+      if (!wanted.has(key)) {
+        if (wanted.size >= MAX_LOOKUPS) continue;
+        wanted.set(key, { hub_id: hubId, parent_id: parentId });
+      }
+      targets.push([r, key]);
+    }
+    if (!wanted.size) return;
+
+    const names = new Map();
+    for (const [key, { hub_id, parent_id }] of wanted) {
+      try {
+        const a = toArray(
+          await this.yp.await_proc('forward_proc', hub_id, 'mfs_node_attr', `'${parent_id}'`)
+        )[0] || {};
+        if (a.filename && !internal(a.filename)) names.set(key, a.filename);
+      } catch (e) {
+        this.debug('[ACTIVITY] folder name lookup failed', key, e && e.message);
+      }
+    }
+    for (const [row, key] of targets) {
+      const name = names.get(key);
+      if (name) row.folder_name = name;
+    }
+  }
+
+  /**
+   * Stamp `folder_name` on TASK rows, so the card can show which folder the
+   * task lives in (Duy 2026-08-21: "I don't know he has assigned me in which
+   * folder").
+   *
+   * _stampFolderNames above only looks at `media.*` events, and a task row is a
+   * yp.contact_activity row — so no task notification has ever carried a folder.
+   * The folder id IS on the row already (flattenTaskFields puts the task's `nid`
+   * there); only its NAME has to be resolved, and a task's nid points at the
+   * folder itself rather than at a parent.
+   *
+   * Deliberately mirrors _stampFolderNames' safety rules: one lookup per
+   * DISTINCT (hub, node), a hard cap on lookups, internal plumbing names
+   * withheld, never overwrites a name already present, and every failure
+   * swallowed — an absent chip is the pre-existing look, while throwing here
+   * would take out the whole feed.
+   *
+   * A workspace-level task (no nid) gets no chip: mfs_node_attr returns the
+   * WORKSPACE name for a hub root, which is what the chip should read, so a task
+   * whose nid IS the root resolves correctly; one with no nid at all has no
+   * container to name.
+   */
+  async _stampTaskFolderNames(rows) {
+    const MAX_LOOKUPS = 12;
+    if (!Array.isArray(rows) || !rows.length) return;
+    const TASK_EVENTS = new Set(['task_assigned', 'task_mention', 'task_column_change']);
+    const internal = (n) => !n || /^__.*__$/.test(n) || n.indexOf('__') === 0;
+
+    const wanted = new Map(); // "hub:node" -> { hub_id, nid }
+    const targets = [];
+    for (const r of rows) {
+      if (!r || r.folder_name) continue;
+      if (!TASK_EVENTS.has(String(r.event || ''))) continue;
+      // task_assigned / task_column_change flatten to task_hub_id + task_nid;
+      // task_mention flattens onto the top-level hub_id + nid (the two events
+      // have different client nav contracts — see flattenTaskFields).
+      const hubId = r.task_hub_id || r.hub_id;
+      const nid = r.task_nid || r.nid;
+      if (!hubId || !nid || `${nid}` === '0' || `${nid}` === 'null') continue;
+      const key = `${hubId}:${nid}`;
+      if (!wanted.has(key)) {
+        if (wanted.size >= MAX_LOOKUPS) continue;
+        wanted.set(key, { hub_id: hubId, nid });
+      }
+      targets.push([r, key]);
+    }
+    if (!wanted.size) return;
+
+    const names = new Map();
+    for (const [key, { hub_id, nid }] of wanted) {
+      try {
+        const a = toArray(
+          await this.yp.await_proc('forward_proc', hub_id, 'mfs_node_attr', `'${nid}'`)
+        )[0] || {};
+        if (a.filename && !internal(a.filename)) names.set(key, a.filename);
+      } catch (e) {
+        this.debug('[ACTIVITY] task folder lookup failed', key, e && e.message);
+      }
+    }
+    for (const [row, key] of targets) {
+      const name = names.get(key);
+      if (name) row.folder_name = name;
+    }
+  }
+
+  /**
+   * Make a workspace invitation READ as one in the chronological feed.
+   *
+   * THE BUG (Lexis, 2026-09-14): "[Username] invited you to [workspace]" was
+   * rendered as "[Username] wants to connect" -- the CONTACT-request copy --
+   * and the recipients reported that clicking it led nowhere. One cause: the
+   * row's copy AND its click router both switch on the same resolved category.
+   *
+   * WHY. A workspace invite is a yp.contact_activity row (event
+   * 'hub_invite_received', written by hub._grantMembership). Under Unread OFF --
+   * the panel's DEFAULT -- the feed comes from activity_get_feed_all, whose
+   * contact branch returns every such row with `category` NULL and `event_type`
+   * 'contact'. The client resolves a row's category as
+   * `category || event_type || type`, so the invite resolved to 'contact' and
+   * took the contact branch of the row renderer. Under Unread ON the same event
+   * arrives from notification_hub_invites via mapHubInviteRow, which DOES set
+   * category 'hub_invite' -- so the two toggle states disagreed, and only the
+   * non-default one was right.
+   *
+   * task_assigned / task_mention / meeting_notice are contact_activity rows with
+   * exactly the same problem, and each dodges it with an `event ===` branch that
+   * runs BEFORE the category switch. A hub invite has no such branch, because
+   * the category it needs already exists -- it just never reached this path.
+   * Stamping it here makes both toggle states produce the identical row, instead
+   * of adding a fourth special case to the renderer.
+   *
+   * Three things are stamped, all of them ADD-ONLY (a row that already carries
+   * the field -- i.e. the rollup row -- is never touched, so this is idempotent
+   * and cannot disturb the Unread-ON path):
+   *
+   *   category   'hub_invite'. Also repairs the dismiss route: the client keys
+   *              item_type off `category`, so these rows used to fall back to
+   *              'mfs' and dismiss a CHANGELOG id that happened to equal the
+   *              contact_activity id. Now they dismiss as contact events, which
+   *              is the table the row actually lives in.
+   *   hub_id     the invited workspace, from the row's own `data` JSON.
+   *              activity_get_feed_all sets hub_id NULL on every contact row.
+   *              This is the SECOND, independent reason the click was dead: the
+   *              desk's notification opener (wm openNotificationLocation) starts
+   *              with `if (!hub_id) return`, so even with the category fixed the
+   *              click would have bailed there. Same trick flattenTaskFields uses.
+   *   author_id  the inviter, so the card shows THEIR face. Without it
+   *              getAuthorId() falls through to undefined and the avatar
+   *              defaults to the viewer's own picture.
+   *
+   * The workspace NAME goes through resolveHubInviteName, the resolver shared
+   * with notification_hub_invites and hub.invite_received_get, so a fourth copy
+   * of that chain cannot drift (that drift is what once left the name blank).
+   * Its first real term is the LIVE name, which is resolved here per distinct
+   * workspace: `data.hub_name` alone is not enough, because hub.add_contributors
+   * and hub.invite_with_roles both record yp.hub.hubname -- the hex id -- and the
+   * resolver correctly refuses to render that as a label.
+   *
+   * Best-effort throughout, exactly like _stampFolderNames: one lookup per
+   * DISTINCT workspace, a hard cap, every failure swallowed, and a missing
+   * routine degrades to the invite-time name rather than breaking the feed.
+   *
+   * Covered by offline/test/hub-invite-feed-row.test.js, which runs this method
+   * for real and holds the identity proof that matters here: stamping a category
+   * does NOT move bookmarkKey(row), so an invitation the user had saved stays
+   * saved.
+   */
+  async _stampHubInvites(rows) {
+    const MAX_LOOKUPS = 12;
+    if (!Array.isArray(rows) || !rows.length) return;
+
+    const targets = [];    // [row, meta]
+    const wanted = new Set();
+    for (const r of rows) {
+      if (!r || r.event !== 'hub_invite_received') continue;
+      let meta = r.data;
+      if (typeof meta === 'string') {
+        try { meta = JSON.parse(meta); } catch (e) { meta = null; }
+      }
+      meta = meta || {};
+      if (!r.category) r.category = 'hub_invite';
+      if (r.hub_id == null && meta.hub_id != null) r.hub_id = meta.hub_id;
+      if (r.author_id == null && r.uid != null) r.author_id = r.uid;
+      // THE THIRD SURFACE THE SAME ROW REACHES, and it has to agree with the
+      // other two. mapHubInviteRow (the Unread-ON rollup) and
+      // hub.invite_received_get both carry the token out as `invite_token`;
+      // this is the raw contact_activity row the DEFAULT feed serves, and an
+      // invitation that arrived through it would otherwise render without its
+      // Accept and Decline buttons — the same one-event-two-paths split that
+      // left file notifications with a dead click in September.
+      if (r.invite_token == null && meta.token != null) r.invite_token = meta.token;
+      targets.push([r, meta]);
+      if (r.hub_name == null && meta.hub_id && wanted.size < MAX_LOOKUPS) {
+        wanted.add(meta.hub_id);
+      }
+    }
+    if (!targets.length) return;
+
+    const names = new Map();
+    for (const hubId of wanted) {
+      try {
+        // Read-only, one row, yp.hub.name -- the name members set and see.
+        // _optionalYpProc, not await_proc: on a deployment where the routine is
+        // not applied yet this must degrade to the invite-time name, without a
+        // warning on every feed load.
+        const row = (await this._optionalYpProc('push_workspace_name', hubId))[0];
+        const name = row && String(row.workspace_name || '').trim();
+        if (name) names.set(hubId, name);
+      } catch (e) {
+        this.debug('[ACTIVITY] workspace name lookup failed', hubId, e && e.message);
+      }
+    }
+
+    for (const [r, meta] of targets) {
+      if (r.hub_name != null) continue;
+      // `hub_live_name` is the resolver's own term for the live name. It rides a
+      // shallow copy rather than being stamped on the row: the client never
+      // reads it, and the feed row's shape is a published contract
+      // (acl/activity.json).
+      const live = meta.hub_id ? names.get(meta.hub_id) : null;
+      const name = resolveHubInviteName(
+        live ? Object.assign({}, r, { hub_live_name: live }) : r,
+        meta,
+      );
+      if (name) r.hub_name = name;
+    }
+  }
+
+  /**
+   * Tell the client whether each workspace invitation on the page can still be
+   * answered, as `invite_status` (see service/lib/hub-invite-status.js).
+   *
+   * Without it the row's Accept/Decline outlive the answer: the notification is
+   * only dismissed, never removed, and it keeps its token — so a declined
+   * invitation came back from the refresh with both buttons live. The client
+   * now draws the buttons only for `pending` and a status label otherwise.
+   *
+   * Runs AFTER _stampHubInvites, which is what gives the raw Unread-OFF row its
+   * `category` and `invite_token`; the Unread-ON rollup rows already carry both.
+   *
+   * ADD-ONLY and best-effort, like the other stampers. A row whose lookup was
+   * skipped (over the cap) or failed is left WITHOUT the field, and the client
+   * treats a missing status exactly as before this existed — buttons whenever
+   * there is a token — so a failure here can only fall back to the old
+   * behaviour, never hide an answerable invitation. A lookup that SUCCEEDS but
+   * finds no token is different: that is a real answer (`invalid`).
+   *
+   * One read per distinct token through token_get_next — the same read-only
+   * proc accept_invite uses — so the verdict matches what pressing the button
+   * would get.
+   */
+  async _stampInviteStatus(rows) {
+    const MAX_LOOKUPS = 20;
+    if (!Array.isArray(rows) || !rows.length) return;
+
+    const byToken = new Map(); // secret -> [rows]
+    for (const r of rows) {
+      if (!r || r.category !== 'hub_invite' || !r.invite_token) continue;
+      if (r.invite_status != null) continue;
+      const list = byToken.get(r.invite_token);
+      if (list) list.push(r);
+      else if (byToken.size < MAX_LOOKUPS) byToken.set(r.invite_token, [r]);
+    }
+    if (!byToken.size) return;
+
+    const now = Math.floor(Date.now() / 1000);
+    for (const [secret, list] of byToken) {
+      let tokenRow;
+      try {
+        const res = await this.yp.await_proc('token_get_next', secret);
+        // await_proc answers undefined when the call itself failed: that is
+        // "unknown", not "no such token", so leave these rows alone.
+        if (res === undefined) continue;
+        tokenRow = toArray(res)[0] || null;
+      } catch (e) {
+        this.debug('[ACTIVITY] invite status lookup failed', e && e.message);
+        continue;
+      }
+      for (const r of list) {
+        r.invite_status = hubInviteStatus(tokenRow, r.hub_id, now);
+      }
+    }
+  }
+
+  /**
+   * Turn a scheduled meeting's rollup row into a MEETING row (Duy 2026-08-21,
+   * issues 9 + 10).
+   *
+   * room.book() creates the meeting as a media node (`category: 'schedule'`), so
+   * notification_center_next rolls it up as an upload — which is why an
+   * invitation read "<organizer> uploaded <Meeting-name>" and sat in the Files
+   * tab. bucketOf already re-routes such a row to Meeting; this fills in what
+   * the sentence needs:
+   *
+   *   - `meeting_stime` → "…on Aug 14, 10:00 AM" (Figma's scheduled card).
+   *   - dropping the row when a targeted `meeting_notice` invitation for the SAME
+   *     meeting is already on this page, so an attendee sees exactly ONE row —
+   *     the invitation, which is what Duy asked to replace the upload row with.
+   *
+   * Why check for the notice instead of just checking attendance: dropping the
+   * rollup on attendance alone would rely on room.js's best-effort write having
+   * succeeded, and a failed write would leave the attendee with NO notification
+   * at all. Deciding from what is actually on the page can never lose a row.
+   *
+   * Resolution uses the EXISTING room_list_scheduled proc (one call per distinct
+   * hub, capped), so there is no schema change. It returns every scheduled
+   * meeting in the hub; the rollup identifies its meeting only by title, because
+   * notification_center_next does not carry the meeting node's own id. Duplicate
+   * titles in one workspace are therefore ambiguous — the earliest-starting match
+   * wins, which affects only the time shown, never which tab the row lands in.
+   *
+   * Returns the (possibly shorter) row array. Best-effort throughout.
+   */
+  async _stampMeetingRollups(rows) {
+    const MAX_LOOKUPS = 8;
+    if (!Array.isArray(rows) || !rows.length) return rows;
+
+    const pending = rows.filter(isScheduleRollup);
+    if (!pending.length) return rows;
+
+    // Meetings this user has already been told about by a targeted invitation.
+    const covered = meetingNoticeKeys(rows);
+    const drop = new Set(pending.filter((r) => isCoveredByNotice(r, covered)));
+    // Only the survivors need a time resolved — a dropped row is never rendered.
+    const needTime = pending.filter((r) => !drop.has(r));
+    if (!needTime.length) return rows.filter((r) => !drop.has(r));
+
+    const byHub = new Map(); // hub_id -> [meeting rows]
+    for (const r of needTime) {
+      if (!r.hub_id || byHub.has(r.hub_id)) continue;
+      if (byHub.size >= MAX_LOOKUPS) continue;
+      byHub.set(r.hub_id, null);
+    }
+    for (const hubId of [...byHub.keys()]) {
+      try {
+        const list = toArray(
+          await this.yp.await_proc('forward_proc', hubId, 'room_list_scheduled', 'NULL,NULL')
+        );
+        byHub.set(hubId, list);
+      } catch (e) {
+        this.debug('[ACTIVITY] room_list_scheduled failed', hubId, e && e.message);
+      }
+    }
+
+    for (const r of needTime) {
+      const list = byHub.get(r.hub_id);
+      if (!Array.isArray(list)) continue;
+      const title = String(r.item_filename || '');
+      // room_list_scheduled is ORDER BY stime ASC, so the first title match is
+      // the earliest-starting one.
+      const hit = list.find((m) => m && String(m.filename || '') === title);
+      if (!hit) continue;
+      if (hit.stime) r.meeting_stime = hit.stime;
+      if (hit.id) r.meeting_nid = String(hit.id);
+    }
+    if (!drop.size) return rows;
+    return rows.filter((r) => !drop.has(r));
+  }
+
+  /**
+   * Flag folder-chat rollups that contain an @-mention of the caller (Duy
+   * 2026-08-21, issue 12: "I only receive the noti 'memberA sent a message'").
+   *
+   * notification_center_next rolls team chat up per FOLDER and carries no
+   * mention information, so a message that named you was indistinguishable from
+   * any other. `channel_list_notifications(uid,'mention',…)` already knows
+   * exactly which unread messages mention you, and returns the folder as
+   * `scope_nid` — so the rollup can be annotated from it with no schema change.
+   *
+   * Annotating the rollup rather than surfacing the mention rows separately is
+   * deliberate: the panel would then show BOTH ("mentioned you in X" and "sent a
+   * message" for the same folder), which is the double-row this avoids.
+   *
+   * One call per DISTINCT hub that actually has a teamchat rollup on the page,
+   * capped, and best-effort: a failure leaves the row reading exactly as it does
+   * today.
+   */
+  async _stampChatMentions(rows) {
+    const MAX_LOOKUPS = 8;
+    if (!Array.isArray(rows) || !rows.length) return;
+    const pending = rows.filter((r) => r && r.category === 'teamchat' && !r.mentioned_in
+      // A rollup whose latest unread event is a meeting start/end renders (and
+      // buckets) as a meeting; a mention flag there would be ignored anyway.
+      && r.meeting_action !== 'start' && r.meeting_action !== 'end');
+    if (!pending.length) return;
+
+    const hubs = [];
+    for (const r of pending) {
+      if (!r.hub_id || hubs.includes(r.hub_id)) continue;
+      if (hubs.length >= MAX_LOOKUPS) break;
+      hubs.push(r.hub_id);
+    }
+
+    // "hub:folder" for every folder holding an unread mention. '' = a
+    // hub-level/legacy chat message, which the rollup groups with nid NULL.
+    const mentioned = new Set();
+    for (const hubId of hubs) {
+      try {
+        const list = toArray(
+          await this.yp.await_proc(
+            'forward_proc', hubId, 'channel_list_notifications',
+            `'${this.uid}','mention',1,1`
+          )
+        );
+        for (const m of list) {
+          if (!m) continue;
+          const scope = (m.scope_nid == null || m.scope_nid === 'null') ? '' : String(m.scope_nid);
+          mentioned.add(`${hubId}:${scope}`);
+        }
+      } catch (e) {
+        this.debug('[ACTIVITY] mention lookup failed', hubId, e && e.message);
+      }
+    }
+    if (!mentioned.size) return;
+
+    for (const r of pending) {
+      const scope = (r.nid == null || r.nid === 'null') ? '' : String(r.nid);
+      if (!mentioned.has(`${r.hub_id}:${scope}`)) continue;
+      // The name the sentence reads ("mentioned you in <Folder>"). `filename` is
+      // the folder for a teamchat rollup, already falling back to the workspace
+      // name for hub-level chat (notification_center_next COALESCEs h.name).
+      r.mentioned_in = r.folder_name || r.filename || '';
+      if (!r.mentioned_in) delete r.mentioned_in;
+    }
   }
 
   /**
@@ -511,6 +2003,26 @@ class MfsActivity extends Entity {
     } catch (e) {
       this.warn('[ACTIVITY] contact_task_column_change_unread failed', e && e.message);
     }
+    // Scheduled-meeting notices ride this endpoint too. Not a task event, so the
+    // name no longer describes the whole payload — but this is the ONE call the
+    // panel makes for the bell badge's contact_activity share, and a notice that
+    // is missing here would make the Meeting tab badge exceed the bell. The
+    // panel filters by `event`, so an older client simply ignores these rows.
+    try {
+      const meetingRows = await this._optionalYpProc('contact_meeting_notice_unread', this.uid);
+      flattenMeetingNotice(meetingRows);
+      rows = rows.concat(meetingRows);
+      rows.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+    } catch (e) {
+      // debug, not warn: the proc may not be applied yet during a rollout.
+      this.debug('[ACTIVITY] contact_meeting_notice_unread skipped', e && e.message);
+    }
+    // These rows are pinned into the panel alongside activity.list rows, so they
+    // need the same `bucket` field or the client cannot filter them by tab. They
+    // resolve to `task` via their event name — the client relabels their
+    // `category` to 'contact_invite' for dismiss routing, which would otherwise
+    // send them to Other.
+    stampBuckets(rows);
     this.output.list(rows);
   }
 
@@ -646,6 +2158,37 @@ class MfsActivity extends Entity {
   }
 
   /**
+   * Mark a single contact_activity row READ, leaving it in Activity history.
+   *
+   * dismiss_contact_event also stamps hidden_at (removal — what mobile relies
+   * on), so the web panel recording a read through it made the notification
+   * vanish from the Unread OFF list. This only writes dismissed_at, the read
+   * marker activity_get_feed_all turns into is_read = 1.
+   * Endpoint: POST /activity.read_contact_event
+   * Input: activity_id (integer)
+   */
+  async read_contact_event() {
+    const activityId = parseInt(this.input.need('activity_id'));
+    if (!Number.isSafeInteger(activityId) || activityId < 1) {
+      return this.exception.bad_request('INVALID_DATA');
+    }
+    const rows = await this._markContactRead(activityId);
+    this.output.data(toArray(rows)[0] || {});
+  }
+
+  /**
+   * Record one contact_activity row as read (dismissed_at only). Until
+   * contact_activity_mark_read is applied to a database, falls back to
+   * contact_activity_dismiss — read + hidden, the previous behaviour — so a
+   * read is never silently lost during a rollout.
+   */
+  async _markContactRead(activityId) {
+    const { ok, rows } = await this._optionalYpProcResult('contact_activity_mark_read', this.uid, activityId);
+    if (ok) return rows;
+    return this._callUserProc('contact_activity_dismiss', this.uid, activityId);
+  }
+
+  /**
    * Hide a single contact_activity row (hub invite, contact invite, etc.)
    * from the user's activity feed. Underlying event stays around for audit.
    * Endpoint: POST /activity.dismiss_contact_event
@@ -659,6 +2202,80 @@ class MfsActivity extends Entity {
   }
 
   /**
+   * Remove an mfs_changelog notification for good (the trash button), as
+   * opposed to `dismiss`, which now means only "I have read this".
+   *
+   * The two were the same operation until 2026-08-28: both wrote an
+   * mfs_dismissed row, and the feed read its presence as is_read. Reading a
+   * notification therefore deleted it, which is what Lexis asked to stop.
+   * `dismiss` is unchanged and still marks read; this adds the flag that keeps
+   * the row out of the feed permanently.
+   *
+   * A separate procedure rather than a parameter on mfs_dismiss_activity:
+   * changing that procedure's arity would break every production caller the
+   * moment it was applied, MariaDB having no default parameters.
+   * Endpoint: POST /activity.delete_activity
+   * Input: changelog_id (integer)
+   */
+  async delete_activity() {
+    const changelogId = parseInt(this.input.need('changelog_id'));
+    const result = await this._callUserProc('mfs_delete_activity', this.uid, changelogId);
+    const data = toArray(result)[0] || {};
+    this.output.data(data);
+  }
+
+  /**
+   * Remove a contact_activity notification for good (the trash button).
+   * Counterpart of `delete_activity` for hub invites, contact invites, task
+   * assignments, task @-mentions, watched-column moves, meeting notices and
+   * storage alerts. `dismiss_contact_event` is unchanged and still means read.
+   *
+   * The procedure also stamps dismissed_at when it is still NULL, so trashing a
+   * notification the user never opened cannot leave it counting toward the bell
+   * badge while being unreachable in the panel.
+   * Endpoint: POST /activity.delete_contact_event
+   * Input: activity_id (integer)
+   */
+  async delete_contact_event() {
+    const activityId = parseInt(this.input.need('activity_id'));
+    const result = await this._callUserProc('contact_activity_delete', this.uid, activityId);
+    const data = toArray(result)[0] || {};
+    this.output.data(data);
+  }
+
+  /**
+   * Remove a chat / teamchat / media / ticket rollup for good (the trash
+   * button).
+   *
+   * TWO WRITES, AND BOTH ARE REQUIRED. notification_rollup_delete flags the
+   * stored copy so it stops being rendered as a read row, and
+   * notification_dismiss advances the underlying read pointer so
+   * notification_center_next stops generating the LIVE rollup. Doing only the
+   * first leaves the live rollup untouched and the row reappears on the next
+   * refresh; doing only the second is exactly today's behaviour, where the row
+   * comes back as a read row instead of staying gone.
+   *
+   * The dismiss half is what today's trash button already does, so this adds
+   * one write rather than changing any existing behaviour. It runs FIRST: if
+   * the flagging then fails, the user is left with today's outcome (the row
+   * returns as read) rather than a row that is flagged deleted while its
+   * conversation is still unread and still counted by the badge.
+   * Endpoint: POST /activity.delete_rollup
+   * Input: category (string), key_id (string), hub_id (string), last_id (integer)
+   */
+  async delete_rollup() {
+    const category = String(this.input.need('category'));
+    const key_id = String(this.input.need('key_id'));
+    const hub_id = String(this.input.use('hub_id') || '');
+    const last_id = parseInt(this.input.use('last_id') || 0);
+
+    await this._callUserProc('notification_dismiss', category, key_id, hub_id, last_id);
+    const result = await this._callUserProc('notification_rollup_delete', this.uid, category, key_id);
+    const data = toArray(result)[0] || {};
+    this.output.data(data);
+  }
+
+  /**
    * Unified notification dismiss for any rollup returned by drumate.notification_center.
    * Routes by `category` to the right read-pointer / status update.
    * Endpoint: POST /activity.notification_dismiss
@@ -666,15 +2283,22 @@ class MfsActivity extends Entity {
    */
   async notification_dismiss() {
     const category = String(this.input.need('category'));
-    const key_id = String(this.input.need('key_id'));
-    const hub_id = String(this.input.use('hub_id') || '');
-    const last_id = parseInt(this.input.use('last_id') || 0);
+    const keyId = String(this.input.need('key_id'));
+    const hubId = String(this.input.use('hub_id') || '');
+    const lastId = Number(this.input.need('last_id'));
+    if (category !== 'contact' && (!Number.isSafeInteger(lastId) || lastId < 1)) {
+      return this.exception.bad_request('INVALID_DATA');
+    }
+    const row = await this._visibleNotificationRollup(category, keyId, hubId, lastId);
+    if (!row) return this.exception.bad_request('INVALID_DATA');
+    // The same key mark_all_read uses. row.key_id is the uploader (media) or
+    // the contact (chat), which the proc cannot match — the read was a no-op.
     const result = await this._callUserProc(
       'notification_dismiss',
       category,
-      key_id,
-      hub_id,
-      last_id
+      String(rollupDismissKey(row) || row.key_id),
+      String(row.hub_id || ''),
+      Number(row.last_id || 0),
     );
     const data = toArray(result)[0] || {};
     this.output.data(data);
@@ -696,7 +2320,29 @@ class MfsActivity extends Entity {
    * Endpoint: POST /activity.list
    */
   async list() {
+    // Web Activity owns task assignment/mention queries separately. Keeping
+    // them out of this legacy priority-rollup endpoint prevents double badge
+    // counts; the chronological mobile surface uses activity.get_feed instead.
     this.output.list(await this._notificationRollups());
+  }
+
+  async _taskNotificationRollups() {
+    const rows = [];
+    for (const proc of [
+      'contact_task_assigned_unread',
+      'contact_task_mention_unread',
+    ]) {
+      try {
+        rows.push(...toArray(await this.yp.await_proc(proc, this.uid)));
+      } catch (e) {
+        this.debug(`[ACTIVITY] ${proc} unavailable`, e && e.message);
+      }
+    }
+    flattenTaskFields(rows);
+    return rows
+      .filter(row => row && row.id &&
+        (row.event === 'task_assigned' || row.event === 'task_mention'))
+      .map(mapTaskNotificationRow);
   }
 
   /**
@@ -726,12 +2372,270 @@ class MfsActivity extends Entity {
       // the existing notification badge.
       this.debug('[ACTIVITY] notification_workspace_moves unavailable', e && e.message);
     }
-    return [
+    // Stamp `bucket` here so BOTH consumers get it from one place: list() (the
+    // badge / priority source) and get_feed()'s chronological merge. Purely
+    // additive — an existing client that ignores the field is unaffected.
+    const items = stampBuckets([
       ...rows.map(mapNotificationRow),
       ...hubs.map(mapHubInviteRow),
       ...refused.map(mapContactRefusedRow),
       ...workspaceMoves,
-    ];
+    ]);
+
+    // Capture the live rollups so they can still be rendered once they have
+    // been read. Deliberately placed HERE and not in get_feed: this method is
+    // what every caller goes through -- list() for the bell badge, get_feed()
+    // for the panel, unread_counts() for the tabs -- and the badge refreshes on
+    // desk load, on visibility change, on reconnect and on chat/mention
+    // websocket pushes, not merely while the panel is open. Capturing anywhere
+    // narrower would lose the row for a user who reads a conversation by
+    // opening the chat window directly and never touching the panel.
+    //
+    // Awaited rather than fired and forgotten so a slow write cannot interleave
+    // with the next refresh and store a stale rollup after a newer one; the
+    // procedure takes the whole set in a single round trip precisely so that
+    // this stays cheap on the busiest notification path.
+    await this._storeRollups(items);
+
+    return items;
+  }
+
+  /**
+   * Upsert the rollup rows into notification_rollup. Best-effort by design.
+   *
+   * A failure here must never affect the badge or the feed: the store is what
+   * lets a READ rollup still be rendered, so losing a write costs at most one
+   * row's history, whereas throwing would cost the user their entire
+   * notification list. await_proc does not re-throw on a SQL error anyway (it
+   * logs, rolls back and returns undefined), so the catch covers only
+   * programmer errors -- which is exactly why the work is kept to one call with
+   * nothing else inside the try.
+   */
+  async _storeRollups(items) {
+    const storable = (items || []).filter((r) => r && ROLLUP_CATEGORIES.has(r.category) && r.key_id != null);
+    if (!storable.length) return;
+    try {
+      await this._callUserProc('notification_rollup_put', this.uid, JSON.stringify(storable));
+    } catch (e) {
+      this.debug('[ACTIVITY] notification_rollup_put skipped', e && e.message);
+    }
+  }
+
+  /**
+   * Read back the captured rollups, rebuilt into the exact shape the client
+   * already renders.
+   *
+   * The payload was stored verbatim, so the row needs no re-derivation and no
+   * second source of truth for its wording -- which is the point of storing the
+   * whole object rather than a handful of columns. The column values still win
+   * for the four fields the store owns (category, key_id, ctime and the trash
+   * flag it filters on), because those are what the upsert maintains across
+   * updates while the payload is only ever a snapshot.
+   *
+   * Best-effort: on a missing procedure or a malformed payload the row is
+   * skipped and the feed simply behaves as it does today -- the read rollup
+   * does not appear. That is the safe direction; the alternative is a throw
+   * that costs the user the whole feed.
+   */
+  async _storedRollups() {
+    let rows;
+    try {
+      rows = toArray(await this._callUserProc('notification_rollup_list', this.uid, 1));
+    } catch (e) {
+      this.debug('[ACTIVITY] notification_rollup_list skipped', e && e.message);
+      return [];
+    }
+    if (!rows || !rows.length) return [];
+
+    const out = [];
+    for (const r of rows) {
+      if (!r || !r.category || r.key_id == null) continue;
+      let payload = r.payload;
+      if (typeof payload === 'string') {
+        try { payload = JSON.parse(payload); } catch (e) { payload = null; }
+      }
+      if (!payload || typeof payload !== 'object') continue;
+      out.push({
+        ...payload,
+        category: r.category,
+        key_id: r.key_id,
+        hub_id: payload.hub_id != null ? payload.hub_id : r.hub_id,
+        ctime: r.ctime,
+        timestamp: r.ctime,
+      });
+    }
+    return stampBuckets(out);
+  }
+
+  /**
+   * Unread count per Notification Center tab, for the badges on the tab bar
+   * (Figma `number-noti`). One call, so the panel does not fan out per tab.
+   *
+   * Counting convention is ONE PER ROW, not the sum of each rollup's `cnt` —
+   * the same convention the bell badge already uses. "Tran sent 3 messages"
+   * is one row the user sees, so it is one, not three. Changing that here
+   * would make the tab badges disagree with the bell.
+   *
+   * Every source is best-effort and independent: a failing or not-yet-deployed
+   * proc contributes 0 rather than sinking the whole response, because a wrong
+   * badge is far better than a panel that cannot render its tab bar.
+   *
+   * Endpoint: POST /activity.unread_counts
+   * Output: { all, files, task, meeting, chat, other }
+   */
+  async unread_counts() {
+    const counts = { files: 0, task: 0, meeting: 0, chat: 0, other: 0 };
+    // bucketOf only ever returns one of the five, but guard the write anyway so
+    // an unexpected value can never create a stray key on the response.
+    const bump = (row) => {
+      const bucket = bucketOf(row);
+      if (Object.prototype.hasOwnProperty.call(counts, bucket)) counts[bucket] += 1;
+    };
+
+    // 2. is counted BEFORE 1. on purpose: a scheduled meeting's rollup row is
+    //    dropped from the feed when a targeted invitation already covers it, so
+    //    the badge has to know about the invitations before it counts rollups —
+    //    otherwise the Meeting badge would read one higher than the rows the tab
+    //    actually shows. Collected here, counted below.
+    const contactRows = [];
+    // The same list the feed uses, so the badge and the rows agree.
+    for (const proc of CONTACT_UNREAD_PROCS) {
+      try {
+        for (const r of await this._optionalYpProc(proc, this.uid)) if (r) contactRows.push(r);
+      } catch (e) {
+        // debug, not warn: a proc missing during a rollout window is expected
+        // and must not spam the alert bot.
+        this.debug(`[ACTIVITY] unread_counts: ${proc} skipped`, e && e.message);
+      }
+    }
+    flattenMeetingNotice(contactRows);
+    for (const r of contactRows) bump(r);
+
+    // 1. The rollup categories + hub invites + refused invitations + workspace
+    //    moves. Already bucket-stamped; bucketOf is idempotent on them. A
+    //    scheduled-meeting rollup already covered by an invitation counted above
+    //    is skipped, exactly as get_feed drops it from the page.
+    try {
+      const covered = meetingNoticeKeys(contactRows);
+      for (const r of await this._notificationRollups()) {
+        if (!r) continue;
+        if (isCoveredByNotice(r, covered)) continue;
+        bump(r);
+      }
+    } catch (e) {
+      this.warn('[ACTIVITY] unread_counts: rollups failed', e && e.message);
+    }
+
+    // 3. Unread secure-share opens ("{email} opened {folder}") — Files, per the
+    //    PO's ruling that link-sharing activity belongs to Files.
+    try {
+      const opens = toArray(await this.yp.await_proc('secure_share_open_feed', this.uid, 1));
+      for (const r of opens) if (r) bump({ ...r, category: 'share_open' });
+    } catch (e) {
+      this.debug('[ACTIVITY] unread_counts: secure_share_open_feed skipped', e && e.message);
+    }
+
+    // 4. Pending secure-share access requests addressed to this user — Other.
+    //    The panel counts these into the bell badge today, so leaving them out
+    //    would make the tabs sum to less than the bell.
+    try {
+      const reqs = toArray(await this.yp.await_proc('secure_share_list_requests', this.uid));
+      for (const r of reqs) if (r) bump({ ...r, category: 'access_request' });
+    } catch (e) {
+      this.debug('[ACTIVITY] unread_counts: secure_share_list_requests skipped', e && e.message);
+    }
+
+    // 5. The BASE FEED's own unread rows — yp.mfs_changelog, i.e. every file
+    //    event (media.new / remove / rename / move / copy / replace / …).
+    //
+    //    These were missing entirely, and they are the single biggest source of
+    //    unread notifications: the Files tab showed unread uploads under a badge
+    //    reading 0, and All under-read by the same amount. Everything counted
+    //    above comes from contact_activity, the rollups or secure-share; none of
+    //    them looks at the changelog the feed itself pages through.
+    //
+    //    Added to `files` with no per-bucket breakdown because there cannot be
+    //    one: EVERY event in yp.mfs_changelog begins with "media." (measured —
+    //    media.new/remove/replace/copy/rename/move/relocate/workspace_move/
+    //    merge_workspace/copy_workspace), BUCKET_BY_EVENT has no media.* key, so
+    //    they all resolve through BUCKET_BY_EVENT_PREFIX's ['media.', files].
+    //
+    //    No double count against the `media` rollup counted in 1.: that rollup is
+    //    built from each hub's own `media` TABLE (notification_center_next),
+    //    while this counts the changelog EVENT LOG. get_feed merges both the same
+    //    way, so the badge keeps matching what the tab lists.
+    //
+    //    mfs_get_unread_count applies the same accessible-hubs set, the same
+    //    mfs_ack cursor AND the same mfs_dismissed exclusion as
+    //    mfs_get_activity_feed, so this is exactly the base rows the unread feed
+    //    would return. Best-effort like every other source here.
+    try {
+      const rows = toArray(await this._callUserProc('mfs_get_unread_count', this.uid));
+      const n = parseInt((rows[0] || {}).unread_count, 10) || 0;
+      counts.files += n;
+    } catch (e) {
+      this.debug('[ACTIVITY] unread_counts: mfs_get_unread_count skipped', e && e.message);
+    }
+
+    const all = counts.files + counts.task + counts.meeting + counts.chat + counts.other;
+    // 6. Per workspace, the NEW files and folders — the desk rail's Files pill.
+    //    Its own field, NOT part of `files` above (that already counts every
+    //    changelog event; adding these again would double them). Additive: a
+    //    client that does not read it is unaffected, and it is [] while the
+    //    procedure is not deployed.
+    const files_by_hub = await this._newFilesByHub(filesSinceArg(this.input.use('files_since')));
+    this.output.data({ all, ...counts, files_by_hub });
+  }
+
+  /**
+   * mfs_new_by_hub (drumate DB): [{ hub_id, cnt, last_ts }] of media.new
+   * events — files and folders — per workspace, newer than the caller's marks.
+   * Best-effort, never throws. A DB that does not have the routine yet (the
+   * rollout window, or a user DB provisioned before it) is skipped for
+   * PROC_RETRY_MS, keyed PER DATABASE so one stale DB never silences another.
+   */
+  async _newFilesByHub(since) {
+    const key = `user-db:${this.user.get(Attr.db_name)}:mfs_new_by_hub`;
+    const now = Date.now();
+    const retryAfter = MISSING_PROCS.get(key);
+    if (retryAfter && now < retryAfter) return [];
+    try {
+      const rows = await this._callUserProc('mfs_new_by_hub', this.uid, since);
+      if (rows === undefined) {
+        MISSING_PROCS.set(key, now + PROC_RETRY_MS);
+        return [];
+      }
+      if (retryAfter) MISSING_PROCS.delete(key);
+      const out = [];
+      for (const r of toArray(rows)) {
+        if (!r || !r.hub_id) continue;
+        const cnt = parseInt(r.cnt, 10) || 0;
+        if (cnt <= 0) continue;
+        out.push({ hub_id: String(r.hub_id), cnt, last_ts: parseInt(r.last_ts, 10) || 0 });
+      }
+      return out;
+    } catch (e) {
+      this.debug('[ACTIVITY] unread_counts: mfs_new_by_hub skipped', e && e.message);
+      return [];
+    }
+  }
+
+  async _visibleNotificationRollup(category, keyId, hubId, lastId) {
+    if (!ROLLUP_MUTATION_CATEGORIES.has(category)) return null;
+    const rows = await this._notificationRollups();
+    // The client sends the key it can act on — the folder nid for media, the
+    // peer's drumate id for chat (see rollupDismissKey) — which is not the
+    // rollup's display key_id for those two categories, so matching key_id
+    // alone rejected every media/chat read with INVALID_DATA. Either key is
+    // accepted; both are still checked against a row that is live right now.
+    return rows.find(row => (
+      row
+      && String(row.category || '') === category
+      && (String(row.key_id || '') === keyId
+        || String(rollupDismissKey(row) || '') === keyId)
+      && String(row.hub_id || '') === hubId
+      && (category === 'contact' || Number(row.last_id || 0) === lastId)
+    )) || null;
   }
 
   /**
@@ -740,7 +2644,146 @@ class MfsActivity extends Entity {
    * Endpoint: POST /activity.dismiss
    */
   async dismiss_rollup() {
+    const category = String(this.input.need('category'));
+    if (CONTACT_ACTIVITY_CATEGORIES.has(category)) {
+      const activityId = Number(this.input.need('key_id'));
+      if (!Number.isSafeInteger(activityId) || activityId < 1) {
+        return this.exception.bad_request('INVALID_DATA');
+      }
+      const result = await this._callUserProc(
+        'contact_activity_dismiss',
+        this.uid,
+        activityId,
+      );
+      return this.output.data(toArray(result)[0] || {});
+    }
     return this.notification_dismiss();
+  }
+
+  async dismiss_history() {
+    const historyId = Number(this.input.need('history_id'));
+    if (!Number.isSafeInteger(historyId) || historyId < 1) {
+      return this.exception.bad_request('INVALID_DATA');
+    }
+    const result = await this._callUserProc(
+      'notification_history_hide',
+      historyId,
+    );
+    return this.output.data(toArray(result)[0] || {});
+  }
+
+  async bookmark_add() {
+    const bookmarkKey = String(this.input.need('bookmark_key'));
+    if (!/^[a-f0-9]{64}$/.test(bookmarkKey)) {
+      return this.exception.bad_request('INVALID_DATA');
+    }
+    const result = await this._callUserProc(
+      'notification_activity_bookmark_add',
+      bookmarkKey,
+    );
+    const data = toArray(result)[0] || {};
+    // Optional: the web panel also sends the row itself so a saved row can be
+    // pinned on top whatever feed page it sits on (bookmark_rows). Mobile sends
+    // only the key and is unaffected. Best-effort: the bookmark above is the
+    // source of truth and stands even if the snapshot is refused or fails.
+    if (Number(data.is_saved) === 1) {
+      await this._saveBookmarkRow(bookmarkKey, this.input.use('row'));
+    }
+    return this.output.data(data);
+  }
+
+  async bookmark_remove() {
+    const bookmarkKey = String(this.input.need('bookmark_key'));
+    if (!/^[a-f0-9]{64}$/.test(bookmarkKey)) {
+      return this.exception.bad_request('INVALID_DATA');
+    }
+    const result = await this._callUserProc(
+      'notification_activity_bookmark_remove',
+      bookmarkKey,
+    );
+    try {
+      await this._callUserProc('notification_activity_bookmark_row_remove', bookmarkKey);
+    } catch (e) {
+      this.debug('[ACTIVITY] bookmark row remove skipped', e && e.message);
+    }
+    return this.output.data(toArray(result)[0] || {});
+  }
+
+  /**
+   * Store what a saved row looked like, keyed by its bookmark.
+   *
+   * The row comes from the client, so it is only kept when it IS the row the
+   * key names -- bookmarkKey(row) must reproduce the key -- and when it is a
+   * reasonable size. It is only ever returned to the same user (bookmark_rows),
+   * whose panel renders it through the same escaping as any feed row.
+   */
+  async _saveBookmarkRow(key, row) {
+    if (!row || typeof row !== 'object' || Array.isArray(row)) return;
+    try {
+      if (bookmarkKey(row) !== key) {
+        this.debug('[ACTIVITY] bookmark row does not match its key, not stored');
+        return;
+      }
+      const clean = { ...row };
+      for (const k of BOOKMARK_ROW_DROP) delete clean[k];
+      const payload = JSON.stringify(clean);
+      if (payload.length > BOOKMARK_ROW_MAX) {
+        this.debug('[ACTIVITY] bookmark row too large, not stored', payload.length);
+        return;
+      }
+      stampBuckets([clean]);
+      const rowTime = Math.max(0, parseInt(clean.timestamp || clean.ctime, 10) || 0);
+      await this._callUserProc(
+        'notification_activity_bookmark_row_save',
+        key,
+        validBucket(clean.bucket) || '',
+        rowTime,
+        payload,
+      );
+    } catch (e) {
+      this.debug('[ACTIVITY] bookmark row save skipped', e && e.message);
+    }
+  }
+
+  /**
+   * The rows the user saved, newest notification first, to pin on top of the
+   * panel. Scoped to a tab when `bucket` names one. Rows the user has since
+   * deleted with the trash button are dropped, like get_feed does.
+   *
+   * is_read is forced to 1: the snapshot's read state is as old as the save and
+   * cannot be trusted, and the client replaces a snapshot with the live row
+   * whenever the feed has it, which carries the true state.
+   * Endpoint: POST /activity.bookmark_rows
+   */
+  async bookmark_rows() {
+    const bucket = validBucket(this.input.use('bucket'));
+    let rows = [];
+    try {
+      rows = toArray(await this._callUserProc(
+        'notification_activity_bookmark_row_list',
+        bucket || '',
+      ));
+    } catch (e) {
+      this.debug('[ACTIVITY] bookmark rows unavailable', e && e.message);
+      return this.output.list([]);
+    }
+    let result = [];
+    for (const r of rows) {
+      if (!r || !r.payload) continue;
+      let row;
+      try { row = JSON.parse(r.payload); } catch (e) { continue; }
+      if (!row || typeof row !== 'object') continue;
+      result.push({
+        ...row,
+        bucket: row.bucket || r.bucket || undefined,
+        bookmark_key: r.bookmark_key,
+        is_saved: 1,
+        is_read: 1,
+        pinned_source: 'snapshot',
+      });
+    }
+    result = await this._dropDeleted(result);
+    return this.output.list(result);
   }
 
   /**
@@ -752,15 +2795,28 @@ class MfsActivity extends Entity {
    */
   async read() {
     const category = String(this.input.need('category'));
-    const key_id = String(this.input.need('key_id'));
-    const hub_id = String(this.input.use('hub_id') || '');
-    const last_id = parseInt(this.input.use('last_id') || 0);
+    const keyId = String(this.input.need('key_id'));
+    if (CONTACT_ACTIVITY_CATEGORIES.has(category)) {
+      const activityId = Number(keyId);
+      if (!Number.isSafeInteger(activityId) || activityId < 1) {
+        return this.exception.bad_request('INVALID_DATA');
+      }
+      return this.output.data({status: 'ok', changed: 0});
+    }
+    const hubId = String(this.input.use('hub_id') || '');
+    const lastId = Number(this.input.need('last_id'));
+    if (!Number.isSafeInteger(lastId) || lastId < 1) {
+      return this.exception.bad_request('INVALID_DATA');
+    }
+    const row = await this._visibleNotificationRollup(category, keyId, hubId, lastId);
+    if (!row) return this.exception.bad_request('INVALID_DATA');
     const result = await this._callUserProc(
       'notification_read',
       category,
-      key_id,
-      hub_id,
-      last_id
+      String(row.key_id),
+      String(row.hub_id || ''),
+      Number(row.last_id || 0),
+      Number(row.ctime || 0),
     );
     const data = toArray(result)[0] || {};
     this.output.data(data);
@@ -791,6 +2847,210 @@ class MfsActivity extends Entity {
     const data = toArray(result)[0] || { status: 'ok', category, key_id };
     this.output.data(data);
   }
+
+  // ============================================================
+  // Notification popup mute (Round 3 / Sprint 1 row 6)
+  //
+  // 🚨 THE POPUP CHANNEL ONLY. Nothing in this section may ever be read by
+  // list(), get_feed() or unread_counts(): a muted user keeps every row in the
+  // Notification Center and keeps the bell badge, they just stop being
+  // interrupted by a card. Muting is "stop talking to me", not "stop
+  // recording". Both feed paths are deliberately left untouched.
+  //
+  // The suppression itself happens on the CLIENT, which reads this state once
+  // and re-reads it from the return value of every mute_set. The chat push
+  // path is not touched at all — no per-message, per-recipient lookup is added
+  // to the hottest push we have, and no popup decision depends on a round trip
+  // that can fail silently mid-message.
+  // ============================================================
+
+  /**
+   * Rows -> the shape the client caches: a global flag plus the muted
+   * workspaces. Shared by mute_state and mute_set so the two can never
+   * disagree about how a row is read.
+   *
+   * A global row (hub_id = '') is decisive on its own; the stored procedures
+   * clear the per-workspace rows when it is written, so the two cannot
+   * legitimately arrive together, but this does not assert on that — it
+   * reports what is there.
+   */
+  _muteState(rows) {
+    let global = 0;
+    const hubs = [];
+    for (const r of toArray(rows)) {
+      if (!r) continue;
+      const id = r.hub_id == null ? '' : String(r.hub_id);
+      if (id === '') global = 1;
+      else if (!hubs.includes(id)) hubs.push(id);
+    }
+    return { global, hubs };
+  }
+
+  /**
+   * The caller's current popup-mute state.
+   * Endpoint: POST /activity.mute_state
+   *
+   * Best-effort by design: before the schema is applied this answers "nothing
+   * muted", which is the safe direction — popups keep working exactly as they
+   * do today rather than everything falling silent on a missing routine.
+   */
+  async mute_state() {
+    const rows = await this._optionalYpProc('notification_mute_state', this.uid);
+    this.output.data(this._muteState(rows));
+  }
+
+  /**
+   * Mute or unmute the popups for one workspace, or for all of them.
+   * Endpoint: POST /activity.mute_set
+   * Input: hub_id (string, empty or absent = all workspaces),
+   *        muted (boolean, default true)
+   *
+   * Returns the FULL resulting state, not just an acknowledgement, so the
+   * client refreshes its cache from the write itself instead of following
+   * every mute with a second call.
+   *
+   * `status` is reported honestly: await_proc does not throw — it logs, drops
+   * the connection and returns undefined — so a write that never landed would
+   * otherwise be indistinguishable from one that did and would be confirmed to
+   * the user regardless. The client shows its confirmation on ok only.
+   */
+  async mute_set() {
+    const hub_id = String(this.input.use('hub_id') || '');
+    const raw = this.input.use('muted');
+    // Absent means mute: the endpoint is named for what it usually does, and
+    // only the explicit falsey values unmute. Strings are checked because form
+    // and query payloads arrive as strings, where '0' and 'false' are both
+    // truthy in JS and would silently invert the caller's intent.
+    const muted =
+      raw === undefined || raw === null || raw === ''
+        ? true
+        : !(raw === 0 || raw === '0' || raw === false || raw === 'false');
+    const proc = muted ? 'notification_mute_set' : 'notification_mute_unset';
+    const { ok, rows } = await this._optionalYpProcResult(proc, this.uid, hub_id);
+    this.output.data({
+      status: ok ? 'ok' : 'error',
+      muted: muted ? 1 : 0,
+      hub_id,
+      ...this._muteState(rows),
+    });
+  }
+  // ── Daily reminder card (Round 3 / Sprint 1 row 7) ───────────────
+  //
+  // Three numbers for the once-a-day "Hi X, today you have ..." card. None of
+  // them has a single-workspace source, so this fans out across every
+  // workspace the desk belongs to and sums. That is affordable ONLY because
+  // the card is shown once a day -- do not reuse this on any interactive path.
+  //
+  // The DAY WINDOW COMES FROM THE CLIENT, on purpose. "Today" is the viewer's
+  // today, and the server has no idea what timezone they are in; deriving it
+  // here would tell someone in UTC+7 about yesterday's tasks for most of their
+  // working morning. The client already knows, because it decides on its own
+  // clock whether the card is due at all.
+  //
+  // 🚨 `day` reaches SQL through forward_proc, which builds a dynamic
+  // statement out of the argument string -- so it is validated against a
+  // strict date pattern and rejected outright, never escaped or coerced. The
+  // epoch bounds go through Number(). uid comes from the session, not input.
+  async daily_digest() {
+    const day = String(this.input.use('day', '') || '');
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) {
+      return this.exception.user('INVALID_DAY');
+    }
+    const dayStart = Number(this.input.use('stime', 0)) || 0;
+    const dayEnd = Number(this.input.use('etime', 0)) || 0;
+    if (!Number.isFinite(dayStart) || !Number.isFinite(dayEnd) || dayEnd <= dayStart) {
+      return this.exception.user('INVALID_DAY');
+    }
+
+    // Areas that count: EXACTLY the sidebar's own "collaborative-area gate".
+    //
+    // This list is not a judgement call -- it is copied from what the client
+    // already treats as the user's workspaces, in
+    // modules/desk/workspace-list/index.js:
+    //     /^(share|private|restricted|public)$/.test(it.area)
+    // whose comment reads "hubs keep the collaborative-area gate (drops the
+    // personal hub itself and the auto dmz/wicket)". desk.home and
+    // mfs_show_node_by apply NO area filter of their own, so that regex is the
+    // only thing deciding what a person sees listed as a workspace.
+    //
+    // An earlier version of this counted only private+public, on the guess that
+    // a 'share' hub was secure-share plumbing. That was WRONG: 'share' is a
+    // collaborative area and the sidebar lists it. On a real stage account it
+    // is 20 of 48 workspaces, so the card would have quietly under-reported by
+    // more than a third, and the tile would have disagreed with the very list
+    // the user is looking at. Only 'dmz' -- and the unassigned 'pool' area --
+    // are genuinely not workspaces.
+    //
+    // Filtered HERE rather than in the proc, so keeping it in step with the
+    // client costs no schema re-apply. desk_my_workspaces returns `area` for
+    // exactly this reason.
+    const COUNTED_AREAS = ['share', 'private', 'restricted', 'public'];
+    const workspaces = toArray(await this._callUserProc('desk_my_workspaces'))
+      .filter((w) => w && COUNTED_AREAS.includes(String(w.area || '')));
+    // A cap so one pathological account cannot turn a daily card into a
+    // hundreds-of-query storm. Reported back so the client -- and anyone
+    // reading a bug report -- can tell a real total from a floor.
+    const MAX_WORKSPACES = 60;
+    const capped = workspaces.slice(0, MAX_WORKSPACES);
+
+    let unread_messages = 0;
+    let due_tasks = 0;
+    let meetings = 0;
+
+    for (const w of capped) {
+      const hubId = w && w.hub_id;
+      if (!hubId) continue;
+
+      // Counts. await_proc does not throw -- it logs, ends the connection and
+      // returns undefined -- so an unmigrated workspace simply contributes
+      // nothing instead of failing the whole card.
+      let row = null;
+      try {
+        row = toArray(
+          await this.yp.await_proc(
+            'forward_proc', hubId, 'hub_daily_counts', `'${this.uid}','${day}'`
+          )
+        )[0];
+      } catch (e) {
+        this.debug('[ACTIVITY] hub_daily_counts failed', hubId, e && e.message);
+        row = null;
+      }
+      if (row) {
+        unread_messages += Number(row.unread_messages) || 0;
+        due_tasks += Number(row.due_tasks) || 0;
+      }
+
+      // Meetings. room_list_scheduled already exists per hub, so this needs no
+      // SQL of its own -- but it returns EVERY recurring meeting regardless of
+      // the window (by design, so the client can expand occurrences), which is
+      // why the day filter is applied here rather than passed as bounds.
+      // The catch wraps ONLY the round trip. It used to wrap the counting
+      // too, and that hid a genuine ReferenceError as a quiet "0 meetings" --
+      // a catch wide enough to swallow a programming error reports a wrong
+      // number instead of failing, which is worse than either.
+      let rooms = [];
+      try {
+        rooms = toArray(
+          await this.yp.await_proc('forward_proc', hubId, 'room_list_scheduled', 'NULL,NULL')
+        );
+      } catch (e) {
+        this.debug('[ACTIVITY] room_list_scheduled failed', hubId, e && e.message);
+        rooms = [];
+      }
+      meetings += countMeetingsInWindow(rooms, dayStart, dayEnd);
+    }
+
+    this.output.data({
+      unread_messages,
+      due_tasks,
+      meetings,
+      workspaces: capped.length,
+      // true = the numbers are a floor, not a total.
+      truncated: workspaces.length > capped.length ? 1 : 0,
+    });
+  }
+
 }
 
+MfsActivity.bookmarkKey = bookmarkKey;
 module.exports = MfsActivity;
