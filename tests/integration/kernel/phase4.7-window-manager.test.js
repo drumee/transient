@@ -98,7 +98,7 @@ async function drag(protocol, from, to, steps = 10) {
 test("Phase 4.7 mounts real LETC windows and physically exercises drag, resize and generic drop", { timeout: 90000 }, async () => {
   const output_path = fs.mkdtempSync(path.join(os.tmpdir(), "drumee-phase47-"));
   const profile = fs.mkdtempSync(path.join(os.tmpdir(), "drumee-phase47-profile-"));
-  const runtime_root = path.join(root, "target/foundation/ui-runtime");
+  const runtime_root = process.env.KERNEL_UI_RUNTIME_ROOT || path.resolve(root, "../ui-runtime");
   const module_root = process.env.KERNEL_WINDOW_MANAGER_ROOT || path.resolve(root, "../window-manager");
   assert.equal(fs.existsSync(path.join(module_root, "package.json")), true, `Standalone Window Manager repository not found: ${module_root}`);
   const { createConfig } = require(path.join(root, "target/tooling/ui-build/lib"));
@@ -109,7 +109,7 @@ test("Phase 4.7 mounts real LETC windows and physically exercises drag, resize a
     entry: "./tests/integration/kernel/fixtures/window-manager/browser-entry.js",
     outputPath: output_path,
     publicPath: "./",
-    version: "0.1.0-alpha.1",
+    version: "0.1.0-alpha.2",
     rev: "phase4.7",
     loaderRoots: [dependencyRoot(), path.join(module_root, "node_modules")],
     moduleRoots: [path.join(module_root, "node_modules"), path.join(runtime_root, "node_modules"), dependencyRoot()]
@@ -118,6 +118,8 @@ test("Phase 4.7 mounts real LETC windows and physically exercises drag, resize a
   config.resolve.alias = {
     ...(config.resolve.alias || {}),
     jquery: path.join(runtime_root, "node_modules/jquery"),
+    "@drumee/ui-runtime$": path.join(runtime_root, "src/index.js"),
+    "@drumee/ui-runtime/browser$": path.join(runtime_root, "src/browser.js"),
     "@drumee/window-manager/browser$": path.join(module_root, "lib/browser.js")
   };
   await compile(config);
@@ -183,7 +185,7 @@ test("Phase 4.7 mounts real LETC windows and physically exercises drag, resize a
     assert.deepEqual(dropped.payload, { type: "generic-token", id: 47 });
 
     await evaluate(protocol, "phase47.manager.activate('window-b');phase47.closed_b=phase47.b;phase47.manager.close('window-b')");
-    const closed = await evaluate(protocol, "({ids:phase47.manager.windows().map(w=>w.window_id),active:phase47.manager.active_window.window_id,connected:phase47.closed_b.el.isConnected,installed:phase47.closed_b.interactions.installed,hasData:jQuery.hasData(phase47.closed_b.el),a:phase47.a.state,c:phase47.c.state})");
+    const closed = await evaluate(protocol, "({ids:phase47.manager.windows().map(w=>w.window_id),active:phase47.manager.active_window.window_id,connected:phase47.closed_b.el.isConnected,installed:phase47.closed_b.interactions.installed,hasData:jQuery.hasData(phase47.closed_b.el),a:phase47.a.lifecycle,c:phase47.c.lifecycle})");
     assert.deepEqual(closed.ids, ["window-a", "window-c"]);
     assert.equal(closed.connected, false);
     assert.deepEqual(closed.installed, { draggable: false, resizable: false, droppable: false });

@@ -1,4 +1,4 @@
-const runtime_api = require("../../../../../target/foundation/ui-runtime/src/browser");
+const runtime_api = require("@drumee/ui-runtime/browser");
 const window_manager_api = require("@drumee/window-manager/browser");
 
 window.Phase47Ready = runtime_api.bootstrap().then((runtime) => {
