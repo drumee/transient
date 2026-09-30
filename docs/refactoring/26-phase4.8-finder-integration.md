@@ -39,12 +39,13 @@ Finder → transfer controllers → MfsTransferClient → mfs-transfer
 - `MfsSync` binds once to `runtime.Websocket`, routes recipient-safe deltas by
   current `{hub_id,nid}` scope, suppresses duplicate operation echoes and
   reconciles open scopes after reconnect.
-- `mfs-service` owns validation, principal context, operation authorization,
-  filesystem orchestration and recipient-safe mutation publication through an
-  injected runtime transport adapter.
-- `mfs-transfer` owns temporary chunks, resumable sessions, integrity checks,
-  archive jobs and requester-scoped progress. It has no direct dependency on
-  `system-mfs`.
+- `mfs-service` owns validation after runtime authorization, filesystem
+  orchestration and recipient-safe mutation publication through an injected
+  runtime transport adapter. Its narrow permission backend exposes logical
+  resources and effective permission; it is not an ACL authority.
+- `mfs-transfer` owns bounded temporary chunks, resumable sessions, integrity
+  checks, offline archive jobs and requester-scoped progress. It has no direct
+  dependency on `system-mfs` and never keeps a completed archive Buffer.
 - the standalone `system-mfs` working tree owns generic filesystem primitives
   and canonical-content adoption. No second implementation remains under
   `target/modules/system-mfs`.
@@ -80,11 +81,13 @@ resume. Temporary bytes are assembled by `mfs-transfer`, authorized by
 `mfs-service`, and atomically adopted by `system-mfs.commitFile` into canonical
 storage before the normal `node.created` event is published.
 
-Downloads accept canonical multi-root identities. `mfs-service` authorizes the
-roots and asks `system-mfs` for a recursive manifest; `mfs-transfer` alone
-builds and serves the ZIP. Small jobs complete inline, larger jobs expose
-requester-only progress, status, cancel, retrieve and release operations.
-Transfer progress is not sent through MFS synchronization.
+Downloads accept canonical multi-root identities. The runtime ACL authorizes
+every root, `mfs-service` asks `system-mfs` for a recursive manifest, and
+`mfs-transfer` starts a finite offline archive process using host-filesystem
+references. The ZIP remains a filesystem artifact. Retrieval re-enters runtime
+ACL, preserves requester ownership, and delegates delivery through FileIo,
+`X-Accel-Redirect` and Nginx. Progress, status, cancel, retrieve and release
+remain requester-scoped; transfer progress is not MFS synchronization.
 
 `removeNode` is an authorized hard filesystem delete. Trash, restore,
 retention, changelog and acknowledgement remain excluded.
@@ -106,8 +109,8 @@ The Phase 4.8 suites prove:
 - mixed recursive upload with empty directories, bounded chunk concurrency,
   retry/resume, progress, cancellation, integrity failure cleanup and canonical
   commit;
-- recursive mixed multi-root ZIP creation, asynchronous progress, cancellation,
-  retrieval and release;
+- recursive mixed multi-root ZIP creation outside the HTTP process,
+  asynchronous progress, cancellation, FileIo/Nginx retrieval and release;
 - standalone `system-mfs` unit, artifact and disposable-MariaDB validation;
 - no Finder dependency on Desk Wm, global selection, Team/Chat or server-side
   `@drumee/system-mfs` in the browser bundle.
@@ -115,21 +118,24 @@ The Phase 4.8 suites prove:
 Phase 4.9 remains responsible for real-use stabilization, richer interaction
 UX and standalone Finder extraction/publication.
 
-## Canonical system-mfs realignment and final closure
+## Canonical system-mfs realignment and corrective final closure
 
-Status: **CLOSED / VALIDATED** on 2026-09-30. The canonical standalone
+Status: **CLOSED / VALIDATED** on 2026-09-30 after the corrective architectural
+pass required by `28-phase4.8-corrective-architectural-closure.md`. The canonical standalone
 `system-mfs` baseline is `a7f7395bdbc79560aed072219b87c0b81c004bce`;
-the corresponding transient integration baseline is
-`95b142a400c009cec4b65553f148151d6b412fa9`. The documentation commit containing
-this closure is the final transient Phase 4.8 HEAD and is reported with the
-external closure record.
+it was audited and not modified. The standalone runtime correction is
+`c4eb77474` with HLS route evidence in `36c8d8075`. The corresponding transient
+implementation commits are `561db9347` and `b66d480cb`. The final documentation
+HEAD is reported with the external closure record.
 
 The final backend chain is:
 
 ```text
-Input → Session.uid()/trusted current hub → service ACL
-      → resolved entity/vhost shard → shard.user_permission()
-      → GRANTED → mfs-service/mfs-transfer → system-mfs procedures
+Input → Session.uid()/trusted current hub → descriptor + runtime ACL
+      → MFS backend resolves every logical source/destination
+      → shard.user_permission() supplies effective privilege
+      → runtime compares required/effective → GRANTED or DENIED
+      → GRANTED only: mfs-service/mfs-transfer → system-mfs procedures
       → explicit public DTO → Output/sanitize → HTTP/WebSocket
 ```
 
@@ -148,13 +154,16 @@ derives or creates `mfs_<principal_id>` databases.
 | Owner | Objects/responsibility |
 |---|---|
 | `system-mfs` | `media`, `permission`, `mfs_clean_path`, `parent_permission`, `user_permission`, `user_expiry`, tree procedures, shard provisioning, filesystem transactions, canonical-content adoption |
-| server ACL | service permission descriptors, source/destination resource resolution, final GRANTED/DENIED decision |
+| server runtime ACL | service permission descriptors, required/effective comparison, final GRANTED/DENIED decision, worker-after-GRANTED ordering |
 | Yellow Pages/platform | `uniqueId`, `entity`, `vhost`, hub/drumate shard assignment, sessions and trusted identity |
 | `Input` | canonical request/header/body/upload normalization and initial tempfile ownership; no authorization |
 | `Session` | trusted uid, current hub and host context |
-| `mfs-service` | semantic validation after ACL grant, filesystem orchestration, explicit HTTP and WebSocket projection |
-| `mfs-transfer` | resumable transfer state, chunks, archives, deterministic tempfile ownership and requester-scoped progress |
-| `Output` | all normal structured HTTP responses and the final sanitizer barrier |
+| `mfs-service` | logical source/destination resolution, effective-permission backend, semantic validation after ACL grant, filesystem orchestration, explicit HTTP and WebSocket projection |
+| host-filesystem | opaque logical-content/representation to confined physical-artifact mapping; physical paths remain private |
+| media-service | invariant original lookup, explicit derived representations, bounded HLS worker and small-playlist control plane |
+| `mfs-transfer` | capacity/TTL-bounded resumable state, chunks, offline archive workers, deterministic tempfile ownership and requester-scoped progress |
+| `Output` | structured responses, bounded small control artifacts and the final sanitizer barrier |
+| FileIo / Nginx | heavy artifact headers/internal redirect and actual byte delivery |
 
 `acl_check`, `acl_array_check_next` and service policy remain server-owned.
 `permission_grant`, `permission_revoke`, `permission_set` and `permission_tree`
@@ -202,7 +211,7 @@ trigger definitions and rejects any unmanifested or duplicate path.
 | rename/hard remove | source delete | `mfs_rename` / `mfs_hard_remove` |
 | same-hub move | every source delete + destination write | transactional `mfs_move_nodes` |
 | cross-hub copy | every source read + destination write | JS orchestration over source enumeration, destination procedures and canonical-content copy |
-| download | every root read | `mfs_enumerate_tree`; archive ownership stays in `mfs-transfer` |
+| download | every root read, including persistent endpoints | `mfs_enumerate_tree`; offline archive and bounded artifact ownership stay in `mfs-transfer`; FileIo/Nginx deliver bytes |
 
 `user_permission()` is the MFS-specific effective privilege primitive. Tests
 cover account-wide, explicit-node, wildcard, nobody normalization, parent
@@ -210,28 +219,51 @@ inheritance, `no_traversal` and zero permission. It does not decide which
 permission a service requires; descriptors and runtime ACL remain the final
 service-level authority.
 
+### Media, filesystem and delivery invariants
+
+`media.orig` resolves only the canonical stored artifact for images, Office
+documents and videos. `preview`, `thumb`, `document` and `video` are explicit
+allowlisted representations; callers cannot supply a generator or physical
+path. Long-form video may start one tracked finite HLS worker per logical node.
+Input normalizes only known logical master/stream/segment routes. Node may
+process bounded playlists; segments and other heavy media use FileIo/Nginx.
+
+Download preparation uses an offline child plus the external ZIP program. The
+HTTP process retains only logical roots, owner, status, expiry, artifact
+metadata and a finite worker handle. Fixed job capacity, TTL cleanup,
+cancel/failure/release cleanup and shutdown cleanup bound all temporary state.
+The generic runtime `stop()` implementation was not changed; its broader
+lifecycle review is explicitly deferred.
+
 ### Validation record
 
-The final clean-baseline commands all passed:
+The final corrective commands all passed from committed implementation heads:
 
 ```text
 system-mfs:
-  node --test test/sql-granularity.test.js                         1/1
   npm test                                                        9/9
-  node --test test/mariadb.test.js                                1/1
+    includes artifact, procedure-backed disposable MariaDB,
+    effective-permission and one-object-per-SQL-file validation
+
+server-runtime:
+  npm test                                                       39/39
 
 transient:
-  node scripts/check-system-mfs-sync.js                           passed
-  node --test target/modules/mfs-service/test/service.test.js
-              target/modules/mfs-transfer/test/transfer.test.js   10/10
-  node --test tests/integration/kernel/phase4.8-backend-dispatch.test.js
-              tests/integration/kernel/phase4.8-transfer-boundary.test.js
-              tests/integration/kernel/phase4.8-multi-client-sync.test.js  5/5
-  node --test tests/integration/kernel/phase4.8-finder-browser.test.js     1/1
-  node --test tests/integration/kernel/phase4.6b-system-mfs.test.js       2/2
-  node --test tests/integration/kernel/phase4.7-window-manager.test.js    1/1
-  (standalone window-manager) npm test                                    6/6
+  npm test (target/foundation/server-runtime)                    35/35
+  scripts/test-env/kernel/phase4.8-validation.sh
+    corrective Phase 4.8 unit/integration/browser suite          35/35
+    real Nginx ZIP + media.orig data-plane suite                   2/2
+    standalone system-mfs suite                                   9/9
+  node --test phase4.6b + phase4.7 regressions                     3/3
+  (standalone window-manager) npm test                             6/6
 ```
 
-This closure made no change under `sources/**`, published no npm package and
-did not start Phase 4.9.
+The Nginx test validates an actual ZIP signature/content and an unchanged
+2 MiB original media artifact at the client. Unit/integration evidence also
+proves `X-Accel-Redirect`, no whole-archive Node Buffer, worker-not-called on
+DENIED, trusted `Session.uid()`, multi-source/cross-hub ACL, cleanup on
+cancel/failure/release/expiry, and HLS playlist/segment routing.
+
+This corrective closure made no change under `sources/**` or `system-mfs`,
+published no npm package, preserved generic `stop()` unchanged and did not
+start Phase 4.9.
