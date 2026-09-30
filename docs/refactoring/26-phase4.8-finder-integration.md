@@ -114,3 +114,123 @@ The Phase 4.8 suites prove:
 
 Phase 4.9 remains responsible for real-use stabilization, richer interaction
 UX and standalone Finder extraction/publication.
+
+## Canonical system-mfs realignment and final closure
+
+Status: **CLOSED / VALIDATED** on 2026-09-30. The canonical standalone
+`system-mfs` baseline is `a7f7395bdbc79560aed072219b87c0b81c004bce`;
+the corresponding transient integration baseline is
+`95b142a400c009cec4b65553f148151d6b412fa9`. The documentation commit containing
+this closure is the final transient Phase 4.8 HEAD and is reported with the
+external closure record.
+
+The final backend chain is:
+
+```text
+Input → Session.uid()/trusted current hub → service ACL
+      → resolved entity/vhost shard → shard.user_permission()
+      → GRANTED → mfs-service/mfs-transfer → system-mfs procedures
+      → explicit public DTO → Output/sanitize → HTTP/WebSocket
+```
+
+Public MFS identity remains `{hub_id,nid}`. `db_name`, `db_host`, `fs_host`,
+`home_dir`, `mfs_root`, `storage_ref` and transfer `payload_ref` are internal.
+The client cannot replace Session uid with `uid`, `principal_id`, `owner_id` or
+`user_id`. A missing identity resolves to canonical nobody; validated token
+identities are consumed through the same server-owned `Session.uid()` contract.
+When a public resource omits `hub_id`, only Session's trusted current hub may
+fill it. Provisioning accepts `{hub_id}` or trusted `{host}`, resolves
+`entity`/`vhost`, and installs into the existing hub or drumate shard. It never
+derives or creates `mfs_<principal_id>` databases.
+
+### Ownership map
+
+| Owner | Objects/responsibility |
+|---|---|
+| `system-mfs` | `media`, `permission`, `mfs_clean_path`, `parent_permission`, `user_permission`, `user_expiry`, tree procedures, shard provisioning, filesystem transactions, canonical-content adoption |
+| server ACL | service permission descriptors, source/destination resource resolution, final GRANTED/DENIED decision |
+| Yellow Pages/platform | `uniqueId`, `entity`, `vhost`, hub/drumate shard assignment, sessions and trusted identity |
+| `Input` | canonical request/header/body/upload normalization and initial tempfile ownership; no authorization |
+| `Session` | trusted uid, current hub and host context |
+| `mfs-service` | semantic validation after ACL grant, filesystem orchestration, explicit HTTP and WebSocket projection |
+| `mfs-transfer` | resumable transfer state, chunks, archives, deterministic tempfile ownership and requester-scoped progress |
+| `Output` | all normal structured HTTP responses and the final sanitizer barrier |
+
+`acl_check`, `acl_array_check_next` and service policy remain server-owned.
+`permission_grant`, `permission_revoke`, `permission_set` and `permission_tree`
+remain permission-administration dependencies rather than duplicated MFS
+authorities. `filecap`, `disk_usage`, trash, changelog, search, acknowledgement,
+DMZ and Team policy remain excluded.
+
+### SQL file/object map
+
+Every module-owned SQL file defines exactly one object and appears once in
+deterministic manifest order. Common SQL applies to both hub and drumate
+shards; both class-specific overlay lists are explicit and currently empty.
+
+| Schema class | Object type | Object/file |
+|---|---|---|
+| yellow-page | table | `system_mfs_installation` — `schemas/yellow-page/tables/system_mfs_installation.sql` |
+| yellow-page | table | `system_mfs_provisioning` — `schemas/yellow-page/tables/system_mfs_provisioning.sql` |
+| common | table | `media` — `schemas/common/tables/media.sql` |
+| common | table | `permission` — `schemas/common/tables/permission.sql` |
+| common | function | `mfs_clean_path` — `schemas/common/functions/mfs_clean_path.sql` |
+| common | function | `parent_permission` — `schemas/common/functions/parent_permission.sql` |
+| common | function | `user_permission` — `schemas/common/functions/user_permission.sql` |
+| common | function | `user_expiry` — `schemas/common/functions/user_expiry.sql` |
+| common | procedure | `mfs_create_node` — `schemas/common/procedures/mfs_create_node.sql` |
+| common | procedure | `mfs_node_attr` — `schemas/common/procedures/mfs_node_attr.sql` |
+| common | procedure | `mfs_make_dir` — `schemas/common/procedures/mfs_make_dir.sql` |
+| common | procedure | `mfs_init_folders` — `schemas/common/procedures/mfs_init_folders.sql` |
+| common | procedure | `mfs_show_node_by` — `schemas/common/procedures/mfs_show_node_by.sql` |
+| common | procedure | `mfs_list_children` — `schemas/common/procedures/mfs_list_children.sql` |
+| common | procedure | `mfs_rename` — `schemas/common/procedures/mfs_rename.sql` |
+| common | procedure | `mfs_hard_remove` — `schemas/common/procedures/mfs_hard_remove.sql` |
+| common | procedure | `mfs_move_nodes` — `schemas/common/procedures/mfs_move_nodes.sql` |
+| common | procedure | `mfs_enumerate_tree` — `schemas/common/procedures/mfs_enumerate_tree.sql` |
+
+The former Phase 4.6 monoliths were removed. The automated granularity test
+rejects any SQL file with zero or multiple top-level table/function/procedure/
+trigger definitions and rejects any unmanifested or duplicate path.
+
+### Operation and authorization map
+
+| Operation | ACL | Execution |
+|---|---|---|
+| list/get | source read | `mfs_list_children` / `mfs_node_attr` in the resolved shard |
+| mkdir/upload commit | destination write | `mfs_make_dir` / `mfs_create_node` |
+| rename/hard remove | source delete | `mfs_rename` / `mfs_hard_remove` |
+| same-hub move | every source delete + destination write | transactional `mfs_move_nodes` |
+| cross-hub copy | every source read + destination write | JS orchestration over source enumeration, destination procedures and canonical-content copy |
+| download | every root read | `mfs_enumerate_tree`; archive ownership stays in `mfs-transfer` |
+
+`user_permission()` is the MFS-specific effective privilege primitive. Tests
+cover account-wide, explicit-node, wildcard, nobody normalization, parent
+inheritance, `no_traversal` and zero permission. It does not decide which
+permission a service requires; descriptors and runtime ACL remain the final
+service-level authority.
+
+### Validation record
+
+The final clean-baseline commands all passed:
+
+```text
+system-mfs:
+  node --test test/sql-granularity.test.js                         1/1
+  npm test                                                        9/9
+  node --test test/mariadb.test.js                                1/1
+
+transient:
+  node scripts/check-system-mfs-sync.js                           passed
+  node --test target/modules/mfs-service/test/service.test.js
+              target/modules/mfs-transfer/test/transfer.test.js   10/10
+  node --test tests/integration/kernel/phase4.8-backend-dispatch.test.js
+              tests/integration/kernel/phase4.8-transfer-boundary.test.js
+              tests/integration/kernel/phase4.8-multi-client-sync.test.js  5/5
+  node --test tests/integration/kernel/phase4.8-finder-browser.test.js     1/1
+  node --test tests/integration/kernel/phase4.6b-system-mfs.test.js       2/2
+  node --test tests/integration/kernel/phase4.7-window-manager.test.js    1/1
+```
+
+This closure made no change under `sources/**`, published no npm package and
+did not start Phase 4.9.
