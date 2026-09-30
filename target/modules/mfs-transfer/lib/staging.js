@@ -28,6 +28,20 @@ class TransferStaging {
     return Object.freeze({ type: "mfs-staged-payload", token });
   }
 
+  adoptInputFile(source, token, filename) {
+    const payload = this.payloads.get(token);
+    if (!payload || !source || !fs.existsSync(source)) throw Object.assign(new Error("Input upload tempfile is unavailable"), { code: "MFS_INPUT_FILE_INVALID" });
+    const destination = path.join(payload.directory, filename);
+    try {
+      fs.renameSync(source, destination);
+    } catch (error) {
+      if (error.code !== "EXDEV") throw error;
+      fs.copyFileSync(source, destination);
+      fs.rmSync(source, { force: true });
+    }
+    return destination;
+  }
+
   claim(payload_ref) {
     if (!payload_ref || payload_ref.type !== "mfs-staged-payload") throw Object.assign(new Error("Invalid staged payload reference"), { code: "MFS_PAYLOAD_REF_INVALID" });
     const payload = this.payloads.get(payload_ref.token);

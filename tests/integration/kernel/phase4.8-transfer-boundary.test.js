@@ -40,21 +40,22 @@ test("upload staging commits through service/system-mfs and download returns aut
   const progress = [];
   const transfer = new MfsTransferService({ mfs_service, staging, content_reader: (ref) => canonical.read(ref), progress: { async publishOperation(event) { progress.push(event); } } });
 
-  const upload = await transfer.uploadStart({ destination, size: 11, operation_id: "upload-boundary", metadata: { filename: "hello.txt", size: 11, mimetype: "text/plain", filetype: "text" } }, { principal_id });
-  await transfer.uploadChunk({ transfer_id: upload.transfer_id, index: 1, data: Buffer.from("world") }, { principal_id });
-  await transfer.uploadChunk({ transfer_id: upload.transfer_id, index: 0, data: Buffer.from("hello ") }, { principal_id });
-  const committed = await transfer.uploadComplete({ transfer_id: upload.transfer_id }, { principal_id });
+  const upload = await transfer.uploadStart({ destination, size: 11, operation_id: "upload-boundary", metadata: { filename: "hello.txt", size: 11, mimetype: "text/plain", filetype: "text" } }, { uid: principal_id });
+  await transfer.uploadChunk({ transfer_id: upload.transfer_id, index: 1, data: Buffer.from("world") }, { uid: principal_id });
+  await transfer.uploadChunk({ transfer_id: upload.transfer_id, index: 0, data: Buffer.from("hello ") }, { uid: principal_id });
+  const committed = await transfer.uploadComplete({ transfer_id: upload.transfer_id }, { uid: principal_id });
   assert.equal(committed.result.filename, "hello.txt");
-  assert.equal((await canonical.read(committed.result.storage_ref)).toString(), "hello world");
+  assert.equal(Object.hasOwn(committed.result, "storage_ref"), false);
+  assert.equal((await canonical.read(canonical.ref({ hub_id, nid: committed.result.nid }))).toString(), "hello world");
   assert.equal(published.length, 1);
   assert.equal(published[0].payload.type, "node.created");
   assert.equal(published[0].payload.committed_from_transfer, true);
 
-  const prepared = await transfer.downloadPrepare({ roots: [{ hub_id, nid: committed.result.nid }], operation_id: "download-boundary" }, { principal_id });
-  const archive = transfer.downloadRetrieve({ transfer_id: prepared.transfer_id }, { principal_id }).data;
+  const prepared = await transfer.downloadPrepare({ roots: [{ hub_id, nid: committed.result.nid }], operation_id: "download-boundary" }, { uid: principal_id });
+  const archive = transfer.downloadRetrieve({ transfer_id: prepared.transfer_id }, { uid: principal_id }).data;
   assert.equal(archive.readUInt32LE(0), 0x04034b50);
   assert.ok(archive.includes(Buffer.from("hello.txt")));
   assert.ok(archive.includes(Buffer.from("hello world")));
   assert.ok(progress.filter((entry) => entry.operation_id === "download-boundary").every((entry) => entry.principal === principal_id));
-  assert.equal(transfer.downloadRelease({ transfer_id: prepared.transfer_id }, { principal_id }).status, "released");
+  assert.equal(transfer.downloadRelease({ transfer_id: prepared.transfer_id }, { uid: principal_id }).status, "released");
 });

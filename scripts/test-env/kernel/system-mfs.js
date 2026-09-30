@@ -54,8 +54,8 @@ const database = {
 
 async function main() {
   const operation = process.argv[2] || "validate-installation";
-  const principal_id = process.argv[3];
-  const context = principal_id ? { organisation_id: Number(process.argv[4] || 1), principal_id } : undefined;
+  const hub_id = process.argv[3];
+  const context = hub_id ? { hub_id } : undefined;
   const store = new SqlMfsStore({ database });
   let report;
   if (operation === "install") report = await install({ store });
@@ -65,8 +65,8 @@ async function main() {
   else if (operation === "exercise") {
     const ready = await validateProvisioning({ store, context });
     if (!ready.valid) throw new Error(`MFS context is not ready: ${ready.status}`);
-    const mfs = new MfsNamespace({ store, context });
-    const created = await mfs.makeDirectory(ready.root_id, process.argv[5] || "Phase46B");
+    const mfs = new MfsNamespace({ store, context, principal: hub_id });
+    const created = await mfs.makeDirectory(ready.root_id, process.argv[4] || "Phase46B");
     report = { ready, created, resolved: await mfs.resolveNode(created.nid), children: await mfs.listChildren(ready.root_id) };
   } else throw new Error(`Unknown system-mfs operation: ${operation}`);
   process.stdout.write(`${JSON.stringify(report)}\n`);

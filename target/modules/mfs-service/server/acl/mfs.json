@@ -1,13 +1,13 @@
 {
   "services": {
-    "list": { "scope": "domain", "permission": { "src": "read" } },
-    "get": { "scope": "domain", "permission": { "src": "read" } },
-    "mkdir": { "scope": "domain", "permission": { "src": "write" } },
-    "rename": { "scope": "domain", "permission": { "src": "write" } },
-    "remove": { "scope": "domain", "permission": { "src": "write" } },
-    "move": { "scope": "domain", "permission": { "src": "write" } },
-    "copy": { "scope": "domain", "permission": { "src": "read" } },
-    "commit_upload": { "scope": "domain", "permission": { "src": "write" } }
+    "list": { "scope": "mfs", "permission": { "src": "read" } },
+    "get": { "scope": "mfs", "permission": { "src": "read" } },
+    "mkdir": { "scope": "mfs", "permission": { "dest": "write" } },
+    "rename": { "scope": "mfs", "permission": { "src": "delete" } },
+    "remove": { "scope": "mfs", "permission": { "src": "delete" } },
+    "move": { "scope": "mfs", "permission": { "src": "delete", "dest": "write" } },
+    "copy": { "scope": "mfs", "permission": { "src": "read", "dest": "write" } },
+    "commit_upload": { "scope": "mfs", "permission": { "dest": "write" } }
   },
   "modules": { "private": "service/mfs" }
 }

@@ -64,7 +64,7 @@ const capability_resolver = new CapabilityResolver({
       const store = resolveMfsStore();
       if (!store) return { available: false, status: "not-installed" };
       return mfs_api.capabilityAvailable({
-        store, context: { organisation_id: Number(input.organisation_id || 1), principal_id: input.principal_id }
+        store, context: { hub_id: input.hub_id }
       });
     }
   }

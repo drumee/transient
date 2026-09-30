@@ -55,18 +55,18 @@ test("two independent runtime Websocket clients receive filtered, idempotent MFS
   [a_source, a_destination, a_unrelated].forEach((finder) => sync_a.register(finder));
   [b_source, b_destination].forEach((finder) => sync_b.register(finder));
 
-  const created = await service.mkdir({ destination: source, name: "Created", operation_id: "create-1" }, { principal_id: client_a });
+  const created = await service.mkdir({ destination: source, name: "Created", operation_id: "create-1" }, { uid: client_a });
   assert.equal(a_source.events.length, 1); assert.equal(b_source.events.length, 1); assert.equal(a_unrelated.events.length, 0);
   const created_node = { hub_id: hub, nid: created.result.nid };
-  await service.rename({ node: created_node, name: "Renamed", operation_id: "rename-1" }, { principal_id: client_a });
+  await service.rename({ node: created_node, name: "Renamed", operation_id: "rename-1" }, { uid: client_a });
   assert.equal(a_source.events.at(-1).type, "node.renamed");
-  await service.move({ nodes: [created_node], destination, operation_id: "move-1" }, { principal_id: client_a });
+  await service.move({ nodes: [created_node], destination, operation_id: "move-1" }, { uid: client_a });
   assert.equal(a_source.events.at(-1).type, "node.moved"); assert.equal(a_destination.events.at(-1).type, "node.moved");
-  await service.copy({ sources: [created_node], destination: source, operation_id: "copy-1" }, { principal_id: client_a });
+  await service.copy({ sources: [created_node], destination: source, operation_id: "copy-1" }, { uid: client_a });
   assert.equal(b_source.events.at(-1).type, "node.copied");
-  await service.commitUpload({ destination: destination, payload_ref: { type: "opaque" }, metadata: { filename: "upload.txt" }, operation_id: "upload-1" }, { principal_id: client_a });
+  await service.commitUpload({ destination: destination, payload_ref: { type: "opaque" }, metadata: { filename: "upload.txt" }, operation_id: "upload-1" }, { uid: client_a });
   assert.equal(b_destination.events.at(-1).type, "node.created");
-  await service.remove({ node: created_node, operation_id: "remove-1" }, { principal_id: client_a });
+  await service.remove({ node: created_node, operation_id: "remove-1" }, { uid: client_a });
   assert.equal(a_destination.events.at(-1).type, "node.removed");
 
   const before_duplicate = a_source.events.length;

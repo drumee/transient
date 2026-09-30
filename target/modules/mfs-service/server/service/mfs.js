@@ -7,13 +7,22 @@ module.exports = class MfsWorker {
   }
 
   context() {
-    const identity = this.session && typeof this.session.identity === "function" ? this.session.identity() : null;
-    return { principal_id: identity && identity.id };
+    const session = this.session;
+    const identity = session && typeof session.identity === "function" ? session.identity() : null;
+    const uid = session && typeof session.uid === "function" ? session.uid() : identity && identity.id;
+    const hub = session && session.hub;
+    const current_hub_id = session && typeof session.currentHub === "function" ? session.currentHub() : hub && typeof hub.get === "function" ? hub.get("id") : hub && (hub.id || hub.hub_id);
+    const input = session && session.input;
+    const host = input && typeof input.host === "function" ? input.host() : session && session.host;
+    return { uid, current_hub_id, host };
   }
 
-  call(method, input) {
+  async call(method, input) {
     if (!this.mfs_service) throw new Error("mfs-service is not configured");
-    return this.mfs_service[method](input || {}, this.context());
+    const result = await this.mfs_service[method](input || {}, this.context());
+    const output = this.session && this.session.output;
+    if (output && typeof output.data === "function") return output.data(result);
+    return result;
   }
 
   list(input) { return this.call("list", input); }

@@ -26,9 +26,9 @@ function db(sql) {
   return result.stdout.trim();
 }
 
-function mfs(operation, principal_id) {
+function mfs(operation, hub_id) {
   const args = ["scripts/test-env/kernel/system-mfs.js", operation];
-  if (principal_id) args.push(principal_id, "1");
+  if (hub_id) args.push(hub_id);
   const result = run("node", args);
   assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
   return JSON.parse(result.stdout);
@@ -43,9 +43,9 @@ function installModule() {
   }
 }
 
-async function post(service, body) {
+async function post(service, body, cookie) {
   const response = await fetch(`${base_url}/-/svc/${service}`, {
-    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body)
+    method: "POST", headers: { "content-type": "application/json", ...(cookie ? { cookie } : {}) }, body: JSON.stringify(body)
   });
   return { response, payload: await response.json() };
 }
@@ -61,8 +61,10 @@ test("Phase 4.6B keeps kernel boot independent and adds explicit real MFS capabi
 
     const principal_id = db("SELECT id FROM drumate WHERE username='system' AND domain_id=1");
     assert.match(principal_id, /^[a-f0-9]{16}$/);
-    const placeholders = db(`SELECT CONCAT(db_name,'|',home_dir,'|',IFNULL(home_id,'NULL')) FROM entity WHERE id='${principal_id}'`);
-    assert.match(placeholders, /^identity_[a-f0-9]{16}\|\/platform-identities\/[a-f0-9]{16}\|NULL$/);
+    const shard_name = "phase48_system_shard";
+    db(`CREATE DATABASE ${shard_name}; GRANT ALL PRIVILEGES ON ${shard_name}.* TO 'kernel_phase4'@'%'; UPDATE entity SET db_name='${shard_name}',home_dir='/platform-shards/${principal_id}' WHERE id='${principal_id}'`);
+    const shard_descriptor = db(`SELECT CONCAT(db_name,'|',home_dir,'|',IFNULL(home_id,'NULL')) FROM entity WHERE id='${principal_id}'`);
+    assert.equal(shard_descriptor, `${shard_name}|/platform-shards/${principal_id}|NULL`);
 
     const authn = await post("bootstrap.authn", {});
     assert.equal(authn.response.status, 200);
@@ -70,7 +72,7 @@ test("Phase 4.6B keeps kernel boot independent and adds explicit real MFS capabi
     const sid = authn.response.headers.get("set-cookie").match(/^regsid=([^;]+)/)[1];
     assert.equal(db(`SELECT uid FROM cookie WHERE id='${sid}'`), "ffffffffffffffff");
 
-    const absent = await post("mfs-proof.probe", { organisation_id: 1, principal_id, parent_id: "unknown" });
+    const absent = await post("mfs-proof.probe", { hub_id: principal_id, parent_id: "unknown" });
     assert.equal(absent.response.status, 500);
     assert.equal(absent.payload.code, "CAPABILITY_UNAVAILABLE");
 
@@ -79,7 +81,7 @@ test("Phase 4.6B keeps kernel boot independent and adds explicit real MFS capabi
     assert.equal(mfs("install").changed, true);
     assert.equal(mfs("install").changed, false);
     assert.equal(mfs("validate", principal_id).status, "installed");
-    assert.equal(db(`SELECT CONCAT(db_name,'|',home_dir,'|',IFNULL(home_id,'NULL')) FROM entity WHERE id='${principal_id}'`), placeholders);
+    assert.equal(db(`SELECT CONCAT(db_name,'|',home_dir,'|',IFNULL(home_id,'NULL')) FROM entity WHERE id='${principal_id}'`), shard_descriptor);
 
     const first = mfs("provision", principal_id);
     assert.equal(first.valid, true);
@@ -88,12 +90,12 @@ test("Phase 4.6B keeps kernel boot independent and adds explicit real MFS capabi
     assert.equal(exercise.created.nid, exercise.resolved.nid);
     assert.ok(exercise.children.some((node) => node.nid === exercise.created.nid));
 
-    const present = await post("mfs-proof.probe", { organisation_id: 1, principal_id, parent_id: first.root_id, name: "RuntimeProof" });
-    assert.equal(present.response.status, 200);
+    const present = await post("mfs-proof.probe", { hub_id: principal_id, parent_id: first.root_id, name: "RuntimeProof" }, `regsid=${sid}`);
+    assert.equal(present.response.status, 200, JSON.stringify(present.payload));
     assert.equal(present.payload.status, "ok");
     assert.equal(present.payload.data.created.nid, present.payload.data.resolved.nid);
 
-    const resource_snapshot = db(`SELECT CONCAT((SELECT root_id FROM system_mfs_provisioning WHERE principal_id='${principal_id}'),'|',(SELECT COUNT(*) FROM mfs_${principal_id}.media),'|',(SELECT COUNT(*) FROM mfs_${principal_id}.permission))`);
+    const resource_snapshot = db(`SELECT CONCAT((SELECT root_id FROM system_mfs_provisioning WHERE hub_id='${principal_id}'),'|',(SELECT COUNT(*) FROM ${shard_name}.media),'|',(SELECT COUNT(*) FROM ${shard_name}.permission))`);
     const restart = run("docker", ["restart", container]);
     assert.equal(restart.status, 0, restart.stderr);
     let ready = false;
@@ -106,8 +108,9 @@ test("Phase 4.6B keeps kernel boot independent and adds explicit real MFS capabi
     assert.equal(ready, true);
     assert.equal(mfs("validate", principal_id).status, "provisioned");
     assert.equal(mfs("provision", principal_id).changed, false);
-    assert.equal(db(`SELECT CONCAT((SELECT root_id FROM system_mfs_provisioning WHERE principal_id='${principal_id}'),'|',(SELECT COUNT(*) FROM mfs_${principal_id}.media),'|',(SELECT COUNT(*) FROM mfs_${principal_id}.permission))`), resource_snapshot);
-    assert.equal(db(`SELECT CONCAT(db_name,'|',home_dir,'|',IFNULL(home_id,'NULL')) FROM entity WHERE id='${principal_id}'`), placeholders);
+    assert.equal(db(`SELECT CONCAT((SELECT root_id FROM system_mfs_provisioning WHERE hub_id='${principal_id}'),'|',(SELECT COUNT(*) FROM ${shard_name}.media),'|',(SELECT COUNT(*) FROM ${shard_name}.permission))`), resource_snapshot);
+    assert.equal(db(`SELECT CONCAT(db_name,'|',home_dir,'|',IFNULL(home_id,'NULL')) FROM entity WHERE id='${principal_id}'`), shard_descriptor);
+    assert.equal(db("SELECT COUNT(*) FROM information_schema.schemata WHERE schema_name LIKE 'mfs\\_%'"), "0");
   } finally {
     const stop = run("scripts/test-env/kernel/down.sh", []);
     assert.equal(stop.status, 0, `${stop.stdout}\n${stop.stderr}`);

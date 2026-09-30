@@ -2,59 +2,84 @@
 
 const assert = require("node:assert/strict");
 const test = require("node:test");
-const { MfsEventPublisher, MfsService } = require("../lib");
+const { MfsAclAuthorizer, MfsEventPublisher, MfsService, trustedUid } = require("../lib");
+const Logger = require("../../../../sources/server-essentials/lib/logger");
 
-const principal_id = "a000000000000001";
+const uid = "a000000000000001";
+const nobody = "ffffffffffffffff";
 const hub_id = "b000000000000002";
-const root = { hub_id, nid: "c000000000000003" };
+const other_hub = "c000000000000003";
+const root = { hub_id, nid: "d000000000000004" };
 
 function filesystem() {
   return {
-    async listChildren() { return { items: [], next_cursor: null }; },
-    async getNode({ node }) { return { ...node, parent_id: root.nid, filename: "before.txt", secret: "owner-only" }; },
-    async makeDirectory({ destination, name }) { return { hub_id: destination.hub_id, nid: "d000000000000004", parent_id: destination.nid, filename: name, filetype: "folder", secret: "owner-only" }; },
-    async renameNode({ node, name }) { return { ...node, parent_id: root.nid, filename: name, secret: "owner-only" }; },
-    async removeNode({ node }) { return { node, parent: root, hard_delete: true, nodes: [node] }; },
-    async moveNodes({ nodes, destination }) { return { nodes: nodes.map((node) => ({ ...node, source_parent: root, destination })), destination }; },
-    async copyTree({ sources, destination }) { return { nodes: sources.map((source) => ({ source, node: { hub_id: destination.hub_id, nid: "e000000000000005" }, item: { hub_id: destination.hub_id, nid: "e000000000000005", parent_id: destination.nid } })), destination }; },
-    async commitFile({ destination, metadata }) { return { hub_id: destination.hub_id, nid: "f000000000000006", parent_id: destination.nid, filename: metadata.filename, secret: "owner-only" }; },
-    async enumerateTree({ roots }) { return { roots, entries: roots.map((node) => ({ ...node, filename: "download.txt", filetype: "file" })) }; },
-    async resolveAccess({ node, operation }) { return { allowed: node.nid === root.nid && operation === "create" }; }
+    async listChildren() { return { items: [{ ...root, filename: "safe", db_name: "private_db", home_dir: "/private", payload_ref: "private" }], next_cursor: null }; },
+    async getNode({ node }) { return node.nid === root.nid ? { ...node, parent_id: "0", filename: "Root", filetype: "root", db_host: "private" } : { ...node, parent_id: root.nid, filename: "before.txt", filetype: "text", mfs_root: "/private" }; },
+    async makeDirectory({ destination, name }) { return { hub_id: destination.hub_id, nid: "e000000000000005", parent_id: destination.nid, filename: name, filetype: "folder", db_name: "private" }; },
+    async renameNode({ node, name }) { return { ...node, parent_id: root.nid, filename: name, filetype: "text", home_dir: "/private" }; },
+    async removeNode({ node }) { return { node, parent: root, hard_delete: true, nodes: [{ ...node, payload_ref: "private" }] }; },
+    async moveNodes({ nodes, destination }) { return { nodes: nodes.map((node) => ({ ...node, source_parent: root, destination, db_name: "private" })), destination }; },
+    async copyTree({ sources, destination }) { return { nodes: sources.map((source) => ({ source, node: { hub_id: destination.hub_id, nid: "f000000000000006" }, item: { hub_id: destination.hub_id, nid: "f000000000000006", parent_id: destination.nid, payload_ref: "private" } })), destination }; },
+    async commitFile({ destination, metadata }) { return { hub_id: destination.hub_id, nid: "1000000000000001", parent_id: destination.nid, filename: metadata.filename, filetype: "text", payload_ref: "private" }; },
+    async enumerateTree({ roots }) { return { roots, entries: roots.map((node) => ({ ...node, filename: "download.txt", filetype: "file", storage_ref: "internal" })) }; }
   };
 }
 
-test("semantic mutations publish recipient-safe projections through an injected runtime adapter", async () => {
+test("service and WebSocket projections exclude physical and staged-storage fields", async () => {
   const deliveries = [];
-  const events = new MfsEventPublisher({
-    recipients: async () => [principal_id, "1000000000000001"],
-    project: async ({ event, recipient }) => recipient === principal_id ? event : { ...event, result: { ...event.result, secret: undefined } },
-    transport: { async publishRecipient(message) { deliveries.push(message); return message.principal; } }
-  });
+  const events = new MfsEventPublisher({ recipients: async () => [uid], transport: { async publishRecipient(message) { deliveries.push(message); } } });
   const service = new MfsService({ filesystem_factory: filesystem, events });
-  const created = await service.mkdir({ destination: root, name: "Docs", operation_id: "op-create" }, { principal_id });
+  const listed = await service.list({ location: root, uid: "client-cannot-override" }, { uid });
+  assert.deepEqual(listed.items[0], { hub_id, nid: root.nid, filename: "safe" });
+  const created = await service.mkdir({ destination: root, name: "Docs", operation_id: "op-create", principal_id: "client-cannot-override" }, { uid });
   assert.equal(created.result.filename, "Docs");
-  assert.equal(deliveries.length, 2);
-  assert.equal(deliveries[0].service, "mfs.event");
-  assert.equal(deliveries[0].payload.result.secret, "owner-only");
-  assert.equal(deliveries[1].payload.result.secret, undefined);
-  assert.equal(Object.hasOwn(events, "sockets"), false);
+  const serialized = JSON.stringify({ listed, created, deliveries });
+  for (const secret of ["db_name", "home_dir", "mfs_root", "db_host", "fs_host", "payload_ref"]) assert.equal(serialized.includes(secret), false, secret);
 });
 
-test("hard removal, move, copy and upload commit retain canonical identities", async () => {
-  const published = [];
-  const service = new MfsService({ filesystem_factory: filesystem, events: { transport: { async publishRecipient(value) { published.push(value); } } } });
-  const node = { hub_id, nid: "d000000000000004" };
-  assert.equal((await service.remove({ node }, { principal_id })).result.hard_delete, true);
-  assert.equal((await service.move({ nodes: [node], destination: root }, { principal_id })).result.destination.nid, root.nid);
-  assert.equal((await service.copy({ sources: [node], destination: root }, { principal_id })).result.nodes[0].node.hub_id, hub_id);
-  assert.equal((await service.commitUpload({ destination: root, payload_ref: { type: "opaque" }, metadata: { filename: "x" } }, { principal_id })).result.parent_id, root.nid);
-  assert.equal((await service.authorizeUpload({ destination: root, size: 1 }, { principal_id })).granted, true);
-  assert.equal((await service.authorizeDownload({ roots: [node] }, { principal_id })).entries[0].nid, node.nid);
+test("hard removal, move, copy and upload commit retain only canonical identities", async () => {
+  const service = new MfsService({ filesystem_factory: filesystem });
+  const node = { hub_id, nid: "e000000000000005" };
+  assert.equal((await service.remove({ node }, { uid })).result.hard_delete, true);
+  assert.equal((await service.move({ nodes: [node], destination: root }, { uid })).result.destination.nid, root.nid);
+  assert.equal((await service.copy({ sources: [node], destination: root }, { uid })).result.nodes[0].node.hub_id, hub_id);
+  assert.equal((await service.commitUpload({ destination: root, payload_ref: { type: "opaque" }, metadata: { filename: "x" } }, { uid })).result.parent_id, root.nid);
+  assert.equal((await service.prepareUpload({ destination: root, size: 1 }, { uid })).granted, true);
+  assert.equal((await service.prepareDownload({ roots: [node] }, { uid })).entries[0].nid, node.nid);
 });
 
-test("operation-level authorization is coordinated before filesystem execution", async () => {
-  let called = false;
-  const denied = new MfsService({ filesystem_factory: () => ({ async listChildren() { called = true; } }), authorize: async ({ method }) => ({ granted: false, method }) });
-  await assert.rejects(() => denied.list({ location: root }, { principal_id }), (error) => error.code === "MFS_OPERATION_DENIED");
-  assert.equal(called, false);
+test("trusted current hub fills omitted hub_id while client infrastructure locators are ignored", async () => {
+  let received;
+  const service = new MfsService({ filesystem_factory: () => ({ async getNode(input) { received = input.node; return { ...input.node, filename: "x", filetype: "text" }; } }) });
+  const value = await service.get({ node: { nid: root.nid }, db_name: "evil", home_dir: "/evil", mfs_root: "/evil" }, { uid, current_hub_id: hub_id });
+  assert.deepEqual(received, root);
+  assert.deepEqual(value, { ...root, filename: "x", filetype: "text" });
+});
+
+test("normal ACL path uses Session uid and enforces source/destination bitmasks", async () => {
+  const grants = new Map([
+    [`${uid}:${hub_id}:${root.nid}`, 63],
+    [`${uid}:${other_hub}:2000000000000002`, 1],
+    [`${nobody}:${hub_id}:${root.nid}`, 0]
+  ]);
+  const acl = new MfsAclAuthorizer({ permission_store: { effectivePermission(actor, node) { return grants.get(`${actor}:${node.hub_id}:${node.nid}`) || 0; } } });
+  const session = { uid: () => uid };
+  assert.equal((await acl.authorize({ service: "mfs.get", permission: { scope: "mfs", src: 1 }, input: { node: root, uid: nobody }, session })).granted, true);
+  assert.equal((await acl.authorize({ service: "mfs.remove", permission: { scope: "mfs", src: 8 }, input: { node: root, principal_id: nobody }, session })).granted, true);
+  const source = { hub_id: other_hub, nid: "2000000000000002" };
+  assert.equal((await acl.authorize({ service: "mfs.copy", permission: { scope: "mfs", src: 1, dest: 4 }, input: { sources: [source], destination: root }, session })).granted, true);
+  assert.equal((await acl.authorize({ service: "mfs.copy", permission: { scope: "mfs", src: 4, dest: 4 }, input: { sources: [source], destination: root }, session })).granted, false);
+  assert.equal((await acl.authorize({ service: "mfs.copy", permission: { scope: "mfs", src: 1, dest: 4 }, input: { sources: [root], destination: source }, session })).granted, false);
+  assert.equal((await acl.authorize({ service: "mfs.get", permission: { scope: "mfs", src: 1 }, input: { node: root }, session: { uid: () => nobody } })).granted, false);
+  const token_uid = "d000000000000004";
+  grants.set(`${token_uid}:${hub_id}:${root.nid}`, 1);
+  assert.equal(trustedUid({}), nobody, "unknown sessions resolve to canonical nobody");
+  assert.equal(trustedUid({ uid: () => uid }), uid, "normal sessions resolve their server-side uid");
+  assert.equal((await acl.authorize({ service: "mfs.get", permission: { scope: "mfs", src: 1 }, input: { node: root, uid }, session: { uid: () => token_uid } })).granted, true, "validated MFS tokens resolve a trusted pseudo-identity through Session.uid()");
+});
+
+test("server Output sanitizer remains a final barrier after explicit projection", () => {
+  const logger = Object.create(Logger.prototype);
+  const value = logger.sanitize({ public: "ok", db_name: "internal", home_dir: "/internal", mfs_root: "/internal", db_host: "internal", fs_host: "internal", nested: { session_id: "secret", password: "secret" } });
+  assert.deepEqual(value, { public: "ok", nested: {} });
 });

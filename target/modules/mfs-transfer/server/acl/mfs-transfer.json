@@ -1,15 +1,15 @@
 {
   "services": {
-    "upload_start": { "scope": "domain", "permission": { "src": "write" } },
-    "upload_chunk": { "scope": "domain", "permission": { "src": "write" } },
-    "upload_status": { "scope": "domain", "permission": { "src": "read" } },
-    "upload_complete": { "scope": "domain", "permission": { "src": "write" } },
-    "upload_abort": { "scope": "domain", "permission": { "src": "write" } },
-    "download_prepare": { "scope": "domain", "permission": { "src": "read" } },
-    "download_status": { "scope": "domain", "permission": { "src": "read" } },
-    "download_cancel": { "scope": "domain", "permission": { "src": "read" } },
-    "download_retrieve": { "scope": "domain", "permission": { "src": "read" } },
-    "download_release": { "scope": "domain", "permission": { "src": "read" } }
+    "upload_start": { "scope": "mfs", "permission": { "dest": "write" } },
+    "upload_chunk": { "scope": "mfs", "permission": { "dest": "write" } },
+    "upload_status": { "scope": "mfs", "permission": { "dest": "write" } },
+    "upload_complete": { "scope": "mfs", "permission": { "dest": "write" } },
+    "upload_abort": { "scope": "mfs", "permission": { "dest": "write" } },
+    "download_prepare": { "scope": "mfs", "permission": { "src": "read" } },
+    "download_status": { "scope": "mfs", "permission": { "src": "read" } },
+    "download_cancel": { "scope": "mfs", "permission": { "src": "read" } },
+    "download_retrieve": { "scope": "mfs", "permission": { "src": "read" } },
+    "download_release": { "scope": "mfs", "permission": { "src": "read" } }
   },
   "modules": { "private": "service/mfs-transfer" }
 }

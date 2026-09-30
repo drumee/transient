@@ -1,24 +1,43 @@
 "use strict";
 
 const crypto = require("node:crypto");
-const { MfsEventPublisher } = require("./events");
+const { MfsEventPublisher, publicEvent, publicNode, publicResult } = require("./events");
 
-function operationId(input = {}) {
-  return input.operation_id || crypto.randomUUID();
-}
+const ID_PATTERN = /^[a-f0-9]{16}$/i;
+
+function operationId(input = {}) { return input.operation_id || crypto.randomUUID(); }
 
 function principalContext(context = {}) {
-  const principal_id = context.principal_id || context.id;
-  if (!/^[a-f0-9]{16}$/i.test(principal_id || "")) throw Object.assign(new Error("Authenticated MFS principal is required"), { code: "MFS_PRINCIPAL_REQUIRED" });
-  return { principal_id: principal_id.toLowerCase() };
+  const uid = context.uid;
+  if (!ID_PATTERN.test(uid || "")) throw Object.assign(new Error("Trusted MFS Session uid is required"), { code: "MFS_PRINCIPAL_REQUIRED" });
+  const current_hub_id = ID_PATTERN.test(context.current_hub_id || "") ? context.current_hub_id.toLowerCase() : null;
+  const host = typeof context.host === "string" && context.host.trim() ? context.host.trim().toLowerCase() : null;
+  return { uid: uid.toLowerCase(), current_hub_id, host };
+}
+
+function resource(value, principal, label) {
+  if (!value || !ID_PATTERN.test(value.nid || "")) throw Object.assign(new Error(`${label} requires a valid nid`), { code: "MFS_IDENTITY_INVALID" });
+  const hub_id = value.hub_id || principal.current_hub_id;
+  if (!ID_PATTERN.test(hub_id || "")) throw Object.assign(new Error(`${label} requires hub_id or trusted current hub context`), { code: "MFS_IDENTITY_INVALID" });
+  return { hub_id: hub_id.toLowerCase(), nid: value.nid.toLowerCase() };
+}
+
+function normalizeInput(method, input, principal) {
+  const value = { ...(input || {}) };
+  if (value.location) value.location = resource(value.location, principal, "location");
+  if (value.node) value.node = resource(value.node, principal, "node");
+  if (value.destination) value.destination = resource(value.destination, principal, "destination");
+  if (value.nodes) value.nodes = value.nodes.map((node) => resource(node, principal, "node"));
+  if (value.sources) value.sources = value.sources.map((node) => resource(node, principal, "source"));
+  if (value.roots) value.roots = value.roots.map((node) => resource(node, principal, "root"));
+  return value;
 }
 
 class MfsService {
-  constructor({ filesystem_factory, events, authorize } = {}) {
+  constructor({ filesystem_factory, events } = {}) {
     if (typeof filesystem_factory !== "function") throw new Error("mfs-service requires a filesystem factory");
     this.filesystem_factory = filesystem_factory;
     this.events = events instanceof MfsEventPublisher ? events : new MfsEventPublisher(events);
-    this.authorize = authorize || (async () => ({ granted: true }));
   }
 
   filesystem(context) {
@@ -26,89 +45,77 @@ class MfsService {
     return { principal, filesystem: this.filesystem_factory(principal) };
   }
 
-  async list(input, context) { const value = this.filesystem(context); await this.requireIntent("list", input, value); return value.filesystem.listChildren(input); }
-  async get(input, context) { const value = this.filesystem(context); await this.requireIntent("get", input, value); return value.filesystem.getNode(input); }
-
-  async mkdir(input, context) {
-    return this.mutate("node.created", "mkdir", input, context, (filesystem) => filesystem.makeDirectory(input), {
-      destination: input.destination
-    });
+  async list(input, context) {
+    const value = this.filesystem(context);
+    const normalized = normalizeInput("list", input, value.principal);
+    const result = await value.filesystem.listChildren(normalized);
+    return { items: (result.items || []).map(publicNode), next_cursor: result.next_cursor || null };
   }
 
+  async get(input, context) {
+    const value = this.filesystem(context);
+    return publicNode(await value.filesystem.getNode(normalizeInput("get", input, value.principal)));
+  }
+
+  mkdir(input, context) { return this.mutate("node.created", "mkdir", input, context, (filesystem, normalized) => filesystem.makeDirectory(normalized), { destination: true }); }
+
   async rename(input, context) {
-    const before = await this.get({ node: input.node }, context);
-    return this.mutate("node.renamed", "rename", input, context, (filesystem) => filesystem.renameNode(input), {
-      source_parent: { hub_id: input.node.hub_id, nid: before.parent_id }
-    });
+    const value = this.filesystem(context);
+    const normalized = normalizeInput("rename", input, value.principal);
+    const before = await value.filesystem.getNode({ node: normalized.node });
+    return this.mutateWith("node.renamed", normalized, value, (filesystem) => filesystem.renameNode(normalized), { source_parent: { hub_id: normalized.node.hub_id, nid: before.parent_id } });
   }
 
   async remove(input, context) {
-    const before = await this.get({ node: input.node }, context);
-    return this.mutate("node.removed", "remove", input, context, (filesystem) => filesystem.removeNode(input), {
-      source_parent: { hub_id: input.node.hub_id, nid: before.parent_id },
-      hard_delete: true
-    });
+    const value = this.filesystem(context);
+    const normalized = normalizeInput("remove", input, value.principal);
+    const before = await value.filesystem.getNode({ node: normalized.node });
+    return this.mutateWith("node.removed", normalized, value, (filesystem) => filesystem.removeNode(normalized), { source_parent: { hub_id: normalized.node.hub_id, nid: before.parent_id }, hard_delete: true });
   }
 
   async move(input, context) {
-    const first = input.nodes && input.nodes[0] ? await this.get({ node: input.nodes[0] }, context) : null;
-    return this.mutate("node.moved", "move", input, context, (filesystem) => filesystem.moveNodes(input), {
-      source_parent: first && { hub_id: input.nodes[0].hub_id, nid: first.parent_id },
-      destination: input.destination
-    });
-  }
-
-  async copy(input, context) {
-    return this.mutate("node.copied", "copy", input, context, (filesystem) => filesystem.copyTree(input), {
-      destination: input.destination
-    });
-  }
-
-  async commitUpload(input, context) {
-    return this.mutate("node.created", "commit_upload", input, context, (filesystem) => filesystem.commitFile(input), {
-      destination: input.destination,
-      committed_from_transfer: true
-    });
-  }
-
-  async authorizeDownload(input, context) {
     const value = this.filesystem(context);
-    await this.requireIntent("download", input, value);
-    const { filesystem } = value;
-    return filesystem.enumerateTree({ roots: input.roots });
+    const normalized = normalizeInput("move", input, value.principal);
+    const first = normalized.nodes && normalized.nodes[0] ? await value.filesystem.getNode({ node: normalized.nodes[0] }) : null;
+    return this.mutateWith("node.moved", normalized, value, (filesystem) => filesystem.moveNodes(normalized), { source_parent: first && { hub_id: normalized.nodes[0].hub_id, nid: first.parent_id }, destination: normalized.destination });
   }
 
-  async authorizeUpload(input, context) {
+  copy(input, context) { return this.mutate("node.copied", "copy", input, context, (filesystem, normalized) => filesystem.copyTree(normalized), { destination: true }); }
+  commitUpload(input, context) { return this.mutate("node.created", "commit_upload", input, context, (filesystem, normalized) => filesystem.commitFile(normalized), { destination: true, committed_from_transfer: true }); }
+
+  async prepareDownload(input, context) {
     const value = this.filesystem(context);
-    await this.requireIntent("upload", input, value);
-    const access = await value.filesystem.resolveAccess({ node: input.destination, operation: "create" });
-    if (!access || !access.allowed) throw Object.assign(new Error("Upload destination is not writable"), { code: "MFS_OPERATION_DENIED", details: access });
-    return { granted: true, destination: input.destination };
+    const normalized = normalizeInput("download", input, value.principal);
+    return value.filesystem.enumerateTree({ roots: normalized.roots });
   }
 
-  async requireIntent(method, input, { principal, filesystem }) {
-    const decision = await this.authorize({ method, input, principal, filesystem });
-    if (!decision || !decision.granted) throw Object.assign(new Error(`MFS operation '${method}' is not authorized`), { code: "MFS_OPERATION_DENIED", details: decision });
+  async prepareUpload(input, context) {
+    const value = this.filesystem(context);
+    const normalized = normalizeInput("upload", input, value.principal);
+    const destination = await value.filesystem.getNode({ node: normalized.destination });
+    if (!destination || !["folder", "root"].includes(destination.filetype)) throw Object.assign(new Error("Upload destination is not a folder"), { code: "MFS_DESTINATION_INVALID" });
+    return { granted: true, destination: normalized.destination };
   }
 
-  async mutate(type, method, input, context, operation, details = {}) {
-    const { principal, filesystem } = this.filesystem(context);
-    await this.requireIntent(method, input, { principal, filesystem });
+  authorizeDownload(input, context) { return this.prepareDownload(input, context); }
+  authorizeUpload(input, context) { return this.prepareUpload(input, context); }
+
+  mutate(type, method, input, context, operation, details = {}) {
+    const value = this.filesystem(context);
+    const normalized = normalizeInput(method, input, value.principal);
+    const expanded = { ...details };
+    if (expanded.destination === true) expanded.destination = normalized.destination;
+    return this.mutateWith(type, normalized, value, operation, expanded);
+  }
+
+  async mutateWith(type, input, { principal, filesystem }, operation, details = {}) {
     const operation_id = operationId(input);
-    const result = await operation(filesystem);
-    const event = {
-      type,
-      operation_id,
-      node: result && result.nid ? { hub_id: result.hub_id || input.destination && input.destination.hub_id || input.node && input.node.hub_id, nid: result.nid } : input.node || null,
-      source_parent: details.source_parent || null,
-      destination: details.destination || null,
-      result,
-      hard_delete: details.hard_delete || false,
-      committed_from_transfer: details.committed_from_transfer || false
-    };
+    const internal_result = await operation(filesystem, input);
+    const result = publicResult(internal_result);
+    const event = publicEvent({ type, operation_id, node: result && result.nid ? { hub_id: result.hub_id, nid: result.nid } : input.node || null, source_parent: details.source_parent || null, destination: details.destination || null, result, hard_delete: details.hard_delete || false, committed_from_transfer: details.committed_from_transfer || false });
     await this.events.publish({ event, principal, filesystem });
     return { operation_id, result };
   }
 }
 
-module.exports = { MfsService, operationId, principalContext };
+module.exports = { MfsService, normalizeInput, operationId, principalContext, resource };

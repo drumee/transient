@@ -24,10 +24,10 @@ class MfsTransferService {
       const existing = this.requireUpload(transfer_id, context);
       return { transfer_id, status: existing.status, chunks: [...existing.chunks.keys()].sort((a, b) => a - b), uploaded: [...existing.chunks.values()].reduce((sum, chunk) => sum + chunk.size, 0), result: existing.result || null };
     }
-    await this.mfs_service.authorizeUpload({ destination: input.destination, metadata: input.metadata || {}, size: Number(input.size || 0) }, context);
+    const prepared = await this.mfs_service.prepareUpload({ destination: input.destination, metadata: input.metadata || {}, size: Number(input.size || 0) }, context);
     const stage = this.staging.create();
     this.uploads.set(transfer_id, {
-      transfer_id, stage, destination: input.destination, metadata: input.metadata || {},
+      transfer_id, stage, destination: prepared.destination, metadata: input.metadata || {},
       operation_id: input.operation_id || transfer_id, size: Number(input.size || 0), chunks: new Map(), status: "uploading", context
     });
     return { transfer_id, status: "uploading" };
@@ -38,10 +38,17 @@ class MfsTransferService {
     if (job.status !== "uploading") throw new Error("Upload is not accepting chunks");
     const index = Number(input.index);
     if (!Number.isInteger(index) || index < 0) throw new Error("Upload chunk index is invalid");
-    const data = Buffer.isBuffer(input.data) ? input.data : Buffer.from(input.data || "", input.encoding || "base64");
     const filename = path.join(job.stage.directory, `${index}.chunk`);
-    fs.writeFileSync(filename, data);
-    job.chunks.set(index, { filename, size: data.length });
+    let size;
+    if (input.uploaded_file) {
+      this.staging.adoptInputFile(input.uploaded_file, job.stage.token, `${index}.chunk`);
+      size = fs.statSync(filename).size;
+    } else {
+      const data = Buffer.isBuffer(input.data) ? input.data : Buffer.from(input.data || "", input.encoding || "base64");
+      fs.writeFileSync(filename, data);
+      size = data.length;
+    }
+    job.chunks.set(index, { filename, size });
     const uploaded = [...job.chunks.values()].reduce((sum, chunk) => sum + chunk.size, 0);
     await this.report(job, { domain: "transfer", type: "upload.progress", loaded: uploaded, total: job.size });
     return { transfer_id: job.transfer_id, uploaded, chunks: job.chunks.size };
@@ -101,7 +108,7 @@ class MfsTransferService {
 
   async downloadPrepare(input, context) {
     const transfer_id = input.transfer_id || crypto.randomUUID();
-    const manifest = await this.mfs_service.authorizeDownload({ roots: input.roots }, context);
+    const manifest = await this.mfs_service.prepareDownload({ roots: input.roots }, context);
     const total = manifest.entries.reduce((sum, entry) => sum + Number(entry.filesize || 0), 0);
     const job = { transfer_id, operation_id: input.operation_id || transfer_id, status: "preparing", manifest, total, context, cancelled: false };
     this.downloads.set(transfer_id, job);
@@ -168,8 +175,16 @@ class MfsTransferService {
 
   requireUpload(id, context) { const job = this.uploads.get(id); if (!job) throw Object.assign(new Error("Upload not found"), { code: "MFS_UPLOAD_NOT_FOUND" }); this.requireOwner(job, context); return job; }
   requireDownload(id, context) { const job = this.downloads.get(id); if (!job) throw Object.assign(new Error("Download not found"), { code: "MFS_DOWNLOAD_NOT_FOUND" }); this.requireOwner(job, context); return job; }
-  requireOwner(job, context) { const owner = job.context && job.context.principal_id; if (!owner || !context || context.principal_id !== owner) throw Object.assign(new Error("Transfer operation belongs to another principal"), { code: "MFS_TRANSFER_FORBIDDEN" }); }
-  report(job, event) { return this.progress.publishOperation({ operation_id: job.operation_id, transfer_id: job.transfer_id, principal: job.context && job.context.principal_id, event }); }
+  requireOwner(job, context) { const owner = job.context && job.context.uid; if (!owner || !context || context.uid !== owner) throw Object.assign(new Error("Transfer operation belongs to another principal"), { code: "MFS_TRANSFER_FORBIDDEN" }); }
+  resourceFor({ service, input } = {}) {
+    const name = String(service || "").split(".").pop();
+    const upload = this.uploads.get(input && input.transfer_id);
+    if (upload) return { dest: [upload.destination] };
+    const download = this.downloads.get(input && input.transfer_id);
+    if (download) return { src: download.manifest.roots };
+    return name.startsWith("upload_") ? { dest: [] } : { src: [] };
+  }
+  report(job, event) { return this.progress.publishOperation({ operation_id: job.operation_id, transfer_id: job.transfer_id, principal: job.context && job.context.uid, event }); }
   destroy() { for (const job of this.uploads.values()) this.staging.release({ token: job.stage.token }); this.uploads.clear(); this.downloads.clear(); }
 }
 
