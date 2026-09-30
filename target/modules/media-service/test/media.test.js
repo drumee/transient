@@ -42,10 +42,13 @@ test("HLS playlists are bounded control artifacts while segments use FileIo", as
   fs.mkdirSync(path.join(root, "content")); fs.writeFileSync(path.join(root, "content", "video.mov"), "video-original");
   const node = { hub_id, nid: ids.video, filename: "video.mov", filetype: "video", storage_ref: { type: "local-content", relative: "content/video.mov" } };
   const host = new HostFilesystem({ root });
-  const manager = new RepresentationManager({ host_filesystem: host, hls_generator({ destination }) { fs.mkdirSync(path.join(path.dirname(destination), "stream-0"), { recursive: true }); fs.writeFileSync(destination, "#EXTM3U\nstream-0/playlist.m3u8"); fs.writeFileSync(path.join(path.dirname(destination), "stream-0", "playlist.m3u8"), "#EXTM3U\nsegment-0.ts"); fs.writeFileSync(path.join(path.dirname(destination), "stream-0", "segment-0.ts"), "segment-bytes"); const worker = new events.EventEmitter(); worker.unref = () => {}; worker.kill = () => {}; setImmediate(() => worker.emit("exit", 0)); return worker; } });
+  let starts = 0; let detached = 0;
+  const manager = new RepresentationManager({ host_filesystem: host, hls_generator({ destination }) { starts += 1; fs.mkdirSync(path.join(path.dirname(destination), "stream-0"), { recursive: true }); fs.writeFileSync(destination, "#EXTM3U\nstream-0/playlist.m3u8"); fs.writeFileSync(path.join(path.dirname(destination), "stream-0", "playlist.m3u8"), "#EXTM3U\nsegment-0.ts"); fs.writeFileSync(path.join(path.dirname(destination), "stream-0", "segment-0.ts"), "segment-bytes"); const worker = new events.EventEmitter(); worker.unref = () => { detached += 1; }; worker.kill = () => {}; setImmediate(() => worker.emit("exit", 0)); return worker; } });
   const service = new MediaService({ node_resolver: () => node, host_filesystem: host, representations: manager });
   const master = await service.resolve("master", { hub_id, nid: node.nid }, { keysel: "trusted-selector" });
   assert.match(master.body, /playlist\.m3u8\?keysel=trusted-selector/);
+  assert.equal(starts, 1); assert.equal(detached, 1); assert.equal(manager.workers.size, 1, "the first usable playlist returns before the finite conversion worker exits");
+  await service.resolve("master", { hub_id, nid: node.nid }); assert.equal(starts, 1, "an existing master playlist is reused");
   const stream = await service.resolve("stream", { hub_id, nid: node.nid, serial: 0 }, { keysel: "trusted-selector" });
   assert.match(stream.body, /segment-0\.ts\?keysel=trusted-selector/);
   const segment = await service.resolve("segment", { hub_id, nid: node.nid, serial: 0, segment: 0 });
