@@ -2,9 +2,10 @@ const { DescriptorRegistry, parseService } = require("./descriptor-registry");
 const { CapabilityResolver } = require("./capability-resolver");
 const { ServiceDispatcher } = require("./dispatcher");
 const { FrontendPluginResolver } = require("./plugin-resolver");
-const { corsHeaders, createServiceServer } = require("./http");
+const { corsHeaders, createServiceServer, videoRequest } = require("./http");
+const { RuntimeOutput } = require("./output");
 const { RuntimeError } = require("./errors");
-const { authorizeFastPath, createAuthorizer, fastCheckName } = require("./permission");
+const { authorizeFastPath, authorizeMfs, createAuthorizer, fastCheckName } = require("./permission");
 const { DomainAuthorizer } = require("./domain-authorizer");
 const { SESSION_SELECTOR_HEADER, sessionAuthorization } = require("./input");
 const { KernelSession, NOBODY_UID, SESSION_COOKIE, SessionManager, createOtak, validSessionId } = require("./session");
@@ -20,6 +21,7 @@ module.exports = {
   KernelSession,
   NOBODY_UID,
   RuntimeError,
+  RuntimeOutput,
   PushBus,
   SESSION_COOKIE,
   SESSION_SELECTOR_HEADER,
@@ -29,6 +31,7 @@ module.exports = {
   YellowPageStore,
   WebSocketPushRouter,
   authorizeFastPath,
+  authorizeMfs,
   createAuthorizer,
   createPushServer,
   createServiceServer,
@@ -36,5 +39,6 @@ module.exports = {
   fastCheckName,
   parseService,
   sessionAuthorization,
-  validSessionId
+  validSessionId,
+  videoRequest
 };

@@ -11,7 +11,8 @@ const {
   RuntimeError,
   ServiceDispatcher,
   authorizeFastPath,
-  parseService
+  parseService,
+  videoRequest
 } = require("../lib");
 const { permissionValue } = require("../../../../sources/server-essentials/lib/lex/permission");
 const { privilegeValue } = require("../../../../sources/server-essentials/lib/lex/privilege");
@@ -216,4 +217,11 @@ test("the public-api fast path is explicit and database-free", async () => {
   const denied = await authorizeFastPath({ permission: { src: permissionValue("read") } });
   assert.deepEqual(denied, { granted: false, mode: "unconfigured" });
   assert.equal(fs.existsSync(path.join(os.tmpdir(), "phase2-no-schema-marker")), false);
+});
+
+test("video routes normalize only logical HLS identities and bounded indexes", () => {
+  assert.deepEqual(videoRequest("/-/vdo/b000000000000002/a000000000000001/master.m3u8"), { service: "video.master", input: { nid: "b000000000000002", hub_id: "a000000000000001" } });
+  assert.deepEqual(videoRequest("/vdo/b000000000000002/a000000000000001/stream-2/playlist.m3u8"), { service: "video.stream", input: { nid: "b000000000000002", hub_id: "a000000000000001", serial: 2 } });
+  assert.deepEqual(videoRequest("/vdo/b000000000000002/stream-2/segment-9.ts"), { service: "video.segment", input: { nid: "b000000000000002", serial: 2, segment: 9 } });
+  assert.equal(videoRequest("/vdo/../../etc/passwd"), null);
 });

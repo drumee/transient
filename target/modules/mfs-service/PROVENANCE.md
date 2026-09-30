@@ -5,9 +5,10 @@ Behavioral references are `drumee/server-team` at
 `service/media.js`, `service/private/media.js` and `acl/media.json`.
 
 The module intentionally retains semantic request orchestration after ACL
-GRANTED, a narrow runtime ACL adapter, committed-mutation description and
-recipient-safe event projection. The adapter uses declarative source and
-destination permissions and trusted Session uid; effective MFS privilege is
-computed by the shard's `user_permission()` function. Filesystem algorithms
+GRANTED, a narrow runtime permission backend, committed-mutation description
+and recipient-safe event projection. The backend resolves logical source and
+destination resources and exposes effective MFS privilege computed by the
+shard's `user_permission()` function. Descriptor comparison and final
+GRANTED/DENIED remain exclusively runtime-owned. Filesystem algorithms
 belong to `@drumee/system-mfs`; connection lookup, Redis and WebSocket
 transport belong to runtime adapters.
