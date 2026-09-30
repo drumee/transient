@@ -230,6 +230,7 @@ transient:
   node --test tests/integration/kernel/phase4.8-finder-browser.test.js     1/1
   node --test tests/integration/kernel/phase4.6b-system-mfs.test.js       2/2
   node --test tests/integration/kernel/phase4.7-window-manager.test.js    1/1
+  (standalone window-manager) npm test                                    6/6
 ```
 
 This closure made no change under `sources/**`, published no npm package and
