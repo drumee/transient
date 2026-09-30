@@ -1,7 +1,7 @@
 "use strict";
 
 module.exports = class MfsTransferWorker {
-  constructor({ session, mfs_transfer } = {}) { this.session = session; this.mfs_transfer = mfs_transfer; }
+  constructor({ session, mfs_transfer, file_io } = {}) { this.session = session; this.mfs_transfer = mfs_transfer; this.file_io = file_io; }
   context() {
     const session = this.session;
     const identity = session && typeof session.identity === "function" ? session.identity() : null;
@@ -16,8 +16,11 @@ module.exports = class MfsTransferWorker {
     if (!this.mfs_transfer) throw new Error("mfs-transfer is not configured");
     const result = await this.mfs_transfer[method](input || {}, this.context());
     const output = this.session && this.session.output;
-    if (output && typeof output.data === "function" && method !== "downloadRetrieve") return output.data(result);
-    if (output && typeof output.write === "function" && method === "downloadRetrieve") return output.write(result.data, result.content_type);
+    if (method === "downloadRetrieve") {
+      if (!this.file_io) throw new Error("mfs-transfer download delivery requires FileIo");
+      return this.file_io.send(output, result.artifact, { name: "download.zip", mimetype: "application/zip" });
+    }
+    if (output && typeof output.data === "function") return output.data(result);
     return result;
   }
   upload_start(input) { return this.call("uploadStart", input); }

@@ -13,8 +13,9 @@ class TransferStaging {
     fs.mkdirSync(this.root, { recursive: true });
   }
 
-  create() {
-    const token = crypto.randomUUID();
+  create(requested_token) {
+    const token = requested_token || crypto.randomUUID();
+    if (!/^[a-zA-Z0-9-]{8,80}$/.test(token) || this.payloads.has(token)) throw Object.assign(new Error("Invalid or duplicate staging token"), { code: "MFS_TRANSFER_INVALID" });
     const directory = path.join(this.root, token);
     fs.mkdirSync(directory, { recursive: true });
     this.payloads.set(token, { directory, created_at: this.now(), claimed: false });

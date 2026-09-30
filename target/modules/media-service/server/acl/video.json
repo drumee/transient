@@ -1,0 +1,8 @@
+{
+  "services": {
+    "master": { "scope": "mfs", "permission": { "src": "read" } },
+    "stream": { "scope": "mfs", "permission": { "src": "read" } },
+    "segment": { "scope": "mfs", "permission": { "src": "read" } }
+  },
+  "modules": { "private": "service/media" }
+}

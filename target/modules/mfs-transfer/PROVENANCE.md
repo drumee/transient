@@ -6,5 +6,7 @@ Behavioral references are `drumee/ui-team` at
 (`service/lib/chunked-upload.js`, `service/lib/archive.js`, and
 `offline/media/download.js`).
 
-This module owns temporary transfer state and archive jobs only. Final MFS
-metadata/content is committed through mfs-service and system-mfs.
+This module owns bounded temporary transfer state and offline archive jobs
+only. Final MFS metadata/content is committed through mfs-service and
+system-mfs. The historical offline worker and FileIo/Nginx split is preserved:
+the HTTP worker retains metadata and worker handles, never whole archive data.

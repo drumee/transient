@@ -16,6 +16,49 @@ const {
 const { permissionValue } = require("/opt/kernel/server-essentials/lib/lex/permission");
 const Mariadb = require("/opt/kernel/server-essentials/lib/mariadb");
 const { RedisStore } = require("/opt/kernel/server-essentials/lib");
+const { HostFilesystem, FileIo } = require("/opt/kernel/host-filesystem/lib");
+const { MediaService, RepresentationManager } = require("/opt/kernel/media-service/lib");
+const { MfsPermissionBackend } = require("/opt/kernel/mfs-service/lib");
+const { MfsTransferService, TransferStaging } = require("/opt/kernel/mfs-transfer/lib");
+
+const fixture_uid = "ffffffffffffffff";
+const fixture_hub_id = "b000000000000002";
+const download_nid = "d000000000000004";
+const media_nid = "e000000000000005";
+const artifact_root = "/runtime/artifacts";
+const host_filesystem = new HostFilesystem({ root: artifact_root });
+const staging = new TransferStaging({ root: `${artifact_root}/transfers` });
+const fixture_nodes = new Map();
+
+function createFixture(nid, filename, prefix, size) {
+  const relative = `${fixture_hub_id}/${nid}`;
+  const physical = `${artifact_root}/${relative}`;
+  fs.mkdirSync(`${artifact_root}/${fixture_hub_id}`, { recursive: true });
+  const handle = fs.openSync(physical, "w");
+  const chunk = Buffer.from(prefix.padEnd(8192, "."));
+  try { for (let written = 0; written < size; written += chunk.length) fs.writeSync(handle, chunk, 0, Math.min(chunk.length, size - written)); }
+  finally { fs.closeSync(handle); }
+  const node = { hub_id: fixture_hub_id, nid, filename, filepath: `/${filename}`, filetype: "file", mimetype: "application/octet-stream", storage_ref: `mfs-content:${fixture_hub_id}:${nid}` };
+  fixture_nodes.set(`${fixture_hub_id}:${nid}`, node);
+  return node;
+}
+
+const download_node = createFixture(download_nid, "phase48-download.txt", "phase48-download-original\n", 256 * 1024);
+const media_node = createFixture(media_nid, "phase48-media.bin", "phase48-media-original\n", 2 * 1024 * 1024);
+const fixture_mfs_service = {
+  async prepareDownload({ roots }) {
+    const entries = roots.map((root) => fixture_nodes.get(`${root.hub_id}:${root.nid}`)).filter(Boolean).map((node) => ({ ...node, root_nid: node.nid, root_path: node.filepath }));
+    return { roots, entries };
+  }
+};
+const mfs_transfer = new MfsTransferService({ mfs_service: fixture_mfs_service, staging, host_filesystem, ttl_ms: 30000, max_jobs: 8 });
+const file_io = new FileIo({ host_filesystem });
+const representations = new RepresentationManager({ host_filesystem });
+const media_service = new MediaService({ node_resolver: async ({ hub_id, nid }) => fixture_nodes.get(`${hub_id}:${nid}`), host_filesystem, representations });
+const mfs_permission_backend = new MfsPermissionBackend({
+  permission_store: { effectivePermission(uid, node) { return uid === fixture_uid && fixture_nodes.has(`${node.hub_id}:${node.nid}`) ? 63 : 0; } },
+  transfer_resource: (value) => mfs_transfer.resourceFor(value)
+});
 
 const registry = new DescriptorRegistry({ permissionValue });
 registry.registerDirectory("/opt/kernel/server-runtime/acl");
@@ -34,6 +77,20 @@ registry.registerDescriptor("kernel", {
   },
   modules: { public: "fixture-worker" }
 }, { workdir: __dirname });
+registry.registerDescriptor("mfs-transfer", {
+  services: {
+    download_prepare: { scope: "mfs", permission: { src: "read" } },
+    download_status: { scope: "mfs", permission: { src: "read" } },
+    download_cancel: { scope: "mfs", permission: { src: "read" } },
+    download_retrieve: { scope: "mfs", permission: { src: "read" } },
+    download_release: { scope: "mfs", permission: { src: "read" } }
+  },
+  modules: { public: "/opt/kernel/mfs-transfer/server/service/mfs-transfer" }
+});
+registry.registerDescriptor("media", {
+  services: { orig: { scope: "mfs", permission: { src: "read" } } },
+  modules: { public: "/opt/kernel/media-service/server/service/media" }
+});
 
 const pluginResolver = new FrontendPluginResolver({
   roots: [{ directory: "/srv/drumee/runtime/plugins/ui/main", publicPrefix: "/-/plugins" }]
@@ -51,7 +108,7 @@ function resolveMfsStore() {
   return mfs_store;
 }
 const sessionManager = new SessionManager({ store: yellowPageStore });
-const authorize = createAuthorizer({ domainAuthorizer: new DomainAuthorizer({ store: yellowPageStore }) });
+const authorize = createAuthorizer({ domainAuthorizer: new DomainAuthorizer({ store: yellowPageStore }), mfsPermissionBackend: mfs_permission_backend });
 global.endpointAddress = process.env.KERNEL_PUSH_ENDPOINT || "kernel-runtime:23000";
 const push = new PushBus({ redisStore: RedisStore, socketStore: yellowPageStore });
 const websocketAllowedOrigins = (process.env.KERNEL_WEBSOCKET_ALLOWED_ORIGINS || "")
@@ -69,7 +126,7 @@ const capability_resolver = new CapabilityResolver({
     }
   }
 });
-const dispatcher = new ServiceDispatcher({ registry, authorize, capability_resolver, workerOptions: { pluginResolver, push, resolveMfsStore } });
+const dispatcher = new ServiceDispatcher({ registry, authorize, capability_resolver, workerOptions: { pluginResolver, push, resolveMfsStore, mfs_transfer, file_io, media_service } });
 const server = createServiceServer({
   dispatcher,
   sessionFactory: (request) => sessionManager.fromRequest(request),
@@ -113,6 +170,8 @@ start().catch((error) => {
 });
 
 async function shutdown() {
+  mfs_transfer.destroy();
+  representations.stop();
   await websocket.stop();
   await Promise.all([server, pushHttpServer].map((entry) => new Promise((resolve) => entry.close(() => resolve()))));
 }

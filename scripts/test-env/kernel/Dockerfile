@@ -1,7 +1,7 @@
 FROM node:22-bookworm-slim
 
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends nginx curl ca-certificates \
+  && apt-get install -y --no-install-recommends nginx curl ca-certificates zip \
   && mkdir -p /var/lib/drumee /srv/drumee \
   && chmod 0777 /var/lib/drumee /srv/drumee \
   && rm -rf /var/lib/apt/lists/*
@@ -33,6 +33,10 @@ RUN npm install --omit=dev --ignore-scripts --no-audit --no-fund
 WORKDIR /opt/kernel
 COPY ui-runtime/ ./ui-runtime/
 COPY hello/ ./hello/
+COPY host-filesystem/ ./host-filesystem/
+COPY media-service/ ./media-service/
+COPY mfs-service/ ./mfs-service/
+COPY mfs-transfer/ ./mfs-transfer/
 COPY container/ ./scripts/
 
 RUN node ./scripts/build-ui-runtime.js \

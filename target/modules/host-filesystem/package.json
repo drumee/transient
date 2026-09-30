@@ -1,0 +1,7 @@
+{
+  "name": "@drumee/phase48-host-filesystem",
+  "version": "0.0.0-phase4.8",
+  "private": true,
+  "main": "lib/index.js",
+  "type": "commonjs"
+}

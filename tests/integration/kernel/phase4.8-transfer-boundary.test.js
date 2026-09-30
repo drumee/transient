@@ -4,12 +4,14 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
+const child_process = require("node:child_process");
 const test = require("node:test");
 
 const root = path.resolve(__dirname, "../../..");
 const { LocalContentStore, MfsFilesystem } = require(path.resolve(root, "../system-mfs"));
 const { MfsEventPublisher, MfsService } = require(path.join(root, "target/modules/mfs-service/lib"));
 const { MfsTransferService, TransferStaging } = require(path.join(root, "target/modules/mfs-transfer/lib"));
+const { HostFilesystem } = require(path.join(root, "target/modules/host-filesystem/lib"));
 
 const principal_id = "a000000000000001";
 const hub_id = "b000000000000002";
@@ -28,8 +30,10 @@ class MemoryStore {
 
 test("upload staging commits through service/system-mfs and download returns authorized canonical bytes", async (t) => {
   const work = fs.mkdtempSync(path.join(os.tmpdir(), "phase48-transfer-boundary-"));
-  const staging = new TransferStaging({ root: path.join(work, "staging") });
-  const canonical = new LocalContentStore({ root: path.join(work, "canonical"), staging });
+  const canonical_root = path.join(work, "canonical");
+  const staging = new TransferStaging({ root: path.join(canonical_root, "transfers") });
+  const canonical = new LocalContentStore({ root: canonical_root, staging });
+  const host_filesystem = new HostFilesystem({ root: canonical_root });
   t.after(() => fs.rmSync(work, { recursive: true, force: true }));
   const store = new MemoryStore();
   const published = [];
@@ -38,7 +42,8 @@ test("upload staging commits through service/system-mfs and download returns aut
     events: new MfsEventPublisher({ transport: { async publishRecipient(message) { published.push(message); } } })
   });
   const progress = [];
-  const transfer = new MfsTransferService({ mfs_service, staging, content_reader: (ref) => canonical.read(ref), progress: { async publishOperation(event) { progress.push(event); } } });
+  const transfer = new MfsTransferService({ mfs_service, staging, host_filesystem, progress: { async publishOperation(event) { progress.push(event); } } });
+  t.after(() => transfer.destroy());
 
   const upload = await transfer.uploadStart({ destination, size: 11, operation_id: "upload-boundary", metadata: { filename: "hello.txt", size: 11, mimetype: "text/plain", filetype: "text" } }, { uid: principal_id });
   await transfer.uploadChunk({ transfer_id: upload.transfer_id, index: 1, data: Buffer.from("world") }, { uid: principal_id });
@@ -52,10 +57,10 @@ test("upload staging commits through service/system-mfs and download returns aut
   assert.equal(published[0].payload.committed_from_transfer, true);
 
   const prepared = await transfer.downloadPrepare({ roots: [{ hub_id, nid: committed.result.nid }], operation_id: "download-boundary" }, { uid: principal_id });
-  const archive = transfer.downloadRetrieve({ transfer_id: prepared.transfer_id }, { uid: principal_id }).data;
-  assert.equal(archive.readUInt32LE(0), 0x04034b50);
-  assert.ok(archive.includes(Buffer.from("hello.txt")));
-  assert.ok(archive.includes(Buffer.from("hello world")));
+  for (let attempt = 0; attempt < 100 && transfer.downloadStatus({ transfer_id: prepared.transfer_id }, { uid: principal_id }).status !== "ready"; attempt++) await new Promise((resolve) => setTimeout(resolve, 25));
+  const archive = transfer.downloadRetrieve({ transfer_id: prepared.transfer_id }, { uid: principal_id }).artifact;
+  assert.equal(Buffer.isBuffer(archive), false);
+  assert.equal(child_process.spawnSync("unzip", ["-p", archive.path]).stdout.toString(), "hello world");
   assert.ok(progress.filter((entry) => entry.operation_id === "download-boundary").every((entry) => entry.principal === principal_id));
   assert.equal(transfer.downloadRelease({ transfer_id: prepared.transfer_id }, { uid: principal_id }).status, "released");
 });

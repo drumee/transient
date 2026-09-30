@@ -1,7 +1,7 @@
 "use strict";
 
-const { crc32, zip } = require("./archive");
+const { ArchiveWorker } = require("./archive-worker");
 const { MfsTransferService } = require("./service");
 const { TransferStaging } = require("./staging");
 
-module.exports = { MfsTransferService, TransferStaging, crc32, zip };
+module.exports = { ArchiveWorker, MfsTransferService, TransferStaging };

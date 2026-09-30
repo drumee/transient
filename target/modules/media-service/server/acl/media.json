@@ -1,0 +1,10 @@
+{
+  "services": {
+    "orig": { "scope": "mfs", "permission": { "src": "read" } },
+    "preview": { "scope": "mfs", "permission": { "src": "read" } },
+    "thumb": { "scope": "mfs", "permission": { "src": "read" } },
+    "document": { "scope": "mfs", "permission": { "src": "read" } },
+    "video": { "scope": "mfs", "permission": { "src": "read" } }
+  },
+  "modules": { "private": "service/media" }
+}

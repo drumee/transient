@@ -45,4 +45,5 @@ docker exec -e "MYSQL_PWD=$KERNEL_DB_ROOT_PASSWORD" "$KERNEL_DB_CONTAINER" \
   mariadb --protocol=tcp --host=127.0.0.1 --user=root "$KERNEL_DB_NAME" \
   --execute 'SELECT domain_permission("phase4authuser01", 41, 2) AS granted' | grep -q '2'
 docker exec "$KERNEL_REDIS_CONTAINER" redis-cli ping | grep -q '^PONG$'
-echo "Phase 4.4 kernel/hello/WebSocket integration prerequisites: PASS"
+KERNEL_HTTP_PORT="$KERNEL_HTTP_PORT" node --test "$TRANSIENT_ROOT/tests/integration/kernel/phase4.8-nginx-delivery.test.js"
+echo "Kernel/hello/WebSocket and Phase 4.8 Nginx data-plane integration: PASS"

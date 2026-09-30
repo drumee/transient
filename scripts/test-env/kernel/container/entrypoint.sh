@@ -28,6 +28,10 @@ printf '%s\n' \
   '  server {' \
   "    listen ${KERNEL_HTTP_PORT:-28642};" \
   '    server_name _;' \
+  '    location /__drumee_artifacts/ {' \
+  '      internal;' \
+  '      alias /runtime/artifacts/;' \
+  '    }' \
   "    include ${route};" \
   '  }' \
   '}' > "$config"
