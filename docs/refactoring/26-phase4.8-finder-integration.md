@@ -125,8 +125,9 @@ pass required by `28-phase4.8-corrective-architectural-closure.md`. The canonica
 `system-mfs` baseline is `a7f7395bdbc79560aed072219b87c0b81c004bce`;
 it was audited and not modified. The standalone runtime correction is
 `c4eb77474` with HLS route evidence in `36c8d8075`. The corresponding transient
-implementation commits are `561db9347` and `b66d480cb`. The final documentation
-HEAD is reported with the external closure record.
+implementation commits are `561db9347` and `b66d480cb`; progressive-HLS
+lifecycle evidence was appended in `e3bb79387`. The final repository HEAD is
+reported with the external closure record.
 
 The final backend chain is:
 
