@@ -43,9 +43,10 @@ Finder → transfer controllers → MfsTransferClient → mfs-transfer
   orchestration and recipient-safe mutation publication through an injected
   runtime transport adapter. Its narrow permission backend exposes logical
   resources and effective permission; it is not an ACL authority.
-- `mfs-transfer` owns bounded temporary chunks, resumable sessions, integrity
-  checks, offline archive jobs and requester-scoped progress. It has no direct
-  dependency on `system-mfs` and never keeps a completed archive Buffer.
+- `mfs-transfer` owns bounded resumable upload sessions, sparse staged payloads,
+  integrity checks, offline archive jobs and requester-scoped progress. It has
+  no direct dependency on `system-mfs` and never keeps a completed upload or
+  archive Buffer.
 - the standalone `system-mfs` working tree owns generic filesystem primitives
   and canonical-content adoption. No second implementation remains under
   `target/modules/system-mfs`.
@@ -77,9 +78,12 @@ Upload scanning fully materializes a `BundleEntry` forest before network work.
 Multiple folders and loose files can share one operation; explicit empty
 directories survive. Directory creation is parent-first, file and chunk work
 is bounded, failed chunks retry, and existing chunk indexes support session
-resume. Temporary bytes are assembled by `mfs-transfer`, authorized by
-`mfs-service`, and atomically adopted by `system-mfs.commitFile` into canonical
-storage before the normal `node.created` event is published.
+resume. Upload metadata travels through the bounded structured service path;
+chunk bytes travel through a separate bounded binary HTTP path. Runtime Input
+first streams each body to a private tempfile, then `mfs-transfer` copies it to
+the server-owned offset in one sparse staged payload. The completed payload is
+authorized by `mfs-service` and atomically adopted by `system-mfs.commitFile`
+into canonical storage before the normal `node.created` event is published.
 
 Downloads accept canonical multi-root identities. The runtime ACL authorizes
 every root, `mfs-service` asks `system-mfs` for a recursive manifest, and
@@ -268,3 +272,67 @@ cancel/failure/release/expiry, and HLS playlist/segment routing.
 This corrective closure made no change under `sources/**` or `system-mfs`,
 published no npm package, preserved generic `stop()` unchanged and did not
 start Phase 4.9.
+
+## Upload data-plane corrective closure
+
+Status: **CLOSED / VALIDATED** after the focused upload correction. This pass
+did not reopen Phase 4.8 and did not change download, media, HLS, Finder
+semantics outside upload transport, or generic runtime `stop()`.
+
+The final upload boundary is deliberately split:
+
+```text
+metadata/control
+    -> bounded structured request (64 KiB remains enforced)
+    -> trusted Session.uid()
+    -> runtime ACL against the logical destination
+
+binary bytes
+    -> application/octet-stream request
+    -> ACL and transfer-owner preflight
+    -> bounded streaming Input receiver
+    -> server-generated private tempfile
+    -> exact-offset write into one sparse staged payload
+```
+
+The server chooses and returns the upload chunk size and enforces both that
+geometry and an independent maximum chunk size. Index, offset, actual tempfile
+length, expected final-chunk length and bounded chunk count are validated
+server-side. Finder passes a Blob directly to the granular `uploadBinary()`
+transport; production upload code no longer calls `arrayBuffer()` or serializes
+`Array.from(Uint8Array(...))` into JSON.
+
+`mfs-transfer` preallocates one staged payload, accepts chunks in any order,
+writes each chunk at `index * chunk_size` with stream backpressure and records
+accepted byte lengths by index. Repeated indexes safely overwrite the same
+range. `upload_status` exposes only bounded public metadata: transfer id,
+status, received indexes, declared size and chunk size. It exposes neither
+tempfile nor staging paths.
+
+On completion, every expected index and the staged size are checked. Requested
+SHA-256 integrity is computed by streaming the staged file sequentially, never
+from chunk arrival order and never by buffering the complete payload. An
+internal `payload_ref` then crosses the existing boundary:
+
+```text
+mfs-transfer -> mfs-service.commitUpload() -> system-mfs.commitFile()
+```
+
+The client cannot submit `payload_ref`. Canonical content survives successful
+adoption while transfer staging and the reference are invalidated. Incoming
+Input tempfiles transfer ownership exactly once and are deleted after adoption
+into staging; rejection, abort, stream failure, bad geometry, hash mismatch,
+commit failure, transfer abort, TTL expiry and shutdown clean their owned
+temporary resources. Runtime ACL remains the final GRANTED/DENIED authority
+and is re-evaluated by normal dispatch; transfer ownership is an additional
+check based on trusted `Session.uid()`.
+
+The real integration path starts an upload over JSON, sends a multi-chunk
+payload through actual HTTP binary bodies (including chunks larger than 64
+KiB), delivers chunks out of order, resumes, repeats a chunk, completes through
+canonical system-mfs adoption, and retrieves byte-identical content through
+the unchanged media.orig/FileIo/Nginx path. A body larger than the server
+maximum is rejected with cleanup. Runtime tests separately prove the JSON
+limit remains effective, the binary path bypasses JSON parsing, authorization
+and ownership preflight prevent worker/body processing, interrupted bodies
+remove partial tempfiles, and internal paths are absent from public output.
