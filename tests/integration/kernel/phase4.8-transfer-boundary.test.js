@@ -42,12 +42,14 @@ test("upload staging commits through service/system-mfs and download returns aut
     events: new MfsEventPublisher({ transport: { async publishRecipient(message) { published.push(message); } } })
   });
   const progress = [];
-  const transfer = new MfsTransferService({ mfs_service, staging, host_filesystem, progress: { async publishOperation(event) { progress.push(event); } } });
+  const transfer = new MfsTransferService({ mfs_service, staging, host_filesystem, upload_chunk_size: 6, max_upload_chunk_size: 6, progress: { async publishOperation(event) { progress.push(event); } } });
   t.after(() => transfer.destroy());
 
   const upload = await transfer.uploadStart({ destination, size: 11, operation_id: "upload-boundary", metadata: { filename: "hello.txt", size: 11, mimetype: "text/plain", filetype: "text" } }, { uid: principal_id });
-  await transfer.uploadChunk({ transfer_id: upload.transfer_id, index: 1, data: Buffer.from("world") }, { uid: principal_id });
-  await transfer.uploadChunk({ transfer_id: upload.transfer_id, index: 0, data: Buffer.from("hello ") }, { uid: principal_id });
+  const second_chunk = path.join(work, "second.chunk"); fs.writeFileSync(second_chunk, "world");
+  const first_chunk = path.join(work, "first.chunk"); fs.writeFileSync(first_chunk, "hello ");
+  await transfer.uploadChunk({ transfer_id: upload.transfer_id, index: 1, uploaded_file: second_chunk }, { uid: principal_id });
+  await transfer.uploadChunk({ transfer_id: upload.transfer_id, index: 0, uploaded_file: first_chunk }, { uid: principal_id });
   const committed = await transfer.uploadComplete({ transfer_id: upload.transfer_id }, { uid: principal_id });
   assert.equal(committed.result.filename, "hello.txt");
   assert.equal(Object.hasOwn(committed.result, "storage_ref"), false);

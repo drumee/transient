@@ -7,6 +7,7 @@ SYSTEM_MFS_ROOT="${KERNEL_SYSTEM_MFS_ROOT:-$(cd "$ROOT/.." && pwd)/system-mfs}"
 cd "$ROOT"
 node scripts/check-system-mfs-sync.js
 node --test \
+  target/foundation/server-runtime/test/binary-upload.test.js \
   target/foundation/server-runtime/test/mfs-authorization.test.js \
   target/modules/finder/test/finder-core.test.js \
   target/modules/host-filesystem/test/host-filesystem.test.js \

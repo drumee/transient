@@ -105,10 +105,15 @@ test("generic service transport preserves logical module.method requests and Dru
   });
   assert.deepEqual(await client.fetchService("bootstrap.plugin", { name: "hello" }), { message: "Hello from Drumee" });
   assert.deepEqual(await client.postService("hello.ping", {}), { message: "Hello from Drumee" });
+  const blob = new Blob(["binary"]);
+  assert.deepEqual(await client.uploadBinary("mfs-transfer.upload_chunk", { transfer_id: "upload-1", index: 2 }, blob), { message: "Hello from Drumee" });
   assert.equal(calls[0].url, "/-/svc/bootstrap.plugin?name=hello");
   assert.equal(calls[0].options.method, "GET");
   assert.equal(calls[1].url, "/-/svc/hello.ping");
   assert.equal(calls[1].options.body, "{}");
+  assert.equal(calls[2].url, "/-/svc/mfs-transfer.upload_chunk?transfer_id=upload-1&index=2");
+  assert.equal(calls[2].options.headers["content-type"], "application/octet-stream");
+  assert.equal(calls[2].options.body, blob);
 });
 
 test("service client preserves the historical x-param session authorization bridge", async () => {
