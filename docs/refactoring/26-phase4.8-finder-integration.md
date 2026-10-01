@@ -336,3 +336,29 @@ maximum is rejected with cleanup. Runtime tests separately prove the JSON
 limit remains effective, the binary path bypasses JSON parsing, authorization
 and ownership preflight prevent worker/body processing, interrupted bodies
 remove partial tempfiles, and internal paths are absent from public output.
+
+Final validation from the append-only implementation heads recorded:
+
+```text
+standalone server-runtime d17ecee8c645f1d14a7e2ef45a2f3542a27c0763
+  npm test                                                        43/43
+
+transient implementation 0e7cb57a1 + tests 1c6939c73
+  target/foundation/server-runtime npm test                       39/39
+  Phase 4.8 focused unit/integration/browser tests                 41/41
+  real Nginx download/media/binary-upload data-plane tests           4/4
+  Phase 4.6B + Phase 4.7 regressions                                 3/3
+
+standalone system-mfs a7f7395bdbc79560aed072219b87c0b81c004bce
+  npm test                                                           9/9
+  SQL granularity                                                     1/1
+  disposable MariaDB integration                                      1/1
+
+standalone window-manager
+  npm test                                                            6/6
+```
+
+Registry inspection after validation still exposed only the pre-existing
+runtime `0.1.0-alpha.1`, system-mfs `0.1.0-alpha.1` and window-manager
+`0.1.0-alpha.2` versions. No package was published and Phase 4.9 was not
+started.
