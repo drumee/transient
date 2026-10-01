@@ -10,3 +10,9 @@ This module owns bounded temporary transfer state and offline archive jobs
 only. Final MFS metadata/content is committed through mfs-service and
 system-mfs. The historical offline worker and FileIo/Nginx split is preserved:
 the HTTP worker retains metadata and worker handles, never whole archive data.
+
+Upload staging follows the historical `service/lib/chunked-upload.js` intent:
+one preallocated sparse file, exact-offset streamed tempfile writes, received
+index tracking, sequential integrity hashing and normal canonical adoption.
+Session storage remains the existing bounded in-process/TTL seam for this phase;
+no Redis/restart-survival subsystem was introduced.

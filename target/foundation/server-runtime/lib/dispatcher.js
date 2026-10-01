@@ -25,12 +25,17 @@ class ServiceDispatcher {
     return WorkerClass;
   }
 
-  async dispatch({ service, session, input } = {}) {
+  async authorizeRequest({ service, session, input } = {}) {
     const resolved = this.registry.resolve(service, session);
     const decision = await this.authorize({ ...resolved, input, session });
     if (!decision || !decision.granted) {
       throw new RuntimeError("PERMISSION_DENIED", `Access denied to ${resolved.service}`, decision);
     }
+    return { resolved, decision };
+  }
+
+  async dispatch({ service, session, input } = {}) {
+    const { resolved } = await this.authorizeRequest({ service, session, input });
     if (resolved.requires.length) {
       if (!this.capability_resolver || typeof this.capability_resolver.requireAll !== "function") {
         throw new RuntimeError("CAPABILITY_UNAVAILABLE", `Required capability '${resolved.requires[0]}' is unavailable`, {

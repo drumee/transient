@@ -4,6 +4,7 @@ const crypto = require("node:crypto");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
+const { pipeline } = require("node:stream/promises");
 
 class TransferStaging {
   constructor({ root, now = () => Date.now() } = {}) {
@@ -27,6 +28,27 @@ class TransferStaging {
     if (!payload) throw Object.assign(new Error("Unknown staged payload"), { code: "MFS_TRANSFER_NOT_FOUND" });
     payload.filename = filename;
     return Object.freeze({ type: "mfs-staged-payload", token });
+  }
+
+  createSparseFile(token, filename, size) {
+    const payload = this.payloads.get(token);
+    if (!payload || path.basename(filename) !== filename) throw Object.assign(new Error("Invalid staged payload target"), { code: "MFS_TRANSFER_INVALID" });
+    const destination = path.join(payload.directory, filename);
+    const handle = fs.openSync(destination, "w");
+    try { fs.ftruncateSync(handle, size); } finally { fs.closeSync(handle); }
+    return destination;
+  }
+
+  async writeInputFile(source, token, filename, offset) {
+    const payload = this.payloads.get(token);
+    if (!payload || !source || !fs.existsSync(source) || path.basename(filename) !== filename) throw Object.assign(new Error("Input upload tempfile is unavailable"), { code: "MFS_INPUT_FILE_INVALID" });
+    const destination = path.join(payload.directory, filename);
+    try {
+      await pipeline(fs.createReadStream(source), fs.createWriteStream(destination, { flags: "r+", start: offset }));
+    } finally {
+      fs.rmSync(source, { force: true });
+    }
+    return destination;
   }
 
   adoptInputFile(source, token, filename) {

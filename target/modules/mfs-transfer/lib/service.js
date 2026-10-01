@@ -6,8 +6,12 @@ const path = require("node:path");
 const { ArchiveWorker } = require("./archive-worker");
 const { TransferStaging } = require("./staging");
 
+const UPLOAD_CHUNK_SIZE = 8 * 1024 * 1024;
+const MAX_UPLOAD_CHUNK_SIZE = 16 * 1024 * 1024;
+const MAX_UPLOAD_CHUNKS = 1000000;
+
 class MfsTransferService {
-  constructor({ mfs_service, staging, host_filesystem, archive_worker, progress, ttl_ms = 15 * 60 * 1000, max_jobs = 128, now = () => Date.now() } = {}) {
+  constructor({ mfs_service, staging, host_filesystem, archive_worker, progress, ttl_ms = 15 * 60 * 1000, max_jobs = 128, upload_chunk_size = UPLOAD_CHUNK_SIZE, max_upload_chunk_size = MAX_UPLOAD_CHUNK_SIZE, max_upload_chunks = MAX_UPLOAD_CHUNKS, now = () => Date.now() } = {}) {
     if (!mfs_service || !host_filesystem) throw new Error("mfs-transfer requires mfs-service and HostFilesystem");
     this.mfs_service = mfs_service;
     this.staging = staging || new TransferStaging();
@@ -16,6 +20,10 @@ class MfsTransferService {
     this.progress = progress || { publishOperation: async () => {} };
     this.ttl_ms = ttl_ms;
     this.max_jobs = max_jobs;
+    this.upload_chunk_size = Number(upload_chunk_size);
+    this.max_upload_chunk_size = Number(max_upload_chunk_size);
+    this.max_upload_chunks = Number(max_upload_chunks);
+    if (!Number.isInteger(this.upload_chunk_size) || this.upload_chunk_size < 1 || this.upload_chunk_size > this.max_upload_chunk_size || !Number.isInteger(this.max_upload_chunks) || this.max_upload_chunks < 1) throw new Error("Invalid upload chunk geometry");
     this.now = now;
     this.uploads = new Map();
     this.downloads = new Map();
@@ -32,45 +40,69 @@ class MfsTransferService {
     const transfer_id = input.transfer_id || crypto.randomUUID();
     if (this.uploads.has(transfer_id)) {
       const existing = this.requireUpload(transfer_id, context);
-      return { transfer_id, status: existing.status, chunks: [...existing.chunks.keys()].sort((a, b) => a - b), uploaded: [...existing.chunks.values()].reduce((sum, chunk) => sum + chunk.size, 0), result: existing.result || null };
+      return { transfer_id, status: existing.status, chunk_size: existing.chunk_size, chunks: [...existing.chunks.keys()].sort((a, b) => a - b), uploaded: [...existing.chunks.values()].reduce((sum, chunk) => sum + chunk.size, 0), result: existing.result || null };
     }
     this.ensureCapacity();
+    const size = Number(input.size);
+    if (!Number.isSafeInteger(size) || size < 0) throw Object.assign(new Error("Upload size is invalid"), { code: "MFS_UPLOAD_SIZE_INVALID" });
+    if (input.metadata && input.metadata.size != null && Number(input.metadata.size) !== size) throw Object.assign(new Error("Upload metadata size is inconsistent"), { code: "MFS_UPLOAD_SIZE_INVALID" });
+    const total_chunks = Math.max(1, Math.ceil(size / this.upload_chunk_size));
+    if (total_chunks > this.max_upload_chunks) throw Object.assign(new Error("Upload has too many chunks"), { code: "MFS_UPLOAD_SIZE_INVALID" });
     const prepared = await this.mfs_service.prepareUpload({ destination: input.destination, metadata: input.metadata || {}, size: Number(input.size || 0) }, context);
     const stage = this.staging.create();
-    this.uploads.set(transfer_id, { transfer_id, stage, destination: prepared.destination, metadata: input.metadata || {}, operation_id: input.operation_id || transfer_id, size: Number(input.size || 0), chunks: new Map(), status: "uploading", context, expires_at: this.now() + this.ttl_ms });
-    return { transfer_id, status: "uploading" };
+    const payload_name = "upload.payload";
+    let payload_file;
+    try { payload_file = this.staging.createSparseFile(stage.token, payload_name, size); }
+    catch (error) { this.staging.release({ token: stage.token }); throw error; }
+    this.uploads.set(transfer_id, { transfer_id, stage, payload_name, payload_file, destination: prepared.destination, metadata: input.metadata || {}, operation_id: input.operation_id || transfer_id, size, chunk_size: this.upload_chunk_size, total_chunks, chunks: new Map(), status: "uploading", context, expires_at: this.now() + this.ttl_ms });
+    return { transfer_id, status: "uploading", chunk_size: this.upload_chunk_size, chunks: [] };
   }
 
   async uploadChunk(input, context) {
+    try {
+      const job = this.requireUpload(input.transfer_id, context);
+      if (job.status !== "uploading") throw new Error("Upload is not accepting chunks");
+      const index = Number(input.index);
+      if (!Number.isInteger(index) || index < 0 || index >= job.total_chunks) throw Object.assign(new Error("Upload chunk index is invalid"), { code: "MFS_UPLOAD_CHUNK_INVALID" });
+      if (!input.uploaded_file) throw Object.assign(new Error("Binary upload tempfile is required"), { code: "MFS_INPUT_FILE_INVALID" });
+      const actual = fs.statSync(input.uploaded_file).size;
+      const offset = index * job.chunk_size;
+      const expected = job.size === 0 ? 0 : Math.min(job.chunk_size, job.size - offset);
+      if (actual > this.max_upload_chunk_size || actual !== expected) throw Object.assign(new Error(`Upload chunk length ${actual} does not match ${expected}`), { code: "MFS_UPLOAD_CHUNK_INVALID" });
+      await this.staging.writeInputFile(input.uploaded_file, job.stage.token, job.payload_name, offset);
+      job.chunks.set(index, { size: actual });
+      job.expires_at = this.now() + this.ttl_ms;
+      const uploaded = [...job.chunks.values()].reduce((sum, chunk) => sum + chunk.size, 0);
+      await this.report(job, { domain: "transfer", type: "upload.progress", loaded: uploaded, total: job.size });
+      return { transfer_id: job.transfer_id, index, uploaded, chunks: [...job.chunks.keys()].sort((a, b) => a - b) };
+    } finally {
+      if (input.uploaded_file) fs.rmSync(input.uploaded_file, { force: true });
+    }
+  }
+
+  uploadPreflight(input, context) {
     const job = this.requireUpload(input.transfer_id, context);
     if (job.status !== "uploading") throw new Error("Upload is not accepting chunks");
     const index = Number(input.index);
-    if (!Number.isInteger(index) || index < 0) throw new Error("Upload chunk index is invalid");
-    const filename = path.join(job.stage.directory, `${index}.chunk`);
-    let size;
-    if (input.uploaded_file) { this.staging.adoptInputFile(input.uploaded_file, job.stage.token, `${index}.chunk`); size = fs.statSync(filename).size; }
-    else { const data = Buffer.isBuffer(input.data) ? input.data : Buffer.from(input.data || "", input.encoding || "base64"); fs.writeFileSync(filename, data); size = data.length; }
-    job.chunks.set(index, { filename, size });
-    job.expires_at = this.now() + this.ttl_ms;
-    const uploaded = [...job.chunks.values()].reduce((sum, chunk) => sum + chunk.size, 0);
-    await this.report(job, { domain: "transfer", type: "upload.progress", loaded: uploaded, total: job.size });
-    return { transfer_id: job.transfer_id, uploaded, chunks: job.chunks.size };
+    if (!Number.isInteger(index) || index < 0 || index >= job.total_chunks) throw Object.assign(new Error("Upload chunk index is invalid"), { code: "MFS_UPLOAD_CHUNK_INVALID" });
+    return { transfer_id: job.transfer_id, index };
   }
 
-  uploadStatus(input, context) { const job = this.requireUpload(input.transfer_id, context); return { transfer_id: job.transfer_id, status: job.status, chunks: [...job.chunks.keys()].sort((a, b) => a - b), size: job.size }; }
+  uploadStatus(input, context) { const job = this.requireUpload(input.transfer_id, context); return { transfer_id: job.transfer_id, status: job.status, chunks: [...job.chunks.keys()].sort((a, b) => a - b), size: job.size, chunk_size: job.chunk_size }; }
 
   async uploadComplete(input, context) {
     const job = this.requireUpload(input.transfer_id, context);
-    const filename = "assembled.payload";
-    const output = path.join(job.stage.directory, filename);
+    const missing = [];
+    for (let index = 0; index < job.total_chunks; index++) if (!job.chunks.has(index)) missing.push(index);
+    if (missing.length) throw Object.assign(new Error("Upload has missing chunks"), { code: "MFS_UPLOAD_INCOMPLETE", missing });
+    const stat = fs.statSync(job.payload_file);
+    if (stat.size !== job.size) { this.finishUpload(job, "failed"); throw Object.assign(new Error("Staged upload size is invalid"), { code: "MFS_UPLOAD_SIZE_INVALID" }); }
     const hash = crypto.createHash("sha256");
-    const handle = fs.openSync(output, "w");
-    try { for (const [, chunk] of [...job.chunks.entries()].sort((a, b) => a[0] - b[0])) { const data = fs.readFileSync(chunk.filename); fs.writeSync(handle, data); hash.update(data); } }
-    finally { fs.closeSync(handle); }
+    for await (const chunk of fs.createReadStream(job.payload_file)) hash.update(chunk);
     const digest = hash.digest("hex");
     if (input.sha256 && input.sha256 !== digest) { this.finishUpload(job, "failed"); throw Object.assign(new Error("Upload integrity check failed"), { code: "MFS_UPLOAD_INTEGRITY" }); }
     job.status = "committing";
-    const payload_ref = this.staging.payloadRef(job.stage.token, filename);
+    const payload_ref = this.staging.payloadRef(job.stage.token, job.payload_name);
     try {
       const committed = await this.mfs_service.commitUpload({ destination: job.destination, payload_ref, metadata: job.metadata, operation_id: job.operation_id }, context || job.context);
       job.result = committed;
@@ -142,4 +174,4 @@ class MfsTransferService {
   }
 }
 
-module.exports = { MfsTransferService };
+module.exports = { MAX_UPLOAD_CHUNK_SIZE, MAX_UPLOAD_CHUNKS, MfsTransferService, UPLOAD_CHUNK_SIZE };

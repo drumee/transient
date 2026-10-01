@@ -40,3 +40,12 @@ fails deterministically with `CAPABILITY_UNAVAILABLE`.
 This smallest generic runtime change is validated only in `transient`. It must
 be extracted and released through a later standalone `server-runtime`
 milestone; Phase 4.6B does not modify or publish that repository.
+
+## Phase 4.8 upload input boundary
+
+The generic JSON service body remains limited to 64 KiB. Hosts may opt a
+specific service into the separate binary receiver, which authorizes bounded
+query metadata before ingestion, applies an optional ownership preflight,
+streams `application/octet-stream` with backpressure into a server-generated
+tempfile, enforces a hard byte ceiling during receipt, and removes every
+failed or unclaimed tempfile. The runtime has no MFS-specific upload logic.

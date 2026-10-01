@@ -2,7 +2,7 @@ const { DescriptorRegistry, parseService } = require("./descriptor-registry");
 const { CapabilityResolver } = require("./capability-resolver");
 const { ServiceDispatcher } = require("./dispatcher");
 const { FrontendPluginResolver } = require("./plugin-resolver");
-const { corsHeaders, createServiceServer, videoRequest } = require("./http");
+const { binaryContentType, corsHeaders, createServiceServer, receiveBinary, videoRequest } = require("./http");
 const { RuntimeOutput } = require("./output");
 const { RuntimeError } = require("./errors");
 const { authorizeFastPath, authorizeMfs, createAuthorizer, fastCheckName } = require("./permission");
@@ -32,12 +32,14 @@ module.exports = {
   WebSocketPushRouter,
   authorizeFastPath,
   authorizeMfs,
+  binaryContentType,
   createAuthorizer,
   createPushServer,
   createServiceServer,
   corsHeaders,
   fastCheckName,
   parseService,
+  receiveBinary,
   sessionAuthorization,
   validSessionId,
   videoRequest

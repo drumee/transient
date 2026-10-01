@@ -144,6 +144,25 @@ class ServiceClient {
   postService(service, payload) {
     return this.request("POST", service, payload);
   }
+
+  async uploadBinary(service, metadata, body) {
+    const call = normalizePayload(service, metadata);
+    const state = transportStates.get(this);
+    if (!state || typeof state.fetch !== "function") throw new Error("Browser fetch is not configured");
+    const query = new URLSearchParams();
+    for (const [key, value] of Object.entries(call.payload)) if (value != null) query.set(key, String(value));
+    const options = { method: "POST", headers: { Accept: "application/json", "content-type": "application/octet-stream", ...sessionAuthorizationHeaders(state.authorization) }, body, cache: "no-cache" };
+    if (state.credentials) options.credentials = state.credentials;
+    const response = await state.fetch(`${serviceUrl(this.baseUrl, call.service)}?${query}`, options);
+    updateSessionAuthorizationFromResponse(this, response);
+    let envelope;
+    try { envelope = await response.json(); } catch (_) { envelope = null; }
+    if (!response.ok || !envelope || envelope.status !== "ok") {
+      const error = new Error((envelope && envelope.code) || `Service ${call.service} failed`);
+      error.code = (envelope && envelope.code) || "SERVICE_FAILED"; error.status = response.status; throw error;
+    }
+    return envelope.data;
+  }
 }
 
 module.exports = {
