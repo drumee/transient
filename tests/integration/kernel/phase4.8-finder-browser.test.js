@@ -48,11 +48,20 @@ test("Phase 4.8 mounts standalone and managed Finders with optimized selection a
     for (let attempt = 0; attempt < 120; attempt++) { const state = await evaluate(protocol, "({ready:document.body.dataset.ready,error:document.body.dataset.error})"); if (state.error) throw new Error(state.error); if (state.ready === "true") break; await new Promise((resolve) => setTimeout(resolve, 50)); }
     const structure = await evaluate(protocol, "({runtime:document.body.dataset.runtimeReady,plainWindow:Boolean(document.querySelector('#plain-host .drumee-window')),plainKind:document.querySelector('#plain-host .drumee-finder').dataset.kind,windows:phase48.manager.windows().length,tiles:document.querySelectorAll('#plain-host .drumee-finder__tile').length,widgetChildren:phase48.plain.children.length,progressViews:document.querySelectorAll('#plain-host [data-kind=finder_transfer_progress]').length,layout:getComputedStyle(document.querySelector('#plain-host .drumee-finder__items')).display})");
     assert.deepEqual(structure, { runtime: "true", plainWindow: false, plainKind: "finder", windows: 2, tiles: 100, widgetChildren: 5, progressViews: 2, layout: "grid" });
-    const navigation = await evaluate(protocol, `(async()=>{const folder=phase48.a.finder.item_list.values().find(item=>item.filetype==='folder');await phase48.a.finder.open(folder);const opened={...phase48.a.finder.location};const title=phase48.a.window.getPart('window-title').getText();await phase48.a.finder.back();const backed={...phase48.a.finder.location};await phase48.a.finder.open(folder);await phase48.a.finder.up();return{opened,backed,up:{...phase48.a.finder.location},title}})()`);
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    const previews = await evaluate(protocol, "({requests:phase48.telemetry.media.length,services:[...new Set(phase48.telemetry.media.map(value=>value.service))],physical:phase48.telemetry.media.some(value=>value.input.db_name||value.input.storage_ref)})");
+    assert.ok(previews.requests > 0, JSON.stringify(previews));
+    assert.equal(previews.physical, false);
+    assert.ok(previews.services.every((service) => ["media.thumb", "media.document", "media.preview", "media.video"].includes(service)), JSON.stringify(previews));
+    const navigation = await evaluate(protocol, `(async()=>{const folder=phase48.a.finder.item_list.values().find(item=>item.filetype==='folder');await phase48.a.finder.open(folder);const opened={...phase48.a.finder.location};const title=phase48.a.window.getPart('window-title').getText();await phase48.a.finder.back();const backed={...phase48.a.finder.location};await phase48.a.finder.forward();const forwarded={...phase48.a.finder.location};await phase48.a.finder.up();return{opened,backed,forwarded,up:{...phase48.a.finder.location},title}})()`);
     assert.equal(navigation.opened.nid, "1000000000000002");
     assert.equal(navigation.backed.nid, "1000000000000001");
+    assert.equal(navigation.forwarded.nid, "1000000000000002");
     assert.equal(navigation.up.nid, "1000000000000001");
     assert.match(navigation.title, /Documents/);
+    await evaluate(protocol, "phase48.a.finder.open(phase48.a.finder.item_list.values().find(item=>item.filetype==='folder'))");
+    await evaluate(protocol, "document.querySelector('[data-finder-id=finder-a] .drumee-finder__breadcrumb').click();new Promise(resolve=>setTimeout(resolve,30))");
+    assert.equal(await evaluate(protocol, "phase48.a.finder.location.nid"), "1000000000000001");
     await evaluate(protocol, "phase48.plain.loadMore().then(()=>phase48.plain.loadMore())");
     assert.equal(await evaluate(protocol, "document.querySelectorAll('#plain-host .drumee-finder__tile').length"), 250);
 
@@ -104,7 +113,29 @@ test("Phase 4.8 mounts standalone and managed Finders with optimized selection a
     assert.equal(after_resize.marqueeActive, false);
     assert.ok(after_resize.geometry.width > before_resize.geometry.width && after_resize.geometry.height > before_resize.geometry.height, JSON.stringify({ before_resize, after_resize }));
 
-    await evaluate(protocol, "phase48.a.destroy();phase48.plain.destroy()");
+    const remote_changes = await evaluate(protocol, `(()=>{const finder=phase48.b.finder;const file=finder.item_list.values().find(item=>item.filetype==='file');finder.selection.set([file]);phase48.emit({type:'node.renamed',operation_id:'remote-rename-item',node:{hub_id:file.hub_id,nid:file.nid},result:{...file,filename:'remote-name.txt'}});const renamed=finder.selection.getItems()[0].filename;phase48.emit({type:'node.removed',operation_id:'remote-remove-item',node:{hub_id:file.hub_id,nid:file.nid},source_parent:{...finder.location},result:{nodes:[file]}});return{renamed,selected:finder.selection.getItems().length,present:finder.hasItem(file)}})()`);
+    assert.deepEqual(remote_changes, { renamed: "remote-name.txt", selected: 0, present: false });
+
+    const before_folder_drop = await evaluate(protocol, "phase48.b.finder.items.size");
+    const folder_drop_points = await evaluate(protocol, `(()=>{const root=document.querySelector('[data-finder-id=finder-b]');const source=root.querySelector('[data-filetype=file]');const target=root.querySelector('[data-filetype=folder]');const a=source.getBoundingClientRect();const b=target.getBoundingClientRect();return{from:{x:a.left+a.width/2,y:a.top+a.height/2},to:{x:b.left+b.width/2,y:b.top+b.height/2}}})()`);
+    await drag(protocol, folder_drop_points.from, folder_drop_points.to, 10);
+    assert.equal(await evaluate(protocol, "phase48.b.finder.items.size"), before_folder_drop - 1);
+
+    const transfers = await evaluate(protocol, `(async()=>{const file=new Blob(['abcdefghij'],{type:'text/plain'});Object.defineProperty(file,'name',{value:'upload.txt'});await phase48.plain.uploadFiles([file]);const item=phase48.plain.item_list.values()[0];const download=await phase48.plain.download_controller.download([item],{document:null,URL:null});return{binary:phase48.telemetry.binary,transfer:phase48.telemetry.transfer,url:download.url,activeUploads:phase48.plain.upload_controller.active.size,activeDownloads:phase48.plain.download_controller.active.size}})()`);
+    assert.ok(transfers.binary.length >= 3, JSON.stringify(transfers));
+    assert.ok(transfers.binary.every((entry) => entry.is_blob && entry.size <= 4), JSON.stringify(transfers.binary));
+    assert.match(transfers.url, /download_retrieve/);
+    assert.equal(transfers.activeUploads, 0);
+    assert.equal(transfers.activeDownloads, 0);
+
+    const reconnect = await evaluate(protocol, `(async()=>{const before=phase48.telemetry.list_calls;const key='a000000000000001:1000000000000002';phase48.state.by_parent.get(key).unshift({hub_id:'a000000000000001',nid:'9900000000000001',parent_id:'1000000000000002',filename:'offline.txt',filetype:'file',mimetype:'text/plain'});phase48.runtime.Websocket.emit('connected',{});await new Promise(resolve=>setTimeout(resolve,80));return{before,after:phase48.telemetry.list_calls,found:phase48.plain.hasItem({hub_id:'a000000000000001',nid:'9900000000000001'})}})()`);
+    assert.ok(reconnect.after >= reconnect.before + 3, JSON.stringify(reconnect));
+    assert.equal(reconnect.found, true);
+
+    const lifecycle = await evaluate(protocol, `(async()=>{const host=document.createElement('section');document.body.append(host);const finder=phase48.runtime.mount({kind:'finder',finder_id:'lifecycle-finder',location:{hub_id:'a000000000000001',nid:'1000000000000002'},...phase48.common},host);await finder.refresh();phase48.emit({type:'node.renamed',operation_id:'rename-current',node:{hub_id:'a000000000000001',nid:'1000000000000002'},result:{hub_id:'a000000000000001',nid:'1000000000000002',filename:'Renamed Documents',filetype:'folder'}});const renamed=finder.current_title;phase48.emit({type:'node.removed',operation_id:'remove-current',node:{hub_id:'a000000000000001',nid:'1000000000000002'},result:{nodes:[]}});const invalid=finder.last_error&&finder.last_error.code;finder.destroy();finder.destroy();host.remove();const baseline=phase48.sync.finders.size;for(let index=0;index<5;index++){const mount=document.createElement('section');document.body.append(mount);const value=phase48.runtime.mount({kind:'finder',finder_id:'cycle-'+index,location:{hub_id:'b000000000000002',nid:'2000000000000001'},...phase48.common},mount);await value.refresh();value.destroy();value.destroy();mount.remove();}let externalDestroyed=false;const external={on(){},off(){},destroy(){externalDestroyed=true},uploadForest(){}};const externalHost=document.createElement('section');document.body.append(externalHost);const externalFinder=phase48.runtime.mount({kind:'finder',finder_id:'external-transfer',location:{hub_id:'b000000000000002',nid:'2000000000000001'},mfs_client:phase48.common.mfs_client,mfs_sync:phase48.common.mfs_sync,upload_controller:external},externalHost);await externalFinder.refresh();externalFinder.destroy();externalHost.remove();return{renamed,invalid,items:finder.items.size,registered:phase48.sync.finders.size,baseline,externalDestroyed}})()`);
+    assert.deepEqual(lifecycle, { renamed: "Renamed Documents", invalid: "MFS_LOCATION_UNAVAILABLE", items: 0, registered: lifecycle.baseline, baseline: 3, externalDestroyed: false });
+
+    await evaluate(protocol, "phase48.a.destroy();phase48.a.destroy();phase48.plain.destroy();phase48.plain.destroy()");
     const cleanup = await evaluate(protocol, "({registered:phase48.sync.finders.size,windows:phase48.manager.windows().length,plainConnected:document.querySelector('#plain-host .drumee-finder')!==null})");
     assert.deepEqual(cleanup, { registered: 1, windows: 1, plainConnected: false });
   } finally {
