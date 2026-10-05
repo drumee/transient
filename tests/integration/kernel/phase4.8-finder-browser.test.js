@@ -97,9 +97,8 @@ test("Phase 4.8 mounts standalone and managed Finders with optimized selection a
     assert.equal(transfer.bSelection, 0);
     assert.equal(transfer.marqueeActive, false);
 
-    await evaluate(protocol, "(()=>{document.querySelectorAll('[data-finder-id=finder-a] .drumee-finder__tile')[1].click();return phase48.a.finder.transferTo(phase48.plain)})()");
-    const moved = await evaluate(protocol, "({source:phase48.a.finder.items.size,destination:phase48.plain.items.size})");
-    assert.deepEqual(moved, { source: 1, destination: 251 });
+    const moved = await evaluate(protocol, `(async()=>{document.querySelectorAll('[data-finder-id=finder-a] .drumee-finder__tile')[1].click();const transfer=phase48.a.finder.transferTo(phase48.plain);const optimistic={source:phase48.a.finder.items.size,destination:phase48.plain.items.size,pending:phase48.a.finder.pending_operations.size};await transfer;return{optimistic,committed:{source:phase48.a.finder.items.size,destination:phase48.plain.items.size,pending:phase48.a.finder.pending_operations.size}}})()`);
+    assert.deepEqual(moved, { optimistic: { source: 1, destination: 251, pending: 1 }, committed: { source: 1, destination: 251, pending: 0 } });
 
     const before = await evaluate(protocol, "phase48.a.finder.selection.getItems().length");
     const header = await point(protocol, "[data-window_id=finder-window-a] .drumee-window__header");
