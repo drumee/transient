@@ -3,13 +3,14 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 SYSTEM_MFS_ROOT="${KERNEL_SYSTEM_MFS_ROOT:-$(cd "$ROOT/.." && pwd)/system-mfs}"
+FINDER_ROOT="${KERNEL_FINDER_ROOT:-$(cd "$ROOT/.." && pwd)/finder}"
 
 cd "$ROOT"
 node scripts/check-system-mfs-sync.js
 node --test \
   target/foundation/server-runtime/test/binary-upload.test.js \
   target/foundation/server-runtime/test/mfs-authorization.test.js \
-  target/modules/finder/test/finder-core.test.js \
+  "$FINDER_ROOT/test/finder-core.test.js" \
   target/modules/host-filesystem/test/host-filesystem.test.js \
   target/modules/media-service/test/media.test.js \
   target/modules/mfs-service/test/service.test.js \

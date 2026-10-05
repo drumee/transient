@@ -6,7 +6,8 @@ const test = require("node:test");
 
 const root = path.resolve(__dirname, "../../..");
 const { Websocket } = require(path.resolve(root, "../ui-runtime/src/websocket"));
-const { MfsSync } = require(path.join(root, "target/modules/finder/lib/mfs-sync"));
+const finder_root = process.env.KERNEL_FINDER_ROOT || path.resolve(root, "../finder");
+const { MfsSync } = require(path.join(finder_root, "lib/mfs-sync"));
 const { MfsEventPublisher, MfsService } = require(path.join(root, "target/modules/mfs-service/lib"));
 
 const client_a = "a000000000000001";

@@ -53,8 +53,8 @@ or generic `stop()` change was required.
 
 ## Contract freeze
 
-The extraction gate is satisfied by
-`target/modules/finder/CONTRACTS.md`. It freezes construction/dependencies,
+The extraction gate was satisfied by the transitional contract freeze now
+preserved as `/home/somanos/github/finder/CONTRACTS.md`. It freezes construction/dependencies,
 `{hub_id,nid}` locations, the public node, service/media/transfer clients,
 MfsSync events, FinderWindow interaction, and the resource ownership map.
 
@@ -80,4 +80,3 @@ remain deferred. Backend-enforced ancestor-cycle detection remains authoritative
 Standalone repository/package evidence, packed consumer validation,
 reintegration results, full regressions, final heads and closure status will be
 appended only after the sequential extraction gate completes.
-

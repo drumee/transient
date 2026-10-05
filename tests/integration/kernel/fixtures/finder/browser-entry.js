@@ -2,8 +2,8 @@
 
 const runtime_api = require("@drumee/ui-runtime/browser");
 const window_manager_api = require("@drumee/window-manager/browser");
-const finder_api = require("@phase48/finder");
-const { FinderWindow } = require("@phase48/finder/window");
+const finder_api = require("@drumee/finder");
+const { FinderWindow } = require("@drumee/finder/window");
 
 const hub_x = "a000000000000001";
 const hub_y = "b000000000000002";
