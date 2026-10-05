@@ -1,6 +1,6 @@
 # Phase 4.9 — Finder stabilization and standalone extraction
 
-Status: **IN PROGRESS — contract freeze passed; extraction pending**
+Status: **CLOSED / VALIDATED** on 2026-10-05.
 
 ## Opening baselines
 
@@ -75,8 +75,108 @@ list modes, large context menus, rich conflict UX, undo, trash/restore UI,
 sharing, Team/Chat integration, Hub administration, and Desk/global ownership
 remain deferred. Backend-enforced ancestor-cycle detection remains authoritative.
 
-## Extraction and closure
+## Standalone extraction
 
-Standalone repository/package evidence, packed consumer validation,
-reintegration results, full regressions, final heads and closure status will be
-appended only after the sequential extraction gate completes.
+The frozen subtree was extracted with history to:
+
+```text
+/home/somanos/github/finder
+branch: main
+HEAD: 730aa30 (fix: converge optimistic moves with committed sync)
+package: @drumee/finder@0.1.0-alpha.1
+```
+
+Core exports are deliberately limited to `Finder`, `FinderTransferPolicy`,
+`MediaClient`, `MfsClient`, `MfsSync`, `MfsTransferClient`, and
+`registerFinderKinds`. `FinderWindow` is exported only from
+`@drumee/finder/window`. `@drumee/ui-runtime >=0.1.0-alpha.2 <0.2.0` is a peer;
+`@drumee/window-manager` has the same range and is an optional peer.
+
+The package contains browser capability code, skeletons, skin and documents.
+It contains no backend implementation, SQL, server-runtime, system-mfs,
+FileIo, host-filesystem, media generator or archive worker. The packed clean
+consumer resolves only declared package entries, mounts both core Finder and
+FinderWindow in Chromium, and rejects transient/historical/backend modules in
+the Webpack graph.
+
+The preferred GitHub repository did not exist. An authorized creation attempt
+for `drumee/finder` failed because the authenticated `somanos` account lacks
+`CreateRepository` permission. The validated local repository is complete;
+remote creation/push is the sole external repository action deferred.
+
+## Reintegration
+
+Transient commit `a1e08d44e` removes `target/modules/finder` and points kernel
+validation at the standalone source boundary (overridable with
+`KERNEL_FINDER_ROOT`). No second production Finder implementation remains.
+Commit `7bc3c6c24` proves an optimistic same-hub MOVE is visible before service
+completion, the committed sync echo creates no duplicate, and pending
+operation state returns to zero. Cross-hub COPY remains server-committed
+because the backend assigns destination identities.
+
+## Final validation
+
+All results below are from the extracted/reintegrated boundary:
+
+| Suite | Result |
+|---|---:|
+| standalone Finder, including packed browser consumer/bundle boundary | 19/19 |
+| standalone server-runtime | 43/43 |
+| standalone ui-runtime | 26/26 |
+| standalone Window Manager | 6/6 |
+| transient server-runtime | 39/39 |
+| transient mfs-transfer | 7/7 |
+| Phase 4.9/4.8 focused unit/integration/browser validation | 46/46 |
+| real Nginx ZIP, `media.orig`, binary upload and oversize rejection | 4/4 |
+| standalone system-mfs artifact/filesystem/MariaDB/SQL suite | 9/9 |
+| Phase 4.6B and Phase 4.7 regression suite | 3/3 |
+
+The Finder browser scenario includes a 250-row paginated directory with five
+structural children, one shared preview observer per Finder, explicit
+near-viewport representation URLs, one shared MfsSync binding, reconnect
+refresh coalescing, five repeated mount/destroy cycles, idempotent double
+destroy and zero leaked Finder registrations. Upload chunks remained bounded
+`Blob` values; archive bytes never entered Finder or Node HTTP memory.
+
+Security validation retained trusted `Session.uid()`, runtime ACL decisions,
+transfer ownership, recipient-safe sync, allowlisted media representations,
+logical public identities and private physical paths. Backend authorization
+continues to enforce destination permission and ancestor-cycle safety.
+
+## Package evidence
+
+Final `npm pack --ignore-scripts --json` result:
+
+```text
+filename:       drumee-finder-0.1.0-alpha.1.tgz
+packed size:    18,853 bytes
+unpacked size:  69,363 bytes
+file count:     27
+sha1:           bfd8a4fbf49591aef285f3da8a87e34bf039a638
+sha512:         7+T1wF5G+Kyjr4ZuXmwN7xzZfhdZmGsIiPXz7BEPhLr/DKiCUxOapYU0AoBrUBeUrfTSTf4C59khXxtsEViDww==
+```
+
+No npm package was published.
+
+## Repository heads and invariants
+
+Validated implementation heads before this closure record:
+
+```text
+transient       7bc3c6c24  refactor/mapping
+finder          730aa30    main
+ui-runtime      5366d904356b414e87848a0bc8870b612e6c748a  main
+window-manager  e294979dfcb59f73af19975e40f890a0b366cd8c  main
+server-runtime  d17ecee8c645f1d14a7e2ef45a2f3542a27c0763  main
+system-mfs      a7f7395bdbc79560aed072219b87c0b81c004bce  main
+```
+
+`sources/**` is unchanged. `server-runtime`, `system-mfs`, `ui-runtime`, and
+Window Manager required no commits. Generic runtime `stop()` is unchanged.
+Phase 4.8 ACL, session, permission, upload, download, media/HLS,
+host-filesystem, FileIo/Nginx and SQL ownership/granularity architecture is
+preserved.
+
+All mandatory Phase 4.9 closure conditions are satisfied. The unavailable
+GitHub remote is not a package/runtime closure condition and is recorded as an
+external follow-up rather than fabricated as completed.
