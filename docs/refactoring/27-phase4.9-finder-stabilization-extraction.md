@@ -1,6 +1,6 @@
 # Phase 4.9 — Finder stabilization and standalone extraction
 
-Status: **CLOSED / VALIDATED** on 2026-10-05.
+Status: **CLOSED / VALIDATED / STANDALONE PUBLISHED** on 2026-10-05.
 
 ## Opening baselines
 
@@ -160,7 +160,38 @@ sha1:           bfd8a4fbf49591aef285f3da8a87e34bf039a638
 sha512:         7+T1wF5G+Kyjr4ZuXmwN7xzZfhdZmGsIiPXz7BEPhLr/DKiCUxOapYU0AoBrUBeUrfTSTf4C59khXxtsEViDww==
 ```
 
-No npm package was published.
+## Post-closure standalone publication
+
+The separately authorized release action published the already validated
+artifact from Finder Git HEAD
+`730aa309939f956d76f70beeed5d9e46846c0574` to the public npm registry:
+
+```text
+package:         @drumee/finder@0.1.0-alpha.1
+registry:        https://registry.npmjs.org/
+published:       2026-10-05T15:15:54.966Z
+intended tag:    next = 0.1.0-alpha.1
+registry tags:   next = 0.1.0-alpha.1
+                 latest = 0.1.0-alpha.1
+sha1:            bfd8a4fbf49591aef285f3da8a87e34bf039a638
+sha512:          7+T1wF5G+Kyjr4ZuXmwN7xzZfhdZmGsIiPXz7BEPhLr/DKiCUxOapYU0AoBrUBeUrfTSTf4C59khXxtsEViDww==
+```
+
+The registry-reported `gitHead`, file count, unpacked size, shasum and
+integrity match the validated Phase 4.9 artifact exactly. npm reports both
+`next` and `latest`; the intended prerelease channel is `next`, and no tag was
+manipulated after publication.
+
+A clean temporary consumer installed `@drumee/finder@next`,
+`@drumee/ui-runtime@0.1.0-alpha.2`, and
+`@drumee/window-manager@0.1.0-alpha.2` exclusively from npm. Both Finder entry
+points resolved under that consumer's `node_modules`. Its Webpack bundle
+contained no transient, backend, system-mfs or historical Team dependency;
+headless Chromium mounted core Finder and FinderWindow and released both sync
+registrations during destruction.
+
+This release changes distribution state only. It does not reopen Phase 4.9 or
+alter Phase 4.8 architecture.
 
 ## Repository heads and invariants
 
