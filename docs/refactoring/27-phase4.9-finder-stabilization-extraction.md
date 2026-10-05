@@ -99,10 +99,14 @@ consumer resolves only declared package entries, mounts both core Finder and
 FinderWindow in Chromium, and rejects transient/historical/backend modules in
 the Webpack graph.
 
-The preferred GitHub repository did not exist. An authorized creation attempt
-for `drumee/finder` failed because the authenticated `somanos` account lacks
-`CreateRepository` permission. The validated local repository is complete;
-remote creation/push is the sole external repository action deferred.
+During the initial Phase 4.9 execution, the preferred GitHub repository did
+not exist and an authorized creation attempt failed because the available
+GitHub credential lacked `CreateRepository` permission. That external action
+was subsequently resolved. The canonical standalone repository is now
+publicly available at `https://github.com/drumee/finder`, its default branch is
+`main`, and that branch resolves to
+`730aa309939f956d76f70beeed5d9e46846c0574`. No repository creation or history
+rewrite was performed during the post-closure verification.
 
 ## Reintegration
 
@@ -177,6 +181,7 @@ Phase 4.8 ACL, session, permission, upload, download, media/HLS,
 host-filesystem, FileIo/Nginx and SQL ownership/granularity architecture is
 preserved.
 
-All mandatory Phase 4.9 closure conditions are satisfied. The unavailable
-GitHub remote is not a package/runtime closure condition and is recorded as an
-external follow-up rather than fabricated as completed.
+All mandatory Phase 4.9 closure conditions are satisfied. The external GitHub
+repository follow-up recorded during initial closure is resolved: the public
+`drumee/finder` repository, default branch `main`, contains canonical Finder
+HEAD `730aa309939f956d76f70beeed5d9e46846c0574`.
