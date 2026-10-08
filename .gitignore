@@ -16,3 +16,24 @@ node_modules/
 
 tests/
 scripts/test-env/
+
+# Phase 4.8B source fixtures and reproducible validation are repository inputs,
+# not generated test output.
+!tests/
+tests/*
+!tests/fixtures/
+tests/fixtures/*
+!tests/fixtures/phase4.8b/
+!tests/fixtures/phase4.8b/**
+!tests/integration/
+tests/integration/*
+!tests/integration/kernel/
+tests/integration/kernel/*
+!tests/integration/kernel/phase4.8b-hub-lifecycle-live.test.js
+!scripts/
+scripts/*
+!scripts/test-env/
+scripts/test-env/*
+!scripts/test-env/kernel/
+scripts/test-env/kernel/*
+!scripts/test-env/kernel/phase4.8b-validation.sh

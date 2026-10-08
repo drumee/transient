@@ -1,0 +1,18 @@
+{
+  "manifestVersion": 2,
+  "owner": "@drumee/phase48b-own-fixture",
+  "packageVersion": "1.0.0",
+  "schemaVersion": "1",
+  "inherit": "own",
+  "requires": ["system-mfs"],
+  "provision": [
+    {
+      "order": 10,
+      "target": "hub",
+      "objectType": "table",
+      "objectName": "phase48b_own_marker",
+      "path": "server/schemas/hub/010-marker.sql"
+    }
+  ],
+  "objects": { "hub": { "tables": ["phase48b_own_marker"] } }
+}

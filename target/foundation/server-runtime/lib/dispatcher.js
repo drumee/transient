@@ -35,7 +35,7 @@ class ServiceDispatcher {
   }
 
   async dispatch({ service, session, input } = {}) {
-    const { resolved } = await this.authorizeRequest({ service, session, input });
+    const { resolved, decision } = await this.authorizeRequest({ service, session, input });
     if (resolved.requires.length) {
       if (!this.capability_resolver || typeof this.capability_resolver.requireAll !== "function") {
         throw new RuntimeError("CAPABILITY_UNAVAILABLE", `Required capability '${resolved.requires[0]}' is unavailable`, {
@@ -45,7 +45,12 @@ class ServiceDispatcher {
       await this.capability_resolver.requireAll(resolved.requires, { input, service: resolved.service, session });
     }
     const WorkerClass = this.getWorkerClass(resolved.workerPath);
-    const worker = new WorkerClass({ ...this.workerOptions, session, permission: resolved.permission });
+    const worker = new WorkerClass({
+      ...this.workerOptions,
+      session,
+      permission: resolved.permission,
+      hub_context: decision.hub_context || null
+    });
     if (!worker || typeof worker[resolved.method] !== "function") {
       if (worker && typeof worker.stop === "function") worker.stop();
       throw new RuntimeError("SERVICE_NOT_FOUND", `Worker does not implement ${resolved.service}`);

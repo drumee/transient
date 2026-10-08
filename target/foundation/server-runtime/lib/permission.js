@@ -56,7 +56,7 @@ async function authorizeMfs(resolved, backend) {
   return { granted: true, mode: "mfs", uid };
 }
 
-function createAuthorizer({ domainAuthorizer, mfsPermissionBackend } = {}) {
+function createAuthorizer({ domainAuthorizer, hubAuthorizer, mfsPermissionBackend } = {}) {
   return async function authorize(resolved) {
     const fastPath = await authorizeFastPath(resolved);
     if (fastPath.granted) return fastPath;
@@ -69,6 +69,13 @@ function createAuthorizer({ domainAuthorizer, mfsPermissionBackend } = {}) {
     }
 
     if (resolved && resolved.permission && resolved.permission.scope === "mfs") return authorizeMfs(resolved, mfsPermissionBackend);
+
+    if (resolved && resolved.permission && resolved.permission.scope === "hub") {
+      if (!hubAuthorizer || typeof hubAuthorizer.authorize !== "function") {
+        return { granted: false, mode: "hub", reason: "HUB_AUTHORIZER_REQUIRED" };
+      }
+      return hubAuthorizer.authorize(resolved);
+    }
 
     return { granted: false, mode: "unsupported", reason: "UNSUPPORTED_PERMISSION_SCOPE" };
   };

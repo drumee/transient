@@ -39,16 +39,22 @@ Phase 4.8
     backend depends on system-mfs
     no final standalone Finder extraction
 
+Phase 4.8B
+    generic Hub lifecycle and authorized server context
+    schema propagation through canonical module manifests
+    CLOSED / VALIDATED
+
 Phase 4.9
     real Finder usage and kernel stabilization
     stabilize Finder public contracts
     extract and validate standalone Finder
 
 After Phase 4.9
-    kernel maintenance, integration, compatibility and evolution
+    end-to-end validation with Oxymotion
+    then kernel maintenance, integration, compatibility and evolution
 
-Oxymot
-    separate future project for Marketing and business capabilities
+Oxymotion
+    separate consumer and owner of Marketing/business capabilities
 ```
 
 Repository and release milestones do not renumber feature phases. No phase
@@ -125,7 +131,26 @@ integration evidence. The detailed closure record is
 Finder remains in the integration workspace; standalone extraction is not part
 of this phase.
 
+## Phase 4.8B — Hub lifecycle and schema propagation (closed / validated)
+
+Phase 4.8B provides the application-neutral lifecycle missing between an
+authenticated principal and module data in a private Hub: idempotent Hub and
+shard assignment, Yellow Page registration, read/write Hub ACL, immutable
+schema plans, ordered/resumable trusted provisioners and an authorized server
+context. `server-runtime` consumes the context but does not own lifecycle;
+`system-mfs` provisions only its own objects in the assigned shard.
+
+The sole module schema contract remains `SCHEMA_MANIFEST.json`, extended with
+`inherit` and `requires`. The detailed implementation and validation record is
+[`30-phase4.8b-hub-lifecycle.md`](30-phase4.8b-hub-lifecycle.md).
+
 ## Phase 4.9 — Finder stabilization and standalone extraction
+
+Phase 4.8B is now the mandatory predecessor to this phase. Existing Finder
+standalone extraction/publication artifacts and the historical Phase 4.9
+closure report remain auditable repository facts, but they are not accepted as
+the current phase-gate proof. Finder must be revalidated against the 4.8B Hub
+context before Phase 4.9 can close in the revised sequence.
 
 Finder, rather than a business application, is the first substantial real
 consumer used to stabilize the complete kernel application platform. Actual

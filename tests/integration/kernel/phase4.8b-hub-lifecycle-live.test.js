@@ -1,0 +1,185 @@
+"use strict";
+
+const assert = require("node:assert/strict");
+const child_process = require("node:child_process");
+const fs = require("node:fs");
+const os = require("node:os");
+const path = require("node:path");
+const test = require("node:test");
+
+const enabled = process.env.KERNEL_PHASE48B_LIVE === "1";
+const root = path.resolve(__dirname, "../../..");
+const lifecycle_root = path.join(root, "target/control-plane/hub-lifecycle");
+const system_mfs_root = process.env.KERNEL_SYSTEM_MFS_ROOT || path.resolve(root, "../system-mfs");
+const fixtures = path.join(root, "tests/fixtures/phase4.8b");
+const { HubLifecycle, ModuleRegistry, SqlHubStore } = require(path.join(lifecycle_root, "lib"));
+const { checksum, normalizeManifest, readModuleManifest } = require(path.join(lifecycle_root, "lib/manifest"));
+const runtime = require(path.join(root, "target/foundation/server-runtime/lib"));
+const systemMfs = require(path.join(system_mfs_root, "lib"));
+
+const container = process.env.KERNEL_DB_CONTAINER || "transient-kernel-phase4-db";
+const yp = process.env.KERNEL_DB_NAME || "yp";
+const password = process.env.KERNEL_DB_ROOT_PASSWORD || "phase4-disposable-root";
+
+function literal(value) {
+  if (value === null || value === undefined) return "NULL";
+  if (typeof value === "number") return String(value);
+  return `'${String(value).replaceAll("\\", "\\\\").replaceAll("'", "''")}'`;
+}
+function bind(sql, parameters) {
+  let index = 0;
+  const output = sql.replace(/\?/g, () => literal(parameters[index++]));
+  if (index !== parameters.length) throw new Error("SQL parameter count mismatch");
+  return output;
+}
+function parse(output) {
+  const lines = output.trim().split("\n").filter(Boolean);
+  if (lines.length < 2) return [];
+  const headers = lines[0].split("\t");
+  return lines.slice(1).filter((line) => line.split("\t").length === headers.length).map((line) => Object.fromEntries(line.split("\t").map((value, index) => [headers[index], value === "NULL" ? null : value])));
+}
+function mariadb(database_name, sql, { input } = {}) {
+  const args = ["exec"];
+  if (input !== undefined) args.push("-i");
+  args.push("-e", `MYSQL_PWD=${password}`, container, "mariadb", "--protocol=tcp", "--host=127.0.0.1", "--user=root", "--batch", "--raw", database_name);
+  if (input === undefined) args.push("--execute", sql);
+  const result = child_process.spawnSync("docker", args, { encoding: "utf8", input });
+  if (result.status !== 0) throw new Error(`${result.stdout}\n${result.stderr}`.trim());
+  return parse(result.stdout);
+}
+const database = {
+  runtime_user: process.env.KERNEL_DB_USER || "kernel_phase4",
+  async query(sql, ...parameters) { return mariadb(yp, bind(sql, parameters)); },
+  async executeScript(script, { database: selected = yp } = {}) { mariadb(selected, "", { input: script }); },
+  async queryIn(selected, sql, ...parameters) { return mariadb(selected, bind(sql, parameters)); }
+};
+
+function trustedSession(uid = "phase4authuser01", domain_id = 41) {
+  return { isAuthenticated: () => true, uid: () => uid, identity: () => ({ id: uid, domainId: domain_id, kind: "drumate" }) };
+}
+
+function fixtureHandler(module_root, { fail_once = false } = {}) {
+  let should_fail = fail_once;
+  return async ({ hub }) => {
+    const manifest = JSON.parse(fs.readFileSync(path.join(module_root, "server/schemas/SCHEMA_MANIFEST.json"), "utf8"));
+    for (const entry of manifest.provision) await database.executeScript(fs.readFileSync(path.join(module_root, entry.path), "utf8"), { database: hub.database_name });
+    if (should_fail) { should_fail = false; throw Object.assign(new Error("injected after SQL success"), { code: "FIXTURE_POST_SQL_INTERRUPTION" }); }
+  };
+}
+
+function register(registry, module_id, module_root, handler, options = {}) {
+  return registry.register({ module_id, module_root, manifest: readModuleManifest(module_id, module_root), handler, artifact_ref: `fixture:${module_id}:1`, ...options });
+}
+
+test("Phase 4.8B real MariaDB Hub lifecycle, ACL, propagation and recovery", { skip: !enabled, timeout: 240000 }, async (t) => {
+  const store = new SqlHubStore({ database });
+  await store.install();
+  const mfs_store = new systemMfs.SqlMfsStore({ database });
+  await systemMfs.install({ store: mfs_store });
+  const registry = new ModuleRegistry();
+  register(registry, "system-mfs", system_mfs_root, async ({ hub }) => systemMfs.provision({ store: mfs_store, context: { hub_id: hub.hub_id } }), { artifact_ref: "system-mfs:a7f7395b" });
+  const installed_root = path.join(fixtures, "installed-module");
+  const own_root = path.join(fixtures, "own-module");
+  register(registry, "installed-module", installed_root, fixtureHandler(installed_root));
+  register(registry, "own-module", own_root, fixtureHandler(own_root));
+  const lifecycle = new HubLifecycle({ store, registry, can_create: async ({ organisation_id }) => organisation_id === 41 });
+
+  const installed_request = { session: trustedSession(), creator_module: "installed-module", specification: { idempotency_key: "phase48b-installed", name: "Phase 48B installed" } };
+  const installed = await lifecycle.createPrivateHub(installed_request);
+  const duplicate = await lifecycle.createPrivateHub(installed_request);
+  assert.deepEqual(duplicate, installed);
+  assert.deepEqual(Object.keys(installed).sort(), ["hub_id", "status"]);
+  const own = await lifecycle.createPrivateHub({ session: trustedSession(), creator_module: "own-module", specification: { idempotency_key: "phase48b-own", name: "Phase 48B own" } });
+  assert.notEqual(own.hub_id, installed.hub_id);
+  const installed_internal = await store.getHub(installed.hub_id);
+  const own_internal = await store.getHub(own.hub_id);
+  assert.notEqual(installed_internal.database_name, own_internal.database_name);
+  assert.equal(mariadb(installed_internal.database_name, "SHOW TABLES LIKE 'media'").length, 1);
+  assert.equal(mariadb(installed_internal.database_name, "SHOW TABLES LIKE 'phase48b_installed_marker'").length, 1);
+  assert.equal(mariadb(installed_internal.database_name, "SHOW TABLES LIKE 'phase48b_own_marker'").length, 1);
+  assert.equal(mariadb(own_internal.database_name, "SHOW TABLES LIKE 'media'").length, 1);
+  assert.equal(mariadb(own_internal.database_name, "SHOW TABLES LIKE 'phase48b_own_marker'").length, 1);
+  assert.equal(mariadb(own_internal.database_name, "SHOW TABLES LIKE 'phase48b_installed_marker'").length, 0);
+
+  const mfs = new systemMfs.MfsNamespace({ store: mfs_store, context: { hub_id: installed.hub_id }, principal: "phase4authuser01" });
+  const ready = await systemMfs.validateProvisioning({ store: mfs_store, context: { hub_id: installed.hub_id } });
+  const folder = await mfs.makeDirectory(ready.root_id, "Phase48B");
+  assert.equal((await mfs.resolveNode(folder.nid)).filename, "Phase48B");
+
+  const reader = "b000000000000002";
+  const owner_context = await store.resolveAuthorized({ hub_id: installed.hub_id, uid: "phase4authuser01", organisation_id: 41, permission: "write", capabilities: ["installed-module"] });
+  await lifecycle.grant({ actor_context: owner_context, target_uid: reader, permission: "read" });
+  assert.equal((await store.resolveAuthorized({ hub_id: installed.hub_id, uid: reader, organisation_id: 41, permission: "read" })).authorized, true);
+  await assert.rejects(() => store.resolveAuthorized({ hub_id: installed.hub_id, uid: reader, organisation_id: 41, permission: "write" }), (error) => error.code === "HUB_PERMISSION_DENIED");
+  await assert.rejects(() => store.resolveAuthorized({ hub_id: own.hub_id, uid: reader, organisation_id: 41, permission: "read" }), (error) => error.code === "HUB_PERMISSION_DENIED");
+
+  await database.executeScript("INSERT INTO phase48b_installed_marker(marker_key,marker_value) VALUES ('authorized','ok') ON DUPLICATE KEY UPDATE marker_value=VALUES(marker_value)", { database: installed_internal.database_name });
+  const descriptors = new runtime.DescriptorRegistry();
+  descriptors.registerDescriptor("fixture", { modules: { private: "fixture.js" }, services: { read: { scope: "hub", permission: { access: "read", selector: "hub_id", capabilities: ["installed-module"] } } } }, { workdir: "/trusted" });
+  class FixtureWorker {
+    constructor({ hub_context }) { this.hub_context = hub_context; }
+    async read() { return database.queryIn(this.hub_context.database_name, "CALL phase48b_installed_marker_read(?)", "authorized"); }
+  }
+  const dispatcher = new runtime.ServiceDispatcher({
+    registry: descriptors,
+    authorize: runtime.createAuthorizer({ hubAuthorizer: new runtime.HubAuthorizer({ resolver: store }) }),
+    requireWorker: () => FixtureWorker
+  });
+  const procedure = await dispatcher.dispatch({ service: "fixture.read", session: trustedSession(), input: { hub_id: installed.hub_id, database_name: own_internal.database_name } });
+  assert.equal(procedure[0].marker_value, "ok");
+
+  const later_root = path.join(fixtures, "later-module");
+  register(registry, "later-module", later_root, fixtureHandler(later_root, { fail_once: true }));
+  await database.executeScript("CREATE TABLE IF NOT EXISTS phase48b_sentinel (id INT PRIMARY KEY); INSERT IGNORE INTO phase48b_sentinel(id) VALUES (1)", { database: installed_internal.database_name });
+  await assert.rejects(() => lifecycle.upgradeExistingHubs({ inherit: "installed", limit: 1 }), (error) => error.code === "FIXTURE_POST_SQL_INTERRUPTION");
+  const failed = mariadb(yp, `SELECT status,attempt FROM hub_capability WHERE hub_id='${installed.hub_id}' AND module_id='later-module'`)[0];
+  assert.equal(failed.status, "failed");
+  assert.equal(mariadb(installed_internal.database_name, "SHOW TABLES LIKE 'phase48b_later_marker'").length, 1);
+  assert.equal((await store.resolveAuthorized({ hub_id: installed.hub_id, uid: "phase4authuser01", organisation_id: 41, permission: "read", capabilities: ["installed-module"] })).authorized, true);
+  await assert.rejects(() => store.resolveAuthorized({ hub_id: installed.hub_id, uid: "phase4authuser01", organisation_id: 41, permission: "read", capabilities: ["later-module"] }), (error) => error.code === "HUB_CAPABILITY_NOT_READY");
+  const upgrade_page = await lifecycle.upgradeExistingHubs({ inherit: "installed", limit: 1 });
+  assert.equal(upgrade_page.next, installed.hub_id);
+  assert.deepEqual((await lifecycle.upgradeExistingHubs({ inherit: "installed", after: upgrade_page.next, limit: 1 })).results, []);
+  const resumed = mariadb(yp, `SELECT status,attempt FROM hub_capability WHERE hub_id='${installed.hub_id}' AND module_id='later-module'`)[0];
+  assert.equal(resumed.status, "ready");
+  assert.equal(Number(resumed.attempt), 2);
+  assert.equal(mariadb(own_internal.database_name, "SHOW TABLES LIKE 'phase48b_later_marker'").length, 0);
+  assert.equal(Number(mariadb(installed_internal.database_name, "SELECT COUNT(*) AS count FROM phase48b_sentinel WHERE id=1")[0].count), 1);
+
+  registry.get("later-module").active = false;
+  assert.equal(mariadb(installed_internal.database_name, "SHOW TABLES LIKE 'phase48b_later_marker'").length, 1);
+
+  registry.register({
+    module_id: "concurrent-creator",
+    manifest: normalizeManifest("concurrent-creator", { schemaVersion: "1", inherit: "own", requires: [] }, { package_metadata: { version: "1.0.0" } }),
+    handler: async () => {},
+    artifact_ref: "fixture:concurrent-creator:1"
+  });
+  const interrupted_specification = { idempotency_key: "phase48b-allocation-resume", name: "Allocation resume" };
+  const interrupted_fingerprint = checksum({ creator_module: "concurrent-creator", organisation_id: 41, uid: "phase4authuser01", name: interrupted_specification.name });
+  const allocating = await store.reserveRequest({ organisation_id: 41, creator_uid: "phase4authuser01", creator_module: "concurrent-creator", idempotency_key: interrupted_specification.idempotency_key, fingerprint: interrupted_fingerprint, public_name: interrupted_specification.name, inherit: "own" });
+  assert.equal(allocating.state, "allocating");
+  assert.equal(mariadb(yp, `SELECT schema_name FROM information_schema.schemata WHERE schema_name='${allocating.database_name}'`).length, 0);
+  const allocation_resumed = await lifecycle.createPrivateHub({ session: trustedSession(), creator_module: "concurrent-creator", specification: interrupted_specification });
+  assert.equal(allocation_resumed.hub_id, allocating.hub_id);
+  assert.equal((await store.getHub(allocating.hub_id)).state, "ready");
+  const concurrent_request = { session: trustedSession(), creator_module: "concurrent-creator", specification: { idempotency_key: "phase48b-concurrent", name: "Concurrent" } };
+  const concurrent = await Promise.all([
+    lifecycle.createPrivateHub(concurrent_request),
+    lifecycle.createPrivateHub(concurrent_request)
+  ]);
+  assert.equal(concurrent[0].hub_id, concurrent[1].hub_id);
+  assert.equal(Number(mariadb(yp, `SELECT COUNT(*) AS count FROM hub_lifecycle WHERE hub_id='${concurrent[0].hub_id}'`)[0].count), 1);
+  assert.equal(Number(mariadb(yp, `SELECT COUNT(*) AS count FROM entity WHERE id='${concurrent[0].hub_id}'`)[0].count), 1);
+
+  const copy = fs.mkdtempSync(path.join(os.tmpdir(), "phase48b-control-plane-copy-"));
+  t.after(() => fs.rmSync(copy, { recursive: true, force: true }));
+  fs.cpSync(lifecycle_root, copy, { recursive: true });
+  const copied = require(path.join(copy, "lib"));
+  const second_store = new copied.SqlHubStore({ database });
+  assert.equal((await second_store.getHub(installed.hub_id)).database_name, installed_internal.database_name);
+  assert.equal(mariadb(installed_internal.database_name, "SELECT marker_value FROM phase48b_installed_marker WHERE marker_key='authorized'")[0].marker_value, "ok");
+
+  const exposed = JSON.stringify({ installed, own, procedure });
+  assert.doesNotMatch(exposed, /hub_[a-f0-9]{16}|phase4-disposable-root|db_host|database_name/i);
+});

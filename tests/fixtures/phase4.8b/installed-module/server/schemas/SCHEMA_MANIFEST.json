@@ -1,0 +1,30 @@
+{
+  "manifestVersion": 2,
+  "owner": "@drumee/phase48b-installed-fixture",
+  "packageVersion": "1.0.0",
+  "schemaVersion": "1",
+  "inherit": "installed",
+  "requires": ["system-mfs"],
+  "provision": [
+    {
+      "order": 10,
+      "target": "hub",
+      "objectType": "table",
+      "objectName": "phase48b_installed_marker",
+      "path": "server/schemas/hub/010-marker.sql"
+    },
+    {
+      "order": 20,
+      "target": "hub",
+      "objectType": "procedure",
+      "objectName": "phase48b_installed_marker_read",
+      "path": "server/schemas/hub/020-marker-read.sql"
+    }
+  ],
+  "objects": {
+    "hub": {
+      "tables": ["phase48b_installed_marker"],
+      "procedures": ["phase48b_installed_marker_read"]
+    }
+  }
+}

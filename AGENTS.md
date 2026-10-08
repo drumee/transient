@@ -47,8 +47,9 @@ Phase 4.6   platform bootstrap contract + system-mfs             CLOSED
 R2          standalone system-mfs extraction                      CLOSED / VALIDATED
 Phase 4.7   Window Manager UI capability + standalone extraction CLOSED / VALIDATED
 Phase 4.8   Finder implementation and integration                 IMPLEMENTED / VALIDATED
+Phase 4.8B  Hub lifecycle, authorized context, schema propagation IMPLEMENTED / VALIDATED
 Phase 4.9   Finder real-use stabilization + standalone extraction PLANNED
-Oxymot      separate future Marketing/business project
+Oxymotion   end-to-end consumer validation after Phase 4.9        PLANNED
 ```
 
 Do not repeat Phase 2 unless correcting a demonstrated defect.
@@ -313,7 +314,9 @@ minimal runtime
 → standalone system-mfs extraction
 → Window Manager independent from MFS
 → Finder implementation and integration
+→ generic Hub lifecycle and schema propagation
 → real Finder stabilization and standalone extraction
+→ end-to-end Oxymotion validation
 → kernel maintenance and evolution
 ```
 
@@ -1247,6 +1250,15 @@ generic capability resolver. The runtime resolver remains MFS-agnostic and
 introduces no package solver or automatic provisioning. Finder remains a
 future system application.
 
+Phase 4.8B subsequently adds the generic Hub control-plane lifecycle before
+Phase 4.9: idempotent private Hub/shard creation, Yellow Page Hub registry,
+Hub ACL, immutable schema-capability plans, resumable provisioning and an
+injected authorized Hub context for server services. The control plane owns
+the lifecycle; `server-runtime` only consumes authorization/context and
+`system-mfs` remains a provisioner for an assigned shard. Module schema
+propagation extends the sole `SCHEMA_MANIFEST.json` contract with `inherit`
+and `requires`; no parallel capabilities manifest is allowed.
+
 ---
 
 # 30. Canonical post-Phase 4.6 roadmap
@@ -1265,8 +1277,9 @@ Finder workflows to stabilize the kernel and then extracts Finder as a
 standalone module/package.
 
 This project owns the kernel, system modules, Window Manager and Finder. A
-future separate Oxymot project owns Marketing and business capabilities.
-Oxymot remains separate and Phase 4.9 is not authorized by Phase 4.8 closure.
+separate Oxymotion project owns Marketing and business capabilities. Its
+end-to-end validation follows the revalidated Phase 4.9 boundary. Oxymotion
+remains separate and Phase 4.9 is not authorized merely by Phase 4.8B closure.
 
 ---
 

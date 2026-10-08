@@ -7,6 +7,7 @@ const { RuntimeOutput } = require("./output");
 const { RuntimeError } = require("./errors");
 const { authorizeFastPath, authorizeMfs, createAuthorizer, fastCheckName } = require("./permission");
 const { DomainAuthorizer } = require("./domain-authorizer");
+const { HubAuthorizer } = require("./hub-authorizer");
 const { SESSION_SELECTOR_HEADER, sessionAuthorization } = require("./input");
 const { KernelSession, NOBODY_UID, SESSION_COOKIE, SessionManager, createOtak, validSessionId } = require("./session");
 const { YellowPageStore } = require("./yellow-page-store");
@@ -18,6 +19,7 @@ module.exports = {
   CapabilityResolver,
   DomainAuthorizer,
   FrontendPluginResolver,
+  HubAuthorizer,
   KernelSession,
   NOBODY_UID,
   RuntimeError,

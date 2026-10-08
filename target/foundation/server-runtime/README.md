@@ -12,7 +12,12 @@ the current `@drumee/server-essentials` dependency.
 
 The approved private seam is limited to `scope: "domain"` → Yellow Page
 `domain_permission`, with real `session_signin`/`regsid` session handling.
-Hub scope, Hub shards, MFS, provisioning and Team router policy are excluded.
+Hub lifecycle, shard allocation, provisioning and Team router policy are
+excluded. Phase 4.8B adds only an injected `scope: "hub"` authorization seam:
+the runtime validates the authenticated session and opaque Hub selection,
+delegates ACL/shard/capability readiness to the control plane resolver, then
+passes the resulting internal `hub_context` to the worker. The runtime never
+creates a Hub or trusts a client-supplied database locator.
 
 ## Phase 4.5 export boundary
 
