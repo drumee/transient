@@ -7,8 +7,6 @@ const { HubLifecycleError } = require("./errors");
 const SCHEMA = path.resolve(__dirname, "../schemas/001-hub-lifecycle.sql");
 const ID = /^[a-f0-9]{16}$/i;
 const SQL_ID = /^[a-z0-9_]+$/i;
-const READ = 1;
-const WRITE = 2;
 
 function rows(value) {
   if (!value) return [];
@@ -22,18 +20,40 @@ function quoteIdentifier(value) {
 }
 
 class SqlHubStore {
-  constructor({ database } = {}) {
+  constructor({ database, acl } = {}) {
     const query = database && (database.await_query || database.query);
     if (typeof query !== "function") throw new HubLifecycleError("HUB_DATABASE_REQUIRED", "Hub lifecycle requires a parameterized Yellow Page adapter");
+    if (!acl || typeof acl.permissionFor !== "function" || typeof acl.privilegeFor !== "function" || typeof acl.grants !== "function") {
+      throw new HubLifecycleError("HUB_ACL_CONTRACT_REQUIRED", "Hub lifecycle requires the canonical server-essentials ACL contract");
+    }
     this.database = database;
+    this.acl = acl;
     this.query = query.bind(database);
     this.executeScript = typeof database.executeScript === "function" ? database.executeScript.bind(database) : null;
   }
 
   async install() {
     const sql = fs.readFileSync(SCHEMA, "utf8");
-    if (this.executeScript) return this.executeScript(sql, { database: "yp" });
-    return this.query(sql);
+    if (this.executeScript) await this.executeScript(sql, { database: "yp" });
+    else await this.query(sql);
+    await this.migrateLegacyAcl();
+  }
+
+  async migrateLegacyAcl() {
+    const columns = rows(await this.query(
+      "SELECT column_name FROM information_schema.columns WHERE table_schema=DATABASE() AND table_name='hub_acl'"
+    ));
+    const names = new Set(columns.map((row) => row.column_name || row.COLUMN_NAME));
+    if (!names.has("permission")) return;
+    if (!names.has("privilege")) {
+      await this.query("ALTER TABLE hub_acl ADD COLUMN privilege tinyint(3) unsigned NULL AFTER uid");
+    }
+    await this.query(
+      "UPDATE hub_acl SET privilege=CASE permission WHEN 1 THEN ? WHEN 2 THEN ? WHEN 3 THEN ? ELSE permission END WHERE privilege IS NULL",
+      this.acl.privilege.read, this.acl.privilege.write, this.acl.privilege.write
+    );
+    await this.query("ALTER TABLE hub_acl MODIFY privilege tinyint(3) unsigned NOT NULL");
+    await this.query("ALTER TABLE hub_acl MODIFY permission tinyint(3) unsigned NULL DEFAULT NULL");
   }
 
   async generateId() {
@@ -68,7 +88,7 @@ class SqlHubStore {
       "INSERT IGNORE INTO hub (id,owner_id,domain_id,name,ctime,mtime) VALUES (?,?,?,?,UNIX_TIMESTAMP(),UNIX_TIMESTAMP())",
       hub_id, creator_uid, organisation_id, public_name
     );
-    await this.grant(hub_id, creator_uid, READ | WRITE, creator_uid);
+    await this.setPrivilege(hub_id, creator_uid, this.acl.privilege.owner, creator_uid);
     return this.getHub(hub_id);
   }
 
@@ -87,29 +107,35 @@ class SqlHubStore {
 
   async getHub(hub_id) {
     return rows(await this.query(
-      "SELECT l.hub_id,l.organisation_id,l.creator_uid,l.creator_module,l.inherit_policy,l.public_name,l.database_name,l.state,l.error_code,e.type,e.db_host,e.fs_host,e.home_dir,e.home_id FROM hub_lifecycle l INNER JOIN entity e ON e.id=l.hub_id WHERE l.hub_id=? LIMIT 1",
+      "SELECT l.hub_id,l.organisation_id,l.creator_uid,l.creator_module,l.inherit_policy,l.public_name,l.database_name,l.state,l.error_code,h.owner_id,e.type,e.db_host,e.fs_host,e.home_dir,e.home_id FROM hub_lifecycle l INNER JOIN entity e ON e.id=l.hub_id INNER JOIN hub h ON h.id=l.hub_id WHERE l.hub_id=? LIMIT 1",
       hub_id
     ))[0] || null;
   }
 
-  async grant(hub_id, uid, permission, granted_by) {
-    const normalized = Number(permission);
-    if (!Number.isInteger(normalized) || normalized < 1 || normalized > 3) throw new HubLifecycleError("HUB_PERMISSION_INVALID", "Hub permission must be read(1), write(2), or read+write(3)");
+  async setPrivilege(hub_id, uid, privilege, granted_by) {
+    const normalized = this.acl.privilegeFor(privilege);
     await this.query(
-      "INSERT INTO hub_acl (hub_id,uid,permission,granted_by,ctime,mtime) VALUES (?,?,?,?,UNIX_TIMESTAMP(),UNIX_TIMESTAMP()) ON DUPLICATE KEY UPDATE permission=VALUES(permission),granted_by=VALUES(granted_by),mtime=UNIX_TIMESTAMP()",
+      "INSERT INTO hub_acl (hub_id,uid,privilege,granted_by,ctime,mtime) VALUES (?,?,?,?,UNIX_TIMESTAMP(),UNIX_TIMESTAMP()) ON DUPLICATE KEY UPDATE privilege=VALUES(privilege),granted_by=VALUES(granted_by),mtime=UNIX_TIMESTAMP()",
       hub_id, uid, normalized, granted_by
     );
   }
 
-  async resolveAuthorized({ hub_id, uid, organisation_id, permission, capabilities = [] }) {
+  async getPrivilege(hub_id, uid) {
+    const acl = rows(await this.query("SELECT privilege FROM hub_acl WHERE hub_id=? AND uid=? LIMIT 1", hub_id, uid))[0];
+    return Number(acl && acl.privilege || 0);
+  }
+
+  async revokePrivilege(hub_id, uid) {
+    await this.query("DELETE FROM hub_acl WHERE hub_id=? AND uid=?", hub_id, uid);
+  }
+
+  async resolveAuthorized({ hub_id, uid, organisation_id, asked_permission, capabilities = [] }) {
     const hub = await this.getHub(hub_id);
     if (!hub || hub.type !== "hub") throw new HubLifecycleError("HUB_NOT_FOUND", "Hub does not exist");
     if (Number(hub.organisation_id) !== Number(organisation_id)) throw new HubLifecycleError("HUB_ORGANISATION_MISMATCH", "Hub does not belong to the authenticated organisation");
-    const acl = rows(await this.query("SELECT permission FROM hub_acl WHERE hub_id=? AND uid=? LIMIT 1", hub_id, uid))[0];
-    const effective = Number(acl && acl.permission || 0);
-    const asked = permission === "write" ? WRITE : READ;
-    const granted = asked === READ ? Boolean(effective & (READ | WRITE)) : Boolean(effective & WRITE);
-    if (!granted) throw new HubLifecycleError("HUB_PERMISSION_DENIED", `Hub ${permission} permission denied`);
+    const effective_privilege = await this.getPrivilege(hub_id, uid);
+    const asked = this.acl.permissionFor(asked_permission);
+    if (!this.acl.grants(effective_privilege, asked)) throw new HubLifecycleError("HUB_PERMISSION_DENIED", `Hub permission bit ${asked} denied`);
     const exists = rows(await this.query("SELECT schema_name FROM information_schema.schemata WHERE schema_name=?", hub.database_name)).length === 1;
     if (!exists) throw new HubLifecycleError("HUB_SHARD_UNAVAILABLE", "Assigned Hub shard does not exist");
     const creation_ready = rows(await this.query("SELECT id FROM hub_plan WHERE hub_id=? AND kind='create' AND status='ready' LIMIT 1", hub_id)).length === 1;
@@ -118,7 +144,7 @@ class SqlHubStore {
       const state = rows(await this.query("SELECT status FROM hub_capability WHERE hub_id=? AND module_id=? LIMIT 1", hub_id, module_id))[0];
       if (!state || state.status !== "ready") throw new HubLifecycleError("HUB_CAPABILITY_NOT_READY", `Hub capability '${module_id}' is not ready`, { hub_id, module_id, status: state && state.status || "missing" });
     }
-    return Object.freeze({ hub_id, type: "hub", organisation_id: Number(hub.organisation_id), uid, permission, database_name: hub.database_name, db_host: hub.db_host || "", fs_host: hub.fs_host || "", home_dir: hub.home_dir, home_id: hub.home_id || null, authorized: true });
+    return Object.freeze({ hub_id, type: "hub", organisation_id: Number(hub.organisation_id), uid, asked_permission: asked, privilege: effective_privilege, database_name: hub.database_name, db_host: hub.db_host || "", fs_host: hub.fs_host || "", home_dir: hub.home_dir, home_id: hub.home_id || null, authorized: true });
   }
 
   async findPlan(hub_id, fingerprint) {
@@ -172,4 +198,4 @@ class SqlHubStore {
   }
 }
 
-module.exports = { ID, READ, SCHEMA, SqlHubStore, WRITE, quoteIdentifier, rows };
+module.exports = { ID, SCHEMA, SqlHubStore, quoteIdentifier, rows };

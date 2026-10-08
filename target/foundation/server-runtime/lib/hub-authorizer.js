@@ -5,9 +5,14 @@ const { RuntimeError } = require("./errors");
 const HUB_ID = /^[a-f0-9]{16}$/i;
 
 class HubAuthorizer {
-  constructor({ resolver } = {}) {
+  constructor({ resolver, permissionValue } = {}) {
     if (!resolver || typeof resolver.resolveAuthorized !== "function") throw new RuntimeError("HUB_RESOLVER_REQUIRED", "Hub authorization requires an injected lifecycle resolver");
+    if (typeof permissionValue !== "function") throw new RuntimeError("PERMISSION_CONVERTER_REQUIRED", "Hub authorization requires the current server-essentials permissionValue converter");
     this.resolver = resolver;
+    this.permission_bits = new Set(["read", "write", "delete", "admin", "owner"].map((name) => Number(permissionValue(name))));
+    if (this.permission_bits.size !== 5 || [...this.permission_bits].some((value) => !Number.isInteger(value) || value <= 0)) {
+      throw new RuntimeError("PERMISSION_CONVERTER_INVALID", "Hub authorization received invalid canonical permission values");
+    }
   }
 
   async authorize(resolved = {}) {
@@ -23,14 +28,14 @@ class HubAuthorizer {
     const selector = resolved.permission && resolved.permission.selector || "hub_id";
     const requested = resolved.input && resolved.input[selector];
     if (typeof requested !== "string" || !HUB_ID.test(requested)) return { granted: false, mode: "hub", reason: "HUB_SELECTION_REQUIRED" };
-    const permission = resolved.permission && resolved.permission.access;
-    if (!["read", "write"].includes(permission)) return { granted: false, mode: "hub", reason: "HUB_PERMISSION_INVALID" };
+    const asked_permission = Number(resolved.permission && resolved.permission.src);
+    if (!this.permission_bits.has(asked_permission)) return { granted: false, mode: "hub", reason: "HUB_PERMISSION_INVALID" };
     try {
       const hub_context = await this.resolver.resolveAuthorized({
         hub_id: requested.toLowerCase(),
         uid,
         organisation_id: Number(principal.domainId),
-        permission,
+        asked_permission,
         capabilities: Array.isArray(resolved.permission.capabilities) ? resolved.permission.capabilities : []
       });
       return { granted: true, mode: "hub", uid, hub_context };

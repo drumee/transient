@@ -1259,6 +1259,16 @@ the lifecycle; `server-runtime` only consumes authorization/context and
 propagation extends the sole `SCHEMA_MANIFEST.json` contract with `inherit`
 and `requires`; no parallel capabilities manifest is allowed.
 
+Phase 4.8B Hub authorization uses the current server-essentials ACL contract,
+not a parallel read/write mask. A requested permission is a single bit
+(`read=2`, `write=4`, `delete=8`, `admin=16`, `owner=32`); a stored privilege
+is the cumulative word (`3`, `7`, `15`, `31`, `63`). The creating Drumate is
+the durable owner and receives privilege 63. ACL grant/revoke requires the
+admin bit; write does not confer ACL-management authority. The public ACL page
+currently showing write as 8 diverges from the executable constants—8 is the
+delete bit—and must not override `server-essentials` or historical bitwise
+runtime/MFS usage.
+
 ---
 
 # 30. Canonical post-Phase 4.6 roadmap

@@ -2,8 +2,11 @@
 
 const assert = require("node:assert/strict");
 const test = require("node:test");
-const { HubLifecycle, ModuleRegistry } = require("../lib");
+const { HubLifecycle, ModuleRegistry, createAclContract } = require("../lib");
 const { normalizeManifest } = require("../lib/manifest");
+const Constants = require("../../../../sources/server-essentials/lib/lex/constants");
+
+const ACL = createAclContract(Constants);
 
 function manifest(module_id, { inherit, requires = [], objects = [module_id.replaceAll("-", "_")] } = {}) {
   return normalizeManifest(module_id, {
@@ -25,6 +28,7 @@ function session(uid = "a000000000000001", domain_id = 1) {
 
 class MemoryStore {
   constructor() {
+    this.acl = ACL;
     this.serial = 0;
     this.requests = new Map();
     this.hubs = new Map();
@@ -40,21 +44,24 @@ class MemoryStore {
     if (prior) return structuredClone(this.hubs.get(prior.hub_id));
     const hub_id = (++this.serial).toString(16).padStart(16, "0");
     this.requests.set(key, { fingerprint: value.fingerprint, hub_id });
-    this.hubs.set(hub_id, { hub_id, organisation_id: value.organisation_id, creator_uid: value.creator_uid, creator_module: value.creator_module, inherit_policy: value.inherit, public_name: value.public_name, database_name: `hub_${hub_id}`, state: "allocating", type: "hub" });
-    await this.grant(hub_id, value.creator_uid, 3, value.creator_uid);
+    this.hubs.set(hub_id, { hub_id, organisation_id: value.organisation_id, creator_uid: value.creator_uid, owner_id: value.creator_uid, creator_module: value.creator_module, inherit_policy: value.inherit, public_name: value.public_name, database_name: `hub_${hub_id}`, state: "allocating", type: "hub" });
+    await this.setPrivilege(hub_id, value.creator_uid, this.acl.privilege.owner, value.creator_uid);
     return structuredClone(this.hubs.get(hub_id));
   }
   async ensureShard(hub) { const value = this.hubs.get(hub.hub_id); value.state = value.state === "allocating" ? "provisioning" : value.state; value.shard_exists = true; return structuredClone(value); }
   async getHub(hub_id) { const value = this.hubs.get(hub_id); return value && structuredClone(value); }
-  async grant(hub_id, uid, permission) { this.acls.set(`${hub_id}:${uid}`, permission); }
-  async resolveAuthorized({ hub_id, uid, organisation_id, permission, capabilities = [] }) {
+  async setPrivilege(hub_id, uid, privilege) { this.acls.set(`${hub_id}:${uid}`, this.acl.privilegeFor(privilege)); }
+  async getPrivilege(hub_id, uid) { return this.acls.get(`${hub_id}:${uid}`) || 0; }
+  async revokePrivilege(hub_id, uid) { this.acls.delete(`${hub_id}:${uid}`); }
+  async resolveAuthorized({ hub_id, uid, organisation_id, asked_permission, capabilities = [] }) {
     const hub = this.hubs.get(hub_id);
     if (!hub) throw Object.assign(new Error("missing"), { code: "HUB_NOT_FOUND" });
     if (Number(hub.organisation_id) !== Number(organisation_id)) throw Object.assign(new Error("org"), { code: "HUB_ORGANISATION_MISMATCH" });
-    const effective = this.acls.get(`${hub_id}:${uid}`) || 0;
-    if (permission === "write" ? !(effective & 2) : !(effective & 3)) throw Object.assign(new Error("denied"), { code: "HUB_PERMISSION_DENIED" });
+    const effective = await this.getPrivilege(hub_id, uid);
+    const asked = this.acl.permissionFor(asked_permission);
+    if (!this.acl.grants(effective, asked)) throw Object.assign(new Error("denied"), { code: "HUB_PERMISSION_DENIED" });
     for (const module_id of capabilities) if (this.capabilities.get(`${hub_id}:${module_id}`)?.status !== "ready") throw Object.assign(new Error("not ready"), { code: "HUB_CAPABILITY_NOT_READY" });
-    return Object.freeze({ hub_id, uid, organisation_id, permission, type: "hub", database_name: hub.database_name, authorized: true });
+    return Object.freeze({ hub_id, uid, organisation_id, asked_permission: asked, privilege: effective, type: "hub", database_name: hub.database_name, authorized: true });
   }
   planKey(hub_id, fingerprint) { return `${hub_id}:${fingerprint}`; }
   async findPlan(hub_id, fingerprint) { const value = this.plans.get(this.planKey(hub_id, fingerprint)); return value && structuredClone(value); }
@@ -103,6 +110,15 @@ function registry(records) {
   for (const record of records) value.register(record);
   return value;
 }
+
+test("ACL contract is derived from server-essentials without a parallel numeric hierarchy", () => {
+  assert.deepEqual(ACL.permission, { read: 2, write: 4, delete: 8, admin: 16, owner: 32 });
+  assert.deepEqual(ACL.privilege, { read: 3, write: 7, delete: 15, admin: 31, owner: 63 });
+  assert.equal(ACL.grants(ACL.privilege.write, ACL.permission.write), true);
+  assert.equal(ACL.grants(ACL.privilege.write, ACL.permission.delete), false);
+  assert.equal(ACL.grants(ACL.privilege.admin, ACL.permission.owner), false);
+  assert.equal(ACL.grants(ACL.privilege.owner, ACL.permission.owner), true);
+});
 
 test("canonical manifest defaults inherit/requires and rejects unknown policy", () => {
   const value = manifest("fixture-default");
@@ -204,16 +220,38 @@ test("ownership collisions are rejected before a plan can execute", () => {
   assert.throws(() => modules.resolvePlan("a"), (error) => error.code === "SCHEMA_OBJECT_COLLISION");
 });
 
-test("ACL context enforces organisation/read/write and capability readiness", async () => {
+test("ACL uses canonical requested bits and cumulative read/write/delete/admin/owner privileges", async () => {
   const store = new MemoryStore();
   const modules = registry([{ module_id: "app", manifest: manifest("app", { inherit: "own" }), handler: async () => {} }]);
   const lifecycle = new HubLifecycle({ store, registry: modules });
   const created = await lifecycle.createPrivateHub({ session: session(), creator_module: "app", specification: { idempotency_key: "acl", name: "ACL" } });
-  const owner = await store.resolveAuthorized({ hub_id: created.hub_id, uid: "a000000000000001", organisation_id: 1, permission: "write", capabilities: ["app"] });
-  await lifecycle.grant({ actor_context: owner, target_uid: "b000000000000002", permission: "read" });
-  assert.equal((await store.resolveAuthorized({ hub_id: created.hub_id, uid: "b000000000000002", organisation_id: 1, permission: "read" })).authorized, true);
-  await assert.rejects(() => store.resolveAuthorized({ hub_id: created.hub_id, uid: "b000000000000002", organisation_id: 1, permission: "write" }), (error) => error.code === "HUB_PERMISSION_DENIED");
-  await assert.rejects(() => store.resolveAuthorized({ hub_id: created.hub_id, uid: "b000000000000002", organisation_id: 2, permission: "read" }), (error) => error.code === "HUB_ORGANISATION_MISMATCH");
+  const owner = await store.resolveAuthorized({ hub_id: created.hub_id, uid: "a000000000000001", organisation_id: 1, asked_permission: ACL.permission.admin, capabilities: ["app"] });
+  assert.equal(owner.privilege, ACL.privilege.owner);
+  assert.equal(store.hubs.get(created.hub_id).creator_uid, owner.uid);
+
+  const reader_uid = "b000000000000002";
+  const writer_uid = "c000000000000003";
+  const deleter_uid = "d000000000000004";
+  const admin_uid = "e000000000000005";
+  await lifecycle.grant({ actor_context: owner, target_uid: reader_uid, privilege: "read" });
+  await lifecycle.grant({ actor_context: owner, target_uid: writer_uid, privilege: "write" });
+  await lifecycle.grant({ actor_context: owner, target_uid: deleter_uid, privilege: "delete" });
+  await lifecycle.grant({ actor_context: owner, target_uid: admin_uid, privilege: "admin" });
+  assert.deepEqual([reader_uid, writer_uid, deleter_uid, admin_uid].map((uid) => store.acls.get(`${created.hub_id}:${uid}`)), [3, 7, 15, 31]);
+
+  assert.equal((await store.resolveAuthorized({ hub_id: created.hub_id, uid: reader_uid, organisation_id: 1, asked_permission: ACL.permission.read })).authorized, true);
+  await assert.rejects(() => store.resolveAuthorized({ hub_id: created.hub_id, uid: reader_uid, organisation_id: 1, asked_permission: ACL.permission.write }), (error) => error.code === "HUB_PERMISSION_DENIED");
+  const writer = await store.resolveAuthorized({ hub_id: created.hub_id, uid: writer_uid, organisation_id: 1, asked_permission: ACL.permission.write });
+  await assert.rejects(() => store.resolveAuthorized({ hub_id: created.hub_id, uid: writer_uid, organisation_id: 1, asked_permission: ACL.permission.delete }), (error) => error.code === "HUB_PERMISSION_DENIED");
+  await assert.rejects(() => lifecycle.grant({ actor_context: writer, target_uid: reader_uid, privilege: "write" }), (error) => error.code === "HUB_PERMISSION_DENIED");
+  assert.equal((await store.resolveAuthorized({ hub_id: created.hub_id, uid: deleter_uid, organisation_id: 1, asked_permission: ACL.permission.delete })).authorized, true);
+
+  const admin = await store.resolveAuthorized({ hub_id: created.hub_id, uid: admin_uid, organisation_id: 1, asked_permission: ACL.permission.admin });
+  await lifecycle.revoke({ actor_context: admin, target_uid: reader_uid });
+  await assert.rejects(() => store.resolveAuthorized({ hub_id: created.hub_id, uid: reader_uid, organisation_id: 1, asked_permission: ACL.permission.read }), (error) => error.code === "HUB_PERMISSION_DENIED");
+  await assert.rejects(() => lifecycle.grant({ actor_context: admin, target_uid: reader_uid, privilege: "owner" }), (error) => error.code === "HUB_OWNER_TRANSFER_REQUIRED");
+  await assert.rejects(() => lifecycle.revoke({ actor_context: admin, target_uid: owner.uid }), (error) => error.code === "HUB_OWNER_REVOKE_DENIED");
+  await assert.rejects(() => store.resolveAuthorized({ hub_id: created.hub_id, uid: admin_uid, organisation_id: 2, asked_permission: ACL.permission.read }), (error) => error.code === "HUB_ORGANISATION_MISMATCH");
 });
 
 test("physical locator and policy fields are rejected from public creation input", async () => {

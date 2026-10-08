@@ -3,6 +3,7 @@
 const assert = require("node:assert/strict");
 const test = require("node:test");
 const { DescriptorRegistry, HubAuthorizer, ServiceDispatcher, createAuthorizer } = require("../lib");
+const { permissionValue } = require("../../../../sources/server-essentials/lib/lex/permission");
 
 function session({ uid = "a000000000000001", domain_id = 1, authenticated = true, kind = "drumate", status = "ok" } = {}) {
   return {
@@ -22,11 +23,11 @@ test("Hub scope resolves an opaque selection into one authoritative internal con
       return Object.freeze({ ...value, type: "hub", database_name: "internal_hub_a", authorized: true });
     }
   };
-  const hubAuthorizer = new HubAuthorizer({ resolver });
+  const hubAuthorizer = new HubAuthorizer({ resolver, permissionValue });
   const decision = await hubAuthorizer.authorize({
     session: session(),
     input: { hub_id: "a000000000000001", database_name: "attacker_database" },
-    permission: { scope: "hub", access: "write", capabilities: ["fixture"] }
+    permission: { scope: "hub", src: permissionValue("write"), capabilities: ["fixture"] }
   });
   assert.equal(decision.granted, true);
   assert.equal(decision.hub_context.database_name, "internal_hub_a");
@@ -34,15 +35,15 @@ test("Hub scope resolves an opaque selection into one authoritative internal con
     hub_id: "a000000000000001",
     uid: "a000000000000001",
     organisation_id: 1,
-    permission: "write",
+    asked_permission: permissionValue("write"),
     capabilities: ["fixture"]
   });
 });
 
 test("anonymous, nobody, OTP/intermediate and unauthorized Hub selections fail closed", async () => {
-  const hubAuthorizer = new HubAuthorizer({ resolver: { async resolveAuthorized() { throw Object.assign(new Error("denied"), { code: "HUB_PERMISSION_DENIED" }); } } });
+  const hubAuthorizer = new HubAuthorizer({ resolver: { async resolveAuthorized() { throw Object.assign(new Error("denied"), { code: "HUB_PERMISSION_DENIED" }); } }, permissionValue });
   const input = { hub_id: "a000000000000001" };
-  const permission = { scope: "hub", access: "read" };
+  const permission = { scope: "hub", src: permissionValue("read") };
   assert.equal((await hubAuthorizer.authorize({ session: session({ authenticated: false, status: "otp" }), input, permission })).reason, "HUB_AUTHENTICATION_REQUIRED");
   assert.equal((await hubAuthorizer.authorize({ session: session({ kind: "nobody" }), input, permission })).reason, "HUB_PRINCIPAL_INVALID");
   assert.equal((await hubAuthorizer.authorize({ session: session(), input: { hub_id: "bad" }, permission })).reason, "HUB_SELECTION_REQUIRED");
@@ -50,13 +51,13 @@ test("anonymous, nobody, OTP/intermediate and unauthorized Hub selections fail c
 });
 
 test("dispatcher injects authorized Hub context and never substitutes client physical parameters", async () => {
-  const registry = new DescriptorRegistry();
+  const registry = new DescriptorRegistry({ permissionValue });
   registry.registerDescriptor("fixture", {
     modules: { private: "service/fixture.js" },
-    services: { probe: { scope: "hub", permission: { access: "read", selector: "hub_id", capabilities: ["fixture"] } } }
+    services: { probe: { scope: "hub", permission: { src: "read", selector: "hub_id", capabilities: ["fixture"] } } }
   }, { workdir: "/trusted" });
   const expected = Object.freeze({ hub_id: "a000000000000001", database_name: "trusted_shard", authorized: true });
-  const authorizer = createAuthorizer({ hubAuthorizer: new HubAuthorizer({ resolver: { async resolveAuthorized() { return expected; } } }) });
+  const authorizer = createAuthorizer({ hubAuthorizer: new HubAuthorizer({ resolver: { async resolveAuthorized() { return expected; } }, permissionValue }) });
   class Worker {
     constructor(options) { this.context = options.hub_context; }
     probe(input) { return { context: this.context, client_database: input.database_name }; }
@@ -66,4 +67,43 @@ test("dispatcher injects authorized Hub context and never substitutes client phy
   assert.equal(result.context, expected);
   assert.equal(result.context.database_name, "trusted_shard");
   assert.equal(result.client_database, "attacker_shard");
+});
+
+test("Hub ACL keeps canonical permission bits distinct and denies before worker construction", async () => {
+  const seen = [];
+  const registry = new DescriptorRegistry({ permissionValue });
+  registry.registerDescriptor("fixture", {
+    modules: { private: "service/fixture.js" },
+    services: {
+      read: { scope: "hub", permission: { src: "read" } },
+      write: { scope: "hub", permission: { src: "write" } },
+      delete: { scope: "hub", permission: { src: "delete" } },
+      admin: { scope: "hub", permission: { src: "admin" } },
+      owner: { scope: "hub", permission: { src: "owner" } }
+    }
+  }, { workdir: "/trusted" });
+  const resolver = {
+    async resolveAuthorized({ asked_permission }) {
+      seen.push(asked_permission);
+      if (asked_permission !== permissionValue("read")) throw Object.assign(new Error("denied"), { code: "HUB_PERMISSION_DENIED" });
+      return Object.freeze({ hub_id: "a000000000000001", asked_permission, privilege: 3, authorized: true });
+    }
+  };
+  let constructions = 0;
+  class Worker {
+    constructor() { constructions++; }
+    read() { return "ok"; }
+  }
+  const dispatcher = new ServiceDispatcher({
+    registry,
+    authorize: createAuthorizer({ hubAuthorizer: new HubAuthorizer({ resolver, permissionValue }) }),
+    requireWorker: () => Worker
+  });
+  const input = { hub_id: "a000000000000001" };
+  assert.equal(await dispatcher.dispatch({ service: "fixture.read", session: session(), input }), "ok");
+  for (const name of ["write", "delete", "admin", "owner"]) {
+    await assert.rejects(() => dispatcher.dispatch({ service: `fixture.${name}`, session: session(), input }), (error) => error.code === "PERMISSION_DENIED");
+  }
+  assert.deepEqual(seen, ["read", "write", "delete", "admin", "owner"].map(permissionValue));
+  assert.equal(constructions, 1);
 });

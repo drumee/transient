@@ -25,11 +25,25 @@ paths, `creator_module` and `inherit`. Reusing a key with the same request
 returns the same Hub. Reusing it with different public attributes fails with
 `HUB_IDEMPOTENCY_CONFLICT`.
 
-The internal resolver accepts `{hub_id,uid,organisation_id,permission,
+The internal resolver accepts `{hub_id,uid,organisation_id,asked_permission,
 capabilities}` and returns the physical descriptor only after authentication,
 organisation, entity type, shard existence, ACL and capability-readiness
-checks. `write` implies `read`; `read` does not imply `write`. The creator gets
-read+write. Further grants require an already authorized write context.
+checks. `asked_permission` is one canonical permission bit; the stored
+`privilege` is the cumulative word granted to the principal. The control plane
+receives both tables through `createAclContract(Constants)` from
+`@drumee/server-essentials >=1.3.6` and defines no numeric ACL hierarchy.
+
+The creator is durably recorded as `hub.owner_id` and receives canonical
+`privilege.owner`. Canonical words are read, write, delete, admin and owner.
+Grant/revoke operations require the canonical admin bit; a write context cannot
+manage ACLs. Generic grants cannot manufacture another owner and the durable
+owner cannot be revoked. Ownership transfer remains a distinct operation and
+is outside this minimal phase.
+
+The public ACL page currently documents `write = 8`; current Essentials and
+runtime usages establish `permission.write = 4` and `permission.delete = 8`.
+The executable constants and the historical `privilege & asked_permission`
+check are authoritative for this implementation.
 
 ## Canonical schema manifest
 

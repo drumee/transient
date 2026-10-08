@@ -1,6 +1,7 @@
 # Phase 4.8B — Hub lifecycle, authorized context and schema propagation
 
-Status: **CLOSED / VALIDATED** on 2026-10-08.
+Status: **CLOSED / VALIDATED**, including the normative ACL correction, on
+2026-10-08.
 
 ## Decision and sequence
 
@@ -36,10 +37,37 @@ only `{idempotency_key,name}` from public input. The public response is
 `{hub_id,status}`. The key scope is organisation + principal + creator module.
 Same key/same fingerprint resumes; same key/different request is rejected.
 
-The internal resolver consumes `{hub_id,uid,organisation_id,permission,
-capabilities}` and returns `{hub_id,type,organisation_id,uid,permission,
+The internal resolver consumes `{hub_id,uid,organisation_id,asked_permission,
+capabilities}` and returns `{hub_id,type,organisation_id,uid,asked_permission,privilege,
 database_name,db_host,fs_host,home_dir,home_id,authorized}`. This object is
 internal and is never serialized as the creation response.
+
+## Normative ACL contract
+
+Phase 4.8B consumes the current `@drumee/server-essentials >=1.3.6` constants
+through an explicit `createAclContract(Constants)` dependency. It does not own
+or duplicate their numeric hierarchy.
+
+| Name | requested `permission` bit | granted cumulative `privilege` |
+|---|---:|---:|
+| read | 2 | 3 |
+| write | 4 | 7 |
+| delete | 8 | 15 |
+| admin | 16 | 31 |
+| owner | 32 | 63 |
+
+The historical evaluator is bitwise: `(granted_privilege & asked_permission)
+=== asked_permission`. The public ACL documentation says `write = 8`, but the
+current executable constants, `permissionValue("write")`, service usages and
+MFS checks all establish write as 4; 8 is delete. The implementation follows
+the executable contract and records this documentation divergence explicitly.
+
+The creating Drumate is persisted as `hub.owner_id` and receives
+`privilege.owner` (63). Generic ACL grant/revoke requires the admin permission
+bit (16), which both admin and owner words contain. Read, write and delete do
+not grant ACL-management authority. Generic grant refuses owner; revocation
+refuses the durable owner. The historical dedicated ownership-transfer path is
+not silently folded into grant and remains outside the minimal 4.8B API.
 
 ## Manifest contract
 
@@ -70,7 +98,7 @@ The control-plane schema persists:
 - scoped idempotency request and fingerprint;
 - Hub lifecycle and immutable shard association;
 - Yellow Page `entity` and minimal `hub` registry rows;
-- read/write ACL;
+- canonical cumulative ACL privilege and durable owner;
 - creator and inheritance policy;
 - immutable create/upgrade plan snapshots and artifact references;
 - per-Hub/per-module version, state, attempt and bounded error code;
@@ -93,8 +121,10 @@ Only fully authenticated Drumate sessions may create/select Hubs. Anonymous,
 nobody, guest and OTP/intermediate sessions fail closed. Domain permission
 does not imply Hub permission. The resolver validates organisation, entity
 type, shard existence, ACL and required capabilities. Physical locators,
-credentials and filesystem paths from client input are rejected. `write`
-implies `read`, while readers cannot write or grant.
+credentials and filesystem paths from client input are rejected. The runtime
+resolves canonical `permission.src` before worker construction. Cumulative
+write includes read, but write/delete cannot grant or revoke ACL; admin/owner
+can. Contextual MFS checks remain separate and unchanged.
 
 ## Validation command
 
@@ -111,9 +141,9 @@ package artifact.
 
 | Suite | Result |
 |---|---:|
-| Hub lifecycle manifest/plan/idempotence/ACL unit tests | 9/9 |
-| Focused runtime Hub authorization/context tests | 3/3 |
-| Complete transitional server-runtime regression | 42/42 |
+| Hub lifecycle manifest/plan/idempotence/ACL unit tests | 10/10 |
+| Focused runtime Hub authorization/context tests | 4/4 |
+| Complete transitional server-runtime regression | 43/43 |
 | Standalone system-mfs regression, including MariaDB | 9/9 |
 | Isolated Phase 4.8B real-MariaDB scenario | 1/1 |
 
@@ -121,16 +151,19 @@ The real scenario created distinct `installed` and `own` Hubs and shards,
 automatically provisioned `system-mfs` and canonical fixtures, exercised MFS,
 called a fixture procedure through `ServiceDispatcher` and an authorized Hub
 context, denied reader writes and cross-Hub selection, and proved client
-database parameters could not redirect execution. It retained a sentinel,
+database parameters could not redirect execution. The corrected run also
+migrated the former 1/2/3 ACL column, persisted the creator as owner 63, denied
+delete and ACL management to a writer 7, and allowed ACL management to an
+admin 31. It retained a sentinel,
 failed after successful upgrade SQL, exposed `failed`/attempt state, kept prior
 capabilities usable, resumed the same plan/shard, paginated the scan and left
 the `own` Hub untouched. It also resumed an `allocating` Hub, converged two
 concurrent creates to one Hub/entity/shard association, loaded the control
 plane from a second filesystem copy and recovered persisted metadata/data.
 
-The private artifact dry run contains nine package-relative files, 39,083
-unpacked bytes, SHA-1 `b4dc87dcbfcb24ea944c6227161c379dfeed0f82` and no bundled dependency. Nothing
-was published.
+The private artifact dry run validates package-relative files and declares
+current server-essentials as a peer dependency; it bundles no duplicate ACL
+constants. Nothing was published.
 
 ## Repository baselines and limits
 

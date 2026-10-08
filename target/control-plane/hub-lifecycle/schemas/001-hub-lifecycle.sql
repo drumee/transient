@@ -42,7 +42,7 @@ CREATE TABLE IF NOT EXISTS `hub_idempotency` (
 CREATE TABLE IF NOT EXISTS `hub_acl` (
   `hub_id` varchar(16) CHARACTER SET ascii COLLATE ascii_general_ci NOT NULL,
   `uid` varchar(16) CHARACTER SET ascii COLLATE ascii_general_ci NOT NULL,
-  `permission` tinyint(3) unsigned NOT NULL,
+  `privilege` tinyint(3) unsigned NOT NULL,
   `granted_by` varchar(16) CHARACTER SET ascii COLLATE ascii_general_ci NOT NULL,
   `ctime` int(11) unsigned NOT NULL,
   `mtime` int(11) unsigned NOT NULL,

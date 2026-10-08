@@ -140,6 +140,10 @@ schema plans, ordered/resumable trusted provisioners and an authorized server
 context. `server-runtime` consumes the context but does not own lifecycle;
 `system-mfs` provisions only its own objects in the assigned shard.
 
+Hub ACL follows the existing server-essentials split between one requested
+permission bit and a cumulative granted privilege word. The creator is the
+durable owner; ACL management is admin/owner authority, never plain write.
+
 The sole module schema contract remains `SCHEMA_MANIFEST.json`, extended with
 `inherit` and `requires`. The detailed implementation and validation record is
 [`30-phase4.8b-hub-lifecycle.md`](30-phase4.8b-hub-lifecycle.md).

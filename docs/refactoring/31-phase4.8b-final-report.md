@@ -14,7 +14,7 @@ principal authentifié et autorisé
 → identité opaque de Hub
 → association durable à un shard MariaDB
 → enregistrement Yellow Pages
-→ ACL Hub read/write
+→ ACL Hub canonique read/write/delete/admin/owner
 → résolution du plan de schémas
 → provisioning ordonné, persistant et reprenable
 → contexte Hub interne autorisé transmis au service
@@ -32,7 +32,7 @@ décision de dépôt public final.
 
 | Dépôt | Branche | HEAD inspecté | Rôle pendant 4.8B | Modification |
 |---|---|---|---|---|
-| `transient` | `refactor/mapping` | `b4d755cda1722f312c436f69b7900616c99f2cad` au démarrage | dépôt autorisé pour l'implémentation | oui, changements non commités |
+| `transient` | `refactor/mapping` | base `b4d755cda`, livraison initiale `1ffaddbcc` | dépôt autorisé pour l'implémentation | correction ACL normative dans le worktree |
 | `server-runtime` | `main` | `d17ecee8c645f1d14a7e2ef45a2f3542a27c0763` | frontière standalone inspectée | non |
 | `system-mfs` | `main` | `a7f7395bdbc79560aed072219b87c0b81c004bce` | provisioner réel et manifeste historique | non |
 | `finder` | `main` | `730aa309939f956d76f70beeed5d9e46846c0574` | artefact futur à revalider | non |
@@ -41,8 +41,9 @@ décision de dépôt public final.
 | `oxymotion` | `main` | `2bdcd556daa55457b0b99e1c684a55dfd03dc794` | consommateur consulté, non intégré | non |
 
 Le répertoire non suivi `oxymotion/node_modules/` existait avant la mission et
-a été préservé. Aucun commit ni push n'a été effectué. Aucun package npm n'a
-été publié.
+a été préservé. La livraison initiale 4.8B a été commitée et poussée sous
+`1ffaddbcc`; la correction ACL décrite ici est postérieure à ce commit. Aucun
+package npm n'a été publié.
 
 ## 3. Divergence documentaire concernant la Phase 4.9
 
@@ -179,7 +180,7 @@ Entrée interne :
   hub_id,
   uid,
   organisation_id,
-  permission: "read" | "write",
+  asked_permission: permissionValue("read"),
   capabilities: ["module-id"]
 }
 ```
@@ -192,7 +193,8 @@ Descripteur interne après validation :
   type: "hub",
   organisation_id,
   uid,
-  permission,
+  asked_permission,
+  privilege,
   database_name,
   db_host,
   fs_host,
@@ -211,11 +213,23 @@ La politique initiale est :
 
 - tout Drumate complètement authentifié peut créer dans son organisation
   courante, sous réserve du callback de politique `can_create` injecté ;
-- le créateur reçoit `read + write` ;
-- un contexte `write` autorisé peut attribuer `read` ou `write` ;
-- `write` implique `read` ;
-- `read` n'accorde pas `write` ;
+- le créateur devient le propriétaire durable dans `hub.owner_id` et reçoit
+  le mot canonique `privilege.owner = 63` ;
+- le bit demandé et le mot accordé restent distincts : read `2/3`, write
+  `4/7`, delete `8/15`, admin `16/31`, owner `32/63` ;
+- l'évaluation est `(privilege & asked_permission) === asked_permission` ;
+- seuls admin et owner peuvent attribuer, modifier ou révoquer une ACL ;
+- write et delete n'accordent aucune autorité de gestion ACL ;
+- owner ne peut être attribué par le grant générique et le propriétaire
+  durable ne peut pas être révoqué ;
 - une permission Domain seule n'accorde aucun Hub.
+
+La [page publique ACL Drumee](https://docs.drumee.com/technology/02-acl-system/)
+indique `write = 8`. Cette valeur diverge du contrat exécutable :
+`server-essentials` définit `permission.write = 4` et
+`permission.delete = 8`, et les usages historiques testent le bit demandé dans
+le mot de privilèges. La correction 4.8B suit les constantes et usages
+canoniques, pas la valeur erronée de la page.
 
 Les identités anonymes, nobody, guest et les sessions OTP/intermédiaires sont
 refusées. Le résolveur vérifie l'organisation, le type `hub`, l'association au
@@ -319,7 +333,7 @@ contournant la règle qui limite les modifications à `transient`.
 | `hub` | registre minimal du Hub et de son propriétaire |
 | `hub_lifecycle` | créateur, politique, shard immuable, état global |
 | `hub_idempotency` | portée, empreinte et Hub associé à la demande |
-| `hub_acl` | permissions read/write par principal |
+| `hub_acl` | mot de privilèges cumulatif canonique par principal |
 | `hub_plan` | snapshot immuable, type create/upgrade, curseur, état |
 | `hub_capability` | version cible/appliquée, état, tentative, erreur |
 | `hub_schema_object` | propriété des objets SQL par module |
@@ -406,7 +420,7 @@ données et capacités prêtes existantes restent intactes.
 | 9 | échec partiel et reprise même Hub/shard | panne après SQL réel | réussi |
 | 10 | relance et concurrence idempotentes | unité + MariaDB concurrent | réussi |
 | 11 | procédure via session/contexte autorisés | `ServiceDispatcher` + procédure fixture | réussi |
-| 12 | refus sans droit et write au lecteur | ACL MariaDB | réussi |
+| 12 | refus sans droit, write au lecteur et gestion ACL au writer | ACL MariaDB | réussi |
 | 13 | paramètres B incapables de détourner A | `database_name=B`, procédure exécutée dans A | réussi |
 | 14 | sélection explicite de B sans droit refusée | résolution ACL | réussi |
 | 15 | sentinelle préservée et collisions refusées | upgrade réel + test ownership | réussi |
@@ -416,8 +430,9 @@ données et capacités prêtes existantes restent intactes.
 | 19 | désactivation sans suppression | table `later` conservée | réussi |
 | 20 | aucun secret/nom physique exposé | audit du résultat public | réussi |
 
-Le scénario réel vérifie aussi une opération MFS dans le shard nouvellement
-créé et les permissions Hub avant l'accès applicatif.
+Le scénario réel vérifie aussi le propriétaire initial à 63, les bits demandés
+canoniques, une opération MFS dans le shard nouvellement créé et les
+permissions Hub avant l'accès applicatif.
 
 ## 12. Tests exécutés
 
@@ -431,15 +446,20 @@ Résultats :
 
 | Suite | Résultat |
 |---|---:|
-| control plane Hub lifecycle | 9/9 |
-| runtime Hub ciblé | 3/3 |
+| control plane Hub lifecycle | 10/10 |
+| runtime Hub ciblé | 4/4 |
 | scénario intégré MariaDB réel | 1/1 |
-| régression complète server-runtime | 42/42 |
+| régression complète server-runtime | 43/43 |
 | régression standalone system-mfs | 9/9 |
 
 Le script démarre des conteneurs nommés uniquement
 `transient-kernel-phase48b*`, puis les supprime avec un trap. La vérification
 finale n'a trouvé aucun conteneur `transient-kernel-*` résiduel.
+
+Le scénario MariaDB crée volontairement l'ancienne colonne ACL 1/2/3 avant
+l'installation, vérifie sa migration vers `privilege`, puis prouve owner 63,
+admin 31 autorisé à gérer l'ACL et writer 7 refusé pour delete et pour la
+gestion des droits.
 
 ## 13. Packaging
 
@@ -447,14 +467,16 @@ Artefact privé préparé, non publié :
 
 ```text
 package:       @drumee/hub-lifecycle-transitional@0.0.0-phase4.8b
-files:         9
-unpacked size: 39,083 bytes
-sha1:          b4dc87dcbfcb24ea944c6227161c379dfeed0f82
-sha512:        8DXx/37qQX8+WT8iZ+mNxS7mZDFxg3oiQm++jMmMjsXYjb/qaMj8razEYeFKZ8dPlh7NuV4DPPTbW0n4a6AJHg==
+packaging:     npm pack --dry-run validé
+peer ACL:      @drumee/server-essentials >=1.3.6 <2
+files:         10
+unpacked size: 44,938 bytes
+sha1:          03272371b3d7300bf1567cd6db43c78a918f9db9
+sha512:        ihRBjXU+tPqiM8BlAiRp6gqz7P//mYEoc7noATU6qL7M/PUVgQIzH2P1dIOLiZdFszpE+KcTTkNtXcfQNl1/NQ==
 ```
 
 Le package contient uniquement `lib/`, `schemas/`, README, provenance et
-métadonnées. Aucun test, source historique, dépendance embarquée ou secret.
+métadonnées. Aucun test, source historique, constante ACL dupliquée ou secret.
 
 ## 14. Fichiers principaux livrés
 
@@ -503,7 +525,7 @@ docs/refactoring/30-phase4.8b-hub-lifecycle.md
   livraison autorisée.
 - Le manifeste `system-mfs` devra migrer physiquement vers le chemin canonique
   lors d'une livraison de son dépôt ; sa sémantique est déjà validée.
-- La gestion administrative avancée, la suppression complète, le partage,
+- Le transfert de propriété, la gestion administrative avancée, la suppression complète, le partage,
   Team, Chat et DMZ restent hors périmètre.
 - Aucune validation de production ou migration d'une base existante réelle
   n'a été effectuée ; toutes les mutations ont ciblé MariaDB jetable.
@@ -528,7 +550,7 @@ propriété.
 ## 17. Conclusion
 
 Les conditions de clôture spécifiques à 4.8B sont satisfaites : création réelle,
-association durable du shard, ACL, contextes autorisés, deux politiques de
+association durable du shard, propriété owner et ACL canoniques, contextes autorisés, deux politiques de
 propagation, provisioning automatique, persistance, concurrence et reprise ont
 été démontrés dans MariaDB isolée avec le runtime et `system-mfs` réels.
 

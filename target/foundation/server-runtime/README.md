@@ -19,6 +19,14 @@ delegates ACL/shard/capability readiness to the control plane resolver, then
 passes the resulting internal `hub_context` to the worker. The runtime never
 creates a Hub or trusts a client-supplied database locator.
 
+Hub descriptors use the existing `permission.src` field. The same injected
+current-Essentials `permissionValue` converter used by descriptor discovery is
+required by `HubAuthorizer`; no `access` string or numeric hierarchy is added.
+The resolved bit is checked before the Worker class is loaded or instantiated,
+and the authorized context carries both `asked_permission` and the effective
+cumulative `privilege`. Contextual MFS authorization remains a separate,
+unchanged pre-execution check.
+
 ## Phase 4.5 export boundary
 
 The private `npm pack` artifact contains only the runtime executable closure:

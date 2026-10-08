@@ -12,10 +12,13 @@ const root = path.resolve(__dirname, "../../..");
 const lifecycle_root = path.join(root, "target/control-plane/hub-lifecycle");
 const system_mfs_root = process.env.KERNEL_SYSTEM_MFS_ROOT || path.resolve(root, "../system-mfs");
 const fixtures = path.join(root, "tests/fixtures/phase4.8b");
-const { HubLifecycle, ModuleRegistry, SqlHubStore } = require(path.join(lifecycle_root, "lib"));
+const { HubLifecycle, ModuleRegistry, SqlHubStore, createAclContract } = require(path.join(lifecycle_root, "lib"));
 const { checksum, normalizeManifest, readModuleManifest } = require(path.join(lifecycle_root, "lib/manifest"));
 const runtime = require(path.join(root, "target/foundation/server-runtime/lib"));
+const Constants = require(path.join(root, "sources/server-essentials/lib/lex/constants"));
+const { permissionValue } = require(path.join(root, "sources/server-essentials/lib/lex/permission"));
 const systemMfs = require(path.join(system_mfs_root, "lib"));
+const ACL = createAclContract(Constants);
 
 const container = process.env.KERNEL_DB_CONTAINER || "transient-kernel-phase4-db";
 const yp = process.env.KERNEL_DB_NAME || "yp";
@@ -72,8 +75,12 @@ function register(registry, module_id, module_root, handler, options = {}) {
 }
 
 test("Phase 4.8B real MariaDB Hub lifecycle, ACL, propagation and recovery", { skip: !enabled, timeout: 240000 }, async (t) => {
-  const store = new SqlHubStore({ database });
+  await database.executeScript("CREATE TABLE IF NOT EXISTS hub_acl (hub_id varchar(16) NOT NULL, uid varchar(16) NOT NULL, permission tinyint(3) unsigned NOT NULL, granted_by varchar(16) NOT NULL, ctime int unsigned NOT NULL, mtime int unsigned NOT NULL, PRIMARY KEY (hub_id,uid)) ENGINE=InnoDB", { database: yp });
+  const store = new SqlHubStore({ database, acl: ACL });
   await store.install();
+  const acl_columns = mariadb(yp, "SELECT column_name,is_nullable FROM information_schema.columns WHERE table_schema=DATABASE() AND table_name='hub_acl' ORDER BY ordinal_position");
+  assert.equal(acl_columns.some((column) => column.column_name === "privilege" && column.is_nullable === "NO"), true);
+  assert.equal(acl_columns.some((column) => column.column_name === "permission" && column.is_nullable === "YES"), true);
   const mfs_store = new systemMfs.SqlMfsStore({ database });
   await systemMfs.install({ store: mfs_store });
   const registry = new ModuleRegistry();
@@ -107,22 +114,36 @@ test("Phase 4.8B real MariaDB Hub lifecycle, ACL, propagation and recovery", { s
   assert.equal((await mfs.resolveNode(folder.nid)).filename, "Phase48B");
 
   const reader = "b000000000000002";
-  const owner_context = await store.resolveAuthorized({ hub_id: installed.hub_id, uid: "phase4authuser01", organisation_id: 41, permission: "write", capabilities: ["installed-module"] });
-  await lifecycle.grant({ actor_context: owner_context, target_uid: reader, permission: "read" });
-  assert.equal((await store.resolveAuthorized({ hub_id: installed.hub_id, uid: reader, organisation_id: 41, permission: "read" })).authorized, true);
-  await assert.rejects(() => store.resolveAuthorized({ hub_id: installed.hub_id, uid: reader, organisation_id: 41, permission: "write" }), (error) => error.code === "HUB_PERMISSION_DENIED");
-  await assert.rejects(() => store.resolveAuthorized({ hub_id: own.hub_id, uid: reader, organisation_id: 41, permission: "read" }), (error) => error.code === "HUB_PERMISSION_DENIED");
+  const writer = "c000000000000003";
+  const admin = "d000000000000004";
+  const owner_context = await store.resolveAuthorized({ hub_id: installed.hub_id, uid: "phase4authuser01", organisation_id: 41, asked_permission: ACL.permission.admin, capabilities: ["installed-module"] });
+  assert.equal(owner_context.privilege, ACL.privilege.owner);
+  assert.equal(installed_internal.owner_id, "phase4authuser01");
+  await lifecycle.grant({ actor_context: owner_context, target_uid: reader, privilege: "read" });
+  await lifecycle.grant({ actor_context: owner_context, target_uid: writer, privilege: "write" });
+  await lifecycle.grant({ actor_context: owner_context, target_uid: admin, privilege: "admin" });
+  assert.equal(await store.getPrivilege(installed.hub_id, reader), ACL.privilege.read);
+  assert.equal(await store.getPrivilege(installed.hub_id, writer), ACL.privilege.write);
+  assert.equal(await store.getPrivilege(installed.hub_id, admin), ACL.privilege.admin);
+  assert.equal((await store.resolveAuthorized({ hub_id: installed.hub_id, uid: reader, organisation_id: 41, asked_permission: ACL.permission.read })).authorized, true);
+  await assert.rejects(() => store.resolveAuthorized({ hub_id: installed.hub_id, uid: reader, organisation_id: 41, asked_permission: ACL.permission.write }), (error) => error.code === "HUB_PERMISSION_DENIED");
+  const writer_context = await store.resolveAuthorized({ hub_id: installed.hub_id, uid: writer, organisation_id: 41, asked_permission: ACL.permission.write });
+  await assert.rejects(() => store.resolveAuthorized({ hub_id: installed.hub_id, uid: writer, organisation_id: 41, asked_permission: ACL.permission.delete }), (error) => error.code === "HUB_PERMISSION_DENIED");
+  await assert.rejects(() => lifecycle.grant({ actor_context: writer_context, target_uid: reader, privilege: "write" }), (error) => error.code === "HUB_PERMISSION_DENIED");
+  const admin_context = await store.resolveAuthorized({ hub_id: installed.hub_id, uid: admin, organisation_id: 41, asked_permission: ACL.permission.admin });
+  await lifecycle.grant({ actor_context: admin_context, target_uid: reader, privilege: "read" });
+  await assert.rejects(() => store.resolveAuthorized({ hub_id: own.hub_id, uid: reader, organisation_id: 41, asked_permission: ACL.permission.read }), (error) => error.code === "HUB_PERMISSION_DENIED");
 
   await database.executeScript("INSERT INTO phase48b_installed_marker(marker_key,marker_value) VALUES ('authorized','ok') ON DUPLICATE KEY UPDATE marker_value=VALUES(marker_value)", { database: installed_internal.database_name });
-  const descriptors = new runtime.DescriptorRegistry();
-  descriptors.registerDescriptor("fixture", { modules: { private: "fixture.js" }, services: { read: { scope: "hub", permission: { access: "read", selector: "hub_id", capabilities: ["installed-module"] } } } }, { workdir: "/trusted" });
+  const descriptors = new runtime.DescriptorRegistry({ permissionValue });
+  descriptors.registerDescriptor("fixture", { modules: { private: "fixture.js" }, services: { read: { scope: "hub", permission: { src: "read", selector: "hub_id", capabilities: ["installed-module"] } } } }, { workdir: "/trusted" });
   class FixtureWorker {
     constructor({ hub_context }) { this.hub_context = hub_context; }
     async read() { return database.queryIn(this.hub_context.database_name, "CALL phase48b_installed_marker_read(?)", "authorized"); }
   }
   const dispatcher = new runtime.ServiceDispatcher({
     registry: descriptors,
-    authorize: runtime.createAuthorizer({ hubAuthorizer: new runtime.HubAuthorizer({ resolver: store }) }),
+    authorize: runtime.createAuthorizer({ hubAuthorizer: new runtime.HubAuthorizer({ resolver: store, permissionValue }) }),
     requireWorker: () => FixtureWorker
   });
   const procedure = await dispatcher.dispatch({ service: "fixture.read", session: trustedSession(), input: { hub_id: installed.hub_id, database_name: own_internal.database_name } });
@@ -135,8 +156,8 @@ test("Phase 4.8B real MariaDB Hub lifecycle, ACL, propagation and recovery", { s
   const failed = mariadb(yp, `SELECT status,attempt FROM hub_capability WHERE hub_id='${installed.hub_id}' AND module_id='later-module'`)[0];
   assert.equal(failed.status, "failed");
   assert.equal(mariadb(installed_internal.database_name, "SHOW TABLES LIKE 'phase48b_later_marker'").length, 1);
-  assert.equal((await store.resolveAuthorized({ hub_id: installed.hub_id, uid: "phase4authuser01", organisation_id: 41, permission: "read", capabilities: ["installed-module"] })).authorized, true);
-  await assert.rejects(() => store.resolveAuthorized({ hub_id: installed.hub_id, uid: "phase4authuser01", organisation_id: 41, permission: "read", capabilities: ["later-module"] }), (error) => error.code === "HUB_CAPABILITY_NOT_READY");
+  assert.equal((await store.resolveAuthorized({ hub_id: installed.hub_id, uid: "phase4authuser01", organisation_id: 41, asked_permission: ACL.permission.read, capabilities: ["installed-module"] })).authorized, true);
+  await assert.rejects(() => store.resolveAuthorized({ hub_id: installed.hub_id, uid: "phase4authuser01", organisation_id: 41, asked_permission: ACL.permission.read, capabilities: ["later-module"] }), (error) => error.code === "HUB_CAPABILITY_NOT_READY");
   const upgrade_page = await lifecycle.upgradeExistingHubs({ inherit: "installed", limit: 1 });
   assert.equal(upgrade_page.next, installed.hub_id);
   assert.deepEqual((await lifecycle.upgradeExistingHubs({ inherit: "installed", after: upgrade_page.next, limit: 1 })).results, []);
@@ -176,7 +197,7 @@ test("Phase 4.8B real MariaDB Hub lifecycle, ACL, propagation and recovery", { s
   t.after(() => fs.rmSync(copy, { recursive: true, force: true }));
   fs.cpSync(lifecycle_root, copy, { recursive: true });
   const copied = require(path.join(copy, "lib"));
-  const second_store = new copied.SqlHubStore({ database });
+  const second_store = new copied.SqlHubStore({ database, acl: copied.createAclContract(Constants) });
   assert.equal((await second_store.getHub(installed.hub_id)).database_name, installed_internal.database_name);
   assert.equal(mariadb(installed_internal.database_name, "SELECT marker_value FROM phase48b_installed_marker WHERE marker_key='authorized'")[0].marker_value, "ok");
 

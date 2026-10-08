@@ -1,9 +1,10 @@
 "use strict";
 
 const { HubLifecycleError } = require("./errors");
+const { createAclContract } = require("./acl-contract");
 const { checksum, stable } = require("./manifest");
 const { ModuleRegistry } = require("./registry");
-const { READ, SqlHubStore, WRITE } = require("./store");
+const { ID, SqlHubStore } = require("./store");
 
 const FORBIDDEN_PUBLIC_FIELDS = ["database_name", "db_name", "db_host", "fs_host", "home_dir", "home_id", "credentials", "creator_module", "inherit"];
 
@@ -35,6 +36,7 @@ class HubLifecycle {
     if (!store) throw new HubLifecycleError("HUB_STORE_REQUIRED", "Hub lifecycle store is required");
     if (!registry || typeof registry.resolvePlan !== "function") throw new HubLifecycleError("MODULE_REGISTRY_REQUIRED", "Trusted module registry is required");
     this.store = store;
+    this.acl = store.acl;
     this.registry = registry;
     this.can_create = can_create;
   }
@@ -119,13 +121,33 @@ class HubLifecycle {
     return { results, next: hubs.length === Number(limit) ? hubs[hubs.length - 1].hub_id : null };
   }
 
-  async grant({ actor_context, target_uid, permission } = {}) {
-    if (!actor_context || !actor_context.authorized || actor_context.permission !== "write") throw new HubLifecycleError("HUB_GRANT_PERMISSION_DENIED", "Hub write context is required to grant access");
-    const mask = permission === "write" ? READ | WRITE : permission === "read" ? READ : 0;
-    if (!mask) throw new HubLifecycleError("HUB_PERMISSION_INVALID", "Permission must be read or write");
-    await this.store.grant(actor_context.hub_id, target_uid, mask, actor_context.uid);
-    return { hub_id: actor_context.hub_id, uid: target_uid, permission };
+  async _aclManager(actor_context) {
+    if (!actor_context || !actor_context.authorized) throw new HubLifecycleError("HUB_ACL_MANAGEMENT_DENIED", "An authorized Hub context is required");
+    return this.store.resolveAuthorized({
+      hub_id: actor_context.hub_id,
+      uid: actor_context.uid,
+      organisation_id: actor_context.organisation_id,
+      asked_permission: this.acl.permission.admin
+    });
+  }
+
+  async grant({ actor_context, target_uid, privilege } = {}) {
+    const manager = await this._aclManager(actor_context);
+    if (!ID.test(target_uid || "")) throw new HubLifecycleError("HUB_PRINCIPAL_INVALID", "Target Hub principal must be a Drumee identifier");
+    const granted_privilege = this.acl.privilegeFor(privilege);
+    if (granted_privilege === this.acl.privilege.owner) throw new HubLifecycleError("HUB_OWNER_TRANSFER_REQUIRED", "Owner privilege cannot be assigned through a generic ACL grant");
+    await this.store.setPrivilege(manager.hub_id, target_uid.toLowerCase(), granted_privilege, manager.uid);
+    return { hub_id: manager.hub_id, uid: target_uid.toLowerCase(), privilege: granted_privilege };
+  }
+
+  async revoke({ actor_context, target_uid } = {}) {
+    const manager = await this._aclManager(actor_context);
+    const hub = await this.store.getHub(manager.hub_id);
+    if (!ID.test(target_uid || "")) throw new HubLifecycleError("HUB_PRINCIPAL_INVALID", "Target Hub principal must be a Drumee identifier");
+    if (String(hub.owner_id).toLowerCase() === String(target_uid).toLowerCase()) throw new HubLifecycleError("HUB_OWNER_REVOKE_DENIED", "The durable Hub owner cannot be revoked");
+    await this.store.revokePrivilege(manager.hub_id, target_uid.toLowerCase());
+    return { hub_id: manager.hub_id, uid: target_uid.toLowerCase(), revoked: true };
   }
 }
 
-module.exports = { HubLifecycle, HubLifecycleError, ModuleRegistry, READ, SqlHubStore, WRITE, publicSpecification, sessionPrincipal };
+module.exports = { HubLifecycle, HubLifecycleError, ModuleRegistry, SqlHubStore, createAclContract, publicSpecification, sessionPrincipal };
