@@ -60,23 +60,24 @@ test("trusted current hub fills omitted hub_id while client infrastructure locat
 test("runtime ACL uses Session uid and the MFS backend only supplies resources and effective permissions", async () => {
   const grants = new Map([
     [`${uid}:${hub_id}:${root.nid}`, 63],
-    [`${uid}:${other_hub}:2000000000000002`, 1],
+    [`${uid}:${other_hub}:2000000000000002`, 3],
     [`${nobody}:${hub_id}:${root.nid}`, 0]
   ]);
   const backend = new MfsPermissionBackend({ permission_store: { effectivePermission(actor, node) { return grants.get(`${actor}:${node.hub_id}:${node.nid}`) || 0; } } });
-  const authorize = createAuthorizer({ mfsPermissionBackend: backend });
+  const hubAuthorizer = { async authorizeResource({ hub_id }) { return { granted: true, hub_context: { hub_id, authorized: true } }; } };
+  const authorize = createAuthorizer({ hubAuthorizer, mfsPermissionBackend: backend });
   const session = { uid: () => uid };
-  assert.equal((await authorize({ service: "mfs.get", permission: { scope: "mfs", src: 1 }, input: { node: root, uid: nobody }, session })).granted, true);
+  assert.equal((await authorize({ service: "mfs.get", permission: { scope: "mfs", src: 2 }, input: { node: root, uid: nobody }, session })).granted, true);
   assert.equal((await authorize({ service: "mfs.remove", permission: { scope: "mfs", src: 8 }, input: { node: root, principal_id: nobody }, session })).granted, true);
   const source = { hub_id: other_hub, nid: "2000000000000002" };
-  assert.equal((await authorize({ service: "mfs.copy", permission: { scope: "mfs", src: 1, dest: 4 }, input: { sources: [source], destination: root }, session })).granted, true);
+  assert.equal((await authorize({ service: "mfs.copy", permission: { scope: "mfs", src: 2, dest: 4 }, input: { sources: [source], destination: root }, session })).granted, true);
   assert.equal((await authorize({ service: "mfs.copy", permission: { scope: "mfs", src: 4, dest: 4 }, input: { sources: [source], destination: root }, session })).granted, false);
-  assert.equal((await authorize({ service: "mfs.copy", permission: { scope: "mfs", src: 1, dest: 4 }, input: { sources: [root], destination: source }, session })).granted, false);
-  assert.equal((await authorize({ service: "mfs.get", permission: { scope: "mfs", src: 1 }, input: { node: root }, session: { uid: () => nobody } })).granted, false);
+  assert.equal((await authorize({ service: "mfs.copy", permission: { scope: "mfs", src: 2, dest: 4 }, input: { sources: [root], destination: source }, session })).granted, false);
+  assert.equal((await authorize({ service: "mfs.get", permission: { scope: "mfs", src: 2 }, input: { node: root }, session: { uid: () => nobody } })).granted, false);
   const token_uid = "d000000000000004";
-  grants.set(`${token_uid}:${hub_id}:${root.nid}`, 1);
-  assert.equal((await authorize({ service: "mfs.get", permission: { scope: "mfs", src: 1 }, input: { node: root, uid }, session: {} })).granted, false, "sessions without uid() fail closed");
-  assert.equal((await authorize({ service: "mfs.get", permission: { scope: "mfs", src: 1 }, input: { node: root, uid }, session: { uid: () => token_uid } })).granted, true, "validated MFS tokens resolve a trusted pseudo-identity through Session.uid()");
+  grants.set(`${token_uid}:${hub_id}:${root.nid}`, 3);
+  assert.equal((await authorize({ service: "mfs.get", permission: { scope: "mfs", src: 2 }, input: { node: root, uid }, session: {} })).granted, false, "sessions without uid() fail closed");
+  assert.equal((await authorize({ service: "mfs.get", permission: { scope: "mfs", src: 2 }, input: { node: root, uid }, session: { uid: () => token_uid } })).granted, true, "validated MFS tokens resolve a trusted pseudo-identity through Session.uid()");
 });
 
 test("server Output sanitizer remains a final barrier after explicit projection", () => {

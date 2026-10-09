@@ -80,10 +80,11 @@ target is `hub`, or legacy entries whose `schemaClass` is `common`/`hub`.
 to Hub shards. Object keys are ownership claims; different modules cannot
 claim the same target/type/name.
 
-Legacy `schemas/SCHEMA_MANIFEST.json` is accepted read-only during migration.
-This is how the current standalone `system-mfs` artifact participates: its
-missing fields normalize to `installed` and `[]`, and its `common` provision
-inventory is a Hub contribution. New fixtures demonstrate the canonical path.
+Legacy `schemas/SCHEMA_MANIFEST.json` is accepted read-only during migration;
+it never creates a second manifest. The prepared standalone
+`system-mfs@0.1.0-alpha.2` artifact uses the canonical
+`server/schemas/SCHEMA_MANIFEST.json` path and declares `inherit: "installed"`
+and `requires: []`. Fixtures demonstrate both inheritance policies.
 
 ## Durable execution
 

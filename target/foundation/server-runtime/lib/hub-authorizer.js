@@ -15,33 +15,47 @@ class HubAuthorizer {
     }
   }
 
-  async authorize(resolved = {}) {
-    const session = resolved.session;
+  principal(session) {
     if (!session || typeof session.isAuthenticated !== "function" || !session.isAuthenticated()) {
-      return { granted: false, mode: "hub", reason: "HUB_AUTHENTICATION_REQUIRED" };
+      return { error: "HUB_AUTHENTICATION_REQUIRED" };
     }
     const principal = typeof session.identity === "function" ? session.identity() : typeof session.principal === "function" ? session.principal() : null;
     const uid = typeof session.uid === "function" ? session.uid() : principal && principal.id;
     if (!principal || !uid || ["nobody", "guest"].includes(principal.kind) || !principal.domainId) {
-      return { granted: false, mode: "hub", reason: "HUB_PRINCIPAL_INVALID" };
+      return { error: "HUB_PRINCIPAL_INVALID" };
     }
-    const selector = resolved.permission && resolved.permission.selector || "hub_id";
-    const requested = resolved.input && resolved.input[selector];
-    if (typeof requested !== "string" || !HUB_ID.test(requested)) return { granted: false, mode: "hub", reason: "HUB_SELECTION_REQUIRED" };
-    const asked_permission = Number(resolved.permission && resolved.permission.src);
-    if (!this.permission_bits.has(asked_permission)) return { granted: false, mode: "hub", reason: "HUB_PERMISSION_INVALID" };
+    return { principal, uid };
+  }
+
+  async authorizeResource({ session, hub_id, asked_permission, capabilities = [] } = {}) {
+    const identity = this.principal(session);
+    if (identity.error) return { granted: false, mode: "hub", reason: identity.error };
+    if (typeof hub_id !== "string" || !HUB_ID.test(hub_id)) return { granted: false, mode: "hub", reason: "HUB_SELECTION_REQUIRED" };
+    const asked = Number(asked_permission);
+    if (!this.permission_bits.has(asked)) return { granted: false, mode: "hub", reason: "HUB_PERMISSION_INVALID" };
     try {
       const hub_context = await this.resolver.resolveAuthorized({
-        hub_id: requested.toLowerCase(),
-        uid,
-        organisation_id: Number(principal.domainId),
-        asked_permission,
-        capabilities: Array.isArray(resolved.permission.capabilities) ? resolved.permission.capabilities : []
+        hub_id: hub_id.toLowerCase(),
+        uid: identity.uid,
+        organisation_id: Number(identity.principal.domainId),
+        asked_permission: asked,
+        capabilities: Array.isArray(capabilities) ? capabilities : []
       });
-      return { granted: true, mode: "hub", uid, hub_context };
+      return { granted: true, mode: "hub", uid: identity.uid, hub_context };
     } catch (error) {
       return { granted: false, mode: "hub", reason: error.code || "HUB_PERMISSION_DENIED" };
     }
+  }
+
+  async authorize(resolved = {}) {
+    const selector = resolved.permission && resolved.permission.selector || "hub_id";
+    const requested = resolved.input && resolved.input[selector];
+    return this.authorizeResource({
+      session: resolved.session,
+      hub_id: requested,
+      asked_permission: resolved.permission && resolved.permission.src,
+      capabilities: resolved.permission && resolved.permission.capabilities
+    });
   }
 }
 

@@ -11,5 +11,6 @@
     "download_retrieve": { "scope": "mfs", "permission": { "src": "read" } },
     "download_release": { "scope": "mfs", "permission": { "src": "read" } }
   },
-  "modules": { "private": "service/mfs-transfer" }
+  "modules": { "private": "service/mfs-transfer" },
+  "requires": ["system-mfs"]
 }

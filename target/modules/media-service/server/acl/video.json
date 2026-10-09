@@ -4,5 +4,6 @@
     "stream": { "scope": "mfs", "permission": { "src": "read" } },
     "segment": { "scope": "mfs", "permission": { "src": "read" } }
   },
-  "modules": { "private": "service/media" }
+  "modules": { "private": "service/media" },
+  "requires": ["system-mfs"]
 }

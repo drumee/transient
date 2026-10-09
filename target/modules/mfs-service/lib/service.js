@@ -12,7 +12,9 @@ function principalContext(context = {}) {
   if (!ID_PATTERN.test(uid || "")) throw Object.assign(new Error("Trusted MFS Session uid is required"), { code: "MFS_PRINCIPAL_REQUIRED" });
   const current_hub_id = ID_PATTERN.test(context.current_hub_id || "") ? context.current_hub_id.toLowerCase() : null;
   const host = typeof context.host === "string" && context.host.trim() ? context.host.trim().toLowerCase() : null;
-  return { uid: uid.toLowerCase(), current_hub_id, host };
+  const hub_context = context.hub_context && context.hub_context.authorized ? context.hub_context : null;
+  const hub_contexts = context.hub_contexts && typeof context.hub_contexts === "object" ? context.hub_contexts : null;
+  return { uid: uid.toLowerCase(), current_hub_id, host, hub_context, hub_contexts };
 }
 
 function resource(value, principal, label) {

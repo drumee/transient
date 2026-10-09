@@ -49,8 +49,12 @@ test("Phase 4.8 mounts standalone and managed Finders with optimized selection a
     for (let attempt = 0; attempt < 120; attempt++) { const state = await evaluate(protocol, "({ready:document.body.dataset.ready,error:document.body.dataset.error})"); if (state.error) throw new Error(state.error); if (state.ready === "true") break; await new Promise((resolve) => setTimeout(resolve, 50)); }
     const structure = await evaluate(protocol, "({runtime:document.body.dataset.runtimeReady,plainWindow:Boolean(document.querySelector('#plain-host .drumee-window')),plainKind:document.querySelector('#plain-host .drumee-finder').dataset.kind,windows:phase48.manager.windows().length,tiles:document.querySelectorAll('#plain-host .drumee-finder__tile').length,widgetChildren:phase48.plain.children.length,progressViews:document.querySelectorAll('#plain-host [data-kind=finder_transfer_progress]').length,layout:getComputedStyle(document.querySelector('#plain-host .drumee-finder__items')).display})");
     assert.deepEqual(structure, { runtime: "true", plainWindow: false, plainKind: "finder", windows: 2, tiles: 100, widgetChildren: 5, progressViews: 2, layout: "grid" });
-    await new Promise((resolve) => setTimeout(resolve, 80));
-    const previews = await evaluate(protocol, "({requests:phase48.telemetry.media.length,services:[...new Set(phase48.telemetry.media.map(value=>value.service))],physical:phase48.telemetry.media.some(value=>value.input.db_name||value.input.storage_ref)})");
+    let previews;
+    for (let attempt = 0; attempt < 80; attempt++) {
+      previews = await evaluate(protocol, "({requests:phase48.telemetry.media.length,services:[...new Set(phase48.telemetry.media.map(value=>value.service))],physical:phase48.telemetry.media.some(value=>value.input.db_name||value.input.storage_ref)})");
+      if (previews.requests > 0) break;
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
     assert.ok(previews.requests > 0, JSON.stringify(previews));
     assert.equal(previews.physical, false);
     assert.ok(previews.services.every((service) => ["media.thumb", "media.document", "media.preview", "media.video"].includes(service)), JSON.stringify(previews));
@@ -84,6 +88,9 @@ test("Phase 4.8 mounts standalone and managed Finders with optimized selection a
     await evaluate(protocol, "document.querySelector('#plain-host .drumee-finder__check').click()");
     assert.equal(await evaluate(protocol, "phase48.plain.selection.getItems().length"), 1);
 
+    const advanced_selection = await evaluate(protocol, `(()=>{const finder=phase48.plain;finder.selection.clear();const tiles=[...document.querySelectorAll('#plain-host .drumee-finder__tile')];tiles[1].dispatchEvent(new MouseEvent('click',{bubbles:true}));tiles[4].dispatchEvent(new MouseEvent('click',{bubbles:true,shiftKey:true}));const range=finder.selection.getItems().length;tiles[6].dispatchEvent(new MouseEvent('click',{bubbles:true,ctrlKey:true}));const additive=finder.selection.getItems().length;tiles[6].dispatchEvent(new KeyboardEvent('keydown',{bubbles:true,key:'ArrowDown'}));const keyboard=finder.selection.getItems()[0].nid;let menu=null;finder.on('context:request',value=>{menu=value.commands});tiles[8].dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,clientX:20,clientY:20}));const context=menu;const view=finder.toggleView();const layout=getComputedStyle(finder.item_list.el).display;finder.toggleView();finder.selection.clear();return{range,additive,keyboard,context,view,layout}})()`);
+    assert.deepEqual(advanced_selection, { range: 4, additive: 5, keyboard: "0000000000000fa7", context: ["open", "download", "rename", "remove"], view: "list", layout: "block" });
+
     await evaluate(protocol, `(()=>{const tiles=document.querySelectorAll('[data-finder-id=finder-a] .drumee-finder__tile');tiles[0].click();tiles[1].querySelector('[data-service=tick]').click()})()`);
     assert.equal(await evaluate(protocol, "phase48.a.finder.selection.getItems().length"), 2);
     const before_checkbox_drag_target = await evaluate(protocol, "phase48.b.finder.items.size");
@@ -99,6 +106,8 @@ test("Phase 4.8 mounts standalone and managed Finders with optimized selection a
 
     const moved = await evaluate(protocol, `(async()=>{document.querySelectorAll('[data-finder-id=finder-a] .drumee-finder__tile')[1].click();const transfer=phase48.a.finder.transferTo(phase48.plain);const optimistic={source:phase48.a.finder.items.size,destination:phase48.plain.items.size,pending:phase48.a.finder.pending_operations.size};await transfer;return{optimistic,committed:{source:phase48.a.finder.items.size,destination:phase48.plain.items.size,pending:phase48.a.finder.pending_operations.size}}})()`);
     assert.deepEqual(moved, { optimistic: { source: 1, destination: 251, pending: 1 }, committed: { source: 1, destination: 251, pending: 0 } });
+    const undone = await evaluate(protocol, `(async()=>{const applied=await phase48.a.finder.undoLast();await phase48.plain.refresh({reconciliation:true});return{applied,source:phase48.a.finder.items.size,destination:phase48.plain.items.size,undo:phase48.a.finder.undo_stack.length}})()`);
+    assert.deepEqual(undone, { applied: true, source: 2, destination: 100, undo: 0 });
 
     const before = await evaluate(protocol, "phase48.a.finder.selection.getItems().length");
     const header = await point(protocol, "[data-window_id=finder-window-a] .drumee-window__header");

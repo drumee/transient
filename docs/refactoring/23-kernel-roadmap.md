@@ -37,7 +37,7 @@ Phase 4.8
     Finder / File Manager implementation and integration
     UI depends on Window Manager
     backend depends on system-mfs
-    no final standalone Finder extraction
+    CLOSED / VALIDATED
 
 Phase 4.8B
     generic Hub lifecycle and authorized server context
@@ -47,7 +47,8 @@ Phase 4.8B
 Phase 4.9
     real Finder usage and kernel stabilization
     stabilize Finder public contracts
-    extract and validate standalone Finder
+    integrate Hub-authorized standalone Finder
+    CLOSED / VALIDATED / NOT PUBLISHED
 
 After Phase 4.9
     end-to-end validation with Oxymotion
@@ -148,13 +149,13 @@ The sole module schema contract remains `SCHEMA_MANIFEST.json`, extended with
 `inherit` and `requires`. The detailed implementation and validation record is
 [`30-phase4.8b-hub-lifecycle.md`](30-phase4.8b-hub-lifecycle.md).
 
-## Phase 4.9 — Finder stabilization and standalone extraction
+## Phase 4.9 — Finder stabilization and standalone integration (closed / validated)
 
-Phase 4.8B is now the mandatory predecessor to this phase. Existing Finder
+Phase 4.8B is the mandatory predecessor to this phase. Existing Finder
 standalone extraction/publication artifacts and the historical Phase 4.9
-closure report remain auditable repository facts, but they are not accepted as
-the current phase-gate proof. Finder must be revalidated against the 4.8B Hub
-context before Phase 4.9 can close in the revised sequence.
+closure report remain auditable repository facts, but are not the current
+phase-gate proof. The revised Phase 4.9 revalidated Finder against the official
+4.8B Hub lifecycle, canonical ACL words/bits and ready `system-mfs` capability.
 
 Finder, rather than a business application, is the first substantial real
 consumer used to stabilize the complete kernel application platform. Actual
@@ -163,17 +164,21 @@ Finder usage may reveal issues in `ui-runtime`, Window Manager,
 multi-window behavior and real MFS operations. Only issues demonstrated by
 that use should change kernel contracts.
 
-After those contracts are stable enough, Phase 4.9 extracts Finder into its
-own standalone repository/package. The artifact must prove package-relative
-assets, isolated tests, no transient or `sources/**` dependency, no Team or
-collaboration dependency, an explicit Window Manager UI dependency, an
-explicit `system-mfs` backend dependency and clean integration back into the
-kernel environment.
+The existing standalone repository remains the Finder delivery boundary.
+Phase 4.9 prepares `@drumee/finder@0.1.0-alpha.2`,
+`@drumee/server-runtime@0.1.0-alpha.2` and
+`@drumee/system-mfs@0.1.0-alpha.2` without publication. The artifacts prove
+package-relative assets, isolated tests, no transient or `sources/**`
+dependency, no Team dependency, explicit Window Manager integration and a
+server-side `system-mfs` requirement.
 
-Phase 4.9 closes only when real Finder use has stabilized the relevant kernel
-contracts, standalone Finder tests pass, standalone Finder works with
-standalone Window Manager and standalone `system-mfs`, kernel integration
-consumes it cleanly, and no uncontrolled duplicate ownership remains.
+Phase 4.9 closed after the canonical validation exercised the real MariaDB Hub
+lifecycle and MFS dispatcher, a real `KernelSession`, independent A/B Hub
+contexts, runtime/Nginx binary paths, WebSocket filtering, Chromium Finder
+interactions, restart persistence and isolated package dry-runs. The complete
+record is [`32-phase4.9-hub-finder-stabilization.md`](32-phase4.9-hub-finder-stabilization.md)
+and the command/result ledger is
+[`33-phase4.9-final-report.md`](33-phase4.9-final-report.md).
 
 The required final proof is:
 

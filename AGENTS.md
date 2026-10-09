@@ -48,7 +48,7 @@ R2          standalone system-mfs extraction                      CLOSED / VALID
 Phase 4.7   Window Manager UI capability + standalone extraction CLOSED / VALIDATED
 Phase 4.8   Finder implementation and integration                 IMPLEMENTED / VALIDATED
 Phase 4.8B  Hub lifecycle, authorized context, schema propagation IMPLEMENTED / VALIDATED
-Phase 4.9   Finder real-use stabilization + standalone extraction PLANNED
+Phase 4.9   Finder real-use stabilization + standalone integration CLOSED / VALIDATED
 Oxymotion   end-to-end consumer validation after Phase 4.9        PLANNED
 ```
 

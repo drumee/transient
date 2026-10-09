@@ -6,5 +6,6 @@
     "document": { "scope": "mfs", "permission": { "src": "read" } },
     "video": { "scope": "mfs", "permission": { "src": "read" } }
   },
-  "modules": { "private": "service/media" }
+  "modules": { "private": "service/media" },
+  "requires": ["system-mfs"]
 }

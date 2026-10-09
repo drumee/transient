@@ -1,6 +1,12 @@
 # Phase 4.9 — Finder stabilization and standalone extraction
 
-Status: **CLOSED / VALIDATED / STANDALONE PUBLISHED** on 2026-10-05.
+Status: **HISTORICAL CLOSURE / STANDALONE PUBLISHED** on 2026-10-05.
+
+This report predates Phase 4.8B and therefore does not prove current Hub
+lifecycle, ACL, schema-propagation or authorized-context integration. The
+revised sequence is closed by
+[`32-phase4.9-hub-finder-stabilization.md`](32-phase4.9-hub-finder-stabilization.md)
+and [`33-phase4.9-final-report.md`](33-phase4.9-final-report.md).
 
 ## Opening baselines
 

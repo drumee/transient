@@ -9,5 +9,6 @@
     "copy": { "scope": "mfs", "permission": { "src": "read", "dest": "write" } },
     "commit_upload": { "scope": "mfs", "permission": { "dest": "write" } }
   },
-  "modules": { "private": "service/mfs" }
+  "modules": { "private": "service/mfs" },
+  "requires": ["system-mfs"]
 }

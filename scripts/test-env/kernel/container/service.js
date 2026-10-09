@@ -73,6 +73,12 @@ const mfs_permission_backend = new MfsPermissionBackend({
   permission_store: { effectivePermission(uid, node) { return uid === fixture_uid && fixture_nodes.has(`${node.hub_id}:${node.nid}`) ? 63 : 0; } },
   transfer_resource: (value) => mfs_transfer.resourceFor(value)
 });
+const fixture_hub_authorizer = {
+  async authorizeResource({ hub_id, asked_permission }) {
+    if (hub_id !== fixture_hub_id) return { granted: false, mode: "hub", reason: "HUB_PERMISSION_DENIED" };
+    return { granted: true, mode: "hub", uid: fixture_uid, hub_context: Object.freeze({ hub_id, type: "hub", privilege: 63, asked_permission, authorized: true }) };
+  }
+};
 
 const registry = new DescriptorRegistry({ permissionValue });
 registry.registerDirectory("/opt/kernel/server-runtime/acl");
@@ -127,7 +133,7 @@ function resolveMfsStore() {
   return mfs_store;
 }
 const sessionManager = new SessionManager({ store: yellowPageStore });
-const authorize = createAuthorizer({ domainAuthorizer: new DomainAuthorizer({ store: yellowPageStore }), mfsPermissionBackend: mfs_permission_backend });
+const authorize = createAuthorizer({ domainAuthorizer: new DomainAuthorizer({ store: yellowPageStore }), hubAuthorizer: fixture_hub_authorizer, mfsPermissionBackend: mfs_permission_backend });
 global.endpointAddress = process.env.KERNEL_PUSH_ENDPOINT || "kernel-runtime:23000";
 const push = new PushBus({ redisStore: RedisStore, socketStore: yellowPageStore });
 const websocketAllowedOrigins = (process.env.KERNEL_WEBSOCKET_ALLOWED_ORIGINS || "")

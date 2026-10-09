@@ -107,3 +107,47 @@ test("Hub ACL keeps canonical permission bits distinct and denies before worker 
   assert.deepEqual(seen, ["read", "write", "delete", "admin", "owner"].map(permissionValue));
   assert.equal(constructions, 1);
 });
+
+test("dispatcher injects independent authorized Hub contexts for cross-Hub MFS work", async () => {
+  const registry = new DescriptorRegistry({ permissionValue });
+  registry.registerDescriptor("mfs-fixture", {
+    modules: { private: "service/mfs-fixture.js" },
+    requires: ["system-mfs"],
+    services: { copy: { scope: "mfs", permission: { src: "read", dest: "write" } } }
+  }, { workdir: "/trusted" });
+  const source = { hub_id: "a000000000000001", nid: "b000000000000002" };
+  const destination = { hub_id: "c000000000000003", nid: "d000000000000004" };
+  const resolver_calls = [];
+  const hubAuthorizer = new HubAuthorizer({
+    permissionValue,
+    resolver: {
+      async resolveAuthorized(request) {
+        resolver_calls.push(request);
+        return Object.freeze({ hub_id: request.hub_id, database_name: `trusted_${request.hub_id}`, authorized: true });
+      }
+    }
+  });
+  const mfsPermissionBackend = {
+    async resources() { return { src: [source], dest: [destination] }; },
+    async effectivePermission() { return 63; }
+  };
+  class Worker {
+    constructor(options) { this.contexts = options.hub_contexts; }
+    copy(input) { return { contexts: this.contexts, attacker_database: input.database_name }; }
+  }
+  const dispatcher = new ServiceDispatcher({
+    registry,
+    authorize: createAuthorizer({ hubAuthorizer, mfsPermissionBackend }),
+    capability_resolver: { async requireAll() {} },
+    requireWorker: () => Worker
+  });
+  const result = await dispatcher.dispatch({ service: "mfs-fixture.copy", session: session(), input: { sources: [source], destination, database_name: "attacker" } });
+  assert.deepEqual(Object.keys(result.contexts).sort(), [source.hub_id, destination.hub_id].sort());
+  assert.equal(result.contexts[source.hub_id].database_name, `trusted_${source.hub_id}`);
+  assert.equal(result.contexts[destination.hub_id].database_name, `trusted_${destination.hub_id}`);
+  assert.equal(result.attacker_database, "attacker");
+  assert.deepEqual(resolver_calls.map(({ hub_id, asked_permission, capabilities }) => ({ hub_id, asked_permission, capabilities })), [
+    { hub_id: source.hub_id, asked_permission: permissionValue("read"), capabilities: ["system-mfs"] },
+    { hub_id: destination.hub_id, asked_permission: permissionValue("write"), capabilities: ["system-mfs"] }
+  ]);
+});

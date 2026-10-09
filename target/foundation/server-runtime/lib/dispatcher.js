@@ -42,14 +42,21 @@ class ServiceDispatcher {
           capability: resolved.requires[0], status: "unavailable"
         });
       }
-      await this.capability_resolver.requireAll(resolved.requires, { input, service: resolved.service, session });
+      await this.capability_resolver.requireAll(resolved.requires, {
+        input,
+        service: resolved.service,
+        session,
+        hub_context: decision.hub_context || null,
+        hub_contexts: decision.hub_contexts || null
+      });
     }
     const WorkerClass = this.getWorkerClass(resolved.workerPath);
     const worker = new WorkerClass({
       ...this.workerOptions,
       session,
       permission: resolved.permission,
-      hub_context: decision.hub_context || null
+      hub_context: decision.hub_context || null,
+      hub_contexts: decision.hub_contexts || null
     });
     if (!worker || typeof worker[resolved.method] !== "function") {
       if (worker && typeof worker.stop === "function") worker.stop();

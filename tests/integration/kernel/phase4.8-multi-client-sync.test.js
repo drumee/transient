@@ -81,3 +81,19 @@ test("two independent runtime Websocket clients receive filtered, idempotent MFS
   assert.deepEqual([a_source.refreshes, a_destination.refreshes, a_unrelated.refreshes, b_source.refreshes, b_destination.refreshes], [1, 1, 1, 1, 1]);
   sync_a.unregister(a_unrelated); sync_a.destroy(); sync_b.destroy();
 });
+
+test("Hub authorization changes suppress WebSocket delivery before projection", async () => {
+  const delivered = [];
+  let client_b_allowed = true;
+  const publisher = new MfsEventPublisher({
+    recipients: async () => [client_a, client_b],
+    authorize: async ({ recipient, hub_ids }) => hub_ids.length === 1 && hub_ids[0] === hub && (recipient !== client_b || client_b_allowed),
+    transport: { async publishRecipient(message) { delivered.push(message); } }
+  });
+  const event = { type: "node.created", operation_id: "rights-1", destination: source, result: { ...source, filename: "safe" } };
+  await publisher.publish({ event, principal: client_a, filesystem: filesystem() });
+  assert.deepEqual(delivered.map((entry) => entry.principal), [client_a, client_b]);
+  client_b_allowed = false;
+  await publisher.publish({ event: { ...event, operation_id: "rights-2" }, principal: client_a, filesystem: filesystem() });
+  assert.deepEqual(delivered.map((entry) => entry.principal), [client_a, client_b, client_a]);
+});

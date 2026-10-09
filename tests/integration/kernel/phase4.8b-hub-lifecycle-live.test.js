@@ -15,6 +15,7 @@ const fixtures = path.join(root, "tests/fixtures/phase4.8b");
 const { HubLifecycle, ModuleRegistry, SqlHubStore, createAclContract } = require(path.join(lifecycle_root, "lib"));
 const { checksum, normalizeManifest, readModuleManifest } = require(path.join(lifecycle_root, "lib/manifest"));
 const runtime = require(path.join(root, "target/foundation/server-runtime/lib"));
+const { MfsPermissionBackend, MfsService } = require(path.join(root, "target/modules/mfs-service/lib"));
 const Constants = require(path.join(root, "sources/server-essentials/lib/lex/constants"));
 const { permissionValue } = require(path.join(root, "sources/server-essentials/lib/lex/permission"));
 const systemMfs = require(path.join(system_mfs_root, "lib"));
@@ -23,6 +24,7 @@ const ACL = createAclContract(Constants);
 const container = process.env.KERNEL_DB_CONTAINER || "transient-kernel-phase4-db";
 const yp = process.env.KERNEL_DB_NAME || "yp";
 const password = process.env.KERNEL_DB_ROOT_PASSWORD || "phase4-disposable-root";
+const creator = "a000000000000001";
 
 function literal(value) {
   if (value === null || value === undefined) return "NULL";
@@ -50,6 +52,18 @@ function mariadb(database_name, sql, { input } = {}) {
   if (result.status !== 0) throw new Error(`${result.stdout}\n${result.stderr}`.trim());
   return parse(result.stdout);
 }
+function restartMariaDb() {
+  const restarted = child_process.spawnSync("docker", ["restart", container], { encoding: "utf8" });
+  if (restarted.status !== 0) throw new Error(`${restarted.stdout}\n${restarted.stderr}`.trim());
+  let last_error = "MariaDB did not become ready";
+  for (let attempt = 0; attempt < 60; attempt++) {
+    const probe = child_process.spawnSync("docker", ["exec", "-e", `MYSQL_PWD=${password}`, container, "mariadb-admin", "--protocol=tcp", "--host=127.0.0.1", "--user=root", "ping"], { encoding: "utf8" });
+    if (probe.status === 0) return;
+    last_error = `${probe.stdout}\n${probe.stderr}`.trim();
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 500);
+  }
+  throw new Error(last_error);
+}
 const database = {
   runtime_user: process.env.KERNEL_DB_USER || "kernel_phase4",
   async query(sql, ...parameters) { return mariadb(yp, bind(sql, parameters)); },
@@ -57,8 +71,14 @@ const database = {
   async queryIn(selected, sql, ...parameters) { return mariadb(selected, bind(sql, parameters)); }
 };
 
-function trustedSession(uid = "phase4authuser01", domain_id = 41) {
-  return { isAuthenticated: () => true, uid: () => uid, identity: () => ({ id: uid, domainId: domain_id, kind: "drumate" }) };
+function trustedSession(uid = creator, domain_id = 41) {
+  return new runtime.KernelSession({
+    store: { async signin() {}, async resolveSession() {} },
+    identity: { id: uid, domainId: domain_id, kind: "drumate" },
+    signedIn: true,
+    status: "ok",
+    contextSource: "phase4.9-live"
+  });
 }
 
 function fixtureHandler(module_root, { fail_once = false } = {}) {
@@ -108,7 +128,7 @@ test("Phase 4.8B real MariaDB Hub lifecycle, ACL, propagation and recovery", { s
   assert.equal(mariadb(own_internal.database_name, "SHOW TABLES LIKE 'phase48b_own_marker'").length, 1);
   assert.equal(mariadb(own_internal.database_name, "SHOW TABLES LIKE 'phase48b_installed_marker'").length, 0);
 
-  const mfs = new systemMfs.MfsNamespace({ store: mfs_store, context: { hub_id: installed.hub_id }, principal: "phase4authuser01" });
+  const mfs = new systemMfs.MfsNamespace({ store: mfs_store, context: { hub_id: installed.hub_id }, principal: creator });
   const ready = await systemMfs.validateProvisioning({ store: mfs_store, context: { hub_id: installed.hub_id } });
   const folder = await mfs.makeDirectory(ready.root_id, "Phase48B");
   assert.equal((await mfs.resolveNode(folder.nid)).filename, "Phase48B");
@@ -116,9 +136,9 @@ test("Phase 4.8B real MariaDB Hub lifecycle, ACL, propagation and recovery", { s
   const reader = "b000000000000002";
   const writer = "c000000000000003";
   const admin = "d000000000000004";
-  const owner_context = await store.resolveAuthorized({ hub_id: installed.hub_id, uid: "phase4authuser01", organisation_id: 41, asked_permission: ACL.permission.admin, capabilities: ["installed-module"] });
+  const owner_context = await store.resolveAuthorized({ hub_id: installed.hub_id, uid: creator, organisation_id: 41, asked_permission: ACL.permission.admin, capabilities: ["installed-module"] });
   assert.equal(owner_context.privilege, ACL.privilege.owner);
-  assert.equal(installed_internal.owner_id, "phase4authuser01");
+  assert.equal(installed_internal.owner_id, creator);
   await lifecycle.grant({ actor_context: owner_context, target_uid: reader, privilege: "read" });
   await lifecycle.grant({ actor_context: owner_context, target_uid: writer, privilege: "write" });
   await lifecycle.grant({ actor_context: owner_context, target_uid: admin, privilege: "admin" });
@@ -149,6 +169,37 @@ test("Phase 4.8B real MariaDB Hub lifecycle, ACL, propagation and recovery", { s
   const procedure = await dispatcher.dispatch({ service: "fixture.read", session: trustedSession(), input: { hub_id: installed.hub_id, database_name: own_internal.database_name } });
   assert.equal(procedure[0].marker_value, "ok");
 
+  const mfs_descriptors = new runtime.DescriptorRegistry({ permissionValue });
+  mfs_descriptors.registerDirectory(path.join(root, "target/modules/mfs-service/server/acl"));
+  const mfs_service = new MfsService({
+    filesystem_factory(principal) {
+      assert.ok(principal.hub_contexts && Object.keys(principal.hub_contexts).length >= 1, "authorized Hub contexts must reach the MFS service");
+      return new systemMfs.MfsFilesystem({ store: mfs_store, principal: principal.uid });
+    }
+  });
+  const mfs_dispatcher = new runtime.ServiceDispatcher({
+    registry: mfs_descriptors,
+    authorize: runtime.createAuthorizer({
+      hubAuthorizer: new runtime.HubAuthorizer({ resolver: store, permissionValue }),
+      mfsPermissionBackend: new MfsPermissionBackend({ permission_store: mfs_store })
+    }),
+    capability_resolver: new runtime.CapabilityResolver({ providers: { "system-mfs": async () => true } }),
+    workerOptions: { mfs_service }
+  });
+  const own_ready = await systemMfs.validateProvisioning({ store: mfs_store, context: { hub_id: own.hub_id } });
+  const root_a = { hub_id: installed.hub_id, nid: ready.root_id };
+  const root_b = { hub_id: own.hub_id, nid: own_ready.root_id };
+  const created_a = await mfs_dispatcher.dispatch({ service: "mfs.mkdir", session: trustedSession(), input: { destination: root_a, name: "Official-A", database_name: own_internal.database_name } });
+  const nested_a = await mfs_dispatcher.dispatch({ service: "mfs.mkdir", session: trustedSession(), input: { destination: root_a, name: "Move-Me" } });
+  await mfs_dispatcher.dispatch({ service: "mfs.move", session: trustedSession(), input: { nodes: [{ hub_id: installed.hub_id, nid: nested_a.result.nid }], destination: { hub_id: installed.hub_id, nid: created_a.result.nid } } });
+  const copied_b = await mfs_dispatcher.dispatch({ service: "mfs.copy", session: trustedSession(), input: { sources: [{ hub_id: installed.hub_id, nid: created_a.result.nid }], destination: root_b, database_name: installed_internal.database_name } });
+  assert.equal(copied_b.result.destination.hub_id, own.hub_id);
+  assert.ok(copied_b.result.nodes.every((entry) => entry.node.hub_id === own.hub_id));
+  assert.equal((await mfs_dispatcher.dispatch({ service: "mfs.list", session: trustedSession(), input: { location: root_a } })).items.some((item) => item.filename === "Official-A"), true);
+  assert.equal((await mfs_dispatcher.dispatch({ service: "mfs.list", session: trustedSession(), input: { location: root_b } })).items.some((item) => item.filename === "Official-A"), true);
+  await assert.rejects(() => mfs_dispatcher.dispatch({ service: "mfs.list", session: trustedSession(admin), input: { location: root_a } }), (error) => error.code === "PERMISSION_DENIED", "Hub admin does not bypass MFS node permissions");
+  await assert.rejects(() => mfs_dispatcher.dispatch({ service: "mfs.copy", session: trustedSession(reader), input: { sources: [root_a], destination: root_b } }), (error) => error.code === "PERMISSION_DENIED", "source Hub read does not authorize the destination Hub");
+
   const later_root = path.join(fixtures, "later-module");
   register(registry, "later-module", later_root, fixtureHandler(later_root, { fail_once: true }));
   await database.executeScript("CREATE TABLE IF NOT EXISTS phase48b_sentinel (id INT PRIMARY KEY); INSERT IGNORE INTO phase48b_sentinel(id) VALUES (1)", { database: installed_internal.database_name });
@@ -156,8 +207,8 @@ test("Phase 4.8B real MariaDB Hub lifecycle, ACL, propagation and recovery", { s
   const failed = mariadb(yp, `SELECT status,attempt FROM hub_capability WHERE hub_id='${installed.hub_id}' AND module_id='later-module'`)[0];
   assert.equal(failed.status, "failed");
   assert.equal(mariadb(installed_internal.database_name, "SHOW TABLES LIKE 'phase48b_later_marker'").length, 1);
-  assert.equal((await store.resolveAuthorized({ hub_id: installed.hub_id, uid: "phase4authuser01", organisation_id: 41, asked_permission: ACL.permission.read, capabilities: ["installed-module"] })).authorized, true);
-  await assert.rejects(() => store.resolveAuthorized({ hub_id: installed.hub_id, uid: "phase4authuser01", organisation_id: 41, asked_permission: ACL.permission.read, capabilities: ["later-module"] }), (error) => error.code === "HUB_CAPABILITY_NOT_READY");
+  assert.equal((await store.resolveAuthorized({ hub_id: installed.hub_id, uid: creator, organisation_id: 41, asked_permission: ACL.permission.read, capabilities: ["installed-module"] })).authorized, true);
+  await assert.rejects(() => store.resolveAuthorized({ hub_id: installed.hub_id, uid: creator, organisation_id: 41, asked_permission: ACL.permission.read, capabilities: ["later-module"] }), (error) => error.code === "HUB_CAPABILITY_NOT_READY");
   const upgrade_page = await lifecycle.upgradeExistingHubs({ inherit: "installed", limit: 1 });
   assert.equal(upgrade_page.next, installed.hub_id);
   assert.deepEqual((await lifecycle.upgradeExistingHubs({ inherit: "installed", after: upgrade_page.next, limit: 1 })).results, []);
@@ -177,8 +228,8 @@ test("Phase 4.8B real MariaDB Hub lifecycle, ACL, propagation and recovery", { s
     artifact_ref: "fixture:concurrent-creator:1"
   });
   const interrupted_specification = { idempotency_key: "phase48b-allocation-resume", name: "Allocation resume" };
-  const interrupted_fingerprint = checksum({ creator_module: "concurrent-creator", organisation_id: 41, uid: "phase4authuser01", name: interrupted_specification.name });
-  const allocating = await store.reserveRequest({ organisation_id: 41, creator_uid: "phase4authuser01", creator_module: "concurrent-creator", idempotency_key: interrupted_specification.idempotency_key, fingerprint: interrupted_fingerprint, public_name: interrupted_specification.name, inherit: "own" });
+  const interrupted_fingerprint = checksum({ creator_module: "concurrent-creator", organisation_id: 41, uid: creator, name: interrupted_specification.name });
+  const allocating = await store.reserveRequest({ organisation_id: 41, creator_uid: creator, creator_module: "concurrent-creator", idempotency_key: interrupted_specification.idempotency_key, fingerprint: interrupted_fingerprint, public_name: interrupted_specification.name, inherit: "own" });
   assert.equal(allocating.state, "allocating");
   assert.equal(mariadb(yp, `SELECT schema_name FROM information_schema.schemata WHERE schema_name='${allocating.database_name}'`).length, 0);
   const allocation_resumed = await lifecycle.createPrivateHub({ session: trustedSession(), creator_module: "concurrent-creator", specification: interrupted_specification });
@@ -200,6 +251,22 @@ test("Phase 4.8B real MariaDB Hub lifecycle, ACL, propagation and recovery", { s
   const second_store = new copied.SqlHubStore({ database, acl: copied.createAclContract(Constants) });
   assert.equal((await second_store.getHub(installed.hub_id)).database_name, installed_internal.database_name);
   assert.equal(mariadb(installed_internal.database_name, "SELECT marker_value FROM phase48b_installed_marker WHERE marker_key='authorized'")[0].marker_value, "ok");
+
+  const durable_snapshot = {
+    hubs: mariadb(yp, `SELECT h.id,h.owner_id,h.domain_id,l.creator_module,l.inherit_policy,l.database_name,l.state FROM hub h INNER JOIN hub_lifecycle l ON l.hub_id=h.id WHERE h.id IN ('${installed.hub_id}','${own.hub_id}') ORDER BY h.id`),
+    acl: mariadb(yp, `SELECT hub_id,uid,privilege,granted_by FROM hub_acl WHERE hub_id IN ('${installed.hub_id}','${own.hub_id}') ORDER BY hub_id,uid`),
+    plans: mariadb(yp, `SELECT id,hub_id,kind,plan_fingerprint,status,plan_cursor,error_code FROM hub_plan WHERE hub_id IN ('${installed.hub_id}','${own.hub_id}') ORDER BY id`),
+    capabilities: mariadb(yp, `SELECT hub_id,module_id,plan_id,target_version,applied_version,artifact_ref,status,attempt,error_code FROM hub_capability WHERE hub_id IN ('${installed.hub_id}','${own.hub_id}') ORDER BY hub_id,module_id`)
+  };
+  restartMariaDb();
+  await second_store.install();
+  assert.deepEqual(mariadb(yp, `SELECT h.id,h.owner_id,h.domain_id,l.creator_module,l.inherit_policy,l.database_name,l.state FROM hub h INNER JOIN hub_lifecycle l ON l.hub_id=h.id WHERE h.id IN ('${installed.hub_id}','${own.hub_id}') ORDER BY h.id`), durable_snapshot.hubs);
+  assert.deepEqual(mariadb(yp, `SELECT hub_id,uid,privilege,granted_by FROM hub_acl WHERE hub_id IN ('${installed.hub_id}','${own.hub_id}') ORDER BY hub_id,uid`), durable_snapshot.acl);
+  assert.deepEqual(mariadb(yp, `SELECT id,hub_id,kind,plan_fingerprint,status,plan_cursor,error_code FROM hub_plan WHERE hub_id IN ('${installed.hub_id}','${own.hub_id}') ORDER BY id`), durable_snapshot.plans);
+  assert.deepEqual(mariadb(yp, `SELECT hub_id,module_id,plan_id,target_version,applied_version,artifact_ref,status,attempt,error_code FROM hub_capability WHERE hub_id IN ('${installed.hub_id}','${own.hub_id}') ORDER BY hub_id,module_id`), durable_snapshot.capabilities);
+  assert.equal((await second_store.getHub(installed.hub_id)).database_name, installed_internal.database_name);
+  assert.equal(mariadb(installed_internal.database_name, "SELECT marker_value FROM phase48b_installed_marker WHERE marker_key='authorized'")[0].marker_value, "ok");
+  assert.equal((await new systemMfs.MfsNamespace({ store: mfs_store, context: { hub_id: installed.hub_id }, principal: creator }).resolveNode(folder.nid)).filename, "Phase48B");
 
   const exposed = JSON.stringify({ installed, own, procedure });
   assert.doesNotMatch(exposed, /hub_[a-f0-9]{16}|phase4-disposable-root|db_host|database_name/i);

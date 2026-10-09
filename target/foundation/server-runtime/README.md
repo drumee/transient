@@ -24,8 +24,13 @@ current-Essentials `permissionValue` converter used by descriptor discovery is
 required by `HubAuthorizer`; no `access` string or numeric hierarchy is added.
 The resolved bit is checked before the Worker class is loaded or instantiated,
 and the authorized context carries both `asked_permission` and the effective
-cumulative `privilege`. Contextual MFS authorization remains a separate,
-unchanged pre-execution check.
+cumulative `privilege`. Contextual MFS authorization remains a separate
+pre-execution check. A service descriptor declares `requires:
+["system-mfs"]`; the runtime authorizes every source/destination Hub
+independently, verifies that capability is ready, and injects immutable
+per-request `hub_context`/`hub_contexts`. It then requires the corresponding
+node permission from the MFS backend. A Hub privilege never substitutes for an
+MFS node privilege, and no mutable process-global Hub is used.
 
 ## Phase 4.5 export boundary
 

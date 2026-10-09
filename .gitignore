@@ -37,3 +37,4 @@ scripts/test-env/*
 !scripts/test-env/kernel/
 scripts/test-env/kernel/*
 !scripts/test-env/kernel/phase4.8b-validation.sh
+!scripts/test-env/kernel/phase4.9-validation.sh

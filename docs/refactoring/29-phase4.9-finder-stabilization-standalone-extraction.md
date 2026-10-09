@@ -1,5 +1,9 @@
 # Phase 4.9 — Finder stabilization and standalone extraction
 
+> Historical authorization specification. It predates Phase 4.8B and is not
+> the current closure proof. See
+> [`32-phase4.9-hub-finder-stabilization.md`](32-phase4.9-hub-finder-stabilization.md).
+
 Phase 4.8 is definitively CLOSED / VALIDATED.
 
 Phase 4.9 is now AUTHORIZED.

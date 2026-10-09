@@ -35,9 +35,22 @@ function publicEvent(event) {
   };
 }
 
+function eventHubIds(event) {
+  const ids = new Set();
+  const visit = (value) => {
+    if (!value || typeof value !== "object") return;
+    if (typeof value.hub_id === "string") ids.add(value.hub_id);
+    if (Array.isArray(value)) for (const entry of value) visit(entry);
+    else for (const entry of Object.values(value)) visit(entry);
+  };
+  visit(publicEvent(event));
+  return [...ids].sort();
+}
+
 class MfsEventPublisher {
-  constructor({ recipients, project, transport } = {}) {
+  constructor({ recipients, authorize, project, transport } = {}) {
     this.recipients = recipients || (async ({ principal }) => [principal]);
+    this.authorize = authorize || (async () => true);
     this.project = project || (async ({ event }) => event);
     this.transport = transport;
   }
@@ -47,6 +60,8 @@ class MfsEventPublisher {
     const recipients = await this.recipients({ event, principal, filesystem });
     const deliveries = [];
     for (const recipient of recipients || []) {
+      const allowed = await this.authorize({ event: publicEvent(event), hub_ids: eventHubIds(event), recipient, principal, filesystem });
+      if (!allowed) continue;
       const projected = await this.project({ event: publicEvent(event), recipient, principal, filesystem });
       if (!projected) continue;
       deliveries.push(await this.transport.publishRecipient({ principal: recipient, service: "mfs.event", payload: publicEvent(projected) }));
@@ -55,4 +70,4 @@ class MfsEventPublisher {
   }
 }
 
-module.exports = { MfsEventPublisher, publicEvent, publicNode, publicResult };
+module.exports = { MfsEventPublisher, eventHubIds, publicEvent, publicNode, publicResult };
