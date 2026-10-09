@@ -2,7 +2,7 @@
 
 const assert = require("node:assert/strict");
 const test = require("node:test");
-const { DescriptorRegistry, HubAuthorizer, ServiceDispatcher, createAuthorizer } = require("../lib");
+const { CapabilityResolver, DescriptorRegistry, HubAuthorizer, ServiceDispatcher, createAuthorizer } = require("../lib");
 const { permissionValue } = require("../../../../sources/server-essentials/lib/lex/permission");
 
 function session({ uid = "a000000000000001", domain_id = 1, authenticated = true, kind = "drumate", status = "ok" } = {}) {
@@ -149,5 +149,60 @@ test("dispatcher injects independent authorized Hub contexts for cross-Hub MFS w
   assert.deepEqual(resolver_calls.map(({ hub_id, asked_permission, capabilities }) => ({ hub_id, asked_permission, capabilities })), [
     { hub_id: source.hub_id, asked_permission: permissionValue("read"), capabilities: ["system-mfs"] },
     { hub_id: destination.hub_id, asked_permission: permissionValue("write"), capabilities: ["system-mfs"] }
+  ]);
+});
+
+test("Hub service requirements are checked on the authorized Hub before global availability and Worker construction", async () => {
+  const registry = new DescriptorRegistry({ permissionValue });
+  registry.registerDescriptor("fixture", {
+    modules: { private: "service/fixture.js" },
+    requires: ["platform-only"],
+    services: {
+      probe: {
+        scope: "hub",
+        requires: ["hub-schema", "platform-only"],
+        permission: { src: "read", selector: "hub_id", capabilities: ["permission-schema"] }
+      }
+    }
+  }, { workdir: "/trusted" });
+  const ready = new Map([
+    ["a000000000000001", new Set(["platform-only", "permission-schema"])],
+    ["b000000000000002", new Set(["platform-only", "permission-schema", "hub-schema"])]
+  ]);
+  const resolver_calls = [];
+  const resolver = {
+    async resolveAuthorized(request) {
+      resolver_calls.push(request);
+      const missing = request.capabilities.find((name) => !ready.get(request.hub_id).has(name));
+      if (missing) throw Object.assign(new Error("not ready"), { code: "HUB_CAPABILITY_NOT_READY" });
+      return Object.freeze({ hub_id: request.hub_id, authorized: true, capabilities: request.capabilities });
+    }
+  };
+  let provider_calls = 0;
+  let constructions = 0;
+  class Worker { constructor() { constructions++; } probe() { return "ok"; } }
+  const dispatcher = new ServiceDispatcher({
+    registry,
+    authorize: createAuthorizer({ hubAuthorizer: new HubAuthorizer({ resolver, permissionValue }) }),
+    capability_resolver: new CapabilityResolver({ providers: {
+      "platform-only": async () => (provider_calls++, true),
+      "hub-schema": async () => (provider_calls++, true)
+    } }),
+    requireWorker: () => Worker
+  });
+  await assert.rejects(
+    () => dispatcher.dispatch({ service: "fixture.probe", session: session(), input: { hub_id: "a000000000000001" } }),
+    (error) => error.code === "PERMISSION_DENIED" && error.details.reason === "HUB_CAPABILITY_NOT_READY"
+  );
+  assert.equal(provider_calls, 0, "a globally available provider cannot bypass Hub readiness");
+  assert.equal(constructions, 0);
+  ready.get("a000000000000001").add("hub-schema");
+  assert.equal(await dispatcher.dispatch({ service: "fixture.probe", session: session(), input: { hub_id: "a000000000000001" } }), "ok");
+  assert.equal(await dispatcher.dispatch({ service: "fixture.probe", session: session(), input: { hub_id: "b000000000000002" } }), "ok");
+  assert.equal(constructions, 2);
+  assert.deepEqual(resolver_calls.map((call) => call.capabilities), [
+    ["permission-schema", "platform-only", "hub-schema"],
+    ["permission-schema", "platform-only", "hub-schema"],
+    ["permission-schema", "platform-only", "hub-schema"]
   ]);
 });

@@ -8,7 +8,9 @@ const root = path.resolve(__dirname, "../../..");
 const { Websocket } = require(path.resolve(root, "../ui-runtime/src/websocket"));
 const finder_root = process.env.KERNEL_FINDER_ROOT || path.resolve(root, "../finder");
 const { MfsSync } = require(path.join(finder_root, "lib/mfs-sync"));
-const { MfsEventPublisher, MfsService } = require(path.join(root, "target/modules/mfs-service/lib"));
+const { HubAuthorizer } = require(path.join(root, "target/foundation/server-runtime/lib"));
+const { MfsEventAclAuthorizer, MfsEventPublisher, MfsService } = require(path.join(root, "target/modules/mfs-service/lib"));
+const { permissionValue } = require(path.join(root, "sources/server-essentials/lib/lex/permission"));
 
 const client_a = "a000000000000001";
 const client_b = "b000000000000002";
@@ -45,6 +47,7 @@ test("two independent runtime Websocket clients receive filtered, idempotent MFS
   const fs_api = filesystem();
   const events = new MfsEventPublisher({
     recipients: async () => [client_a, client_b],
+    authorize: async () => true,
     project: async ({ event, recipient }) => recipient === client_a ? event : { ...event, result: event.result && { ...event.result, secret: undefined } },
     transport
   });
@@ -82,18 +85,69 @@ test("two independent runtime Websocket clients receive filtered, idempotent MFS
   sync_a.unregister(a_unrelated); sync_a.destroy(); sync_b.destroy();
 });
 
-test("Hub authorization changes suppress WebSocket delivery before projection", async () => {
+test("current Hub and node ACL suppress WebSocket delivery and isolate cross-Hub projections", async () => {
   const delivered = [];
-  let client_b_allowed = true;
+  const destination_hub = "1000000000000007";
+  const destination_node = { hub_id: destination_hub, nid: "1000000000000008" };
+  const sessions = new Map([client_a, client_b].map((uid) => [uid, {
+    uid: () => uid,
+    isAuthenticated: () => true,
+    identity: () => ({ id: uid, domainId: 1, kind: "drumate" })
+  }]));
+  const hub_acl = new Map([
+    [`${client_a}:${hub}`, 63], [`${client_a}:${destination_hub}`, 63],
+    [`${client_b}:${hub}`, 3], [`${client_b}:${destination_hub}`, 3]
+  ]);
+  const node_acl = new Map();
+  for (const uid of [client_a, client_b]) for (const node of [source, destination_node]) node_acl.set(`${uid}:${node.hub_id}:${node.nid}`, 3);
+  const hub_authorizer = new HubAuthorizer({
+    permissionValue,
+    resolver: {
+      async resolveAuthorized({ hub_id, uid, asked_permission, capabilities }) {
+        assert.deepEqual(capabilities, ["system-mfs"]);
+        const privilege = hub_acl.get(`${uid}:${hub_id}`) || 0;
+        if ((privilege & asked_permission) !== asked_permission) throw Object.assign(new Error("denied"), { code: "HUB_PERMISSION_DENIED" });
+        return { hub_id, privilege, authorized: true };
+      }
+    }
+  });
+  const acl = new MfsEventAclAuthorizer({
+    session_resolver: async (recipient) => sessions.get(recipient),
+    hub_authorizer,
+    permission_backend: { async effectivePermission(uid, node) { return node_acl.get(`${uid}:${node.hub_id}:${node.nid}`) || 0; } },
+    read_permission: permissionValue("read")
+  });
   const publisher = new MfsEventPublisher({
     recipients: async () => [client_a, client_b],
-    authorize: async ({ recipient, hub_ids }) => hub_ids.length === 1 && hub_ids[0] === hub && (recipient !== client_b || client_b_allowed),
+    authorize: (request) => acl.authorize(request),
     transport: { async publishRecipient(message) { delivered.push(message); } }
   });
   const event = { type: "node.created", operation_id: "rights-1", destination: source, result: { ...source, filename: "safe" } };
   await publisher.publish({ event, principal: client_a, filesystem: filesystem() });
   assert.deepEqual(delivered.map((entry) => entry.principal), [client_a, client_b]);
-  client_b_allowed = false;
+  hub_acl.delete(`${client_b}:${hub}`);
   await publisher.publish({ event: { ...event, operation_id: "rights-2" }, principal: client_a, filesystem: filesystem() });
   assert.deepEqual(delivered.map((entry) => entry.principal), [client_a, client_b, client_a]);
+
+  hub_acl.set(`${client_b}:${hub}`, 3);
+  node_acl.delete(`${client_b}:${hub}:${source.nid}`);
+  await publisher.publish({ event: { ...event, operation_id: "node-denied" }, principal: client_a, filesystem: filesystem() });
+  assert.equal(delivered.filter((entry) => entry.payload.operation_id === "node-denied" && entry.principal === client_b).length, 0);
+
+  const cross_hub = {
+    type: "node.copied",
+    operation_id: "cross-hub",
+    source_parent: source,
+    destination: destination_node,
+    result: { nodes: [{ source: { ...source, filename: "source-secret.txt" }, node: destination_node, item: { ...destination_node, filename: "copy.txt" } }], destination: destination_node }
+  };
+  await publisher.publish({ event: cross_hub, principal: client_a, filesystem: filesystem() });
+  const projected = delivered.find((entry) => entry.principal === client_b && entry.payload.operation_id === "cross-hub").payload;
+  assert.equal(JSON.stringify(projected).includes("source-secret.txt"), false);
+  assert.equal(JSON.stringify(projected).includes(destination_hub), true);
+
+  const failing = new MfsEventPublisher({ recipients: async () => [client_b], authorize: async () => { throw new Error("ACL unavailable"); }, transport: { async publishRecipient(message) { delivered.push(message); } } });
+  await failing.publish({ event, principal: client_a, filesystem: filesystem() });
+  assert.equal(delivered.filter((entry) => entry.payload.operation_id === "rights-1" && entry.principal === client_b).length, 1);
+  assert.throws(() => new MfsEventPublisher({ transport: { async publishRecipient() {} } }), (error) => error.code === "MFS_EVENT_AUTHORIZER_REQUIRED");
 });

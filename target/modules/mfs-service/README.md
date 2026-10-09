@@ -12,7 +12,11 @@ Trusted uid and Hub contexts come from runtime authorization before worker
 construction. The permission backend never selects an identity or returns a
 Hub authorization decision. Client uid, principal and physical shard locators
 are ignored. Cross-Hub operations retain separately authorized source and
-destination contexts. Event publication accepts a current-rights callback so
-revoked recipients are filtered before projection. It owns neither filesystem
-algorithms nor WebSocket/Redis connection routing.
+destination contexts. Event delivery requires a current-rights callback;
+missing or failing authorization delivers nothing. `MfsEventAclAuthorizer`
+resolves each live recipient session, rechecks canonical Hub read plus node
+read, and removes resources that recipient cannot see. Cross-Hub events never
+expose the other Hub solely because the recipient may see one side. Candidate
+enumeration is not authorization. It owns neither filesystem algorithms nor
+WebSocket/Redis connection routing.
 `remove` is a hard filesystem deletion; trash and changelog are excluded.

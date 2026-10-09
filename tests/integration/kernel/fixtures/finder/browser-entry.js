@@ -62,7 +62,7 @@ window.Phase48Ready = runtime_api.bootstrap().then((runtime) => {
       }
       if (service === "mfs.copy") {
         const copied = [];
-        for (const identity of input.nodes) for (const items of state.by_parent.values()) {
+        for (const identity of input.sources) for (const items of state.by_parent.values()) {
           const source = items.find((item) => key(item) === key(identity)); if (!source) continue;
           const item = { ...source, hub_id: input.destination.hub_id, nid: (++copy_serial).toString(16).padStart(16, "f"), parent_id: input.destination.nid };
           const target = state.by_parent.get(key(input.destination)) || []; target.push(item); state.by_parent.set(key(input.destination), target); copied.push({ item, node: { hub_id: item.hub_id, nid: item.nid }, source: identity }); break;

@@ -7,7 +7,7 @@ function trustedHubId(session) {
   return hub && (hub.id || hub.hub_id) || null;
 }
 
-function serviceResources(service, input, transfer_resource) {
+function serviceResources(service, input, transfer_resource, session) {
   const name = String(service || "").split(".").pop();
   if (["list"].includes(name)) return { src: [input.location] };
   if (["get", "rename", "remove"].includes(name)) return { src: [input.node] };
@@ -16,7 +16,7 @@ function serviceResources(service, input, transfer_resource) {
   if (name === "copy") return { src: input.sources || [], dest: [input.destination] };
   if (name === "download_prepare") return { src: input.roots || [] };
   if (["orig", "preview", "thumb", "document", "video", "master", "stream", "segment"].includes(name)) return { src: [{ hub_id: input.hub_id, nid: input.nid }] };
-  return transfer_resource ? transfer_resource({ service, input }) : {};
+  return transfer_resource ? transfer_resource({ service, input, session }) : {};
 }
 
 class MfsPermissionBackend {
@@ -27,7 +27,7 @@ class MfsPermissionBackend {
   }
 
   async resources({ service, input = {}, session } = {}) {
-    const target = await serviceResources(service, input, this.transfer_resource);
+    const target = await serviceResources(service, input, this.transfer_resource, session);
     const normalized = {};
     for (const side of ["src", "dest"]) {
       normalized[side] = ((target && target[side]) || []).map((node) => node && node.hub_id ? node : { ...node, hub_id: trustedHubId(session) });

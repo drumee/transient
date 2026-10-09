@@ -20,6 +20,8 @@ test("upload writes out-of-order and duplicate chunks into one sparse staged pay
   const service = new MfsTransferService({ staging: env.staging, host_filesystem: env.host, max_jobs: 2, upload_chunk_size: 2, max_upload_chunk_size: 4, mfs_service: { async prepareUpload({ destination }) { return { destination }; }, async commitUpload(input) { const filename = env.staging.claim(input.payload_ref); commits.push(fs.readFileSync(filename)); return { operation_id: input.operation_id, result: { ...destination, nid: "d000000000000004" } }; } }, progress: { async publishOperation(value) { progress.push(value); } } });
   const started = await service.uploadStart({ destination, size: 5, operation_id: "upload-1", metadata: { size: 5 } }, { uid: principal_id });
   assert.equal(started.chunk_size, 2);
+  assert.deepEqual(service.resourceFor({ service: "mfs-transfer.upload_chunk", input: { transfer_id: started.transfer_id }, session: { uid: () => principal_id } }), { dest: [destination] });
+  assert.throws(() => service.resourceFor({ service: "mfs-transfer.upload_chunk", input: { transfer_id: started.transfer_id }, session: { uid: () => "b000000000000002" } }), (error) => error.code === "MFS_TRANSFER_FORBIDDEN");
   const sparse = service.uploads.get(started.transfer_id).payload_file;
   assert.equal(fs.statSync(sparse).size, 5);
   assert.throws(() => service.uploadStatus({ transfer_id: started.transfer_id }, { uid: "b000000000000002" }), (error) => error.code === "MFS_TRANSFER_FORBIDDEN");

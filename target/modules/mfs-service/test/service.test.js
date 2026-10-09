@@ -28,7 +28,7 @@ function filesystem() {
 
 test("service and WebSocket projections exclude physical and staged-storage fields", async () => {
   const deliveries = [];
-  const events = new MfsEventPublisher({ recipients: async () => [uid], transport: { async publishRecipient(message) { deliveries.push(message); } } });
+  const events = new MfsEventPublisher({ recipients: async () => [uid], authorize: async () => true, transport: { async publishRecipient(message) { deliveries.push(message); } } });
   const service = new MfsService({ filesystem_factory: filesystem, events });
   const listed = await service.list({ location: root, uid: "client-cannot-override" }, { uid });
   assert.deepEqual(listed.items[0], { hub_id, nid: root.nid, filename: "safe" });

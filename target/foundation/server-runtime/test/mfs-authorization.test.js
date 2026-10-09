@@ -67,3 +67,54 @@ test("missing backends and unsupported scopes fail closed", async () => {
   assert.equal((await authorizeMfs({ permission: { scope: "mfs", src: 1 }, session: { uid: () => "trusted" } }, backend(1))).reason, "HUB_AUTHORIZER_REQUIRED");
   assert.equal((await createAuthorizer()({ permission: { scope: "unknown" } })).granted, false);
 });
+
+test("MFS always requires system-mfs and preserves additional requirements for every Hub", async () => {
+  const source = { hub_id: "a000000000000001", nid: "b000000000000002" };
+  const destination = { hub_id: "c000000000000003", nid: "d000000000000004" };
+  const permission_backend = {
+    async resources() { return { src: [source], dest: [destination] }; },
+    async effectivePermission() { return 63; }
+  };
+  for (const requirements of [undefined, [], ["fixture-schema", "system-mfs"]]) {
+    const calls = [];
+    const resolved = {
+      permission: { scope: "mfs", src: 2, dest: 4 },
+      session: { uid: () => "trusted" }
+    };
+    if (requirements !== undefined) resolved.requires = requirements;
+    const decision = await authorizeMfs(resolved, permission_backend, {
+      async authorizeResource(request) {
+        calls.push(request);
+        return { granted: true, hub_context: { hub_id: request.hub_id, authorized: true } };
+      }
+    });
+    assert.equal(decision.granted, true);
+    const expected = requirements && requirements.includes("fixture-schema") ? ["system-mfs", "fixture-schema"] : ["system-mfs"];
+    assert.deepEqual(calls.map((call) => call.capabilities), [expected, expected]);
+  }
+});
+
+test("MFS source and destination readiness fail independently before node permission", async () => {
+  const source = { hub_id: "a000000000000001", nid: "b000000000000002" };
+  const destination = { hub_id: "c000000000000003", nid: "d000000000000004" };
+  const node_checks = [];
+  const permission_backend = {
+    async resources() { return { src: [source], dest: [destination] }; },
+    async effectivePermission(uid, resource) { node_checks.push(resource.hub_id); return 63; }
+  };
+  const readiness = new Map([[source.hub_id, true], [destination.hub_id, false]]);
+  const decision = await authorizeMfs({
+    permission: { scope: "mfs", src: 2, dest: 4 },
+    requires: [],
+    session: { uid: () => "trusted" }
+  }, permission_backend, {
+    async authorizeResource(request) {
+      assert.deepEqual(request.capabilities, ["system-mfs"]);
+      if (!readiness.get(request.hub_id)) return { granted: false, reason: "HUB_CAPABILITY_NOT_READY" };
+      return { granted: true, hub_context: { hub_id: request.hub_id, authorized: true } };
+    }
+  });
+  assert.equal(decision.granted, false);
+  assert.equal(decision.side, "dest");
+  assert.deepEqual(node_checks, [source.hub_id]);
+});

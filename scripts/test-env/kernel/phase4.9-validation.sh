@@ -17,6 +17,16 @@ done
 "$script_dir/phase4.8b-validation.sh"
 KERNEL_SYSTEM_MFS_ROOT="$system_mfs_root" KERNEL_FINDER_ROOT="$finder_root" "$script_dir/phase4.8-validation.sh"
 
+export KERNEL_CONTAINER="${KERNEL_CONTAINER:-transient-kernel-phase49}"
+export KERNEL_DB_CONTAINER="${KERNEL_DB_CONTAINER:-transient-kernel-phase49-db}"
+export KERNEL_REDIS_CONTAINER="${KERNEL_REDIS_CONTAINER:-transient-kernel-phase49-redis}"
+export KERNEL_NETWORK="${KERNEL_NETWORK:-transient-kernel-phase49-net}"
+export KERNEL_HTTP_PORT="${KERNEL_HTTP_PORT:-28649}"
+cleanup() { "$script_dir/down.sh" >/dev/null 2>&1 || true; }
+trap cleanup EXIT
+"$script_dir/up.sh"
+KERNEL_PHASE49_LIVE_BROWSER=1 KERNEL_SYSTEM_MFS_ROOT="$system_mfs_root" KERNEL_FINDER_ROOT="$finder_root" node --test "$transient_root/tests/integration/kernel/phase4.9-finder-live-browser.test.js"
+
 npm test --prefix "$server_runtime_root"
 npm test --prefix "$finder_root"
 npm test --prefix "$window_manager_root"

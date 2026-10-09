@@ -39,7 +39,7 @@ test("upload staging commits through service/system-mfs and download returns aut
   const published = [];
   const mfs_service = new MfsService({
     filesystem_factory: () => new MfsFilesystem({ store, principal: principal_id, content_store: canonical }),
-    events: new MfsEventPublisher({ transport: { async publishRecipient(message) { published.push(message); } } })
+    events: new MfsEventPublisher({ authorize: async () => true, transport: { async publishRecipient(message) { published.push(message); } } })
   });
   const progress = [];
   const transfer = new MfsTransferService({ mfs_service, staging, host_filesystem, upload_chunk_size: 6, max_upload_chunk_size: 6, progress: { async publishOperation(event) { progress.push(event); } } });

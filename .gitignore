@@ -30,6 +30,12 @@ tests/integration/*
 !tests/integration/kernel/
 tests/integration/kernel/*
 !tests/integration/kernel/phase4.8b-hub-lifecycle-live.test.js
+!tests/integration/kernel/phase4.9-finder-live-browser.test.js
+!tests/integration/kernel/fixtures/
+tests/integration/kernel/fixtures/*
+!tests/integration/kernel/fixtures/finder/
+tests/integration/kernel/fixtures/finder/*
+!tests/integration/kernel/fixtures/finder/live-browser-entry.js
 !scripts/
 scripts/*
 !scripts/test-env/

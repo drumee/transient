@@ -1,4 +1,5 @@
 const { RuntimeError } = require("./errors");
+const { capabilityNames } = require("./hub-authorizer");
 
 function resolvePermission(permission, permissionValue) {
   if (!permission || typeof permission !== "object" || Array.isArray(permission)) {
@@ -45,6 +46,7 @@ async function authorizeMfs(resolved, backend, hubAuthorizer) {
     return { granted: false, mode: "mfs", reason: "HUB_AUTHORIZER_REQUIRED" };
   }
   const resources = await backend.resources(resolved);
+  const capabilities = capabilityNames(["system-mfs"], resolved.requires, resolved.permission && resolved.permission.capabilities);
   const hub_contexts = {};
   for (const side of ["src", "dest"]) {
     const asked = Number(resolved.permission[side] || 0);
@@ -57,7 +59,7 @@ async function authorizeMfs(resolved, backend, hubAuthorizer) {
         session,
         hub_id: node.hub_id,
         asked_permission: asked,
-        capabilities: resolved.requires || ["system-mfs"]
+        capabilities
       });
       if (!hub.granted) return { ...hub, mode: "mfs", side, hub_id: node.hub_id };
       hub_contexts[node.hub_id] = hub.hub_context;

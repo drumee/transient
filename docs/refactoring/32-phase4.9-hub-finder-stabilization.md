@@ -12,9 +12,9 @@ here.
 | Component | Delivery boundary | Prepared version |
 |---|---|---|
 | Hub lifecycle | private `target/control-plane/hub-lifecycle` workspace | `0.0.0-phase4.8b` |
-| server runtime | standalone `drumee/server-runtime` | `0.1.0-alpha.2` |
+| server runtime | standalone `drumee/server-runtime` | `0.1.0-alpha.3` |
 | system MFS | standalone `drumee/system-mfs` | `0.1.0-alpha.2` |
-| Finder | standalone `drumee/finder` | `0.1.0-alpha.2` |
+| Finder | standalone `drumee/finder` | `0.1.0-alpha.3` |
 | Window Manager | standalone `drumee/window-manager` | existing `0.1.0-alpha.2` |
 
 No package was published. The Hub control plane deliberately remains a
@@ -55,6 +55,20 @@ destination write. Hub admin/owner does not bypass node ACL.
 Long-running transfer entrypoints re-enter runtime authorization rather than
 trusting a transfer identifier. WebSocket publication filters recipients with
 current Hub rights before producing the recipient-safe event projection.
+
+Descriptor-level and service-level `requires` are merged with explicit
+permission capabilities. For Hub scope, that union is checked against every
+server-authorized Hub context before a platform provider and before Worker
+construction. Platform component availability never substitutes for a Hub
+capability in `ready` state. For MFS scope, `system-mfs` is always added even
+when `requires` is absent or empty; source and destination Hubs are checked
+independently.
+
+WebSocket delivery is fail-closed. A publisher with a transport but no
+authorization callback is invalid. The official event authorizer resolves the
+current recipient session, rechecks Hub read and node read, and projects out
+resources the recipient cannot see. Candidate socket enumeration is not an
+authorization decision, and an authorization exception results in no delivery.
 
 ## Schema contract
 
@@ -101,6 +115,29 @@ same-Hub-move undo, and explicit conflict error/reconciliation behavior. Undo
 does not claim cross-Hub copy rollback because destination identities are
 server-assigned. Trash/share/Hub-administration UI and a rich conflict-dialog
 system remain outside Finder's application-neutral boundary.
+
+Move undo snapshots its source location before the first asynchronous transfer
+step. Later navigation cannot alter the inverse operation. Failed moves create
+no undo entry, and an inverse denied after an ACL change remains retryable after
+view reconciliation. `MfsClient.copy()` keeps its public `nodes` argument but
+emits the backend's canonical `sources` wire field.
+
+## Validation levels
+
+Three evidence levels are retained and named explicitly:
+
+1. deterministic unit/in-memory fixtures for interaction timing, undo, event
+   projection and negative authorization paths;
+2. direct runtime integration through the dispatcher, real KernelSession,
+   lifecycle and MariaDB shards;
+3. a Chromium end-to-end path using the packaged Finder clients, authenticated
+   HTTP transport, runtime WebSocket, lifecycle-created Hubs and provisioned
+   MariaDB shards.
+
+The third level proves simultaneous A/B windows, listing/navigation/mkdir,
+same-Hub move, cross-Hub copy, a real ACL denial, chunk upload and byte
+retrieval, delivery to an authorized second client, suppression after durable
+ACL revocation, and absence of physical database locators in browser exchanges.
 
 ## Persistence and availability
 

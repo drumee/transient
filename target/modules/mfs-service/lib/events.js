@@ -47,22 +47,87 @@ function eventHubIds(event) {
   return [...ids].sort();
 }
 
+function eventNodes(event) {
+  const nodes = new Map();
+  const visit = (value) => {
+    if (!value || typeof value !== "object") return;
+    if (typeof value.hub_id === "string" && typeof value.nid === "string") nodes.set(`${value.hub_id}:${value.nid}`, { hub_id: value.hub_id, nid: value.nid });
+    if (Array.isArray(value)) for (const entry of value) visit(entry);
+    else for (const entry of Object.values(value)) visit(entry);
+  };
+  visit(publicEvent(event));
+  return [...nodes.values()];
+}
+
+function projectVisibleNodes(value, visible) {
+  if (!value || typeof value !== "object") return value;
+  if (typeof value.hub_id === "string" && typeof value.nid === "string" && !visible.has(`${value.hub_id}:${value.nid}`)) return null;
+  if (Array.isArray(value)) return value.map((entry) => projectVisibleNodes(entry, visible)).filter(Boolean);
+  const projected = {};
+  for (const [key, entry] of Object.entries(value)) {
+    const next = projectVisibleNodes(entry, visible);
+    if (next !== null) projected[key] = next;
+  }
+  return projected;
+}
+
+class MfsEventAclAuthorizer {
+  constructor({ session_resolver, hub_authorizer, permission_backend, read_permission = 2 } = {}) {
+    if (typeof session_resolver !== "function") throw Object.assign(new Error("MFS event authorization requires a session resolver"), { code: "MFS_EVENT_SESSION_RESOLVER_REQUIRED" });
+    if (!hub_authorizer || typeof hub_authorizer.authorizeResource !== "function") throw Object.assign(new Error("MFS event authorization requires the Hub authorizer"), { code: "MFS_EVENT_HUB_AUTHORIZER_REQUIRED" });
+    if (!permission_backend || typeof permission_backend.effectivePermission !== "function") throw Object.assign(new Error("MFS event authorization requires the MFS permission backend"), { code: "MFS_EVENT_PERMISSION_BACKEND_REQUIRED" });
+    this.session_resolver = session_resolver;
+    this.hub_authorizer = hub_authorizer;
+    this.permission_backend = permission_backend;
+    this.read_permission = Number(read_permission);
+  }
+
+  async authorize({ event, recipient }) {
+    const session = await this.session_resolver(recipient);
+    const uid = session && typeof session.uid === "function" ? session.uid() : null;
+    if (!uid) return { allowed: false, event: null };
+    const visible = new Set();
+    for (const node of eventNodes(event)) {
+      try {
+        const hub = await this.hub_authorizer.authorizeResource({ session, hub_id: node.hub_id, asked_permission: this.read_permission, capabilities: ["system-mfs"] });
+        if (!hub || !hub.granted) continue;
+        const effective = Number(await this.permission_backend.effectivePermission(uid, node) || 0);
+        if ((effective & this.read_permission) === this.read_permission) visible.add(`${node.hub_id}:${node.nid}`);
+      } catch (_) {
+        // Authorization backend failures are closed: this resource is hidden.
+      }
+    }
+    const projected = projectVisibleNodes(publicEvent(event), visible);
+    return { allowed: eventHubIds(projected).length > 0, event: projected };
+  }
+}
+
 class MfsEventPublisher {
   constructor({ recipients, authorize, project, transport } = {}) {
     this.recipients = recipients || (async ({ principal }) => [principal]);
-    this.authorize = authorize || (async () => true);
+    if (transport && typeof authorize !== "function") throw Object.assign(new Error("MFS event delivery requires an authorization callback"), { code: "MFS_EVENT_AUTHORIZER_REQUIRED" });
+    this.authorize = authorize || null;
     this.project = project || (async ({ event }) => event);
     this.transport = transport;
   }
 
   async publish({ event, principal, filesystem }) {
     if (!this.transport || typeof this.transport.publishRecipient !== "function") return [];
+    if (!this.authorize) throw Object.assign(new Error("MFS event delivery requires authorization"), { code: "MFS_EVENT_AUTHORIZER_REQUIRED" });
     const recipients = await this.recipients({ event, principal, filesystem });
     const deliveries = [];
+    const candidate = publicEvent(event);
     for (const recipient of recipients || []) {
-      const allowed = await this.authorize({ event: publicEvent(event), hub_ids: eventHubIds(event), recipient, principal, filesystem });
-      if (!allowed) continue;
-      const projected = await this.project({ event: publicEvent(event), recipient, principal, filesystem });
+      let authorization;
+      try {
+        authorization = await this.authorize({ event: candidate, hub_ids: eventHubIds(candidate), recipient, principal, filesystem });
+      } catch (_) {
+        continue;
+      }
+      if (!authorization || authorization.allowed === false) continue;
+      const authorized_event = authorization === true ? candidate : authorization.event;
+      if (!authorized_event) continue;
+      const projected = await this.project({ event: authorized_event, recipient, principal, filesystem });
       if (!projected) continue;
       deliveries.push(await this.transport.publishRecipient({ principal: recipient, service: "mfs.event", payload: publicEvent(projected) }));
     }
@@ -70,4 +135,4 @@ class MfsEventPublisher {
   }
 }
 
-module.exports = { MfsEventPublisher, eventHubIds, publicEvent, publicNode, publicResult };
+module.exports = { MfsEventAclAuthorizer, MfsEventPublisher, eventHubIds, eventNodes, projectVisibleNodes, publicEvent, publicNode, publicResult };

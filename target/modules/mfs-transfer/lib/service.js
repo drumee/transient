@@ -156,7 +156,14 @@ class MfsTransferService {
   requireUpload(id, context) { this.cleanupExpired(); const job = this.uploads.get(id); if (!job) throw Object.assign(new Error("Upload not found"), { code: "MFS_UPLOAD_NOT_FOUND" }); this.requireOwner(job, context); return job; }
   requireDownload(id, context) { this.cleanupExpired(); const job = this.downloads.get(id); if (!job) throw Object.assign(new Error("Download not found"), { code: "MFS_DOWNLOAD_NOT_FOUND" }); this.requireOwner(job, context); return job; }
   requireOwner(job, context) { const owner = job.context && job.context.uid; if (!owner || !context || context.uid !== owner) throw Object.assign(new Error("Transfer operation belongs to another principal"), { code: "MFS_TRANSFER_FORBIDDEN" }); }
-  resourceFor({ service, input } = {}) { const id = input && input.transfer_id; const upload = this.uploads.get(id); if (upload) return { dest: [upload.destination] }; const download = this.downloads.get(id); if (download) return { src: download.roots }; return String(service || "").includes("upload_") ? { dest: [] } : { src: [] }; }
+  resourceFor({ service, input, session } = {}) {
+    const id = input && input.transfer_id;
+    const identity = session && typeof session.uid === "function" ? session.uid() : session && session.uid;
+    const context = { uid: identity };
+    if (this.uploads.has(id)) return { dest: [this.requireUpload(id, context).destination] };
+    if (this.downloads.has(id)) return { src: this.requireDownload(id, context).roots };
+    return String(service || "").includes("upload_") ? { dest: [] } : { src: [] };
+  }
   report(job, event) { return this.progress.publishOperation({ operation_id: job.operation_id, transfer_id: job.transfer_id, principal: job.context && job.context.uid, event }); }
 
   cleanupExpired() {
