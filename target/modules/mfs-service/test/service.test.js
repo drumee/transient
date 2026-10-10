@@ -3,7 +3,7 @@
 const assert = require("node:assert/strict");
 const test = require("node:test");
 const { createAuthorizer } = require("../../../foundation/server-runtime/lib");
-const { MfsPermissionBackend, MfsEventPublisher, MfsService } = require("../lib");
+const { MfsEventAclAuthorizer, MfsPermissionBackend, MfsEventPublisher, MfsService } = require("../lib");
 const Logger = require("../../../../sources/server-essentials/lib/logger");
 
 const uid = "a000000000000001";
@@ -78,6 +78,64 @@ test("runtime ACL uses Session uid and the MFS backend only supplies resources a
   grants.set(`${token_uid}:${hub_id}:${root.nid}`, 3);
   assert.equal((await authorize({ service: "mfs.get", permission: { scope: "mfs", src: 2 }, input: { node: root, uid }, session: {} })).granted, false, "sessions without uid() fail closed");
   assert.equal((await authorize({ service: "mfs.get", permission: { scope: "mfs", src: 2 }, input: { node: root, uid }, session: { uid: () => token_uid } })).granted, true, "validated MFS tokens resolve a trusted pseudo-identity through Session.uid()");
+});
+
+test("list and get expose only the caller effective Hub and node access contract", async () => {
+  const permission = { read: 2, write: 4, delete: 8, admin: 16, owner: 32 };
+  const backend = { async effectivePermission(actor) { return actor === uid ? 15 : 3; } };
+  const service = new MfsService({ filesystem_factory: filesystem, permission_backend: backend, permission_contract: permission });
+  const owner_context = { uid, hub_context: { hub_id, privilege: 63, authorized: true } };
+  const reader_context = { uid: nobody, hub_context: { hub_id, privilege: 3, authorized: true } };
+  const owner_node = (await service.list({ location: root }, owner_context)).items[0];
+  const reader_node = await service.get({ node: root }, reader_context);
+  const created_node = (await service.mkdir({ destination: root, name: "Caller access" }, owner_context)).result;
+  assert.deepEqual(owner_node.access, { known: true, hub_privilege: 63, node_privilege: 15, permission });
+  assert.deepEqual(reader_node.access, { known: true, hub_privilege: 3, node_privilege: 3, permission });
+  assert.equal(owner_node.privilege, 15);
+  assert.equal(reader_node.privilege, 3);
+  assert.deepEqual(created_node.access, { known: true, hub_privilege: 63, node_privilege: 15, permission });
+  assert.equal(JSON.stringify({ owner_node, reader_node }).includes("entity_id"), false);
+});
+
+test("partially visible move and deletion invalidate only authorized folders without leaking hidden identities", async () => {
+  const reader = "reader0000000001";
+  const owner = "owner0000000002";
+  const source = { hub_id, nid: "source0000000001", filename: "Visible source" };
+  const destination = { hub_id, nid: "dest000000000002", filename: "Hidden destination" };
+  const moved = { hub_id, nid: "moved00000000001", filename: "Hidden after move" };
+  const permission = { read: 2, write: 4, delete: 8, admin: 16, owner: 32 };
+  const effective = new Map([
+    [`${reader}:${source.nid}`, 3],
+    [`${owner}:${source.nid}`, 63], [`${owner}:${destination.nid}`, 63], [`${owner}:${moved.nid}`, 63]
+  ]);
+  const authorizer = new MfsEventAclAuthorizer({
+    session_resolver: ({ uid: actor }) => ({ uid: () => actor }),
+    hub_authorizer: { async authorizeResource({ session }) { return { granted: true, hub_context: { hub_id, privilege: session.uid() === owner ? 63 : 3 } }; } },
+    permission_backend: { async effectivePermission(actor, node) { return effective.get(`${actor}:${node.nid}`) || 0; } },
+    permission_contract: permission,
+    read_permission: permission.read
+  });
+  const event = {
+    type: "node.moved", operation_id: "partially-visible-move", node: moved, source_parent: source, destination,
+    result: { nodes: [{ ...moved, parent_id: destination.nid }], destination }
+  };
+  const projected = await authorizer.authorize({ recipient: { uid: reader }, event });
+  assert.equal(projected.allowed, true);
+  assert.deepEqual(projected.event.reconcile.map(({ hub_id: value_hub, nid }) => ({ hub_id: value_hub, nid })), [{ hub_id, nid: source.nid }]);
+  assert.equal(projected.event.node, undefined);
+  assert.equal(projected.event.destination, undefined);
+  const serialized = JSON.stringify(projected.event);
+  for (const hidden of [destination.nid, destination.filename, moved.nid, moved.filename]) assert.equal(serialized.includes(hidden), false, hidden);
+  assert.deepEqual(projected.event.reconcile[0].access, { known: true, hub_privilege: 3, node_privilege: 3, permission });
+
+  const removed = await authorizer.authorize({ recipient: { uid: reader }, event: { type: "node.removed", operation_id: "partially-visible-delete", node: moved, source_parent: source, result: { hard_delete: true, node: moved, parent: source, nodes: [moved] } } });
+  assert.deepEqual(removed.event.reconcile.map((entry) => entry.nid), [source.nid]);
+  assert.equal(JSON.stringify(removed.event).includes(moved.nid), false);
+
+  const owner_projection = await authorizer.authorize({ recipient: { uid: owner }, event });
+  assert.equal(owner_projection.event.node.nid, moved.nid);
+  assert.deepEqual(owner_projection.event.reconcile, []);
+  assert.equal(owner_projection.event.node.access.node_privilege, 63);
 });
 
 test("server Output sanitizer remains a final barrier after explicit projection", () => {

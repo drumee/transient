@@ -10,10 +10,12 @@ const hub_y = "b000000000000002";
 const x_root = { hub_id: hub_x, nid: "1000000000000001" };
 const x_docs = { hub_id: hub_x, nid: "1000000000000002" };
 const y_root = { hub_id: hub_y, nid: "2000000000000001" };
+const permission = { read: 2, write: 4, delete: 8, admin: 16, owner: 32 };
+const accessible = (node) => ({ ...node, privilege: 63, hub_privilege: 63, access: { known: true, hub_privilege: 63, node_privilege: 63, permission } });
 
 function model() {
   const by_parent = new Map();
-  const add = (parent, item) => { const key = `${parent.hub_id}:${parent.nid}`; const values = by_parent.get(key) || []; values.push(item); by_parent.set(key, values); };
+  const add = (parent, item) => { const key = `${parent.hub_id}:${parent.nid}`; const values = by_parent.get(key) || []; values.push(accessible(item)); by_parent.set(key, values); };
   add(x_root, { ...x_docs, parent_id: x_root.nid, filename: "Documents", filetype: "folder" });
   add(x_root, { hub_id: hub_x, nid: "3000000000000001", parent_id: x_root.nid, filename: "readme.txt", filetype: "file", mimetype: "text/plain" });
   for (let index = 0; index < 250; index++) add(x_docs, { hub_id: hub_x, nid: (4000 + index).toString(16).padStart(16, "0"), parent_id: x_docs.nid, filename: `item-${String(index).padStart(3, "0")}.txt`, filetype: "file", mimetype: index % 2 ? "image/png" : "application/pdf" });
@@ -40,7 +42,7 @@ window.Phase48Ready = runtime_api.bootstrap().then((runtime) => {
       }
       if (service === "mfs.get") {
         for (const items of state.by_parent.values()) { const found = items.find((item) => key(item) === key(input.node)); if (found) return found; }
-        return { ...input.node, parent_id: "0", filename: "Root", filetype: "root" };
+        return accessible({ ...input.node, parent_id: "0", filename: "Root", filetype: "root" });
       }
       if (service === "mfs.move") {
         const moved = [];

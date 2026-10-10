@@ -14,7 +14,7 @@ here.
 | Hub lifecycle | private `target/control-plane/hub-lifecycle` workspace | `0.0.0-phase4.8b` |
 | server runtime | standalone `drumee/server-runtime` | `0.1.0-alpha.3` |
 | system MFS | standalone `drumee/system-mfs` | `0.1.0-alpha.2` |
-| Finder | standalone `drumee/finder` | `0.1.0-alpha.3` |
+| Finder | standalone `drumee/finder` | `0.1.0-alpha.4` |
 | Window Manager | standalone `drumee/window-manager` | existing `0.1.0-alpha.2` |
 
 No package was published. The Hub control plane deliberately remains a
@@ -122,6 +122,42 @@ no undo entry, and an inverse denied after an ACL change remains retryable after
 view reconciliation. `MfsClient.copy()` keeps its public `nodes` argument but
 emits the backend's canonical `sources` wire field.
 
+### Safe reconciliation and permission-aware interactions
+
+Post-mutation authorization can legitimately hide both a moved node and its
+destination from a reader who still sees the old source folder. In that case
+an incremental event cannot carry a safe removal identity. The recipient
+projection now emits `reconcile: [{hub_id,nid}]` containing only affected
+folders that the recipient can currently read. Folder identities come from
+trusted mutation context and are reauthorized with current Hub and MFS rights;
+the hidden node, destination attributes and physical locators stay absent.
+Removal uses the same fallback when the deleted identity can no longer be
+projected.
+
+`MfsSync` routes each marker to every Finder showing the authorized folder.
+Finder coalesces invalidations, schedules a further refresh when another marker
+arrives in flight, ignores results made obsolete by navigation, reconciles its
+selection, reports refresh errors and stops after destruction. Safe complete
+events continue to use incremental updates.
+
+List, get and mutation DTOs now include the current caller's effective node
+privilege, Hub privilege and a bounded `access` object. Its requested bits are
+projected from canonical server constants; Finder has no independent numeric
+ACL table. `known: false` is distinct from a known denial. WebSocket projection
+recomputes these values for each recipient instead of copying the initiator's
+mask.
+
+A shared Finder access-policy helper guides context commands, keyboard and
+toolbar operations, upload/download, undo and drag/drop. It follows service
+ACL exactly: move requires source delete and destination write; copy requires
+source read and destination write. It checks every selected source and the
+destination, never converts a denied move to copy, and never submits a partial
+authorized subset. A current-parent drop is a no-op. Unknown targets are
+resolved through `mfs.get`; concurrent resolution is coalesced and invalidation
+epochs reject stale responses. Drag feedback distinguishes pending, move,
+copy, no-op and unavailable states. Server authorization remains canonical and
+every refusal invalidates permission metadata and reconciles optimistic state.
+
 ## Validation levels
 
 Three evidence levels are retained and named explicitly:
@@ -137,7 +173,9 @@ Three evidence levels are retained and named explicitly:
 The third level proves simultaneous A/B windows, listing/navigation/mkdir,
 same-Hub move, cross-Hub copy, a real ACL denial, chunk upload and byte
 retrieval, delivery to an authorized second client, suppression after durable
-ACL revocation, and absence of physical database locators in browser exchanges.
+ACL revocation, caller-specific access DTOs, stale-approval refusal with
+optimistic rollback, partial-visibility reconciliation without disclosure, and
+absence of physical database locators in browser exchanges.
 
 ## Persistence and availability
 

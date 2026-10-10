@@ -20,3 +20,16 @@ expose the other Hub solely because the recipient may see one side. Candidate
 enumeration is not authorization. It owns neither filesystem algorithms nor
 WebSocket/Redis connection routing.
 `remove` is a hard filesystem deletion; trash and changelog are excluded.
+
+Authorized list, get and mutation results carry a recipient-specific public
+access DTO: `known`, `hub_privilege`, `node_privilege`, and a browser-safe
+projection of the canonical `read`, `write`, `delete`, `admin`, and `owner`
+requested bits. The values come from the same Hub authorizer and
+`user_permission()` path used for execution. No ACL membership is exposed.
+
+When a projected move or removal cannot retain the node identity needed for an
+incremental client removal, the event authorizer emits `reconcile` with only
+currently readable affected folder identities. The folders are derived from
+trusted mutation context and reauthorized per live recipient. The hidden node,
+inaccessible destination and physical locators remain absent. Incremental
+events remain unchanged when their identities are safe to disclose.

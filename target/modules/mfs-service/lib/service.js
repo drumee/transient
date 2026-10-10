@@ -1,7 +1,7 @@
 "use strict";
 
 const crypto = require("node:crypto");
-const { MfsEventPublisher, publicEvent, publicNode, publicResult } = require("./events");
+const { MfsEventPublisher, publicAccess, publicEvent, publicNode, publicResult } = require("./events");
 
 const ID_PATTERN = /^[a-f0-9]{16}$/i;
 
@@ -36,10 +36,36 @@ function normalizeInput(method, input, principal) {
 }
 
 class MfsService {
-  constructor({ filesystem_factory, events } = {}) {
+  constructor({ filesystem_factory, events, permission_backend, permission_contract = {} } = {}) {
     if (typeof filesystem_factory !== "function") throw new Error("mfs-service requires a filesystem factory");
     this.filesystem_factory = filesystem_factory;
     this.events = events instanceof MfsEventPublisher ? events : new MfsEventPublisher(events);
+    this.permission_backend = permission_backend || null;
+    this.permission_contract = permission_contract;
+  }
+
+  hubContext(principal, hub_id) {
+    if (principal.hub_context && principal.hub_context.hub_id === hub_id) return principal.hub_context;
+    return principal.hub_contexts && principal.hub_contexts[hub_id] || null;
+  }
+
+  async decorateNode(node, principal) {
+    const value = publicNode(node);
+    if (!value || !value.hub_id || !value.nid || !this.permission_backend) return value;
+    const hub = this.hubContext(principal, value.hub_id);
+    if (!hub) return { ...value, access: { known: false } };
+    const node_privilege = Number(await this.permission_backend.effectivePermission(principal.uid, value) || 0);
+    const access = publicAccess({ known: true, hub_privilege: Number(hub.privilege || 0), node_privilege, permission: this.permission_contract });
+    return { ...value, privilege: node_privilege, hub_privilege: access.hub_privilege, access };
+  }
+
+  async decorateResult(value, principal) {
+    if (!value || typeof value !== "object") return value;
+    if (value.hub_id && value.nid) return this.decorateNode(value, principal);
+    if (Array.isArray(value)) return Promise.all(value.map((entry) => this.decorateResult(entry, principal)));
+    const result = {};
+    for (const [key, entry] of Object.entries(value)) result[key] = await this.decorateResult(entry, principal);
+    return result;
   }
 
   filesystem(context) {
@@ -51,12 +77,12 @@ class MfsService {
     const value = this.filesystem(context);
     const normalized = normalizeInput("list", input, value.principal);
     const result = await value.filesystem.listChildren(normalized);
-    return { items: (result.items || []).map(publicNode), next_cursor: result.next_cursor || null };
+    return { items: await Promise.all((result.items || []).map((item) => this.decorateNode(item, value.principal))), next_cursor: result.next_cursor || null };
   }
 
   async get(input, context) {
     const value = this.filesystem(context);
-    return publicNode(await value.filesystem.getNode(normalizeInput("get", input, value.principal)));
+    return this.decorateNode(await value.filesystem.getNode(normalizeInput("get", input, value.principal)), value.principal);
   }
 
   mkdir(input, context) { return this.mutate("node.created", "mkdir", input, context, (filesystem, normalized) => filesystem.makeDirectory(normalized), { destination: true }); }
@@ -113,7 +139,7 @@ class MfsService {
   async mutateWith(type, input, { principal, filesystem }, operation, details = {}) {
     const operation_id = operationId(input);
     const internal_result = await operation(filesystem, input);
-    const result = publicResult(internal_result);
+    const result = await this.decorateResult(publicResult(internal_result), principal);
     const event = publicEvent({ type, operation_id, node: result && result.nid ? { hub_id: result.hub_id, nid: result.nid } : input.node || null, source_parent: details.source_parent || null, destination: details.destination || null, result, hard_delete: details.hard_delete || false, committed_from_transfer: details.committed_from_transfer || false });
     await this.events.publish({ event, principal, filesystem });
     return { operation_id, result };

@@ -6,10 +6,10 @@ Date: 2026-10-09. Verdict: **PHASE 4.9 CLOSED**.
 
 | Repository | Branch | Opening commit |
 |---|---|---|
-| transient | `refactor/mapping` | `a7624bd7c894c49fb43c720ca6b7526acc217431` |
-| server-runtime | `main` | `295592c70d47d9eef3b5cfeb8ced72943ee71488` |
+| transient | `refactor/mapping` | `7d24660b776d2c69be8cb9eee3bd3d75e1c3f891` |
+| server-runtime | `main` | `fc7d9de3f3e63baea8258885e55efe8e242904d0` |
 | system-mfs | `main` | `53101c4a995ffca9118f795ab5d4c7c731200a2f` |
-| finder | `main` | `b811d78dd9740e5b081190f7241bdebac3d062d4` |
+| finder | `main` | `c8e3d1d2a632c87e6db377942e90aabe4e5d6310` |
 | window-manager | `main` | `e294979dfcb59f73af19975e40f890a0b366cd8c` |
 | ui-runtime | `main` | `5366d904356b414e87848a0bc8870b612e6c748a` |
 
@@ -34,6 +34,33 @@ and persistent transfer endpoints lacked an owner-bound resource resolver for
 runtime ACL. Both are corrected and covered. Transfer identifiers now resolve
 resources only after matching the authenticated owner.
 
+## Safe reconciliation and permission UX correction
+
+The targeted review defect was confirmed. After a reader saw a source item,
+an owner could move it into an inaccessible destination. Correct
+post-mutation authorization removed the node and destination from that
+reader's event, but the remaining source-folder projection lacked a removal
+identity, leaving a stale Finder entry.
+
+The event contract now has a recipient-specific `reconcile` marker containing
+only currently authorized affected folder identities. Trusted mutation context
+identifies candidates; current Hub and node read checks decide which candidates
+survive. The inaccessible node and destination are never restored merely to
+update the UI. Deletion uses the same fallback. MfsSync refreshes only matching
+views, and Finder handles repeated/in-flight invalidations, navigation races,
+selection cleanup, refresh errors and destruction.
+
+MFS public nodes now carry only the current caller's effective
+`hub_privilege`, node `privilege`, and bounded `access` DTO with canonical
+requested bits. WebSocket values are recomputed per recipient. Finder's shared
+access policy consumes those server values for menus, toolbar/keyboard actions,
+drag/drop, transfers and undo. It enforces the UX requirements of each real
+service ACL, resolves unknown destination access, rejects stale resolution,
+keeps mixed selection all-or-nothing and treats current-parent drops as no-op.
+These checks are guidance only: a real Chromium scenario revokes node rights
+after frontend approval and proves that runtime authorization refuses the move
+and Finder reconciles the optimistic removal.
+
 ## Canonical command and results
 
 ```bash
@@ -48,12 +75,12 @@ standalone suites and package audits:
 | Hub lifecycle contract | 10/10 |
 | runtime Hub authorization | 6/6 |
 | live MariaDB Hub/MFS/restart scenario | 1/1 |
-| focused Finder/backend/browser/sync | 55/55 |
+| focused Finder/backend/browser/sync | 65/65 |
 | real Nginx HTTP/media/upload | 4/4 |
 | Chromium → authenticated HTTP/WebSocket → runtime → MariaDB | 1/1 |
 | standalone system-mfs | 9/9 |
 | standalone server-runtime | 48/48 |
-| standalone Finder | 23/23 |
+| standalone Finder | 31/31 |
 | standalone Window Manager | 6/6 |
 | package dry-runs and immutable `sources/**` audit | PASS |
 
@@ -87,7 +114,8 @@ association or data.
 Dry-run artifacts contain no fixtures, historical sources, credentials or
 development checkout paths. The system-mfs artifact contains only the
 canonical `server/schemas/SCHEMA_MANIFEST.json`. Corrected server-runtime and
-Finder artifacts are prepared as `0.1.0-alpha.3`; system-mfs remains
+Finder artifacts are prepared as `0.1.0-alpha.3` and `0.1.0-alpha.4`
+respectively; system-mfs remains
 `0.1.0-alpha.2`. None is published.
 
 Finder's bounded context-menu contract delegates rendering to the host. Undo
