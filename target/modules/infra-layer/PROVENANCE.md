@@ -52,3 +52,19 @@ revision and path allowlist in `test/integration/kernel-dependencies.json` into
 temporary storage; no sibling checkout or historical source tree is distributed.
 An initial test-stub promisification error and static-test marker mismatch were
 fixed without changing kernel implementations or reducing tests.
+
+## Exact extraction ledger
+
+- Transient corrective commit: `c1de9e77d412bd05d76f9b089b269f9720c54d3e`.
+- History-preserving subtree split: `062f270f4459e1d247567fde6c8531c43f36688f`.
+- Standalone extraction merge: `da03fac1ac835a551bb2dc92981525ff6f8967c9`.
+- Preserved standalone initial main: `30b6c7584e06d4d9a1e31cf0d88a1e0b5ba4347f`.
+- Exact release source is identified by Git tag `v0.1.0-alpha.1`; tag resolution
+  and npm tarball integrity are recorded in transient dossier 36 after public
+  registry verification. A self-referential commit hash is not embedded here.
+
+The standalone package removes private:true only after source regression and
+allowlist auditing; release metadata and this ledger are its intentional changes
+from the corrective snapshot. Transient is synchronized to the exact release
+tree after verification. The retained .gitignore matches the pre-existing
+standalone initial commit; no unrelated work/history is overwritten.

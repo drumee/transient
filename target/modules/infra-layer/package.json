@@ -1,7 +1,6 @@
 {
   "name": "@drumee/infra-layer",
   "version": "0.1.0-alpha.1",
-  "private": true,
   "description": "IL-1 infrastructure contracts and Nginx gateway planning.",
   "license": "AGPL-3.0-only",
   "type": "commonjs",

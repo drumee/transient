@@ -4,6 +4,14 @@ Status: **IL-0 — APPROVED FOR IL-1**. Audit date: 2026-10-13. The specificatio
 
 IL-1 follow-up: the private CommonJS foundation and gateway-only Nginx/Docker projection are implemented under `target/modules/infra-layer/`. The implemented subset, provenance, real gateway/kernel/browser evidence and remaining TLS/DNS/persistence limits are recorded in [35-infra-layer-il1.md](35-infra-layer-il1.md). Sections below retain the IL-0 audit/proposals; they do not imply implementation of every proposed provider or IL-2/IL-3 feature. **IL-1 — READY_FOR_TECHNICAL_REVIEW**; later phases still require separate authorization.
 
+IL-1.1 closure: observation/rendering corrections are validated and extracted to
+canonical `https://github.com/drumee/infra-layer`, main/tag `v0.1.0-alpha.1`,
+commit `b1b8e8666e92ec604d933b9c99145c90b966362b`. Transient retains an exact pinned
+integration snapshot. npm publication is **blocked by EOTP** and is not claimed;
+the prepared alpha, tests and blocker are recorded in
+[36-infra-layer-il1.1-release.md](36-infra-layer-il1.1-release.md).
+IL-2 development belongs in the standalone repository after explicit approval.
+
 ## 1. Executive summary
 
 The smallest useful Infra Layer is a validated infrastructure plan, a Docker Compose adapter, an Nginx gateway, persistent infrastructure secrets, and observable database/cache availability. The first LAN acceptance also requires containerized BIND9 and local HTTPS for `drumee.lan`. SMTP is a required supported capability but is optional for kernel startup. Oxymotion consumes this foundation; it does not define its public API.

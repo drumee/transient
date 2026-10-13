@@ -6,10 +6,14 @@ IL-1.1 corrective follow-up: the Docker observer now binds probes to the exact
 validated plan and local Docker ownership/port identity. Matching labels no
 longer imply loaded Nginx configuration; functional HTTP does not imply protected
 delivery. Rendering rejects concurrent/stale locks and rechecks destinations
-before replacement. The release/extraction record will be maintained in
+before replacement. The release/extraction record is maintained in
 [36-infra-layer-il1.1-release.md](36-infra-layer-il1.1-release.md). The original
 IL-1 evidence below remains historical; its observation/multi-writer limitations
-are superseded by that corrective record.
+are superseded by that corrective record. Canonical source is now
+`drumee/infra-layer`, commit `b1b8e8666e92ec604d933b9c99145c90b966362b`, Git tag
+`v0.1.0-alpha.1`. npm is not yet published: EOTP requires interactive npm
+authentication. **IL-1.1 — RELEASE_BLOCKED**, with all code/extraction/package
+validation complete and an exact synchronized snapshot retained here.
 
 Repository `drumee/transient`, branch `refactor/mapping`. Approved architecture:
 `a31b544f565ca4438f1ed8df5eccb21bf0486104`, dossier

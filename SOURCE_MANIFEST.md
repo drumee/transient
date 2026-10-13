@@ -36,3 +36,19 @@ Generated: 2026-09-29T00:00:00Z
 `sources/**` is immutable after each controlled provenance import.
 All mapping work goes under `docs/refactoring/**`.
 All future implementation work goes under `target/**`.
+
+## Extracted capability integration snapshots
+
+These are canonical extracted repositories consumed by transitional `target/**`
+snapshots, not additions or modifications to immutable `sources/**`.
+
+| Capability | Canonical repository | Branch / Git tag | Exact snapshot commit | Date / method | npm status |
+|---|---|---|---|---|---|
+| Infra Layer | `https://github.com/drumee/infra-layer` | `main`, `v0.1.0-alpha.1` | `b1b8e8666e92ec604d933b9c99145c90b966362b` | 2026-10-13; history-preserving subtree extraction from corrective `c1de9e77d412bd05d76f9b089b269f9720c54d3e`, synchronized 30-file integration snapshot | `@drumee/infra-layer@0.1.0-alpha.1` prepared; publication blocked by npm EOTP, not available in registry |
+
+Infra Layer development/release authority is the standalone repository.
+`scripts/check-infra-layer-sync.js <absolute-standalone-checkout>` checks the full
+snapshot against the pinned Git commit. Exact extraction history, prepared
+archive integrity, clean-checkout tests and publication blocker are recorded in
+`docs/refactoring/36-infra-layer-il1.1-release.md`. Subsequent IL-2 requires
+separate authorization; npm publication is not inferred from a Git tag.
