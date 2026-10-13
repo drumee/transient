@@ -38,13 +38,22 @@ export interface InfrastructurePlan {
   inputs?: { spec: InfrastructureSpec; requirements: KernelInfrastructureRequirements; adapter_input: DockerNginxInput };
 }
 export interface Deployment {
-  id: string; desired_revision: string; container_id?: string; url?: string; host?: string;
+  id: string; desired_revision: string; container_id?: string;
+  /** Required by docker-nginx; exact applicable plan, not caller-provided URLs. */
+  plan?: InfrastructurePlan;
 }
 export interface GatewayObservation {
-  running?: boolean; health?: string; active_revision?: string; http_ready?: boolean;
+  running?: boolean; health?: string; observed_revision?: string; active_revision?: string; http_ready?: boolean;
+  diagnostic_codes?: string[];
+  loaded_configuration?: { status: "unknown" | "unverified" | "verified"; revision?: string; evidence?: "activation-attestation" | "process-attestation" };
+  protected_delivery_verified?: boolean;
 }
 export interface InfrastructureState {
-  contract_version: "1"; deployment: string; desired_revision: string; active_revision?: string;
+  contract_version: "1"; deployment: string; desired_revision: string; observed_revision?: string;
+  /** Compatibility alias for observed_revision; never evidence of loaded config. */
+  active_revision?: string;
+  loaded_configuration: { status: "unknown" | "unverified" | "verified"; revision?: string; evidence?: string };
+  verification: { functional: boolean; protected_delivery: "verified" | "unverified" };
   capabilities: { name: string; required: boolean; readiness: "ready" | "degraded" | "failed"; diagnostic_codes: string[] }[];
   dependencies: { name: string; readiness: "ready" | "unknown" }[];
   metadata: { adapter: string; runtime_id?: string };

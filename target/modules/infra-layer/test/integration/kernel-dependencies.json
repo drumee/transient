@@ -1,0 +1,16 @@
+{
+  "repository": "https://github.com/drumee/transient.git",
+  "revision": "faee9a57487d80f79a8ec79a68887e6da36ca489",
+  "paths": [
+    "target/foundation/server-runtime",
+    "target/foundation/ui-runtime",
+    "target/tooling/ui-build",
+    "target/modules/hello",
+    "target/modules/host-filesystem",
+    "target/modules/media-service",
+    "target/modules/mfs-service",
+    "target/modules/mfs-transfer",
+    "sources/server-essentials/lib/lex/permission.js",
+    "sources/server-essentials/lib/lex/functions.js"
+  ]
+}

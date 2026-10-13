@@ -46,6 +46,21 @@ function renderPlan(plan, output_directory) {
   for (const artifact of plan.artifacts) {
     if (path.isAbsolute(artifact.path) || artifact.path.includes("/") || artifact.path.includes("\\") || [".", ".."].includes(artifact.path)) fail("UNSAFE_RESOURCE_PATH");
   }
+  safeParents(output_directory, true);
+  const lock = path.join(output_directory, ".infra-layer-render.lock");
+  try { fs.mkdirSync(lock, { mode: 0o700 }); } catch (error) { if (error.code === "EEXIST") fail("RENDER_LOCKED"); throw error; }
+  const lock_stat = fs.lstatSync(lock);
+  try {
+    fs.writeFileSync(path.join(lock, "owner.json"), JSON.stringify({ pid: process.pid, instance: plan.inputs.spec.instance.id, project: plan.inputs.adapter_input.project }), { flag: "wx", mode: 0o600 });
+    return renderLocked(plan, output_directory);
+  } finally {
+    const current = fs.lstatSync(lock, { throwIfNoEntry: false });
+    if (current && !current.isSymbolicLink() && current.ino === lock_stat.ino && current.dev === lock_stat.dev) {
+      if (fs.existsSync(path.join(lock, "owner.json"))) fs.unlinkSync(path.join(lock, "owner.json")); fs.rmdirSync(lock);
+    }
+  }
+}
+function renderLocked(plan, output_directory) {
   const manifest_file = path.join(output_directory, ".infra-layer-render.json");
   let previous = null;
   if (regular(manifest_file)) {
@@ -61,6 +76,13 @@ function renderPlan(plan, output_directory) {
       old_files.set(artifact.path, content);
     }
   }
+  const validateDestinations = () => {
+    for (const name of [...plan.artifacts.map((artifact) => artifact.path), ".infra-layer-render.json"]) {
+      const file = path.join(output_directory, name);
+      const stat = regular(file);
+      if (old_files.has(name) ? !stat || !read(file).equals(old_files.get(name)) : stat) fail("RENDER_DESTINATION_CHANGED");
+    }
+  };
   safeParents(output_directory, true);
   const staging = fs.mkdtempSync(path.join(output_directory, ".infra-render-"));
   const new_manifest = { owner: "drumee-infra-layer", instance: plan.inputs.spec.instance.id, project: plan.inputs.adapter_input.project, revision: plan.revision, artifacts: Object.fromEntries(plan.artifacts.map((artifact) => [artifact.path, artifact.digest])) };
@@ -72,6 +94,7 @@ function renderPlan(plan, output_directory) {
       const fd = fs.openSync(path.join(staging, artifact.path), "wx", artifact.mode);
       try { fs.writeFileSync(fd, artifact.content); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
     }
+    validateDestinations();
     for (const artifact of contents) {
       safeParents(output_directory);
       regular(path.join(output_directory, artifact.path));

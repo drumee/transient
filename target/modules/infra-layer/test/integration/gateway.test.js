@@ -61,8 +61,12 @@ test("Nginx syntax, rootless/read-only mounts and observed functional readiness"
   assert.equal(inspected.Config.User, "101:101"); assert.equal(inspected.HostConfig.ReadonlyRootfs, true);
   assert.equal(inspected.HostConfig.Privileged, false); assert.ok(inspected.Mounts.every((mount) => mount.Type !== "bind" || mount.RW === false));
   assert.ok(Object.values(inspected.HostConfig.PortBindings).flat().every((binding) => binding.HostIp === "127.0.0.1"));
-  const observed = await api.inspectInfrastructure({ id: "il1-gateway", desired_revision: process.env.IL1_REVISION, container_id: process.env.IL1_GATEWAY_ID, url: `http://127.0.0.1:${port}/__infra_ready`, host: hostname }, adapter);
-  assert.equal(api.diagnoseInfrastructure(observed, inputs().requirements).ready, true);
+  const plan = JSON.parse(fs.readFileSync(process.env.IL1_PLAN));
+  const observed = await api.inspectInfrastructure({ id: "il1-gateway", desired_revision: process.env.IL1_REVISION, container_id: process.env.IL1_GATEWAY_ID, plan }, adapter);
+  assert.equal(observed.observed_revision, plan.revision); assert.equal(observed.verification.functional, true);
+  assert.equal(observed.loaded_configuration.status, "unverified");
+  assert.equal(api.diagnoseInfrastructure(observed, inputs().requirements).ready, false);
+  assert.ok(observed.capabilities[0].diagnostic_codes.includes("LOADED_CONFIGURATION_NOT_VERIFIED"));
   const kernel_ports = JSON.parse(docker("inspect", "--format", "{{json .NetworkSettings.Ports}}", process.env.IL1_KERNEL_ID));
   assert.ok(!kernel_ports || Object.values(kernel_ports).every((binding) => binding === null));
 });

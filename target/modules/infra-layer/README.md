@@ -1,6 +1,6 @@
 # Drumee Infra Layer — IL-1
 
-Private CommonJS capability developed in transient. Produces a validated Nginx
+CommonJS alpha capability extracted from transient. Produces a validated Nginx
 gateway plan and a **gateway-only** Docker Compose fragment for a distribution
 such as drumee/debian. No complete installer, apply/deploy operation, kernel
 policy, schema bootstrap, secret generation, DNS daemon or certificate issuer.
@@ -29,8 +29,7 @@ renderPlan(plan, "/tmp/operator-owned-render"); // render only; no activation
 const docker = require("./adapters/docker/nginx");
 const state = await inspectInfrastructure({
   id: "instance-gateway", desired_revision: plan.revision,
-  container_id: "explicit-container-id",
-  url: "http://127.0.0.1:8080/__infra_ready", host: "example.com:8080"
+  container_id: "<full-64-character-Docker-id>", plan
 }, docker);
 const diagnostics = diagnoseInfrastructure(state, requirements);
 ```
@@ -103,8 +102,16 @@ cross-instance/project overwrite are refused. Existing unrelated files are
 preserved. All bytes are staged/fsynced before per-file rename; ordinary rename
 failure rolls back earlier owned-file changes. Render ownership is recorded in
 `.infra-layer-render.json`, written last. This is not a crash-atomic deployment
-transaction or safe multi-writer directory; use an exclusively owned output
+transaction; use an exclusively owned output
 directory, then validate a complete revision before later activation.
+
+The atomic directory lock `.infra-layer-render.lock` rejects competing writers
+with `RENDER_LOCKED`. It covers manifest reading, staging, destination rechecks,
+replacement and rollback. There is no automatic stale-lock takeover based on
+PID or time: after a crash, the operator must verify ownership/process exit and
+inspect the complete directory before recovery. A partial crash can leave mixed
+files; removing a stale lock alone cannot authorize edited/mismatched artifacts.
+Recovery/activation remains IL-3. Locks are released on ordinary success/error.
 
 Generated artifacts:
 
@@ -173,33 +180,49 @@ path; the harness uses a dedicated ordinary bridge and publishes only gateway
 loopback/high-port ingress. Kernel listeners have no published host ports.
 
 `inspectInfrastructure(deployment, adapter)` calls an explicit observer. The
-Docker observer reads only running/health/revision fields and probes the supplied
-gateway readiness URL; raw environment/health-log output is not projected.
-Readiness needs running + healthy + successful functional probe + matching known
-revision. A generated config or healthy process alone is insufficient. Labels
-identify the started revision; this is not IL-2/IL-3 certificate, migration,
-configuration-drift or full-application acceptance monitoring. Observer failures
-produce stable redacted diagnostics.
+Docker observer reads only identity/ownership/ports/running/health/revision fields
+and probes the plan-bound gateway; raw environment/health-log output is not projected.
+The Docker observer validates the exact plan, full container ID, owner,
+Compose project/service labels, declared published bindings and revision before
+any HTTP request. It uses only the local `/var/run/docker.sock`, fixed loopback
+addresses (wildcard bindings map to loopback), declared external port, primary
+hostname and fixed `/__infra_ready` path. No caller URL/Host, DNS resolution,
+redirect following or disabled HTTPS verification. LAN-only publications and
+remote/rootless Docker daemon sockets are unsupported by this alpha observer.
+Requests have an absolute 3-second deadline and 4 KiB response bound.
+
+`desired_revision` is the plan revision; `observed_revision` is the Docker label
+(`active_revision` is a compatibility alias only). Matching labels do **not**
+verify loaded Nginx configuration. A functional probe does **not** verify MFS
+delivery. The Docker observer reports loaded configuration and protected delivery
+as unverified, so `diagnoseInfrastructure().ready` remains false even when HTTP
+is functional. Separate explicit observer attestations may establish these
+facts; Docker labels or syntax checks cannot. Activation/process attestation
+and reliable drift/recovery evidence remain IL-3 work. Observer failures expose
+only allowlisted diagnostic codes, never raw errors.
 
 ## Reproduce validation
 
-Prerequisites: Node 22+, Docker/Compose, Chromium-compatible browser, `unzip`, and
-the existing ui-runtime/ui-build locked dependencies installed in their own
-transient workspaces. Infra Layer has **no production dependency**; the only
+Prerequisites: Node 22+, Docker/Compose, Chromium-compatible browser, `unzip`,
+Git and tar. Infra Layer has **no production dependency**; the only
 addition is test-only `websocket@1.0.35` with its lockfile. Runtime tests have no
 external service/network dependency; initial image/package preparation may need
 registry/APT access.
 
 ```sh
-cd target/modules/infra-layer
-npm ci --ignore-scripts
+git clone https://github.com/drumee/infra-layer.git
+cd infra-layer
+npm ci
 npm test
 npm run test:integration
 ```
 
 The integration runner uses a unique `drumee-il1-test-<suffix>` project, a free
 127.0.0.1 high port, a dedicated network and caller-owned temporary fixtures. It
-refuses existing project/network/image ownership collisions. Builds browser
+refuses existing project/network/image ownership collisions. Fetches only the
+test dependency revision in `test/integration/kernel-dependencies.json`, archives
+the listed kernel/build/capability paths into its temporary workspace, installs
+the UI/build locked dependencies there, and builds browser
 assets with existing ui-build, prepares a test-only Node+zip composition image,
 checks Compose and `nginx -t` before gateway startup, waits for health, and runs
 the actual HTTP/WebSocket/FileIo/transfer/Chromium cases. Final cleanup removes
@@ -221,7 +244,7 @@ Hub/node persistence, filesystem metadata and Redis-compatible pub/sub are
 in-memory test stores. This does not prove MariaDB/Redis lifecycle, provisioned
 platform identities, Finder product acceptance, TLS trust or Oxymotion D0.
 
-See [PROVENANCE.md](PROVENANCE.md) and the canonical
-[IL-1 report](../../../docs/refactoring/35-infra-layer-il1.md). IL-2 requires
+See [PROVENANCE.md](PROVENANCE.md). `drumee/infra-layer` is the canonical source;
+the transient copy is a pinned integration snapshot. IL-2 requires
 separate approval; certificate lifecycle, actual DNS/services and full deployment
 orchestration remain outside this implementation.

@@ -10,7 +10,8 @@ const { spawnSync } = require("node:child_process");
 const { planInfrastructure, renderPlan } = require("../../lib");
 const { inputs } = require("../support/inputs");
 const { buildBrowser } = require("./build-browser");
-const root = path.resolve(__dirname, "../../../../..");
+const { prepareKernel } = require("./prepare-kernel");
+const module_directory = path.resolve(__dirname, "../..");
 
 function command(args, options = {}) {
   const result = spawnSync(args[0], args.slice(1), { encoding: "utf8", timeout: 300000, maxBuffer: 8 * 1024 * 1024, ...options });
@@ -28,6 +29,7 @@ async function main() {
   if (spawnSync("docker", ["network", "inspect", network_name], { stdio: "ignore" }).status === 0) throw new Error("TEST_NETWORK_ALREADY_EXISTS");
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), `${project}-`)); fs.chmodSync(directory, 0o755);
   try {
+  const root = prepareKernel(directory, module_directory);
   const port = await freePort();
   const fixtures = path.join(directory, "fixtures");
   fs.mkdirSync(path.join(fixtures, "artifacts"), { recursive: true }); fs.mkdirSync(path.join(fixtures, "incoming"));
@@ -37,6 +39,7 @@ async function main() {
   const plan = planInfrastructure(value.spec, value.requirements, value.adapter_input);
   assert.equal(plan.applicable, true);
   const rendered = path.join(directory, "rendered"); renderPlan(plan, rendered);
+  const plan_file = path.join(directory, "plan.json"); fs.writeFileSync(plan_file, JSON.stringify(plan));
   const compose = JSON.parse(fs.readFileSync(path.join(rendered, "gateway.compose.json")));
   // Only the harness creates the test network and adds its composition fixture.
   // A dedicated bridge is isolated by project membership. Docker 29's internal
@@ -59,7 +62,7 @@ async function main() {
   for (const component of ["foundation/server-runtime", "modules/hello/server", "modules/host-filesystem", "modules/media-service", "modules/mfs-service", "modules/mfs-transfer", "modules/infra-layer/test/integration"]) {
     fs.cpSync(path.join(root, "target", component), path.join(context, "target", component), { recursive: true, filter: (file) => !file.split(path.sep).includes("node_modules") });
   }
-  fs.cpSync(path.join(root, "target/modules/infra-layer/node_modules"), path.join(context, "target/modules/infra-layer/node_modules"), { recursive: true });
+  fs.cpSync(path.join(module_directory, "node_modules"), path.join(context, "target/modules/infra-layer/node_modules"), { recursive: true });
   fs.mkdirSync(path.join(context, "sources/server-essentials/lib/lex"), { recursive: true });
   for (const file of ["permission.js", "functions.js"]) fs.copyFileSync(path.join(root, "sources/server-essentials/lib/lex", file), path.join(context, "sources/server-essentials/lib/lex", file));
   fs.copyFileSync(path.join(__dirname, "Dockerfile.kernel"), path.join(context, "Dockerfile"));
@@ -75,7 +78,7 @@ async function main() {
     docker("exec", "-T", "gateway", "nginx", "-t");
     const gateway_id = docker("ps", "-q", "gateway").trim();
     const kernel_id = docker("ps", "-q", "kernel").trim();
-    const result = spawnSync(process.execPath, ["--test", path.join(__dirname, "gateway.test.js")], { stdio: "inherit", timeout: 180000, env: { ...process.env, IL1_PORT: String(port), IL1_GATEWAY_ID: gateway_id, IL1_KERNEL_ID: kernel_id, IL1_REVISION: plan.revision, IL1_FIXTURES: fixtures } });
+    const result = spawnSync(process.execPath, ["--test", path.join(__dirname, "gateway.test.js")], { stdio: "inherit", timeout: 180000, env: { ...process.env, IL1_PORT: String(port), IL1_GATEWAY_ID: gateway_id, IL1_KERNEL_ID: kernel_id, IL1_REVISION: plan.revision, IL1_FIXTURES: fixtures, IL1_PLAN: plan_file } });
     if (result.status !== 0) throw new Error("GATEWAY_INTEGRATION_FAILED");
     const logs = docker("logs", "--no-color");
     assert.doesNotMatch(logs, /otak=|regsid=|isolated-fixture-password|outside-protected-view|\/__drumee_artifacts\//);

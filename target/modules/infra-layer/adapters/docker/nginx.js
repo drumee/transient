@@ -24,24 +24,56 @@ function gatewayResources(inputs, effective_domain, revision) {
 }
 
 // Explicit read-only observation; planning never calls this function.
+// Local Docker inspection only. Targets come from the validated plan, never URLs.
 async function observeDockerGateway(deployment) {
   const { execFile } = require("node:child_process");
   const { promisify } = require("node:util");
+  const S = require("../../lib/spec");
+  const { planInfrastructure } = require("../../lib/plan");
+  const fail = (code) => { throw Object.assign(new Error(code), { code }); };
   const http = require("node:http");
   const https = require("node:https");
-  if (!deployment || !/^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$/.test(deployment.container_id || "")) throw new Error("INVALID_DEPLOYMENT_IDENTIFIER");
-  const format = '{"running":{{json .State.Running}},"health":{{if .State.Health}}{{json .State.Health.Status}}{{else}}"unknown"{{end}},"revision":{{json (index .Config.Labels "org.drumee.infra.revision")}}}';
-  const { stdout } = await promisify(execFile)("docker", ["inspect", "--format", format, deployment.container_id], { timeout: 10000, maxBuffer: 65536 });
+  if (!S.plainTree(deployment) || !S.record(deployment) || Object.keys(deployment).some((key) => !["id", "desired_revision", "container_id", "plan"].includes(key))
+    || !S.identifier(deployment.id) || !/^[a-f0-9]{64}$/.test(deployment.container_id || "") || !deployment.plan?.inputs) fail("INVALID_DEPLOYMENT_DESCRIPTOR");
+  const plan = deployment.plan;
+  const expected = planInfrastructure(plan.inputs.spec, plan.inputs.requirements, plan.inputs.adapter_input);
+  if (!plan.applicable || !expected.applicable || expected.revision !== plan.revision || plan.revision !== deployment.desired_revision
+    || S.serialize(expected.artifacts) !== S.serialize(plan.artifacts) || !expected.inputs.spec.http.enabled) fail("INVALID_DEPLOYMENT_DESCRIPTOR");
+  const { spec, adapter_input } = expected.inputs;
+  const binding = adapter_input.bindings.find((entry) => ["127.0.0.1", "::1", "0.0.0.0", "::"].includes(entry.host_address));
+  // This alpha observer supports host-local publication only, not LAN probes.
+  if (!binding) fail("INVALID_DEPLOYMENT_DESCRIPTOR");
+  const address = ["::", "::1"].includes(binding.host_address) ? "::1" : "127.0.0.1";
+  const format = '{"id":{{json .Id}},"running":{{json .State.Running}},"health":{{if .State.Health}}{{json .State.Health.Status}}{{else}}"unknown"{{end}},"owner":{{json (index .Config.Labels "org.drumee.infra.owner")}},"project":{{json (index .Config.Labels "com.docker.compose.project")}},"service":{{json (index .Config.Labels "com.docker.compose.service")}},"revision":{{json (index .Config.Labels "org.drumee.infra.revision")}},"ports":{{json .NetworkSettings.Ports}}}';
+  const { stdout } = await promisify(execFile)("docker", ["--host", "unix:///var/run/docker.sock", "inspect", "--format", format, deployment.container_id], { timeout: 10000, maxBuffer: 65536 });
   const observed = JSON.parse(stdout);
-  let http_ready = false;
-  if (deployment.url && deployment.host) {
-    const url = new URL(deployment.url);
-    if (!["http:", "https:"].includes(url.protocol) || url.username || url.password || url.pathname !== "/__infra_ready" || url.search) throw new Error("INVALID_DEPLOYMENT_ENDPOINT");
-    http_ready = await new Promise((resolve) => {
-      const request = (url.protocol === "https:" ? https : http).get(url, { headers: { host: deployment.host }, timeout: 3000 }, (response) => { response.resume(); resolve(response.statusCode === 200); });
-      request.once("error", () => resolve(false)); request.once("timeout", () => { request.destroy(); resolve(false); });
-    });
-  }
-  return { running: observed.running, health: observed.health, active_revision: observed.revision, http_ready };
+  const result = { running: observed.running === true, health: observed.health, observed_revision: observed.revision, loaded_configuration: { status: "unverified" }, diagnostic_codes: [] };
+  const reject = (code) => ({ ...result, http_ready: false, diagnostic_codes: [code] });
+  if (observed.id !== deployment.container_id) return reject("DEPLOYMENT_IDENTITY_MISMATCH");
+  if (observed.owner !== adapter_input.project || observed.project !== adapter_input.project || observed.service !== "gateway") return reject("DEPLOYMENT_OWNERSHIP_MISMATCH");
+  if (observed.revision !== expected.revision) return reject("DEPLOYMENT_REVISION_MISMATCH");
+  const ports = observed.ports;
+  const published = S.record(ports) && ports[`${adapter_input.listen_port}/tcp`];
+  const expected_ports = adapter_input.bindings.map((entry) => `${entry.host_address}:${entry.host_port}`).sort();
+  if (!Array.isArray(published) || published.some((entry) => !S.record(entry) || typeof entry.HostIp !== "string" || typeof entry.HostPort !== "string")
+    || S.serialize(published.map((entry) => `${entry.HostIp}:${entry.HostPort}`).sort()) !== S.serialize(expected_ports)
+    || Object.entries(ports).some(([key, entries]) => key !== `${adapter_input.listen_port}/tcp` && entries?.length)) return reject("DEPLOYMENT_PORT_MISMATCH");
+  if (!result.running) return result;
+  const probe = await new Promise((resolve) => {
+    let request, complete = false;
+    const finish = (http_ready, code) => { if (complete) return; complete = true; clearTimeout(deadline); resolve({ http_ready, code }); if (!http_ready) request?.destroy(); };
+    const deadline = setTimeout(() => finish(false, "GATEWAY_PROBE_TIMEOUT"), 3000);
+    try {
+      request = (spec.http.https ? https : http).get({ hostname: address, family: address === "::1" ? 6 : 4, port: binding.host_port, path: "/__infra_ready",
+        headers: { Host: `${expected.effective_domain}:${binding.host_port}` }, ...(spec.http.https ? { servername: expected.effective_domain, rejectUnauthorized: true } : {}) }, (response) => {
+        if (response.statusCode >= 300 && response.statusCode < 400) { response.destroy(); finish(false, "GATEWAY_PROBE_REDIRECT"); return; }
+        let size = 0; response.on("data", (chunk) => { size += chunk.length; if (size > 4096) finish(false, "GATEWAY_PROBE_FAILED"); });
+        response.on("end", () => finish(response.statusCode === 200, response.statusCode === 200 ? undefined : "GATEWAY_PROBE_FAILED"));
+        response.on("error", () => finish(false, "GATEWAY_PROBE_FAILED"));
+      });
+      request.once("error", () => finish(false, "GATEWAY_PROBE_FAILED"));
+    } catch (_) { finish(false, "GATEWAY_PROBE_FAILED"); }
+  });
+  return { ...result, http_ready: probe.http_ready, diagnostic_codes: probe.code ? [probe.code] : [] };
 }
 module.exports = { kind: "docker-nginx", gatewayResources, observe: observeDockerGateway };

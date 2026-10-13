@@ -1,16 +1,22 @@
 {
   "name": "@drumee/infra-layer",
-  "version": "0.0.0-il1",
+  "version": "0.1.0-alpha.1",
   "private": true,
   "description": "IL-1 infrastructure contracts and Nginx gateway planning.",
   "license": "AGPL-3.0-only",
   "type": "commonjs",
   "main": "lib/index.js",
   "types": "index.d.ts",
+  "repository": { "type": "git", "url": "git+https://github.com/drumee/infra-layer.git" },
+  "homepage": "https://github.com/drumee/infra-layer#readme",
+  "bugs": { "url": "https://github.com/drumee/infra-layer/issues" },
+  "files": ["lib/", "capabilities/", "adapters/", "index.d.ts", "README.md", "LICENSE", "PROVENANCE.md"],
+  "publishConfig": { "access": "public", "tag": "next" },
   "engines": { "node": ">=22" },
   "scripts": {
     "test": "node --test test/unit/*.test.js",
-    "test:integration": "node test/integration/run.js"
+    "test:integration": "node test/integration/run.js",
+    "test:package": "node test/package-audit.js"
   },
   "devDependencies": { "websocket": "1.0.35" }
 }

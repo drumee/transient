@@ -114,7 +114,8 @@ test("state requires an observed functional probe and active revision, with no s
   const adapter = { observe: async () => ({ running: true, health: "healthy", password: "TOP-SECRET-MARKER" }) };
   const state = await api.inspectInfrastructure(deployment, adapter); assert.equal(state.capabilities[0].readiness, "degraded"); assert.equal(JSON.stringify(state).includes("TOP-SECRET-MARKER"), false);
   assert.equal(api.diagnoseInfrastructure(state, inputs().requirements).ready, false);
-  adapter.observe = async () => ({ running: true, health: "healthy", http_ready: true, active_revision: result.revision });
+  adapter.observe = async () => ({ running: true, health: "healthy", http_ready: true, observed_revision: result.revision,
+    loaded_configuration: { status: "verified", revision: result.revision, evidence: "activation-attestation" }, protected_delivery_verified: true });
   assert.equal(api.diagnoseInfrastructure(await api.inspectInfrastructure(deployment, adapter), inputs().requirements).ready, true);
 });
 test("gateway descriptor is scoped, rootless, read-only and has no host networking", () => {

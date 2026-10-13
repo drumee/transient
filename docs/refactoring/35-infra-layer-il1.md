@@ -2,6 +2,15 @@
 
 Status: **IL-1 — READY_FOR_TECHNICAL_REVIEW**. 2026-10-13.
 
+IL-1.1 corrective follow-up: the Docker observer now binds probes to the exact
+validated plan and local Docker ownership/port identity. Matching labels no
+longer imply loaded Nginx configuration; functional HTTP does not imply protected
+delivery. Rendering rejects concurrent/stale locks and rechecks destinations
+before replacement. The release/extraction record will be maintained in
+[36-infra-layer-il1.1-release.md](36-infra-layer-il1.1-release.md). The original
+IL-1 evidence below remains historical; its observation/multi-writer limitations
+are superseded by that corrective record.
+
 Repository `drumee/transient`, branch `refactor/mapping`. Approved architecture:
 `a31b544f565ca4438f1ed8df5eccb21bf0486104`, dossier
 [34-infra-layer-foundation.md](34-infra-layer-foundation.md). Implementation

@@ -28,4 +28,27 @@ Test image inputs are immutable official Nginx and Node digests (recorded in
 README/report); the test-only archive utility is Debian `zip=3.0-13+deb12u1`.
 No mutable GitHub branch is downloaded at build or test time. npm test-only
 WebSocket dependencies are fixed by this module's package-lock.json. Existing
-ui-build/ui-runtime dependencies are supplied by their own locked workspaces.
+ui-build/ui-runtime dependencies are installed in temporary pinned test workspaces.
+
+## IL-1.1 corrective extraction
+
+Source: `https://github.com/drumee/transient`, `target/modules/infra-layer/`.
+IL-1 baseline: `faee9a57487d80f79a8ec79a68887e6da36ca489`.
+Canonical development/release repository after extraction:
+`https://github.com/drumee/infra-layer`; transient becomes a pinned integration
+snapshot. Exact corrective and subtree extraction revisions are appended to
+this record in the standalone release preparation, then synchronized back.
+
+Adaptations: plan-bound local Docker ownership/port/revision observation,
+separate desired/observed/loaded/functional/protected-delivery evidence,
+exclusive render-directory lock with explicit stale-lock rejection and
+precommit destination checks. Five public functions and all routing/kernel
+semantics retained; no IL-2 or activation mechanism. AGPL-3.0-only preserved.
+
+Validation: 66 foundation/corrective units, 17 actual Nginx/kernel/Chromium cases,
+68 unchanged runtime/capability regressions and 27 unchanged Finder tests.
+All pass without skips. The standalone harness fetches only the immutable test
+revision and path allowlist in `test/integration/kernel-dependencies.json` into
+temporary storage; no sibling checkout or historical source tree is distributed.
+An initial test-stub promisification error and static-test marker mismatch were
+fixed without changing kernel implementations or reducing tests.
