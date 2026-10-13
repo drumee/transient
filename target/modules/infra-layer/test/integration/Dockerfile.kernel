@@ -1,0 +1,8 @@
+FROM node:22-bookworm-slim@sha256:c3de60bf2f9dd0ac6370e6117950ff62d6e339527e7472301c9c78a017978392
+# Test-only image. No SQL, identities, application packages or deployment installer.
+RUN apt-get update -qq && apt-get install -y --no-install-recommends zip=3.0-13+deb12u1 && rm -rf /var/lib/apt/lists/*
+COPY target /work/target
+COPY sources /work/sources
+ENV NODE_PATH=/work/target/modules/infra-layer/node_modules
+USER 1000:1000
+ENTRYPOINT ["node", "/work/target/modules/infra-layer/test/integration/kernel-fixture.js"]

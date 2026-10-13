@@ -1,0 +1,16 @@
+{
+  "name": "@drumee/infra-layer",
+  "version": "0.0.0-il1",
+  "private": true,
+  "description": "IL-1 infrastructure contracts and Nginx gateway planning.",
+  "license": "AGPL-3.0-only",
+  "type": "commonjs",
+  "main": "lib/index.js",
+  "types": "index.d.ts",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "test": "node --test test/unit/*.test.js",
+    "test:integration": "node test/integration/run.js"
+  },
+  "devDependencies": { "websocket": "1.0.35" }
+}

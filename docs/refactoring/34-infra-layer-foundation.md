@@ -1,6 +1,8 @@
 # Infra Layer — IL-0 architecture audit and extraction specification
 
-Status: **IL-0 — READY_FOR_ARCHITECTURE_REVIEW**. Specification only; implementation requires the project owner's architecture approval. Audit date: 2026-10-13. Workstream: Infra Layer, independently reusable by the minimal Drumee kernel and its distributions. Number 30 is occupied by the Hub lifecycle dossier; 34 follows the existing series.
+Status: **IL-0 — APPROVED FOR IL-1**. Audit date: 2026-10-13. The specification-only baseline was committed as `a31b544f565ca4438f1ed8df5eccb21bf0486104` and subsequently approved by the owner with the IL-1 implementation requirements. Workstream: Infra Layer, independently reusable by the minimal Drumee kernel and its distributions. Number 30 is occupied by the Hub lifecycle dossier; 34 follows the existing series.
+
+IL-1 follow-up: the private CommonJS foundation and gateway-only Nginx/Docker projection are implemented under `target/modules/infra-layer/`. The implemented subset, provenance, real gateway/kernel/browser evidence and remaining TLS/DNS/persistence limits are recorded in [35-infra-layer-il1.md](35-infra-layer-il1.md). Sections below retain the IL-0 audit/proposals; they do not imply implementation of every proposed provider or IL-2/IL-3 feature. **IL-1 — READY_FOR_TECHNICAL_REVIEW**; later phases still require separate authorization.
 
 ## 1. Executive summary
 
