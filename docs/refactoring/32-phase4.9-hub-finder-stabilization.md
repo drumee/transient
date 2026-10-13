@@ -1,15 +1,16 @@
 # Phase 4.9 — Finder stabilization on the authorized Hub lifecycle
 
-Status: **CLOSED / VALIDATED / NOT PUBLISHED** on 2026-10-09.
+Status: **CLOSED / VALIDATED** on 2026-10-09; corrected standalone artifacts
+published by a separately authorized post-closure action on 2026-10-10.
 
 This is the canonical Phase 4.9 implementation record for the sequence
 4.8B → 4.9 → Oxymotion validation. Reports 27 and 29 describe an earlier
 standalone Finder milestone; they do not establish the Hub integration proved
 here.
 
-## Boundaries and prepared versions
+## Boundaries and release versions
 
-| Component | Delivery boundary | Prepared version |
+| Component | Delivery boundary | Version |
 |---|---|---|
 | Hub lifecycle | private `target/control-plane/hub-lifecycle` workspace | `0.0.0-phase4.8b` |
 | server runtime | standalone `drumee/server-runtime` | `0.1.0-alpha.3` |
@@ -17,10 +18,13 @@ here.
 | Finder | standalone `drumee/finder` | `0.1.0-alpha.4` |
 | Window Manager | standalone `drumee/window-manager` | existing `0.1.0-alpha.2` |
 
-No package was published. The Hub control plane deliberately remains a
-transitional private package: its final repository is not implied by its
-current hosting, while lifecycle ownership remains outside server-runtime and
-system-mfs.
+At phase closure, no package was published. A later explicit instruction
+authorized publication of `@drumee/server-runtime@0.1.0-alpha.3` and
+`@drumee/finder@0.1.0-alpha.4` with the npm `next` tag. The Hub control plane
+remains a transitional private package and was not published; its final
+repository is not implied by its current hosting, while lifecycle ownership
+remains outside server-runtime and system-mfs. No new system-mfs or Window
+Manager version was published by this action.
 
 ## Authorized request contract
 

@@ -165,12 +165,14 @@ multi-window behavior and real MFS operations. Only issues demonstrated by
 that use should change kernel contracts.
 
 The existing standalone repository remains the Finder delivery boundary.
-Phase 4.9 prepares `@drumee/finder@0.1.0-alpha.2`,
-`@drumee/server-runtime@0.1.0-alpha.2` and
-`@drumee/system-mfs@0.1.0-alpha.2` without publication. The artifacts prove
-package-relative assets, isolated tests, no transient or `sources/**`
-dependency, no Team dependency, explicit Window Manager integration and a
-server-side `system-mfs` requirement.
+Phase 4.9 prepared `@drumee/finder@0.1.0-alpha.4`,
+`@drumee/server-runtime@0.1.0-alpha.3` and retained
+`@drumee/system-mfs@0.1.0-alpha.2`. After phase closure, an explicit release
+instruction published the corrected Finder and server-runtime artifacts on
+2026-10-10 with the `next` tag; it did not publish a new system-mfs artifact.
+The artifacts prove package-relative assets, isolated tests, no transient or
+`sources/**` dependency, no Team dependency, explicit Window Manager
+integration and a server-side `system-mfs` requirement.
 
 Phase 4.9 closed after the canonical validation exercised the real MariaDB Hub
 lifecycle and MFS dispatcher, a real `KernelSession`, independent A/B Hub

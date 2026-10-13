@@ -114,9 +114,9 @@ association or data.
 Dry-run artifacts contain no fixtures, historical sources, credentials or
 development checkout paths. The system-mfs artifact contains only the
 canonical `server/schemas/SCHEMA_MANIFEST.json`. Corrected server-runtime and
-Finder artifacts are prepared as `0.1.0-alpha.3` and `0.1.0-alpha.4`
-respectively; system-mfs remains
-`0.1.0-alpha.2`. None is published.
+Finder artifacts were prepared as `0.1.0-alpha.3` and `0.1.0-alpha.4`
+respectively; system-mfs remains `0.1.0-alpha.2`. None was published by the
+phase-closing validation itself.
 
 Finder's bounded context-menu contract delegates rendering to the host. Undo
 is deliberately limited to session-local same-Hub moves. Rich conflict UI,
@@ -129,3 +129,23 @@ every Hub context through the official lifecycle, preserves MFS node ACL,
 survives MariaDB restart, passes runtime/Nginx/Chromium integration and packs
 cleanly from standalone boundaries. Oxymotion end-to-end validation remains
 the next, separate step.
+
+## Post-closure npm publication
+
+On 2026-10-10, a later explicit instruction authorized publication of the two
+corrected standalone artifacts. Before publication, the clean standalone
+repositories passed their complete package suites: server-runtime 48/48 and
+Finder 31/31. Dry-run tarballs contained 28 files each and matched the
+artifacts subsequently exposed by the npm registry.
+
+| Package | Standalone commit | npm tag | SHA-1 | SHA-512 integrity |
+|---|---|---|---|---|
+| `@drumee/server-runtime@0.1.0-alpha.3` | `fc7d9de3f3e63baea8258885e55efe8e242904d0` | `next` | `9eea2ec8695db8043c64d2fececb6650e3a87a9d` | `sha512-lW7hwEB+ruJ+6k9H2Z3U+c65WbQfdKyDjLGaUbzucP+A+dH7qlLS2W7gC17YhgOu0E8s24QGPjpf9w1B6gIWzg==` |
+| `@drumee/finder@0.1.0-alpha.4` | `b46e2c94b615a1993b6162716d9e8965d0029564` | `next` | `d0bddae9b1194cc20f9877633162b13fc2059ada` | `sha512-93plvFIOcfKaQyVokeeWJkwLeoCRO4UVUUgOO+ChcpIw7FfS5LOkVXzM6qmDsvs3FJeYnJ0gI+bgTyQ0/wqraw==` |
+
+Registry verification confirmed that both `next` aliases resolve to these
+versions and that each published `gitHead`, SHA-1 and SHA-512 value matches the
+validated artifact. npm retained `latest` on the earlier alpha.1 releases. No
+tag was changed manually, no new system-mfs package was published, and
+`sources/**` remained unchanged. This release changes distribution state only;
+it does not reopen Phase 4.9 or authorize Oxymotion work.
