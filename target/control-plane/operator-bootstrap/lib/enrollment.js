@@ -10,7 +10,13 @@ async function prerequisites(db, options) {
     if (!(await runtime.validatePlatformAuthority({ database: db })).valid) fail("OPERATOR_AUTHORITY_UNAVAILABLE");
     const auth = await db.query("SELECT routine_name FROM information_schema.routines WHERE routine_schema=DATABASE() AND routine_name IN ('session_signin','session_ensure') AND routine_type='PROCEDURE'");
     if (auth.length !== 2) fail("OPERATOR_AUTHENTICATION_UNAVAILABLE");
+    const tables = await db.query("SELECT table_name,engine FROM information_schema.tables WHERE table_schema=DATABASE() AND table_name IN ('entity','drumate','privilege')");
+    if (tables.length !== 3 || tables.some(table => table.engine !== "InnoDB")) fail("OPERATOR_IDENTITY_SCHEMA_INVALID");
   } catch (error) { if (error instanceof OperatorBootstrapError) throw error; fail("OPERATOR_PREREQUISITE_FAILED"); }
+}
+async function requireIdle(db) {
+  const state = (await db.query("SELECT @@in_transaction AS active,@@autocommit AS auto_commit"))[0];
+  if (Number(state.active) !== 0 || Number(state.auto_commit) !== 1) fail("OPERATOR_CONNECTION_NOT_IDLE");
 }
 function empty(record) { return Object.entries(record).every(([key,value]) => ["singleton", "contract_version"].includes(key) || value === null); }
 async function inspectRecord(db, record) {
@@ -25,7 +31,7 @@ async function inspectRecord(db, record) {
   return { contract_version: 1, valid: true, uid: record.uid, operation_id: record.operation_id, policy: runtime.PLATFORM_ADMINISTRATOR.name };
 }
 async function installOperatorSchema(options) {
-  context(options); const db = store(options.database); await prerequisites(db, options);
+  context(options); const db = store(options.database); await requireIdle(db); await prerequisites(db, options);
   await installSchema(db); return { contract_version: 1, valid: true, schema_version: "kb01b-initial-operator-1" };
 }
 async function validateInitialOperator(options = {}) {
@@ -42,6 +48,7 @@ async function validateInitialOperator(options = {}) {
 }
 async function enrollInitialOperator(options = {}) {
   const intent = context(options), db = store(options.database);
+  await requireIdle(db);
   await prerequisites(db, options); await validateSchema(db);
   const provider = options.credential_provider;
   if (!provider || !MODES.includes(provider.mode) || typeof provider.prepare !== "function") fail("OPERATOR_CREDENTIAL_PROVIDER_INVALID");

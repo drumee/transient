@@ -78,6 +78,11 @@ test("KB-01B real SQL enrollment, credential durability, exclusivity and interru
     const prepared=resource(env,"collision-"+index);await assert.rejects(api.enrollInitialOperator({...intent(db),credential_provider:prepared.provider}),{code:kind==="administrator"?"OPERATOR_ADMINISTRATOR_EXISTS":"OPERATOR_IDENTITY_CONFLICT"});
    }
   });
+  await t.test("caller transactions and nontransactional identity tables are rejected before credential preparation",async()=>{
+   const db=await env.database("unsafe_transaction"),prepared=resource(env,"unsafe-transaction");await api.installOperatorSchema(intent(db));
+   await db.connection.beginTransaction();await assert.rejects(api.enrollInitialOperator({...intent(db),credential_provider:prepared.provider}),{code:"OPERATOR_CONNECTION_NOT_IDLE"});await assert.rejects(api.installOperatorSchema(intent(db)),{code:"OPERATOR_CONNECTION_NOT_IDLE"});await db.connection.rollback();assert.equal(fs.existsSync(prepared.file),false);
+   await db.query("ALTER TABLE entity ENGINE=MyISAM");await assert.rejects(api.enrollInitialOperator({...intent(db),credential_provider:prepared.provider}),{code:"OPERATOR_IDENTITY_SCHEMA_INVALID"});assert.equal(fs.existsSync(prepared.file),false);
+  });
   await t.test("revoked/mismatched grant or corrupt completion metadata is detected and never repaired",async()=>{
    await main.query("UPDATE drumate SET remit=8 WHERE id=?",owner.uid);assert.equal((await api.validateInitialOperator({contract_version:1,database:main,domain:"drumee.lan",organisation_id:1})).valid,false);await assert.rejects(api.enrollInitialOperator({...intent(main),credential_provider:provider}),{code:"OPERATOR_STATE_CORRUPT"});assert.equal((await main.query("SELECT remit FROM drumate WHERE id=?",owner.uid))[0].remit,8);await main.query("UPDATE drumate SET remit=15 WHERE id=?",owner.uid);
    await main.query("UPDATE initial_operator_enrollment SET identity_commitment=REPEAT('0',64)");await assert.rejects(api.enrollInitialOperator({...intent(main),credential_provider:provider}),{code:"OPERATOR_STATE_CORRUPT"});

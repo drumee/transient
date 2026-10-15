@@ -20,7 +20,8 @@ organisation_id: 1}`. This is a host authorization decision, never an anonymous
 client claim. Validate canonical platform bootstrap and KB-01A first; the API
 rejects missing or inconsistent prerequisites without repair. Distributions
 projecting the module elsewhere may inject the same canonical `platform`
-bootstrap validator. Pooled query facades are rejected.
+bootstrap validator. Pooled query facades are rejected. The connection must be idle with autocommit enabled;
+entity, drumate and privilege must use InnoDB.
 
 Create `credential_provider` with
 `createFileCredentialProvider({mode, file, password_fd, input, output})` and
@@ -33,7 +34,7 @@ Exactly three modes share the same SQL policy: `test`, `interactive`,
 `automatic`. Test/automatic generate 32 cryptographic random bytes encoded
 base64url once per resource. Interactive reads a private owned regular-file
 FD (>=3) or uses a raw, non-echoing TTY prompt with confirmation. Without a
-secure input channel it fails; there is no generation fallback. No password
+secure input channel it fails; there is no generation fallback. Passwords are valid UTF-8, 16–128 bytes, without NUL/newline. No password
 argument, environment variable or implicit Unix administrator is accepted.
 The host supplies explicit username/email; automatic installations may use
 username `admin`.
