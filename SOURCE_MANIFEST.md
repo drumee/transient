@@ -71,8 +71,8 @@ imported into sources or a second transient Infra Layer copy.
 
 | Repository | Branch | Exact revision | Method / role |
 |---|---|---|---|
-| https://github.com/drumee/infra-layer | main | `a0d0006c51ac4e71fb155d3a1330d9d2b77aeded` | Canonical composition correction, report and unpublished artifact evidence; runtime implementation `2d1f6aa6774f70f1d3cfc00f47a94ecf4133e314` |
-| https://github.com/drumee/debian | feat/container-distribution | `1fa0939d5c73cdc40b0fb4ac936b76aaa63e4e7e` | IL-3 dependency inventory and IL-4 integration/SQL handoff; no production installer |
+| https://github.com/drumee/infra-layer | main | `35fe3d0e6b6311d43940338b65a7e5ae74c0d222` | Canonical composition correction, report and unpublished artifact evidence; runtime implementation `adf56e04961c3974e0bd0ad481b1700a15d99c09` |
+| https://github.com/drumee/debian | feat/container-distribution | `d035f9ed5af437c323d364dfbd732673f24f6c3e` | IL-3 dependency inventory and IL-4 integration/SQL handoff; no production installer |
 | https://github.com/drumee/debian | main | `b8b0ebe7082e1ad2366f3a7997712f5da5bba127` | Read-only remote branch inspection; unchanged |
 
 The earlier IL-1.1 publication-blocked row is historical evidence: current npm

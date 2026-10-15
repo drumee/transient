@@ -1,12 +1,12 @@
 # IL-4 — Distribution qualification checkpoint
 
-Canonical Infra Layer evidence: `a0d0006c51ac4e71fb155d3a1330d9d2b77aeded`,
+Canonical Infra Layer evidence: `35fe3d0e6b6311d43940338b65a7e5ae74c0d222`,
 `docs/IL-4-validation-evidence.json`. Debian handoff:
-`1fa0939d5c73cdc40b0fb4ac936b76aaa63e4e7e`.
+`d035f9ed5af437c323d364dfbd732673f24f6c3e`.
 The final development archive has integrity
-`sha512-Bspkr6685T8HXcvtM8zAn1MEQ+3/YtExAPWwM8CSKr3QLLtqDqHjdaf1uc4wkq25y9PKvflcOw4ckm/ennELYA==`.
-Its runtime bytes match the fully integrated archive below; only README and
-PROVENANCE differ. This remains private development metadata, not alpha.2.
+`sha512-yQD6QsmHoI0sMtqCJvbPGwf5Nc527kpEJwsEbZkHwwAugfKqQnE5O/58yXSPfHmHLLxhbRyBXWZbeg2xnuxD1A==`.
+Its runtime bytes match the final guard integration archive recorded below;
+only PROVENANCE differs. This remains private development metadata, not alpha.2.
 
 Status: **IL-4 — INTEGRATION_BLOCKED**. The canonical first-human/operator
 enrollment contract is missing. The approved IL-3 fixture remains unchanged;
@@ -44,6 +44,9 @@ sorts only the distribution resource iteration and preserves the historical
 infrastructure inventory prefix. Regression verifies input purity, permutation
 equivalence, self-verification, legacy ordering and tamper rejection. Public
 functions, types and contract versions remain unchanged.
+Follow-up `adf56e04961c3974e0bd0ad481b1700a15d99c09` validates malformed
+resource records before sorting, keeping stable diagnostics for null records
+and invalid identity values; valid composition output remains unchanged.
 
 ## Real SQL investigation
 
@@ -186,3 +189,28 @@ No new IL-4 remote/LAN acceptance is claimed. Report 37's LAN/browser/recovery
 results remain prior approved evidence. No testbox, existing infrastructure,
 customer data, host trust/resolver/firewall or unrelated Docker resources were
 changed. No Oxymotion or permanent stack deployment occurred.
+
+## Final guard rerun and operational retry
+
+The clean standalone command sequence was repeated at implementation
+`adf56e04961c3974e0bd0ad481b1700a15d99c09`: all 124 units, 17 gateway,
+17 services, 16 lifecycle tests, four HTTPS scenarios and packed-consumer checks
+pass again. Repeated runs do not increase unique test counts.
+
+The first fixture run against that guard stopped after nine groups with
+`DOCKER_LIFECYCLE_COMMAND_FAILED`; its resources were cleaned. Cause remains
+unestablished. A sequential retry with temporary test-only error classification
+passed all 25 groups, actual interrupted Redis rotation and three browsers,
+including SQL/MFS/ACL restoration; no Docker error classifier fired. No kernel
+or production behavior was modified for that retry. This unreproduced failure
+remains disclosed as an operational diagnostic limitation.
+
+Successful final project `drumee-il3-kernel-6faacb7e` used loopback HTTPS 45625
+and DNS 36623, with separate restored high ports. Owned resources were cleaned.
+Its integrated archive has SRI
+`sha512-yDUjkDIOotn3ujPV/zzWflwemWO/lEA1XYtharBZkWwH/Udc/ZBxK1Omzz0sxkvWhfPerIJwLpTYOxpD24XTlA==`.
+The final documentation archive at source
+`574a9307f57de813a54e678ccca3fa436fdf5076` has the SRI at the top of this report;
+archive comparison proves runtime bytes identical, only PROVENANCE changed.
+Image IDs and complete attempt/artifact evidence are pinned in the canonical
+Infra Layer JSON record above.
