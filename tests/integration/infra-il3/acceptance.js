@@ -142,7 +142,7 @@ async function browser({ origin, binding, prepared, directory, account }) {
   const cert = new crypto.X509Certificate(fs.readFileSync(path.resolve(prepared.candidate, certificate_mount.source)));
   const spki = crypto.createHash("sha256").update(cert.publicKey.export({ type: "spki", format: "der" })).digest("base64");
   const profile = fs.mkdtempSync(path.join(directory, "chrome-"));
-  const chrome = spawn(process.env.CHROME_BIN || "/usr/bin/google-chrome", ["--headless=new", "--no-sandbox", "--disable-gpu", "--no-proxy-server", "--no-first-run", "--disable-background-networking", "--remote-debugging-port=0", "--user-data-dir=" + profile, "--host-resolver-rules=MAP drumee.lan " + binding.host_address, "--ignore-certificate-errors-spki-list=" + spki, origin], { stdio: "ignore", detached: true });
+  const chrome = spawn(process.env.CHROME_BIN || "/usr/bin/google-chrome", ["--headless=new", "--no-sandbox", "--disable-gpu", "--no-proxy-server", "--no-first-run", "--disable-background-networking", "--remote-debugging-port=0", "--user-data-dir=" + profile, "--host-resolver-rules=MAP drumee.lan " + binding.host_address, "--ignore-certificate-errors-spki-list=" + spki, "about:blank"], { stdio: "ignore", detached: true });
   let socket;
   try {
     let devtools;
@@ -150,13 +150,14 @@ async function browser({ origin, binding, prepared, directory, account }) {
     assert.ok(devtools, "Chromium debugging unavailable");
     const pages = await (await fetch("http://127.0.0.1:" + devtools + "/json/list")).json();
     socket = new WebSocket(pages.find(page => page.type === "page").webSocketDebuggerUrl); await once(socket, "open");
-    let serial = 0; const pending = new Map(); const failures = [];
-    socket.addEventListener("message", event => { const message = JSON.parse(event.data); if (message.method === "Runtime.exceptionThrown") failures.push("JS_EXCEPTION"); if (message.method === "Network.loadingFailed" && message.params.type !== "Other") failures.push("NETWORK_FAILED"); if (pending.has(message.id)) { const call = pending.get(message.id); pending.delete(message.id); message.error ? call.reject(Error("DEVTOOLS_ERROR")) : call.resolve(message.result); } });
+    let serial = 0; const pending = new Map(); const failures = [], responses = [];
+    socket.addEventListener("message", event => { const message = JSON.parse(event.data); if (message.method === "Runtime.exceptionThrown") failures.push("JS_EXCEPTION"); if (message.method === "Network.loadingFailed" && message.params.type !== "Other") failures.push("NETWORK_FAILED"); if (message.method === "Network.responseReceived") responses.push({ type: message.params.type, status: message.params.response.status }); if (pending.has(message.id)) { const call = pending.get(message.id); pending.delete(message.id); message.error ? call.reject(Error("DEVTOOLS_ERROR")) : call.resolve(message.result); } });
     const send = (method, params = {}) => new Promise((resolve, reject) => { const id = ++serial; pending.set(id, { resolve, reject }); socket.send(JSON.stringify({ id, method, params })); });
     const evaluate = async expression => { const result = await send("Runtime.evaluate", { expression, awaitPromise: true, returnByValue: true }); if (result.exceptionDetails) { console.error("BROWSER_EXCEPTION_TYPE " + (result.exceptionDetails.exception?.className || "unknown")); throw Error("BROWSER_EVALUATION_FAILED"); } return result.result.value; };
-    await send("Runtime.enable"); await send("Network.enable");
+    await send("Runtime.enable"); await send("Network.enable"); await send("Page.enable");
+    await send("Page.navigate", { url: origin });
     for (let attempt = 0; attempt < 100 && !await evaluate("typeof startKernelAcceptance==='function'"); attempt++) await sleep(100);
-    console.log("BROWSER_BOOTSTRAP_STATE " + JSON.stringify(await evaluate("({title:document.title,bundle:document.body?.dataset.bundle,error:document.body?.dataset.error,entry:typeof startKernelAcceptance})")));
+    console.log("BROWSER_BOOTSTRAP_STATE " + JSON.stringify({ ...(await evaluate("({title:document.title,bundle:document.body?.dataset.bundle,error:document.body?.dataset.error,entry:typeof startKernelAcceptance})")), responses, failures }));
     assert.equal(await evaluate("typeof startKernelAcceptance"), "function", "Frontend bootstrap unavailable");
     const result = await evaluate("startKernelAcceptance(" + JSON.stringify({ uid: account.id, password: account.password }) + ")");
     assert.equal(result.ready, true); assert.equal(result.hubs, 2); assert.equal(result.kind, "finder");
