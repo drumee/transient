@@ -16,7 +16,7 @@ unchanged. No copied kernel implementation is tracked in this directory.
 | `drumee/system-mfs`, main; private archive alpha.2 | `53101c4a995ffca9118f795ab5d4c7c731200a2f` | Actual module-owned schemas, provisioning, permissions, filesystem/content APIs. No publication or substitution by older npm alpha.1. |
 | `drumee/window-manager`, main; npm alpha.2 | `e294979dfcb59f73af19975e40f890a0b366cd8c` | Real Finder window host. |
 | `drumee/finder`, main; npm alpha.4 | `b46e2c94b615a1993b6162716d9e8965d0029564` | Real MfsClient, Finder widget, sync and window behavior. |
-| `drumee/infra-layer`, main; unpublished source archive | `d2b1f3fbb7f59e406c854dc80c5750a9695c9bfa` | Existing pure plan, composition, preparation, activation, persistent services and recovery. No transient implementation fork. |
+| `drumee/infra-layer`, main; unpublished source archive | `95db6c7aed097b62aa8081df17b3467d850e779c` | Existing pure plan, composition, preparation, activation, persistent services and recovery; bounded authenticated Redis native-check readiness before shutdown. No transient implementation fork. |
 
 `lib/host.js` wires the existing primitives; `lib/initialize.js` invokes existing
 owners and prepares explicitly authorized disposable principals. The wiring was

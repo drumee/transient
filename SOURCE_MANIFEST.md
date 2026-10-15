@@ -61,5 +61,5 @@ branches and revisions are recorded in its `PROVENANCE.md`; `sources.lock.json`
 pins the allowlisted transient revision and npm's lockfile pins archive integrity.
 Generated acquisitions live in ignored fixture-local vendor/cache, never sources.
 Infra Layer authority remains standalone main at
-`d2b1f3fbb7f59e406c854dc80c5750a9695c9bfa`; its IL-3 source archive is a private
+`95db6c7aed097b62aa8081df17b3467d850e779c`; its IL-3 source archive is a private
 test dependency, not the published npm alpha or a new transitional implementation.
