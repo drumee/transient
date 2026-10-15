@@ -96,7 +96,8 @@ privileged DBA SQL is outside enrollment-writer mutual exclusion.
 ## Tests and ownership
 
 Run `npm ci --ignore-scripts --no-audit --no-fund`, `npm test`, and
-`npm run test:integration`. Tests use uniquely owned disposable MariaDB,
+`npm run test:integration`. `npm run test:tty` adds the real PTY probe
+using Python 3 standard library. Tests use uniquely owned disposable MariaDB,
 private generated credentials and loopback dynamic ports. Real authentication,
 separate-connection concurrency, disconnect rollback, commit acknowledgment
 loss, all interruption checkpoints, canonical Hub provisioning and per-resource

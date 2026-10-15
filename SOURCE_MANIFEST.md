@@ -94,3 +94,21 @@ operator-bootstrap probe consumes a verified archive of the canonical runtime:
 The registry runtime alpha.3 remains unchanged and is retained under an explicit
 legacy test alias. Corrected code is not represented as a new npm publication.
 See `docs/refactoring/40-kernel-platform-authority.md`; KB-01B is not started.
+
+
+## KB-01B published runtime and canonical enrollment (2026-10-15)
+
+No imports or changes to immutable sources. The control plane and fixture now
+consume published `@drumee/server-runtime@0.1.0-alpha.4`, npm gitHead
+`f961f6214432c2e6dbbcde2b926544c076935950`, integrity
+`sha512-bOZ/v6/4mQ/FPa8iE21polPx2PjJWFYTKqTz+2duqxI2ljpviemNgOtpwkxF4j/1Xn/1aVIxdvVCc8Tch2ctEQ==`.
+Alpha.3 remains only an explicit historical diagnostic development alias.
+
+The approved fixture acquires canonical operator-bootstrap and its unchanged
+bootstrap/Hub/MFS/HostFilesystem dependency closure from allowlisted Git objects
+at transient `4424fde877eb12a719d6057449ba11aa245244fd` via sources.lock.json;
+content digests are recorded by its source acquisition inventory. Final clean
+fixture revision is `d15d70179a13064fcf50bcfa89152afed771a7bc`. No sibling
+checkout, second runtime implementation, standalone extraction or publication
+is introduced. Report 41 and its sanitized JSON evidence record exact tests,
+commits and generated test image identities. IL-4 remains subject to approval.

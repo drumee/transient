@@ -66,3 +66,14 @@ enrollment, additional counterexamples remain disposable SQL test setup.
 
 Historical blocked evidence above remains provenance, not current module
 status. See report 41 for fixture acquisition, commits and qualification.
+
+
+Final enrollment source projected by the fixture:
+`4424fde877eb12a719d6057449ba11aa245244fd`. This revision enforces immutable
+durable providers and refuses credential regeneration when a completed SQL
+marker exists but the private resource is missing. Qualification fixture:
+`d15d70179a13064fcf50bcfa89152afed771a7bc`. The independent final clone passes
+18 unit, 31 real-SQL TAP and real-PTY checks; full fixture passes 28 grouped
+functional checks across fresh/restart/restore with three Chromium runs.
+All existing applicable regressions are preserved (218 total TAP passes,
+zero failures/skips). See report 41 and its sanitized validation JSON.

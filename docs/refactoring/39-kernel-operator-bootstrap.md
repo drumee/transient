@@ -1,5 +1,10 @@
 # KB-01 — canonical first platform administrator: contract gate
 
+Historical blocked diagnostic. Canonical enrollment is implemented and
+qualified in [KB-01B report 41](41-kernel-operator-enrollment.md); this report
+retains the original missing-contract evidence and does not describe current
+enrollment availability.
+
 Historical diagnostic at `53432be57421147a3b282b4258f48507edb34913`.
 [KB-01A](40-kernel-platform-authority.md) now supplies the canonical runtime
 correction and real SQL/Hub/MFS validation. This report retains the original

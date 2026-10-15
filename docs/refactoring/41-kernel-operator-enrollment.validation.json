@@ -1,0 +1,99 @@
+{
+  "contract": "kb01b-validation-1",
+  "qualified_fixture_revision": "d15d70179a13064fcf50bcfa89152afed771a7bc",
+  "operator_source_revision": "4424fde877eb12a719d6057449ba11aa245244fd",
+  "runtime": {
+    "package": "@drumee/server-runtime",
+    "version": "0.1.0-alpha.4",
+    "gitHead": "f961f6214432c2e6dbbcde2b926544c076935950",
+    "integrity": "sha512-bOZ/v6/4mQ/FPa8iE21polPx2PjJWFYTKqTz+2duqxI2ljpviemNgOtpwkxF4j/1Xn/1aVIxdvVCc8Tch2ctEQ==",
+    "registry_verified": true
+  },
+  "suites": [
+    {
+      "name": "operator-unit",
+      "tests": 18,
+      "pass": 18,
+      "fail": 0,
+      "skipped": 0
+    },
+    {
+      "name": "operator-real-sql",
+      "tests": 31,
+      "pass": 31,
+      "fail": 0,
+      "skipped": 0
+    },
+    {
+      "name": "runtime-unit-package",
+      "tests": 56,
+      "pass": 56,
+      "fail": 0,
+      "skipped": 0
+    },
+    {
+      "name": "runtime-real-sql",
+      "tests": 16,
+      "pass": 16,
+      "fail": 0,
+      "skipped": 0
+    },
+    {
+      "name": "platform-bootstrap-hub",
+      "tests": 17,
+      "pass": 17,
+      "fail": 0,
+      "skipped": 0
+    },
+    {
+      "name": "runtime-mfs-fileio-transfers",
+      "tests": 68,
+      "pass": 68,
+      "fail": 0,
+      "skipped": 0
+    },
+    {
+      "name": "system-mfs-unit",
+      "tests": 7,
+      "pass": 7,
+      "fail": 0,
+      "skipped": 0
+    },
+    {
+      "name": "fixture-unit",
+      "tests": 5,
+      "pass": 5,
+      "fail": 0,
+      "skipped": 0
+    }
+  ],
+  "total": {
+    "pass": 218,
+    "fail": 0,
+    "skipped": 0
+  },
+  "functional_groups": [
+    10,
+    9,
+    9
+  ],
+  "chromium_runs": 3,
+  "real_pty": "passed",
+  "deployment": {
+    "project": "drumee-il3-kernel-ab86f57d",
+    "source_revision": "d15d70179a13064fcf50bcfa89152afed771a7bc",
+    "composition_revision": "40b3fa473bb78dcde547f33f3331281d676fb43cb9610a230ad8d58346e0c28e",
+    "image_id": "sha256:7fcdde6b2839081c3f5a016c4f08eb80adedd4682f83c731fa00deef92768840",
+    "tools_id": "sha256:2a0e5595df115695e2fa100b15730371c1cec16e78d3a5264bd265bc2f0f44f6",
+    "https_port": 34737,
+    "dns_port": 33139,
+    "real_kernel": true,
+    "interrupted_rotation_recovered": true,
+    "restart": true,
+    "isolated_recovery": true,
+    "ca_fingerprint": "82:13:33:F4:24:31:70:81:83:F8:DA:BE:B5:0B:EB:79:A2:BD:B2:66:08:A9:12:19:B7:BE:E5:1C:D8:04:2D:DC"
+  },
+  "owned_resources_cleaned": true,
+  "testbox_used": false,
+  "published_by_this_work": false
+}

@@ -1,5 +1,10 @@
 # KB-01A — canonical platform authority correction
 
+Historical KB-01A closure. [KB-01B report 41](41-kernel-operator-enrollment.md)
+now records canonical first-operator enrollment using the published alpha.4.
+The source-revision and no-enrollment statements below describe the original
+KB-01A checkpoint, whose evidence remains preserved.
+
 Status: **KB-01A — READY_FOR_TECHNICAL_REVIEW**.
 
 The independent platform authorization contract is restored in canonical
