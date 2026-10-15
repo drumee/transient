@@ -61,8 +61,12 @@ reports its own `kernel_recovery_verified:false`; application evidence is separa
 Browser acceptance pins the prepared leaf's SPKI for the isolated Chrome profile;
 HTTPS API tests use ordinary CA/SAN verification. No CA is installed system-wide.
 
-Implementation and tests are in progress until the acceptance report records
-actual successful results. Do not infer full IL-3 readiness from this fixture.
+The approved minimal profile passes clean-checkout and testbox/LAN acceptance:
+four unit tests, 25 grouped real-kernel checks per full lifecycle, and a separate
+actual-process Redis rotation interruption/recovery case. Exact revisions,
+commands, ownership, cleanup and supported limits are recorded in
+[the IL-3 distribution report](../../../docs/refactoring/37-infra-layer-il3-distribution.md).
+This is technical-review evidence, not a production release or permanent install.
 
 Remote acceptance uses the same runner with explicit `IL3_BIND_ADDRESS`,
 `IL3_HTTPS_PORT`, `IL3_DNS_PORT` and `IL3_EXTERNAL_BROWSER_DIRECTORY` values.
