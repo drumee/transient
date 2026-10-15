@@ -1,0 +1,17 @@
+{
+  "name": "@drumee/operator-bootstrap-contract-probe",
+  "version": "0.0.0-kb01-blocked",
+  "private": true,
+  "type": "commonjs",
+  "license": "AGPL-3.0-only",
+  "description": "KB-01 executable contract evidence; enrollment blocked on canonical runtime platform authority.",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "test": "node --test test/unit/*.test.js",
+    "test:integration": "node --test test/integration/*.test.js"
+  },
+  "devDependencies": {
+    "@drumee/server-runtime": "0.1.0-alpha.3",
+    "mariadb": "3.5.4"
+  }
+}
