@@ -2,6 +2,7 @@
 const fs = require("node:fs"), path = require("node:path"), crypto = require("node:crypto");
 const { fail, OperatorBootstrapError } = require("./errors");
 const { MODES, commitment, fingerprint } = require("./validation");
+const providers = new WeakSet();
 function ownedFile(stat) {
   if (!stat.isFile() || stat.uid !== process.getuid() || (stat.mode & 0o777) !== 0o600 || stat.nlink !== 1) fail("OPERATOR_CREDENTIAL_RESOURCE_UNSAFE");
 }
@@ -88,9 +89,9 @@ function descriptorPassword(fd) {
 function createFileCredentialProvider({ mode, file, password_fd, input, output } = {}) {
   if (!MODES.includes(mode)) fail("OPERATOR_MODE_INVALID");
   if (typeof file !== "string") fail("OPERATOR_CREDENTIAL_PATH_INVALID");
-  return {
+  const provider = Object.freeze({
     mode,
-    async prepare(intent) {
+    async prepare(intent, { allow_create = true } = {}) {
       let lock, temp, password;
       try {
         location(file);
@@ -99,6 +100,7 @@ function createFileCredentialProvider({ mode, file, password_fd, input, output }
         catch (_) { fail("OPERATOR_CREDENTIAL_RESOURCE_BUSY"); }
         const previous = safeRead(file);
         if (previous) { matching(previous, intent, mode); return { password: Buffer.from(previous.password, "utf8") }; }
+        if (!allow_create) fail("OPERATOR_CREDENTIAL_RESOURCE_MISSING");
         password = mode === "interactive" ? password_fd !== undefined ? descriptorPassword(password_fd) : await promptPassword({ input, output }) : Buffer.from(crypto.randomBytes(32).toString("base64url"));
         fingerprint(password);
         const payload = { ...intent, mode, password: password.toString("utf8") };
@@ -117,7 +119,9 @@ function createFileCredentialProvider({ mode, file, password_fd, input, output }
         if (lock !== undefined) { fs.closeSync(lock); fs.unlinkSync(file + ".lock"); }
       }
     }
-  };
+  });
+  providers.add(provider);
+  return provider;
 }
 function retrieveInitialCredential({ file, authorization } = {}) {
   if (!authorization || authorization.authorized !== true || authorization.scope !== "retrieve-initial-credential") fail("OPERATOR_RETRIEVAL_AUTHORIZATION_REQUIRED");
@@ -129,4 +133,4 @@ function retrieveInitialCredential({ file, authorization } = {}) {
     return { username: record.identity.username, email: record.identity.email, password: Buffer.from(record.password, "utf8") };
   } catch (error) { if (error instanceof OperatorBootstrapError) throw error; fail("OPERATOR_CREDENTIAL_RESOURCE_MISSING"); }
 }
-module.exports = { createFileCredentialProvider, retrieveInitialCredential, promptPassword };
+module.exports = { createFileCredentialProvider, retrieveInitialCredential, promptPassword, isFileCredentialProvider: provider => providers.has(provider) };

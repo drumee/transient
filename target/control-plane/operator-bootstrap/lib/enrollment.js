@@ -3,6 +3,7 @@ const runtime = require("@drumee/server-runtime");
 const { fail, OperatorBootstrapError } = require("./errors");
 const { context, commitment, fingerprint, MODES } = require("./validation");
 const { store, validateSchema, installSchema } = require("./store");
+const { isFileCredentialProvider } = require("./credentials");
 async function prerequisites(db, options) {
   const platform = options.platform || require("../../bootstrap/lib");
   try {
@@ -49,9 +50,11 @@ async function validateInitialOperator(options = {}) {
 async function enrollInitialOperator(options = {}) {
   const intent = context(options), db = store(options.database);
   await requireIdle(db);
-  await prerequisites(db, options); await validateSchema(db);
+  await prerequisites(db, options);
+  const observed = await validateSchema(db), observed_enrollment = await inspectRecord(db, observed);
+  if (observed_enrollment && (observed.operation_id !== intent.operation_id || observed.identity_commitment !== commitment(intent))) fail("OPERATOR_ENROLLMENT_CONFLICT");
   const provider = options.credential_provider;
-  if (!provider || !MODES.includes(provider.mode) || typeof provider.prepare !== "function") fail("OPERATOR_CREDENTIAL_PROVIDER_INVALID");
+  if (!isFileCredentialProvider(provider) || !MODES.includes(provider.mode) || typeof provider.prepare !== "function") fail("OPERATOR_CREDENTIAL_PROVIDER_INVALID");
   let password, begun = false;
   // Trusted distribution/test hook permits controlled interruption testing, never
   // supplied by a network request. It receives phase names only, no secrets.
@@ -62,7 +65,7 @@ async function enrollInitialOperator(options = {}) {
   try {
     await checkpoint("before-credential");
     let material;
-    try { material = await provider.prepare(intent); }
+    try { material = await provider.prepare(intent, { allow_create: !observed_enrollment }); }
     catch (_) { fail("OPERATOR_CREDENTIAL_PREPARATION_FAILED"); }
     password = material?.password;
     const credential_commitment = fingerprint(password), identity_commitment = commitment(intent);

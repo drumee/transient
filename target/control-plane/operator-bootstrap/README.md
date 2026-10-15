@@ -27,6 +27,10 @@ Create `credential_provider` with
 `createFileCredentialProvider({mode, file, password_fd, input, output})` and
 pass it to enrollment. Result fields are contract_version, valid, uid,
 operation_id, policy, changed. No password or fingerprint is returned.
+The initial provider contract accepts only immutable filesystem providers made
+by this module. Arbitrary callbacks cannot substitute ephemeral credentials for
+the required durable preparation. Other secret-store providers require a later
+explicit contract; interactive FD/TTY acquisition still uses this same store.
 
 ## Credentials
 
@@ -46,6 +50,9 @@ atomic file link, fsync and intent checksum protect creation. Credentials bind
 the operation/domain/organization/identity/mode and persist before SQL.
 Existing material is reused; malformed state or stale locks fail closed,
 requiring explicit operator investigation. No stale-lock takeover occurs.
+If SQL enrollment is complete, a missing credential resource is never created
+anew. Restore its protected backup or use a future separately authorized
+recovery operation; the initial enrollment API cannot reset the account.
 
 Explicit retrieval is `retrieveInitialCredential({file, authorization:
 {authorized:true, scope:"retrieve-initial-credential", operation_id}})`.
