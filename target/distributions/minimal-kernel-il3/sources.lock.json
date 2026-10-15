@@ -1,6 +1,6 @@
 {
   "repository": "https://github.com/drumee/transient.git",
-  "revision": "5469b48109dbb20eacbbc9314a6772264b388843",
+  "revision": "47d1c7d9750287852f342790c2788bcca1182bf8",
   "paths": {
     "target/control-plane/bootstrap": "platform-bootstrap",
     "target/control-plane/hub-lifecycle": "hub-lifecycle",
@@ -13,6 +13,7 @@
     "sources/server-essentials/lib/lex/permission.js": "essentials/lex/permission.js",
     "sources/server-essentials/lib/lex/functions.js": "essentials/lex/functions.js",
     "sources/server-essentials/lib/redis-store.js": "essentials/redis-store.js",
-    "sources/server-essentials/LICENSE": "essentials/LICENSE"
+    "sources/server-essentials/LICENSE": "essentials/LICENSE",
+    "target/control-plane/operator-bootstrap": "operator-bootstrap"
   }
 }

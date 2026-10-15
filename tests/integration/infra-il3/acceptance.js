@@ -11,6 +11,9 @@ async function verify({ prepared, directory, driver, baseline }) {
   const ca = fs.readFileSync(path.join(prepared.candidate, "ca-public.pem"));
   const hostname = "drumee.lan:" + port, origin = "https://" + hostname;
   const accounts = JSON.parse(fs.readFileSync(path.join(prepared.root, "durable/acceptance/principals.json")));
+  const operator = require(path.join(fixture_root, "vendor/operator-bootstrap/lib"));
+  const credential = operator.retrieveInitialCredential({ file: path.join(prepared.root, "durable/acceptance/operator-credential.json"), authorization: { authorized: true, scope: "retrieve-initial-credential", operation_id: "il3-initial-operator-1" } });
+  accounts.principals.owner.password = credential.password.toString(); credential.password.fill(0);
   const cookies = {};
   const request = (method, route, { user, body, headers = {} } = {}) => new Promise((resolve, reject) => {
     const req = https.request({ agent: false, hostname: binding.host_address, port, servername: "drumee.lan", ca, rejectUnauthorized: true, method, path: route, headers: { Host: hostname, ...(cookies[user] ? { Cookie: cookies[user] } : {}), ...headers } }, res => {
@@ -33,6 +36,11 @@ async function verify({ prepared, directory, driver, baseline }) {
       cookies[name] = response.headers["set-cookie"][0].split(";")[0];
       assert.equal(response.headers.regsid, cookies[name].slice("regsid=".length));
     }
+  });
+  await check("canonical-enrolled-platform-administrator-dispatch", async () => {
+    assert.equal((await service("fixture.platform_info")).data.policy, "PLATFORM_ADMINISTRATOR");
+    await service("fixture.platform_info", {}, "reader", 403);
+    await service("fixture.platform_info", {}, "outsider", 403);
   });
   const { data: context } = await service("fixture.context"); const a = context.hubs[0].root, b = context.hubs[1].root;
   await check("canonical-hub-acl-and-cross-hub-denial", async () => {
@@ -122,7 +130,9 @@ async function verify({ prepared, directory, driver, baseline }) {
     for (const resource of resources.filter(value => ["database", "redis", "kernel"].includes(value.service))) assert.ok(Object.values(resource.ports || {}).every(value => value === null));
     assert.equal(driver.compose(prepared, ["exec", "-T", "gateway", "nginx", "-t"]).includes(""), true);
   });
-  const inventory_script = `const crypto=require('node:crypto');(async()=>{const db=await require('./lib/database').connect();const inventory={};for(const [name,sql] of Object.entries({principals:'SELECT e.id,e.dom_id,e.type,e.status,d.username,d.fingerprint,d.email FROM entity e JOIN drumate d ON e.id=d.id ORDER BY e.id',privileges:'SELECT uid,domain_id,privilege,is_authoritative FROM privilege ORDER BY uid',hubs:'SELECT id,owner_id,domain_id,name FROM hub ORDER BY id',acl:'SELECT hub_id,uid,privilege FROM hub_acl ORDER BY hub_id,uid',platform:'SELECT conf_key,conf_value FROM sys_conf ORDER BY conf_key'}))inventory[name]=await db.query(sql);const hubs=await db.query('SELECT hub_id,database_name FROM hub_lifecycle ORDER BY hub_id');for(const hub of hubs){inventory[hub.hub_id]={media:await db.queryIn(hub.database_name,'SELECT * FROM media ORDER BY id'),permissions:await db.queryIn(hub.database_name,'SELECT * FROM permission ORDER BY resource_id,entity_id')};}await db.close();console.log(crypto.createHash('sha256').update(JSON.stringify(inventory)).digest('hex'));})().catch(()=>process.exit(1));`;
+  const inventory_script = `const crypto=require('node:crypto');(async()=>{const db=await require('./lib/database').connect();const inventory={};for(const [name,sql] of Object.entries({principals:'SELECT e.id,e.dom_id,e.type,e.status,d.username,d.fingerprint,d.email,d.remit FROM entity e JOIN drumate d ON e.id=d.id ORDER BY e.id',privileges:'SELECT uid,domain_id,privilege,is_authoritative FROM privilege ORDER BY uid',hubs:'SELECT id,owner_id,domain_id,name FROM hub ORDER BY id',acl:'SELECT hub_id,uid,privilege FROM hub_acl ORDER BY hub_id,uid',platform:'SELECT conf_key,conf_value FROM sys_conf ORDER BY conf_key',operator:'SELECT * FROM initial_operator_enrollment'}))inventory[name]=await db.query(sql);const hubs=await db.query('SELECT hub_id,database_name FROM hub_lifecycle ORDER BY hub_id');for(const hub of hubs){inventory[hub.hub_id]={media:await db.queryIn(hub.database_name,'SELECT * FROM media ORDER BY id'),permissions:await db.queryIn(hub.database_name,'SELECT * FROM permission ORDER BY resource_id,entity_id')};}await db.close();console.log(crypto.createHash('sha256').update(JSON.stringify(inventory)).digest('hex'));})().catch(()=>process.exit(1));`;
+  const credential_resource_digest = crypto.createHash("sha256").update(fs.readFileSync(path.join(prepared.root, "durable/acceptance/operator-credential.json"))).digest("hex");
+  if (baseline) assert.equal(credential_resource_digest, baseline.credential_resource_digest, "Initial operator credential changed across restart/recovery");
   const inventory_digest = driver.compose(prepared, ["exec", "-T", "kernel", "node", "-e", inventory_script]).trim();
   assert.match(inventory_digest, /^[a-f0-9]{64}$/);
   if (baseline) {
@@ -134,7 +144,7 @@ async function verify({ prepared, directory, driver, baseline }) {
     else await browser({ origin, binding, prepared, directory, account: accounts.principals.owner });
   });
   console.log("KERNEL_ACCEPTANCE_CHECKS " + checks);
-  return { node, inventory_digest, ca_fingerprint: prepared.certificate.ca_fingerprint, checks };
+  return { node, inventory_digest, credential_resource_digest, ca_fingerprint: prepared.certificate.ca_fingerprint, checks };
 }
 async function browser({ origin, binding, prepared, directory, account }) {
   const { once } = require("node:events");

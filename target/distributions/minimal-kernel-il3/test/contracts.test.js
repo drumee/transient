@@ -18,11 +18,21 @@ test("private resources reject symlinks, hardlinks and permissive modes", () => 
 });
 test("installed runtime schema manifest resolves only package files and parses its actual SQL", () => {
   const root = path.dirname(require.resolve("@drumee/server-runtime/package.json"));
-  const entries = manifestEntries(root); assert.equal(entries.length, 2);
+  const entries = manifestEntries(root); assert.equal(entries.length, 3);
   assert.ok(entries.flatMap(entry => statements(fs.readFileSync(entry.file, "utf8"))).length > 15);
 });
 test("distribution composition passes the canonical lifecycle verification", () => {
   const { compose } = require("../lib/distribution");
   const composition = compose({ root: "/tmp/il3-unit", project: "il3-unit", image: "sha256:" + "a".repeat(64), tools_image: "sha256:" + "b".repeat(64), https_port: 29443, dns_port: 29553, source_revision: "5469b48109dbb20eacbbc9314a6772264b388843" });
   assert.deepEqual(require("@drumee/infra-layer/lifecycle/composition").verifyComposition(composition), composition);
+});
+
+test("fixture consumes published authority and canonical owner enrollment", () => {
+  const pkg = require("../package.json"); assert.equal(pkg.dependencies["@drumee/server-runtime"], "0.1.0-alpha.4");
+  const init = fs.readFileSync(path.join(__dirname, "../lib/initialize.js"), "utf8");
+  assert.ok(init.includes("operator.enrollInitialOperator"));
+  assert.ok(init.includes('for (const name of ["reader", "outsider"])'));
+  assert.ok(!init.includes("state.principals.owner.password"));
+  const components = fs.readFileSync(path.join(__dirname, "../lib/components.js"), "utf8");
+  assert.ok(components.includes("platform_authorizer.authorize")); assert.ok(!components.includes("organisation_id === 1"));
 });

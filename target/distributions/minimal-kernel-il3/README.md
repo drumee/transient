@@ -77,3 +77,34 @@ are never logged, and request files are removed after acknowledgment. Browser
 checks for the isolated loopback restoration use an owned SSH tunnel; initial
 deployment checks go directly over the LAN. No browser executable or CA is
 installed on testbox. An external-browser timeout is a failure, not a skip.
+
+
+## KB-01B canonical initial operator
+
+The fixture consumes published `@drumee/server-runtime@0.1.0-alpha.4` and
+projects operator-bootstrap from source revision
+`47d1c7d9750287852f342790c2788bcca1182bf8` through sources.lock.json.
+The first owner is enrolled by the canonical control-plane API in test mode,
+with operation `il3-initial-operator-1`, personal/active human identity,
+platform remit 15 and minimal Domain membership 1. Hub creation requires the
+actual PlatformAuthorizer, not a blanket organization-ID predicate.
+The fixture-only context and platform_info endpoints use that platform policy;
+this grants no Hub/MFS bypass and does not change generic kernel ACL rules.
+
+The private initial credential is persisted in
+`durable/acceptance/operator-credential.json` before SQL. It is mounted only
+into the initialization job, never into the running kernel or gateway. The
+owner entry in principals.json contains no password. Reader/outsider setup and
+their credentials remain strictly disposable acceptance preparation, not a
+production ordinary-user provisioning API. The acceptance driver explicitly
+retrieves the initial secret through the protected control-plane API to perform
+normal runtime login; no credential is printed into logs or built into images.
+
+The acceptance directory and SQL completion marker are included in coordinated
+backup/restore. Tests compare credential bytes and SQL/ACL/MFS digests before
+and after restart/restoration and repeat real login/platform dispatch. Existing
+pre-KB-01B fixture identities are never adopted or reset automatically; use an
+empty disposable deployment or a matching canonical backup. The minimal profile
+is still a test distribution, not the Debian production installer.
+
+See transient report 41 for exact qualification and remaining boundaries.

@@ -4,7 +4,9 @@
   "private": true,
   "type": "commonjs",
   "license": "AGPL-3.0-only",
-  "engines": { "node": ">=22" },
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "test": "node --test test/*.test.js",
     "sources": "node scripts/sources.js",
@@ -12,7 +14,7 @@
     "test:integration": "node ../../../tests/integration/infra-il3/run.js"
   },
   "dependencies": {
-    "@drumee/server-runtime": "0.1.0-alpha.3",
+    "@drumee/server-runtime": "0.1.0-alpha.4",
     "@drumee/system-mfs": "https://codeload.github.com/drumee/system-mfs/tar.gz/53101c4a995ffca9118f795ab5d4c7c731200a2f",
     "@drumee/ui-runtime": "0.1.0-alpha.2",
     "@drumee/finder": "0.1.0-alpha.4",

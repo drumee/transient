@@ -33,3 +33,24 @@ Infrastructure images are immutable references in lib/distribution.js. The
 native DNS capability image is built from Infra Layer's pinned recipe. Resulting
 local image IDs, fixture Git SHA and composition revision belong in each test
 report. Local test image labels do not substitute for code provenance.
+
+
+## KB-01B integration
+
+Reference before change: transient `7c2e3b0a3ea5d75623c67faa123e48d6eb9b1052`.
+Canonical enrollment projection: transient
+`47d1c7d9750287852f342790c2788bcca1182bf8`, allowlisted sources.lock acquisition.
+Bootstrap/Hub/MFS/HostFilesystem implementations are unchanged; the source pin
+moves to acquire the canonical new control-plane capability with provenance.
+Runtime is published alpha.4, npm gitHead
+`f961f6214432c2e6dbbcde2b926544c076935950`, SHA-512 integrity
+`sha512-bOZ/v6/4mQ/FPa8iE21polPx2PjJWFYTKqTz+2duqxI2ljpviemNgOtpwkxF4j/1Xn/1aVIxdvVCc8Tch2ctEQ==`.
+No source-relative/runtime sibling fallback is used.
+
+initialize.js delegates first-owner identity/fingerprint/remit creation to
+KB-01B. Direct SQL is retained only for test reader/outsider setup and their
+explicit acceptance grants. components.js authorizes Hub creation through the
+canonical platform policy. host.js adds platform-scoped fixture observation,
+without changing kernel authorization. acceptance.js adds enrolled-platform
+HTTP checks and credential/marker/remit recovery inventory. Protected FileIo,
+transfers, OTAK, Finder, Redis rotation and restore checks are preserved.

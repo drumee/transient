@@ -31,16 +31,17 @@ async function start() {
   const descriptors = new runtime.DescriptorRegistry({ permissionValue });
   descriptors.registerDirectory(path.join(path.dirname(require.resolve("@drumee/server-runtime/package.json")), "acl"));
   for (const name of ["mfs-service", "mfs-transfer", "media-service"]) descriptors.registerDirectory(path.join(__dirname, "../vendor", name, "server/acl"));
-  descriptors.registerDescriptor("fixture", { modules: { private: "worker.js" }, services: { context: { scope: "domain", permission: { src: "read" } }, original: { scope: "mfs", requires: ["system-mfs"], permission: { src: "read" } } } }, { workdir: __dirname });
+  descriptors.registerDescriptor("fixture", { modules: { private: "worker.js" }, services: { platform_info: { scope: "platform", permission: { src: "PLATFORM_ADMINISTRATOR" } }, context: { scope: "platform", permission: { src: "PLATFORM_ADMINISTRATOR" } }, original: { scope: "mfs", requires: ["system-mfs"], permission: { src: "read" } } } }, { workdir: __dirname });
   class FixtureWorker {
     constructor({ session }) { this.session = session; }
+    async platform_info() { return { policy: "PLATFORM_ADMINISTRATOR" }; }
     async context() {
       const hubs = await db.query("SELECT hub_id,public_name FROM hub_lifecycle WHERE creator_uid=? ORDER BY hub_id", this.session.uid());
       return { hubs: await Promise.all(hubs.map(async hub => ({ hub_id: hub.hub_id, name: hub.public_name, root: { hub_id: hub.hub_id, nid: (await system_mfs.validateProvisioning({ store: mfs_store, context: { hub_id: hub.hub_id } })).root_id } }))) };
     }
     async original(input) { const node = await mfs_store.getNode(null, input.node); return file_io.send(this.session.output, host_filesystem.original(node), { name: node.filename, mimetype: node.mimetype }); }
   }
-  const dispatcher = new runtime.ServiceDispatcher({ registry: descriptors, authorize: runtime.createAuthorizer({ domainAuthorizer: new runtime.DomainAuthorizer({ store: yellow_page }), hubAuthorizer: hub_authorizer, mfsPermissionBackend: permission_backend }), capability_resolver: new runtime.CapabilityResolver({ providers: { "system-mfs": async ({ hub_context, hub_contexts }) => {
+  const dispatcher = new runtime.ServiceDispatcher({ registry: descriptors, authorize: runtime.createAuthorizer({ platformAuthorizer: new runtime.PlatformAuthorizer({ store: yellow_page }), domainAuthorizer: new runtime.DomainAuthorizer({ store: yellow_page }), hubAuthorizer: hub_authorizer, mfsPermissionBackend: permission_backend }), capability_resolver: new runtime.CapabilityResolver({ providers: { "system-mfs": async ({ hub_context, hub_contexts }) => {
     const contexts = Object.values(hub_contexts || (hub_context ? { current: hub_context } : {}));
     if (!contexts.length) return { available: false, status: "hub-required" };
     const reports = await Promise.all(contexts.map(context => system_mfs.capabilityAvailable({ store: mfs_store, context: { hub_id: context.hub_id } })));

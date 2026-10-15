@@ -1,7 +1,7 @@
 "use strict";
 const fs = require("node:fs"), path = require("node:path"), crypto = require("node:crypto");
 const { connect, privateFile, manifestEntries, fail } = require("./database");
-const { runtime, system_mfs, platform, components } = require("./components");
+const { runtime, system_mfs, platform, operator, components } = require("./components");
 const state_file = "/acceptance/principals.json";
 async function initialize(mode) {
   if (!["install", "validate"].includes(mode)) fail("INVALID_INITIALIZATION_OPERATION");
@@ -15,6 +15,14 @@ async function initialize(mode) {
       await platform.bootstrap({ database: db, domain: "drumee.lan" });
     }
     if (!(await platform.validate({ database: db, domain: "drumee.lan" })).valid) fail("PLATFORM_NOT_READY");
+    const operation_id = "il3-initial-operator-1", credential_file = "/acceptance/operator-credential.json";
+    const enrollment = { contract_version: 1, database: db, platform, domain: "drumee.lan", organisation_id: 1, operation_id, identity: { username: "il3-owner", email: "il3-owner@drumee.lan" }, authorization: { authorized: true, scope: "initial-operator", operation_id, domain: "drumee.lan", organisation_id: 1 } };
+    let initial;
+    if (mode === "install") {
+      await operator.installOperatorSchema(enrollment);
+      initial = await operator.enrollInitialOperator({ ...enrollment, credential_provider: operator.createFileCredentialProvider({ mode: "test", file: credential_file }) });
+    } else initial = await operator.validateInitialOperator({ ...enrollment });
+    if (!initial.valid) fail("INITIAL_OPERATOR_NOT_READY");
     const { acl, hub_store, mfs_store, lifecycle, sessions } = components(db);
     if (mode === "install") { await hub_store.install(); await system_mfs.install({ store: mfs_store }); }
     if (!(await system_mfs.validateInstallation({ store: mfs_store })).valid) fail("MFS_INSTALLATION_NOT_READY");
@@ -22,10 +30,11 @@ async function initialize(mode) {
     if (fs.existsSync(state_file)) state = JSON.parse(privateFile(state_file));
     else {
       if (mode !== "install") fail("ACCEPTANCE_STATE_MISSING");
-      const unowned = await db.query("SELECT id FROM drumate WHERE username IN ('il3-owner','il3-reader','il3-outsider')");
+      const unowned = await db.query("SELECT id FROM drumate WHERE username IN ('il3-reader','il3-outsider')");
       if (unowned.length) fail("ACCEPTANCE_IDENTITY_OWNERSHIP_CONFLICT");
       state = { contract_version: 1, domain: "drumee.lan", principals: {} };
-      for (const name of ["owner", "reader", "outsider"]) {
+      state.principals.owner = { id: initial.uid, email: "il3-owner@drumee.lan" };
+      for (const name of ["reader", "outsider"]) {
         state.principals[name] = { id: (await db.query("SELECT uniqueId() AS id"))[0].id, email: `il3-${name}@drumee.lan`, password: crypto.randomBytes(32).toString("base64url") };
       }
       // Write pending intent first. Interrupted SQL resumes with identical IDs.
@@ -33,7 +42,10 @@ async function initialize(mode) {
       try { fs.writeFileSync(fd, JSON.stringify(state)); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
     }
     if (state.contract_version !== 1 || state.domain !== "drumee.lan" || Object.keys(state.principals).sort().join() !== "outsider,owner,reader") fail("ACCEPTANCE_STATE_CORRUPTED");
-    for (const [name, principal] of Object.entries(state.principals)) {
+    if (state.principals.owner.id !== initial.uid || state.principals.owner.email !== "il3-owner@drumee.lan" || Object.hasOwn(state.principals.owner, "password")) fail("ACCEPTANCE_OWNER_CONFLICT");
+    // Additional users remain strictly disposable test preparation, not enrollment.
+    for (const name of ["reader", "outsider"]) {
+      const principal = state.principals[name];
       if (!/^[a-f0-9]{16}$/.test(principal.id) || !/^[A-Za-z0-9_-]{43}$/.test(principal.password)) fail("ACCEPTANCE_STATE_CORRUPTED");
       const current = await db.query("SELECT e.id,d.fingerprint,d.email,e.dom_id FROM entity e JOIN drumate d ON e.id=d.id WHERE e.id=?", principal.id);
       const fingerprint = crypto.createHash("sha512").update(principal.password).digest("hex");
@@ -49,7 +61,8 @@ async function initialize(mode) {
     }
     if (mode === "install") {
       const owner_session = await sessions.fromRequest({ headers: {} });
-      await owner_session.signin({ uid: state.principals.owner.id, password: state.principals.owner.password });
+      const credential = operator.retrieveInitialCredential({ file: credential_file, authorization: { authorized: true, scope: "retrieve-initial-credential", operation_id } });
+      try { await owner_session.signin({ uid: initial.uid, password: credential.password.toString() }); } finally { credential.password.fill(0); }
       for (const name of ["a", "b"]) await lifecycle.createPrivateHub({ session: owner_session, creator_module: "system-mfs", specification: { idempotency_key: "il3-" + name, name: "IL3 " + name.toUpperCase() } });
     }
     const hubs = await db.query("SELECT hub_id FROM hub_lifecycle WHERE creator_uid=? ORDER BY hub_id", state.principals.owner.id);
