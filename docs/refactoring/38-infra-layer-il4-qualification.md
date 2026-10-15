@@ -1,5 +1,9 @@
 # IL-4 — Distribution qualification checkpoint
 
+KB-01 follow-up: [canonical operator bootstrap contract gate](39-kernel-operator-bootstrap.md).
+KB-01 identified the missing minimal-runtime platform authority chain; IL-4
+remains gated and has not resumed.
+
 Canonical Infra Layer evidence: `35fe3d0e6b6311d43940338b65a7e5ae74c0d222`,
 `docs/IL-4-validation-evidence.json`. Debian handoff:
 `d035f9ed5af437c323d364dfbd732673f24f6c3e`.
