@@ -12,6 +12,7 @@
     "sources/server-essentials/lib/lex/constants.js": "essentials/lex/constants.js",
     "sources/server-essentials/lib/lex/permission.js": "essentials/lex/permission.js",
     "sources/server-essentials/lib/lex/functions.js": "essentials/lex/functions.js",
-    "sources/server-essentials/lib/redis-store.js": "essentials/redis-store.js"
+    "sources/server-essentials/lib/redis-store.js": "essentials/redis-store.js",
+    "sources/server-essentials/LICENSE": "essentials/LICENSE"
   }
 }
