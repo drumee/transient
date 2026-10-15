@@ -23,3 +23,24 @@ implemented to turn that result into a pass.
 
 Test checkpoint: `87a869eed880dbce656e04c592ffd09ad3c2d291`.
 The implementation boundary and regression evidence are recorded in report 39.
+
+## KB-01A canonical correction and integration
+
+Starting transient revision: `53432be57421147a3b282b4258f48507edb34913`,
+branch `refactor/mapping`. Integration checkpoint:
+`6033269963323dbc1b6c4360d3bbe53f99b26784`.
+
+| Input | Immutable revision / integrity | Role |
+|---|---|---|
+| drumee/server-runtime / main | `a6c4dbf24b036255ea0dbfe70dbe80a402c990b0` | Canonical correction; implementation commit `bfcbf66ecdef9d0ed1a3be054ed9c60329894b3c` |
+| Corrected runtime source archive | `sha512-Yyasa5Wm7PNh+jgBn0lk7JCIlUMoSIERT+4z/anIKNYDH4HbSmJ0p0uYocHM7gbd1su4dkrtbyEXD+Q14ruP6w==` | Main development test dependency; same package metadata alpha.3, different explicit source artifact from registry |
+| Legacy runtime alias | `npm:@drumee/server-runtime@0.1.0-alpha.3` | Preserves original KB-01 diagnostic, not the corrected integration |
+| drumee/system-mfs | `53101c4a995ffca9118f795ab5d4c7c731200a2f` | Source archive pinned in lock; actual SQL/module provision and ACL backend |
+| Existing transient bootstrap, hub-lifecycle, mfs-service | unchanged files from starting transient revision | Actual control-plane and MFS integration inputs, not alternate implementations |
+
+The new test is an integration composition only. Human INSERTs and grant
+changes are disposable SQL setup, not an enrollment API. Hub creation uses
+normal authenticated sessions and a `can_create` policy invoking the canonical
+PlatformAuthorizer. Cross-Hub denial is exercised through the real dispatcher,
+Hub resolver, MFS permission backend and SQL. No permissive runtime fallback
+or module/schema change was introduced. Report 40 records full test evidence.

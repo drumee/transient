@@ -1,5 +1,11 @@
 # KB-01 — canonical first platform administrator: contract gate
 
+Historical diagnostic at `53432be57421147a3b282b4258f48507edb34913`.
+[KB-01A](40-kernel-platform-authority.md) now supplies the canonical runtime
+correction and real SQL/Hub/MFS validation. This report retains the original
+blocking evidence. First-administrator enrollment is still not implemented;
+KB-01B and IL-4 resumption require separate review/approval.
+
 Status: **KB-01 — CONTRACT_BLOCKED**. The requested enrollment cannot correctly
 grant platform administration through the selected minimal runtime. No fake
 administrator, independent privilege authority or enrollment API was shipped.

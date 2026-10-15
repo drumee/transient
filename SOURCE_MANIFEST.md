@@ -80,3 +80,17 @@ registry inspection confirms alpha.1 is published and next/latest remain on
 that release. It still lacks IL-3 lifecycle APIs. No alpha.2 publication or
 release qualification occurs in this checkpoint. See report 38 for the missing
 canonical first-operator contract and exact regression scope.
+
+## KB-01A canonical runtime authority (2026-10-15)
+
+No source import or transitional runtime copy is made. The private
+operator-bootstrap probe consumes a verified archive of the canonical runtime:
+
+| Repository | Branch | Exact revision | Acquisition / role |
+|---|---|---|---|
+| https://github.com/drumee/server-runtime | main | `a6c4dbf24b036255ea0dbfe70dbe80a402c990b0` | Immutable codeload archive, SHA-512 in probe package-lock; independent platform authority correction from baseline `fc7d9de3f3e63baea8258885e55efe8e242904d0` |
+| https://github.com/drumee/system-mfs | main source lineage | `53101c4a995ffca9118f795ab5d4c7c731200a2f` | Existing approved IL-3 source revision, pinned test archive; real module provisioning/ACL integration |
+
+The registry runtime alpha.3 remains unchanged and is retained under an explicit
+legacy test alias. Corrected code is not represented as a new npm publication.
+See `docs/refactoring/40-kernel-platform-authority.md`; KB-01B is not started.

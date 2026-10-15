@@ -1,6 +1,14 @@
-# KB-01 — operator bootstrap contract probe
+# KB-01 / KB-01A — operator bootstrap and platform authority probes
 
-Status: **KB-01 — CONTRACT_BLOCKED**. This directory contains executable
+KB-01A supplies and validates the corrected canonical runtime authority
+contract; see [the technical report](../../../docs/refactoring/40-kernel-platform-authority.md).
+The runtime implementation lives exclusively in `drumee/server-runtime` at
+`a6c4dbf24b036255ea0dbfe70dbe80a402c990b0`, acquired by immutable source archive
+with lockfile integrity. It is not the published npm alpha.3 artifact despite
+unchanged package metadata. No enrollment API is implemented here; KB-01B
+requires its own approval. The historical blocked evidence below is retained.
+
+Historical status at diagnostic commit 53432be: **KB-01 — CONTRACT_BLOCKED**. This directory contains executable
 evidence and a pinned test environment, not an enrollment implementation.
 There is no public `enrollInitialOperator()` export, no credential provider,
 no enrollment migration and no administrator installed by this package.
@@ -29,8 +37,11 @@ npm test
 npm run test:integration
 ```
 
-Test dependencies are immutable `@drumee/server-runtime@0.1.0-alpha.3` and
-`mariadb@3.5.4`, with SHA-512 integrity in package-lock.json. The probe also
+Test dependencies include the corrected source archive, legacy published
+`@drumee/server-runtime@0.1.0-alpha.3` under the explicit test-only alias
+`@drumee/server-runtime-legacy`, `system-mfs` source revision
+`53101c4a995ffca9118f795ab5d4c7c731200a2f` and `mariadb@3.5.4`, all with
+SHA-512 integrity in package-lock.json. The probe also
 reads the repository's existing transitional runtime, platform-bootstrap and
 immutable Essentials constants as explicit test inputs. It is a private monorepo
 probe, not a standalone production package. No developer-specific absolute
@@ -47,16 +58,21 @@ the unchanged SQL `session_signin`, session issuance/resumption and dispatcher.
 Database/Docker errors are reduced to stable probe codes; plaintext credentials
 are not logged. Random per-run credentials are never Git/package/image inputs.
 
-Results: four unit tests and seven integration TAP tests including the parent,
-zero failures/skips. A passing contract probe means the absence is reproduced;
-it does not mean operator enrollment is implemented.
+KB-01A results: eight unit tests and sixteen integration TAP tests including
+parents, zero failures/skips. Four units and seven SQL TAP tests preserve
+the old diagnostic; four units and nine SQL TAP tests validate the corrected
+runtime with real bootstrap, sessions, platform authorization, Hub lifecycle,
+module provisioning and cross-Hub/per-resource MFS denial. Test human creation
+and explicit grant assignment are confined to disposable probe SQL, not
+production enrollment. Existing bootstrap, Hub and MFS implementations are
+test inputs, never copied or patched by this correction.
 
-## Required canonical correction
+## Historical required canonical correction
 
-The owning project is `drumee/server-runtime`. Restore a narrow, versioned
+The owning project is `drumee/server-runtime`. KB-01 requested a narrow, versioned
 platform authorization contract and its intrinsic schema prerequisites before
-implementing KB-01. Define the PLATFORM_ADMINISTRATOR grant separately from
-domain owner privileges, use real authenticated human sessions, and preserve
+enrollment. KB-01A now defines the PLATFORM_ADMINISTRATOR grant separately from
+domain owner privileges, uses real authenticated human sessions, and preserves
 Hub/MFS ACL isolation. The role cannot be manufactured by naming an enrollment
 record or assigning a domain number.
 
