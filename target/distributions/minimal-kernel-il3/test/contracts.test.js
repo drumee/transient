@@ -21,3 +21,8 @@ test("installed runtime schema manifest resolves only package files and parses i
   const entries = manifestEntries(root); assert.equal(entries.length, 2);
   assert.ok(entries.flatMap(entry => statements(fs.readFileSync(entry.file, "utf8"))).length > 15);
 });
+test("distribution composition passes the canonical lifecycle verification", () => {
+  const { compose } = require("../lib/distribution");
+  const composition = compose({ root: "/tmp/il3-unit", project: "il3-unit", image: "sha256:" + "a".repeat(64), tools_image: "sha256:" + "b".repeat(64), https_port: 29443, dns_port: 29553, source_revision: "5469b48109dbb20eacbbc9314a6772264b388843" });
+  assert.deepEqual(require("@drumee/infra-layer/lifecycle/composition").verifyComposition(composition), composition);
+});

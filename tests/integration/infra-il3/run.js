@@ -32,8 +32,10 @@ async function run() {
     const image_id = command(["docker", "image", "inspect", image, "--format", "{{.Id}}"] ).trim();
     const tools_id = command(["docker", "image", "inspect", tools, "--format", "{{.Id}}"] ).trim();
     const source_revision = command(["git", "-C", root, "rev-parse", "HEAD"] ).trim();
-    const https_port = await freePort(), dns_port = await freePort();
-    composition = compose({ root: deployment_root, project, image: image_id, tools_image: tools_id, https_port, dns_port, source_revision });
+    const https_port = process.env.IL3_HTTPS_PORT ? Number(process.env.IL3_HTTPS_PORT) : await freePort();
+    const dns_port = process.env.IL3_DNS_PORT ? Number(process.env.IL3_DNS_PORT) : await freePort();
+    const address = process.env.IL3_BIND_ADDRESS || "127.0.0.1";
+    composition = compose({ root: deployment_root, project, image: image_id, tools_image: tools_id, https_port, dns_port, address, source_revision });
     const context = { root: deployment_root, authorized: true, create_resources: true, driver };
     prepared = await lifecycle.prepareDeployment(composition, context);
     fs.cpSync(path.join(root, "public"), path.join(deployment_root, "durable/public"), { recursive: true });

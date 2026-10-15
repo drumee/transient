@@ -58,8 +58,18 @@ Range/chunk transfers, OTAK/WebSocket/Redis, real LETC/Finder browser, restart,
 cold backup and isolated restoration. Recovery compares canonical identity/Hub/
 ACL/MFS inventory digests and actual file bytes. Infrastructure restore still
 reports its own `kernel_recovery_verified:false`; application evidence is separate.
-Browser acceptance pins this disposable CA's SPKI for the isolated Chrome profile;
+Browser acceptance pins the prepared leaf's SPKI for the isolated Chrome profile;
 HTTPS API tests use ordinary CA/SAN verification. No CA is installed system-wide.
 
 Implementation and tests are in progress until the acceptance report records
 actual successful results. Do not infer full IL-3 readiness from this fixture.
+
+Remote acceptance uses the same runner with explicit `IL3_BIND_ADDRESS`,
+`IL3_HTTPS_PORT`, `IL3_DNS_PORT` and `IL3_EXTERNAL_BROWSER_DIRECTORY` values.
+Reinspect the host and ports first. A private owned browser directory coordinates
+three nonce-bound browser requests with `tests/integration/infra-il3/remote-browser.js`
+running on the LAN client. Credentials travel only through SSH/private files,
+are never logged, and request files are removed after acknowledgment. Browser
+checks for the isolated loopback restoration use an owned SSH tunnel; initial
+deployment checks go directly over the LAN. No browser executable or CA is
+installed on testbox. An external-browser timeout is a failure, not a skip.

@@ -19,7 +19,7 @@ async function verify({ prepared, directory, driver, baseline }) {
   });
   async function service(name, input = {}, user = "owner", status = 200) {
     const response = await request("POST", "/-/svc/" + name, { user, body: JSON.stringify(input), headers: { "content-type": "application/json" } });
-    assert.equal(response.status, status, "Unexpected status for " + name);
+    assert.equal(response.status, status, "Unexpected status for " + name + " / " + (user || "anonymous"));
     const value = JSON.parse(response.bytes);
     return { ...response, value, data: value.data };
   }
@@ -40,7 +40,7 @@ async function verify({ prepared, directory, driver, baseline }) {
     await service("mfs.list", { location: a }, "reader");
     await service("mfs.list", { location: a }, "outsider", 403);
     await service("mfs.list", { location: b }, "reader", 403);
-    await service("mfs.list", { location: a }, null, 403);
+    await service("mfs.list", { location: a }, null, 404);
     await service("mfs.mkdir", { destination: a, name: "reader-cannot-write" }, "reader", 403);
   });
   let node = baseline?.node;
@@ -50,7 +50,7 @@ async function verify({ prepared, directory, driver, baseline }) {
     const { data: start } = await service("mfs-transfer.upload_start", { destination: a, metadata: { filename: "IL3 original.bin", mimetype: "application/octet-stream", size: bytes.length }, size: bytes.length });
     for (const index of [1, 0, 1, 2]) {
       const chunk = bytes.subarray(index * start.chunk_size, Math.min(bytes.length, (index + 1) * start.chunk_size));
-      const response = await request("POST", `/-/svc/mfs-transfer.upload_chunk?transfer_id=${start.transfer_id}&index=${index}`, { user: "owner", body: chunk, headers: { "content-type": "application/octet-stream", "content-length": String(chunk.length) } });
+      const response = await request("POST", `/-/svc/mfs-transfer.upload_chunk?transfer_id=${start.transfer_id}&index=${index}`, { user: "owner", body: chunk, headers: { "content-type": "application/octet-stream", ...(index === 1 ? { "transfer-encoding": "chunked" } : { "content-length": String(chunk.length) }) } });
       assert.equal(response.status, 200, "binary chunk rejected");
     }
     const too_large = await request("POST", `/-/svc/mfs-transfer.upload_chunk?transfer_id=${start.transfer_id}&index=0`, { user: "owner", body: Buffer.alloc(1024 * 1024 + 1), headers: { "content-type": "application/octet-stream" } });
@@ -63,11 +63,22 @@ async function verify({ prepared, directory, driver, baseline }) {
   await check("real-fileio-protected-bytes-range-head-and-denials", async () => {
     for (const user of ["owner", "reader"]) { const response = await request("GET", media, { user }); assert.equal(response.status, 200); assert.equal(crypto.createHash("sha256").update(response.bytes).digest("hex"), digest); assert.equal(response.headers["x-accel-redirect"], undefined); }
     assert.equal((await request("GET", media, { user: "outsider" })).status, 403);
-    assert.equal((await request("GET", media)).status, 403);
+    assert.equal((await request("GET", media)).status, 404);
     const range = await request("GET", media, { user: "owner", headers: { Range: "bytes=3-20" } }); assert.equal(range.status, 206); assert.deepEqual(range.bytes, bytes.subarray(3, 21));
     assert.equal((await request("GET", media, { user: "owner", headers: { Range: "bytes=999999999-" } })).status, 416);
     const head = await request("HEAD", media, { user: "owner" }); assert.equal(head.status, 200); assert.equal(head.bytes.length, 0); assert.equal(head.headers["content-length"], String(bytes.length));
     for (const uri of ["/__drumee_artifacts/", "/__drumee_artifacts/../acceptance/principals.json", "/__drumee_artifacts/%252e%252e/secrets", "/mfs/raw", "/etc/passwd"]) assert.ok([400, 403, 404].includes((await request("GET", uri)).status));
+  });
+  await check("nginx-refuses-protected-symlink-escape", async () => {
+    const original = path.join(prepared.root, "durable/content", node.hub_id, node.nid);
+    const saved = original + ".il3-symlink-test";
+    fs.renameSync(original, saved);
+    try {
+      // Readable in kernel, absent from gateway; delegation cannot expose it.
+      fs.symlinkSync("/run/infra/database", original);
+      const response = await request("GET", media, { user: "owner" });
+      assert.ok([403, 404].includes(response.status));
+    } finally { fs.unlinkSync(original); fs.renameSync(saved, original); }
   });
   await check("real-archive-through-fileio", async () => {
     const { data: job } = await service("mfs-transfer.download_prepare", { roots: [node] });
@@ -119,17 +130,19 @@ async function verify({ prepared, directory, driver, baseline }) {
     assert.equal(prepared.certificate.ca_fingerprint, baseline.ca_fingerprint);
   }
   await check("chromium-letc-finder-and-websocket", async () => {
-    await browser({ origin, binding, prepared, directory, account: accounts.principals.owner });
+    if (process.env.IL3_EXTERNAL_BROWSER_DIRECTORY) await externalBrowser({ origin, binding, prepared, account: accounts.principals.owner });
+    else await browser({ origin, binding, prepared, directory, account: accounts.principals.owner });
   });
   console.log("KERNEL_ACCEPTANCE_CHECKS " + checks);
   return { node, inventory_digest, ca_fingerprint: prepared.certificate.ca_fingerprint, checks };
 }
 async function browser({ origin, binding, prepared, directory, account }) {
   const { once } = require("node:events");
-  const cert = new crypto.X509Certificate(fs.readFileSync(path.join(prepared.candidate, "ca-public.pem")));
+  const certificate_mount = prepared.compose.services.gateway.volumes.find(mount => mount.target === "/run/secrets/tls-certificate");
+  const cert = new crypto.X509Certificate(fs.readFileSync(path.resolve(prepared.candidate, certificate_mount.source)));
   const spki = crypto.createHash("sha256").update(cert.publicKey.export({ type: "spki", format: "der" })).digest("base64");
   const profile = fs.mkdtempSync(path.join(directory, "chrome-"));
-  const chrome = spawn(process.env.CHROME_BIN || "/usr/bin/google-chrome", ["--headless=new", "--no-sandbox", "--disable-gpu", "--no-proxy-server", "--no-first-run", "--disable-background-networking", "--remote-debugging-port=0", "--user-data-dir=" + profile, "--host-resolver-rules=MAP drumee.lan " + binding.host_address, "--ignore-certificate-errors-spki-list=" + spki, origin], { stdio: "ignore" });
+  const chrome = spawn(process.env.CHROME_BIN || "/usr/bin/google-chrome", ["--headless=new", "--no-sandbox", "--disable-gpu", "--no-proxy-server", "--no-first-run", "--disable-background-networking", "--remote-debugging-port=0", "--user-data-dir=" + profile, "--host-resolver-rules=MAP drumee.lan " + binding.host_address, "--ignore-certificate-errors-spki-list=" + spki, origin], { stdio: "ignore", detached: true });
   let socket;
   try {
     let devtools;
@@ -140,16 +153,46 @@ async function browser({ origin, binding, prepared, directory, account }) {
     let serial = 0; const pending = new Map(); const failures = [];
     socket.addEventListener("message", event => { const message = JSON.parse(event.data); if (message.method === "Runtime.exceptionThrown") failures.push("JS_EXCEPTION"); if (message.method === "Network.loadingFailed" && message.params.type !== "Other") failures.push("NETWORK_FAILED"); if (pending.has(message.id)) { const call = pending.get(message.id); pending.delete(message.id); message.error ? call.reject(Error("DEVTOOLS_ERROR")) : call.resolve(message.result); } });
     const send = (method, params = {}) => new Promise((resolve, reject) => { const id = ++serial; pending.set(id, { resolve, reject }); socket.send(JSON.stringify({ id, method, params })); });
-    const evaluate = async expression => { const result = await send("Runtime.evaluate", { expression, awaitPromise: true, returnByValue: true }); if (result.exceptionDetails) throw Error("BROWSER_EVALUATION_FAILED"); return result.result.value; };
+    const evaluate = async expression => { const result = await send("Runtime.evaluate", { expression, awaitPromise: true, returnByValue: true }); if (result.exceptionDetails) { console.error("BROWSER_EXCEPTION_TYPE " + (result.exceptionDetails.exception?.className || "unknown")); throw Error("BROWSER_EVALUATION_FAILED"); } return result.result.value; };
     await send("Runtime.enable"); await send("Network.enable");
     for (let attempt = 0; attempt < 100 && !await evaluate("typeof startKernelAcceptance==='function'"); attempt++) await sleep(100);
+    console.log("BROWSER_BOOTSTRAP_STATE " + JSON.stringify(await evaluate("({title:document.title,bundle:document.body?.dataset.bundle,error:document.body?.dataset.error,entry:typeof startKernelAcceptance})")));
+    assert.equal(await evaluate("typeof startKernelAcceptance"), "function", "Frontend bootstrap unavailable");
     const result = await evaluate("startKernelAcceptance(" + JSON.stringify({ uid: account.id, password: account.password }) + ")");
     assert.equal(result.ready, true); assert.equal(result.hubs, 2); assert.equal(result.kind, "finder");
     assert.equal(await evaluate("kernelAcceptance.websocket.connected || document.body.dataset.ready==='true'"), true);
     assert.deepEqual(failures, []);
+    console.log("BROWSER_LETC_FINDER_WEBSOCKET_VERIFIED");
+    await send("Browser.close").catch(() => {});
   } finally {
-    socket?.close(); chrome.kill("SIGTERM"); await Promise.race([once(chrome, "exit"), sleep(2000)]);
-    fs.rmSync(profile, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+    socket?.close();
+    // Only this detached process group is owned; never kill by executable name.
+    if (chrome.exitCode === null) { try { process.kill(-chrome.pid, "SIGTERM"); } catch (_) {} await Promise.race([once(chrome, "exit"), sleep(2000)]); }
+    try { process.kill(-chrome.pid, "SIGKILL"); } catch (_) {}
+    await sleep(200);
+    fs.rmSync(profile, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
   }
 }
-module.exports = { verify };
+async function externalBrowser({ origin, binding, prepared, account }) {
+  const root = process.env.IL3_EXTERNAL_BROWSER_DIRECTORY;
+  const stat = fs.lstatSync(root);
+  assert.ok(stat.isDirectory() && !stat.isSymbolicLink() && stat.uid === process.getuid() && !(stat.mode & 0o077));
+  const nonce = crypto.randomBytes(16).toString("hex");
+  const mount = prepared.compose.services.gateway.volumes.find(value => value.target === "/run/secrets/tls-certificate");
+  const request = { nonce, origin, binding, project: prepared.project, revision: prepared.revision, ca: fs.readFileSync(path.join(prepared.candidate, "ca-public.pem"), "utf8"), certificate: fs.readFileSync(path.resolve(prepared.candidate, mount.source), "utf8"), account };
+  fs.writeFileSync(path.join(root, "request-" + nonce + ".json"), JSON.stringify(request), { mode: 0o600, flag: "wx" });
+  console.log("EXTERNAL_LAN_BROWSER_REQUESTED " + nonce);
+  try {
+    for (let attempt = 0; attempt < 600; attempt++) {
+      const result_file = path.join(root, "result-" + nonce + ".json");
+      if (fs.existsSync(result_file)) {
+        const result = JSON.parse(fs.readFileSync(result_file, "utf8"));
+        assert.equal(result.nonce, nonce); assert.equal(result.success, true, "External LAN browser acceptance failed");
+        return;
+      }
+      await sleep(1000);
+    }
+    throw Error("EXTERNAL_BROWSER_TIMEOUT");
+  } finally { fs.unlinkSync(path.join(root, "request-" + nonce + ".json")); }
+}
+module.exports = { verify, browser };

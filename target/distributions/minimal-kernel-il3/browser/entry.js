@@ -17,7 +17,7 @@ window.startKernelAcceptance = async function ({ uid, password }) {
   const transport = new Transport();
   await transport.postService("yp.signin", { uid, password });
   const context = await transport.postService("fixture.context");
-  const websocket = new runtime_api.Websocket({ global: window, url: location.origin.replace(/^http/, "ws") + "/-/websocket", serviceClient: transport, WebSocket });
+  const websocket = new runtime_api.Websocket({ global: window, url: location.origin.replace(/^http/, "ws") + "/-/websocket/", serviceClient: transport, WebSocket });
   const messages = []; websocket.on("message", message => messages.push(message)); await websocket.connect();
   const runtime = await runtime_api.bootstrap({ serviceClient: transport, websocket });
   finder.registerFinderKinds(runtime);
