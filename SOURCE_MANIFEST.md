@@ -63,3 +63,20 @@ Generated acquisitions live in ignored fixture-local vendor/cache, never sources
 Infra Layer authority remains standalone main at
 `95db6c7aed097b62aa8081df17b3467d850e779c`; its IL-3 source archive is a private
 test dependency, not the published npm alpha or a new transitional implementation.
+
+## IL-4 qualification references (2026-10-15)
+
+These references record inspected/validated counterparts; no implementation is
+imported into sources or a second transient Infra Layer copy.
+
+| Repository | Branch | Exact revision | Method / role |
+|---|---|---|---|
+| https://github.com/drumee/infra-layer | main | `a0d0006c51ac4e71fb155d3a1330d9d2b77aeded` | Canonical composition correction, report and unpublished artifact evidence; runtime implementation `2d1f6aa6774f70f1d3cfc00f47a94ecf4133e314` |
+| https://github.com/drumee/debian | feat/container-distribution | `1fa0939d5c73cdc40b0fb4ac936b76aaa63e4e7e` | IL-3 dependency inventory and IL-4 integration/SQL handoff; no production installer |
+| https://github.com/drumee/debian | main | `b8b0ebe7082e1ad2366f3a7997712f5da5bba127` | Read-only remote branch inspection; unchanged |
+
+The earlier IL-1.1 publication-blocked row is historical evidence: current npm
+registry inspection confirms alpha.1 is published and next/latest remain on
+that release. It still lacks IL-3 lifecycle APIs. No alpha.2 publication or
+release qualification occurs in this checkpoint. See report 38 for the missing
+canonical first-operator contract and exact regression scope.

@@ -1,5 +1,9 @@
 # IL-3 — approved distribution fixture and real-kernel acceptance
 
+IL-4 follow-up: [distribution qualification checkpoint](38-infra-layer-il4-qualification.md).
+The IL-3 fixture remains preserved; its disposable identities are not production
+initialization defaults.
+
 Status: **IL-3 — READY_FOR_TECHNICAL_REVIEW** for the documented minimal
 Docker profile and supported compatibility boundaries. This is not release
 approval, unrestricted provider support, or production/Oxymotion acceptance.
