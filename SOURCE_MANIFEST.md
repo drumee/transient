@@ -52,3 +52,14 @@ snapshot against the pinned Git commit. Exact extraction history, prepared
 archive integrity, clean-checkout tests and publication blocker are recorded in
 `docs/refactoring/36-infra-layer-il1.1-release.md`. Subsequent IL-2 requires
 separate authorization; npm publication is not inferred from a Git tag.
+
+## Approved IL-3 distribution fixture inputs (2026-10-15)
+
+The private `target/distributions/minimal-kernel-il3` fixture has explicit owner
+approval under IL-3 section 10. It adds no source-tree import. Exact repositories,
+branches and revisions are recorded in its `PROVENANCE.md`; `sources.lock.json`
+pins the allowlisted transient revision and npm's lockfile pins archive integrity.
+Generated acquisitions live in ignored fixture-local vendor/cache, never sources.
+Infra Layer authority remains standalone main at
+`d2b1f3fbb7f59e406c854dc80c5750a9695c9bfa`; its IL-3 source archive is a private
+test dependency, not the published npm alpha or a new transitional implementation.

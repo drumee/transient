@@ -1,0 +1,155 @@
+"use strict";
+const assert = require("node:assert/strict");
+const fs = require("node:fs"), path = require("node:path"), https = require("node:https"), crypto = require("node:crypto");
+const { spawn, spawnSync } = require("node:child_process");
+const fixture_root = path.resolve(__dirname, "../../../target/distributions/minimal-kernel-il3");
+const { client: WebSocketClient } = require(require.resolve("websocket", { paths: [fixture_root] }));
+const sleep = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds));
+async function verify({ prepared, directory, driver, baseline }) {
+  const config = prepared.composition.plan.inputs.adapter_input;
+  const binding = config.gateway.bindings[0], port = binding.host_port;
+  const ca = fs.readFileSync(path.join(prepared.candidate, "ca-public.pem"));
+  const hostname = "drumee.lan:" + port, origin = "https://" + hostname;
+  const accounts = JSON.parse(fs.readFileSync(path.join(prepared.root, "durable/acceptance/principals.json")));
+  const cookies = {};
+  const request = (method, route, { user, body, headers = {} } = {}) => new Promise((resolve, reject) => {
+    const req = https.request({ agent: false, hostname: binding.host_address, port, servername: "drumee.lan", ca, rejectUnauthorized: true, method, path: route, headers: { Host: hostname, ...(cookies[user] ? { Cookie: cookies[user] } : {}), ...headers } }, res => {
+      const chunks = []; res.on("data", chunk => chunks.push(chunk)); res.on("end", () => resolve({ status: res.statusCode, headers: res.headers, bytes: Buffer.concat(chunks) })); res.on("error", reject);
+    }); req.on("error", reject); req.setTimeout(15000, () => req.destroy(Error("REQUEST_TIMEOUT"))); req.end(body);
+  });
+  async function service(name, input = {}, user = "owner", status = 200) {
+    const response = await request("POST", "/-/svc/" + name, { user, body: JSON.stringify(input), headers: { "content-type": "application/json" } });
+    assert.equal(response.status, status, "Unexpected status for " + name);
+    const value = JSON.parse(response.bytes);
+    return { ...response, value, data: value.data };
+  }
+  let checks = 0;
+  const check = async (name, callback) => { await callback(); checks++; console.log("KERNEL_CONTRACT_OK " + name); };
+  await check("real-signin-session-and-invalid-credentials", async () => {
+    await service("yp.signin", { uid: accounts.principals.owner.id, password: "deliberately-invalid" }, null, 401);
+    for (const [name, principal] of Object.entries(accounts.principals)) {
+      const response = await service("yp.signin", { uid: principal.id, password: principal.password }, null);
+      assert.equal(response.data.authenticated, true);
+      cookies[name] = response.headers["set-cookie"][0].split(";")[0];
+      assert.equal(response.headers.regsid, cookies[name].slice("regsid=".length));
+    }
+  });
+  const { data: context } = await service("fixture.context"); const a = context.hubs[0].root, b = context.hubs[1].root;
+  await check("canonical-hub-acl-and-cross-hub-denial", async () => {
+    assert.equal(context.hubs.length, 2);
+    await service("mfs.list", { location: a }, "reader");
+    await service("mfs.list", { location: a }, "outsider", 403);
+    await service("mfs.list", { location: b }, "reader", 403);
+    await service("mfs.list", { location: a }, null, 403);
+    await service("mfs.mkdir", { destination: a, name: "reader-cannot-write" }, "reader", 403);
+  });
+  let node = baseline?.node;
+  const bytes = Buffer.alloc(2 * 1024 * 1024 + 17, 0x51); bytes.write("Drumee IL3 persistent original\n");
+  const digest = crypto.createHash("sha256").update(bytes).digest("hex");
+  if (!baseline) await check("real-binary-chunks-retries-order-limits-and-commit", async () => {
+    const { data: start } = await service("mfs-transfer.upload_start", { destination: a, metadata: { filename: "IL3 original.bin", mimetype: "application/octet-stream", size: bytes.length }, size: bytes.length });
+    for (const index of [1, 0, 1, 2]) {
+      const chunk = bytes.subarray(index * start.chunk_size, Math.min(bytes.length, (index + 1) * start.chunk_size));
+      const response = await request("POST", `/-/svc/mfs-transfer.upload_chunk?transfer_id=${start.transfer_id}&index=${index}`, { user: "owner", body: chunk, headers: { "content-type": "application/octet-stream", "content-length": String(chunk.length) } });
+      assert.equal(response.status, 200, "binary chunk rejected");
+    }
+    const too_large = await request("POST", `/-/svc/mfs-transfer.upload_chunk?transfer_id=${start.transfer_id}&index=0`, { user: "owner", body: Buffer.alloc(1024 * 1024 + 1), headers: { "content-type": "application/octet-stream" } });
+    assert.equal(too_large.status, 413);
+    const result = await service("mfs-transfer.upload_complete", { transfer_id: start.transfer_id, sha256: digest });
+    node = { hub_id: result.data.result.hub_id, nid: result.data.result.nid };
+    assert.match(node.nid, /^[a-f0-9]{16}$/);
+  });
+  const media = `/-/svc/media.orig?hub_id=${node.hub_id}&nid=${node.nid}`;
+  await check("real-fileio-protected-bytes-range-head-and-denials", async () => {
+    for (const user of ["owner", "reader"]) { const response = await request("GET", media, { user }); assert.equal(response.status, 200); assert.equal(crypto.createHash("sha256").update(response.bytes).digest("hex"), digest); assert.equal(response.headers["x-accel-redirect"], undefined); }
+    assert.equal((await request("GET", media, { user: "outsider" })).status, 403);
+    assert.equal((await request("GET", media)).status, 403);
+    const range = await request("GET", media, { user: "owner", headers: { Range: "bytes=3-20" } }); assert.equal(range.status, 206); assert.deepEqual(range.bytes, bytes.subarray(3, 21));
+    assert.equal((await request("GET", media, { user: "owner", headers: { Range: "bytes=999999999-" } })).status, 416);
+    const head = await request("HEAD", media, { user: "owner" }); assert.equal(head.status, 200); assert.equal(head.bytes.length, 0); assert.equal(head.headers["content-length"], String(bytes.length));
+    for (const uri of ["/__drumee_artifacts/", "/__drumee_artifacts/../acceptance/principals.json", "/__drumee_artifacts/%252e%252e/secrets", "/mfs/raw", "/etc/passwd"]) assert.ok([400, 403, 404].includes((await request("GET", uri)).status));
+  });
+  await check("real-archive-through-fileio", async () => {
+    const { data: job } = await service("mfs-transfer.download_prepare", { roots: [node] });
+    let ready = false;
+    for (let attempt = 0; attempt < 100; attempt++) { const status = await service("mfs-transfer.download_status", { transfer_id: job.transfer_id }); if (status.data.status === "ready") { ready = true; break; } await sleep(50); }
+    assert.equal(ready, true);
+    const response = await request("POST", "/-/svc/mfs-transfer.download_retrieve", { user: "owner", body: JSON.stringify({ transfer_id: job.transfer_id }), headers: { "content-type": "application/json" } });
+    assert.equal(response.status, 200); assert.equal(response.bytes.subarray(0, 2).toString(), "PK");
+    await service("mfs-transfer.download_release", { transfer_id: job.transfer_id });
+  });
+  async function socket(token, protocol = "service", requested_origin = origin) {
+    return new Promise((resolve, reject) => {
+      const client = new WebSocketClient({ tlsOptions: { ca, rejectUnauthorized: true, servername: "drumee.lan" } });
+      client.once("connectFailed", () => reject(Error("WEBSOCKET_REJECTED")));
+      client.once("connect", connection => { const messages = []; connection.on("message", message => { if (message.type === "utf8") messages.push(JSON.parse(message.utf8Data)); }); resolve({ connection, messages }); });
+      client.connect(`wss://${binding.host_address}:${port}/-/websocket/?otak=${encodeURIComponent(token || "")}`, protocol, requested_origin, { Host: hostname });
+    });
+  }
+  await check("real-otak-origin-protocol-redis-events-and-reconnect", async () => {
+    await assert.rejects(() => socket(null));
+    const token = (await service("bootstrap.authn")).data.token;
+    await assert.rejects(() => socket(token, "wrong"));
+    await assert.rejects(() => socket(token, "service", "https://unexpected.invalid"));
+    const opened = await socket(token);
+    try {
+      opened.connection.sendUTF(JSON.stringify({ service: "sys.ping", data: { proof: "il3" } }));
+      for (let attempt = 0; attempt < 100 && !opened.messages.some(message => message.service === "sys.ping"); attempt++) await sleep(20);
+      assert.ok(opened.messages.some(message => message.service === "sys.ping" && message.data.ok));
+      // Actual RedisStore publisher -> Redis -> runtime subscriber -> socket.
+      driver.compose(prepared, ["exec", "-T", "kernel", "node", "-e", `process.env.credential_dir='/run/infra';const R=require('./vendor/essentials/redis-store');(async()=>{await new R().init();const db=await require('./lib/database').connect();const ids=await db.query('SELECT id AS socket_id FROM socket WHERE uid=?',${JSON.stringify(accounts.principals.owner.id)});await R.sendData({service:'fixture.redis',data:{proof:'redis-pubsub'}},ids);await db.close();process.exit(0)})().catch(()=>process.exit(1))`]);
+      for (let attempt = 0; attempt < 100 && !opened.messages.some(message => message.service === "fixture.redis"); attempt++) await sleep(20);
+      assert.ok(opened.messages.some(message => message.service === "fixture.redis" && message.data.proof === "redis-pubsub"));
+    } finally { opened.connection.close(); }
+    const second = await socket((await service("bootstrap.authn")).data.token); second.connection.close();
+  });
+  await check("bind-authority-no-recursion-and-private-network-exposure", async () => {
+    const dns = config.services.dns.bindings[0];
+    const output = spawnSync("dig", ["@" + dns.host_address, "-p", String(dns.host_port), "drumee.lan", "A", "+short"], { encoding: "utf8" }); assert.equal(output.status, 0); assert.equal(output.stdout.trim(), prepared.composition.plan.inputs.spec.dns.ipv4);
+    const denied = spawnSync("dig", ["@" + dns.host_address, "-p", String(dns.host_port), "example.net", "A"], { encoding: "utf8" }); assert.equal(denied.status, 0); assert.match(denied.stdout, /status: REFUSED/);
+    const resources = driver.inspectProject(prepared.project, Object.keys(prepared.compose.services));
+    for (const resource of resources.filter(value => ["database", "redis", "kernel"].includes(value.service))) assert.ok(Object.values(resource.ports || {}).every(value => value === null));
+    assert.equal(driver.compose(prepared, ["exec", "-T", "gateway", "nginx", "-t"]).includes(""), true);
+  });
+  const inventory_script = `const crypto=require('node:crypto');(async()=>{const db=await require('./lib/database').connect();const inventory={};for(const [name,sql] of Object.entries({principals:'SELECT e.id,e.dom_id,e.type,e.status,d.username,d.fingerprint,d.email FROM entity e JOIN drumate d ON e.id=d.id ORDER BY e.id',privileges:'SELECT uid,domain_id,privilege,is_authoritative FROM privilege ORDER BY uid',hubs:'SELECT id,owner_id,domain_id,name FROM hub ORDER BY id',acl:'SELECT hub_id,uid,privilege FROM hub_acl ORDER BY hub_id,uid',platform:'SELECT conf_key,conf_value FROM sys_conf ORDER BY conf_key'}))inventory[name]=await db.query(sql);const hubs=await db.query('SELECT hub_id,database_name FROM hub_lifecycle ORDER BY hub_id');for(const hub of hubs){inventory[hub.hub_id]={media:await db.queryIn(hub.database_name,'SELECT * FROM media ORDER BY id'),permissions:await db.queryIn(hub.database_name,'SELECT * FROM permission ORDER BY resource_id,entity_id')};}await db.close();console.log(crypto.createHash('sha256').update(JSON.stringify(inventory)).digest('hex'));})().catch(()=>process.exit(1));`;
+  const inventory_digest = driver.compose(prepared, ["exec", "-T", "kernel", "node", "-e", inventory_script]).trim();
+  assert.match(inventory_digest, /^[a-f0-9]{64}$/);
+  if (baseline) {
+    assert.equal(inventory_digest, baseline.inventory_digest, "Canonical identity/ACL/MFS recovery digest mismatch");
+    assert.equal(prepared.certificate.ca_fingerprint, baseline.ca_fingerprint);
+  }
+  await check("chromium-letc-finder-and-websocket", async () => {
+    await browser({ origin, binding, prepared, directory, account: accounts.principals.owner });
+  });
+  console.log("KERNEL_ACCEPTANCE_CHECKS " + checks);
+  return { node, inventory_digest, ca_fingerprint: prepared.certificate.ca_fingerprint, checks };
+}
+async function browser({ origin, binding, prepared, directory, account }) {
+  const { once } = require("node:events");
+  const cert = new crypto.X509Certificate(fs.readFileSync(path.join(prepared.candidate, "ca-public.pem")));
+  const spki = crypto.createHash("sha256").update(cert.publicKey.export({ type: "spki", format: "der" })).digest("base64");
+  const profile = fs.mkdtempSync(path.join(directory, "chrome-"));
+  const chrome = spawn(process.env.CHROME_BIN || "/usr/bin/google-chrome", ["--headless=new", "--no-sandbox", "--disable-gpu", "--no-proxy-server", "--no-first-run", "--disable-background-networking", "--remote-debugging-port=0", "--user-data-dir=" + profile, "--host-resolver-rules=MAP drumee.lan " + binding.host_address, "--ignore-certificate-errors-spki-list=" + spki, origin], { stdio: "ignore" });
+  let socket;
+  try {
+    let devtools;
+    for (let attempt = 0; attempt < 200; attempt++) { const file = path.join(profile, "DevToolsActivePort"); if (fs.existsSync(file)) { devtools = fs.readFileSync(file, "utf8").split("\n")[0]; break; } if (chrome.exitCode !== null) throw Error("CHROMIUM_EXITED"); await sleep(50); }
+    assert.ok(devtools, "Chromium debugging unavailable");
+    const pages = await (await fetch("http://127.0.0.1:" + devtools + "/json/list")).json();
+    socket = new WebSocket(pages.find(page => page.type === "page").webSocketDebuggerUrl); await once(socket, "open");
+    let serial = 0; const pending = new Map(); const failures = [];
+    socket.addEventListener("message", event => { const message = JSON.parse(event.data); if (message.method === "Runtime.exceptionThrown") failures.push("JS_EXCEPTION"); if (message.method === "Network.loadingFailed" && message.params.type !== "Other") failures.push("NETWORK_FAILED"); if (pending.has(message.id)) { const call = pending.get(message.id); pending.delete(message.id); message.error ? call.reject(Error("DEVTOOLS_ERROR")) : call.resolve(message.result); } });
+    const send = (method, params = {}) => new Promise((resolve, reject) => { const id = ++serial; pending.set(id, { resolve, reject }); socket.send(JSON.stringify({ id, method, params })); });
+    const evaluate = async expression => { const result = await send("Runtime.evaluate", { expression, awaitPromise: true, returnByValue: true }); if (result.exceptionDetails) throw Error("BROWSER_EVALUATION_FAILED"); return result.result.value; };
+    await send("Runtime.enable"); await send("Network.enable");
+    for (let attempt = 0; attempt < 100 && !await evaluate("typeof startKernelAcceptance==='function'"); attempt++) await sleep(100);
+    const result = await evaluate("startKernelAcceptance(" + JSON.stringify({ uid: account.id, password: account.password }) + ")");
+    assert.equal(result.ready, true); assert.equal(result.hubs, 2); assert.equal(result.kind, "finder");
+    assert.equal(await evaluate("kernelAcceptance.websocket.connected || document.body.dataset.ready==='true'"), true);
+    assert.deepEqual(failures, []);
+  } finally {
+    socket?.close(); chrome.kill("SIGTERM"); await Promise.race([once(chrome, "exit"), sleep(2000)]);
+    fs.rmSync(profile, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+  }
+}
+module.exports = { verify };
