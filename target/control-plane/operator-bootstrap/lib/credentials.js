@@ -44,10 +44,12 @@ function matching(record, intent, mode) {
 async function promptPassword({ input = process.stdin, output = process.stderr } = {}) {
   if (!input.isTTY || !output.isTTY || typeof input.setRawMode !== "function") fail("OPERATOR_SECURE_INPUT_REQUIRED");
   async function once(label) {
-    output.write(label); const was_raw = input.isRaw; input.setRawMode(true); input.resume();
+    const was_raw = input.isRaw;
     return new Promise((resolve, reject) => {
-      const bytes = [];
+      const bytes = []; let finished = false;
       function finish(error) {
+        if (finished) return; finished = true;
+        input.removeListener("end", onError); input.removeListener("close", onError);
         input.removeListener("data", onData); input.removeListener("error", onError); input.setRawMode(!!was_raw); input.pause(); output.write("\n");
         const value = Buffer.from(bytes); bytes.fill(0); if (error) { value.fill(0); reject(error); } else resolve(value);
       }
@@ -61,7 +63,8 @@ async function promptPassword({ input = process.stdin, output = process.stderr }
           if (bytes.length > 128) return finish(new OperatorBootstrapError("OPERATOR_CREDENTIAL_INVALID"));
         }
       };
-      input.on("data", onData); input.once("error", onError);
+      input.on("data", onData); input.once("error", onError); input.once("end", onError); input.once("close", onError);
+      try { input.setRawMode(true); input.resume(); output.write(label); } catch (_) { onError(); }
     });
   }
   const first = await once("Initial Drumee password: "); let confirmation;

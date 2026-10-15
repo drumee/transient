@@ -55,10 +55,16 @@ async function enrollInitialOperator(options = {}) {
   let password, begun = false;
   // Trusted distribution/test hook permits controlled interruption testing, never
   // supplied by a network request. It receives phase names only, no secrets.
-  const checkpoint = async phase => { if (options.checkpoint) await options.checkpoint(phase); };
+  const checkpoint = async phase => {
+    try { if (options.checkpoint) await options.checkpoint(phase); }
+    catch (_) { fail("OPERATOR_ENROLLMENT_FAILED"); }
+  };
   try {
     await checkpoint("before-credential");
-    const material = await provider.prepare(intent); password = material?.password;
+    let material;
+    try { material = await provider.prepare(intent); }
+    catch (_) { fail("OPERATOR_CREDENTIAL_PREPARATION_FAILED"); }
+    password = material?.password;
     const credential_commitment = fingerprint(password), identity_commitment = commitment(intent);
     await checkpoint("credential-prepared"); await checkpoint("before-transaction");
     await db.connection.beginTransaction(); begun = true;

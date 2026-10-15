@@ -43,6 +43,16 @@ test("KB-01B real SQL enrollment, credential durability, exclusivity and interru
    const db=await env.database("same_race"),second=await env.connect("same_race");await api.installOperatorSchema(intent(db));const prepared=resource(env,"same-race");
    const results=await Promise.all([api.enrollInitialOperator({...intent(db),credential_provider:prepared.provider}),api.enrollInitialOperator({...intent(second),credential_provider:prepared.provider})]);assert.equal(results[0].uid,results[1].uid);assert.deepEqual(results.map(value=>value.changed).sort(),[false,true]);
   });
+  await t.test("two actual deployment processes cannot enroll two first administrators",async()=>{
+   const db=await env.database("process_race");await api.installOperatorSchema(intent(db));
+   const {execFile}=require("node:child_process");
+   const requests=["a","b"].map(suffix=>{
+    const prepared=resource(env,"process-"+suffix),options=intent(null,"process-operation-"+suffix,{username:"admin-"+suffix,email:"admin-"+suffix+"@drumee.lan"});delete options.database;
+    const config=path.join(env.directory,"process-"+suffix+".json");fs.writeFileSync(config,JSON.stringify({port:env.port,password_file:env.password_file,database:"process_race",file:prepared.file,intent:options}),{mode:0o600});
+    return new Promise((resolve,reject)=>execFile(process.execPath,[path.join(__dirname,"../helpers/enrollment-child.js"),config],{timeout:30000},(error,stdout)=>{if(error)return reject(Error("CHILD_PROCESS_FAILED"));try{resolve(JSON.parse(stdout));}catch(_){reject(Error("CHILD_PROTOCOL_FAILED"));}}));
+   });
+   const results=await Promise.all(requests);assert.equal(results.filter(value=>value.changed===true).length,1);assert.equal(results.filter(value=>value.code==="OPERATOR_ENROLLMENT_CONFLICT").length,1);assert.equal((await db.query("SELECT COUNT(*) AS n FROM drumate WHERE remit=15"))[0].n,1);
+  });
   await t.test("all precommit interruption boundaries roll back humans and preserve prepared credentials for retry",async()=>{
    const phases=["before-credential","credential-prepared","before-transaction","principal-inserted","credential-inserted","remit-assigned","metadata-written","before-commit"];
    for(const [index,phase] of phases.entries()){
@@ -67,6 +77,7 @@ test("KB-01B real SQL enrollment, credential durability, exclusivity and interru
   await t.test("missing authority, missing authentication routine, wrong bootstrap and invalid provider fail closed",async()=>{
    const db=await env.database("missing_authority");await api.installOperatorSchema(intent(db));const prepared=resource(env,"missing-provider");
    await assert.rejects(api.enrollInitialOperator({...intent(db),credential_provider:{mode:"invalid",prepare(){throw Error("NEVER");}}}),{code:"OPERATOR_CREDENTIAL_PROVIDER_INVALID"});
+   await assert.rejects(api.enrollInitialOperator({...intent(db),credential_provider:{mode:"automatic",prepare(){throw new api.OperatorBootstrapError("private-credential-never-disclose");}}}),error=>error.code==="OPERATOR_CREDENTIAL_PREPARATION_FAILED"&&!JSON.stringify(error).includes("private-credential"));
    await db.query("DROP FUNCTION get_remit");await assert.rejects(api.enrollInitialOperator({...intent(db),credential_provider:prepared.provider}),{code:"OPERATOR_AUTHORITY_UNAVAILABLE"});assert.equal(fs.existsSync(prepared.file),false);
    const auth=await env.database("missing_auth");await api.installOperatorSchema(intent(auth));await auth.query("DROP PROCEDURE session_signin");await assert.rejects(api.enrollInitialOperator({...intent(auth),credential_provider:prepared.provider}),{code:"OPERATOR_AUTHENTICATION_UNAVAILABLE"});
    const bootstrap=await env.database("bad_bootstrap");await bootstrap.query("UPDATE sys_conf SET conf_value='bad' WHERE conf_key='guest_id'");await assert.rejects(api.installOperatorSchema(intent(bootstrap)),{code:"OPERATOR_PLATFORM_INVALID"});

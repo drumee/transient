@@ -2,7 +2,9 @@
 const crypto = require("node:crypto");
 const { fail } = require("./errors");
 const MODES = Object.freeze(["test", "interactive", "automatic"]);
-function context({ contract_version, domain, organisation_id, operation_id, identity, authorization } = {}) {
+function context(options = {}) {
+  if (!options || typeof options !== "object" || Array.isArray(options)) fail("OPERATOR_CONTRACT_INVALID");
+  const { contract_version, domain, organisation_id, operation_id, identity, authorization } = options;
   if (contract_version !== 1) fail("OPERATOR_CONTRACT_INVALID");
   if (organisation_id !== 1) fail("OPERATOR_ORGANISATION_INVALID");
   if (typeof domain !== "string" || domain.length > 253 || domain !== domain.toLowerCase() || !/^(?:localhost|[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+)$/.test(domain) || domain.split(".").some(label => label.length > 63)) fail("OPERATOR_DOMAIN_INVALID");

@@ -10,7 +10,8 @@
   },
   "scripts": {
     "test": "node --test test/unit/*.test.js",
-    "test:integration": "node --test test/integration/*.test.js"
+    "test:integration": "node --test test/integration/*.test.js",
+    "test:tty": "python3 test/helpers/tty-probe.py"
   },
   "devDependencies": {
     "mariadb": "3.5.4",
