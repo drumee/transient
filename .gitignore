@@ -48,3 +48,5 @@ scripts/test-env/kernel/*
 # Approved IL-3 distribution fixture acceptance inputs.
 !tests/integration/infra-il3/
 !tests/integration/infra-il3/**
+!tests/integration/infra-il4/
+!tests/integration/infra-il4/**
