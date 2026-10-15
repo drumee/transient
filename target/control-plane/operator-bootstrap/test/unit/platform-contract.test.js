@@ -1,6 +1,6 @@
 "use strict";
 const test = require("node:test"), assert = require("node:assert/strict");
-const runtime = require("@drumee/server-runtime");
+const runtime = require("@drumee/server-runtime-legacy");
 const target_runtime = require("../../../../foundation/server-runtime/lib");
 const Constants = require("../../../../../sources/server-essentials/lib/lex/constants");
 const { permissionValue } = require("../../../../../sources/server-essentials/lib/lex/permission");

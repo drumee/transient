@@ -1,17 +1,21 @@
 {
   "name": "@drumee/operator-bootstrap-contract-probe",
-  "version": "0.0.0-kb01-blocked",
+  "version": "0.0.0-kb01a-probe",
   "private": true,
   "type": "commonjs",
   "license": "AGPL-3.0-only",
-  "description": "KB-01 executable contract evidence; enrollment blocked on canonical runtime platform authority.",
-  "engines": { "node": ">=22" },
+  "description": "KB-01A canonical platform authority integration probes; no operator enrollment.",
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "test": "node --test test/unit/*.test.js",
     "test:integration": "node --test test/integration/*.test.js"
   },
   "devDependencies": {
-    "@drumee/server-runtime": "0.1.0-alpha.3",
-    "mariadb": "3.5.4"
+    "@drumee/server-runtime": "https://codeload.github.com/drumee/server-runtime/tar.gz/a6c4dbf24b036255ea0dbfe70dbe80a402c990b0",
+    "mariadb": "3.5.4",
+    "@drumee/server-runtime-legacy": "npm:@drumee/server-runtime@0.1.0-alpha.3",
+    "@drumee/system-mfs": "https://codeload.github.com/drumee/system-mfs/tar.gz/53101c4a995ffca9118f795ab5d4c7c731200a2f"
   }
 }

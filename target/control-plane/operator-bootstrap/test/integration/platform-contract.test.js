@@ -3,7 +3,7 @@
 const test = require("node:test"), assert = require("node:assert/strict");
 const fs = require("node:fs"), path = require("node:path"), os = require("node:os"), crypto = require("node:crypto");
 const { execFileSync } = require("node:child_process");
-const mariadb = require("mariadb"), runtime = require("@drumee/server-runtime");
+const mariadb = require("mariadb"), runtime = require("@drumee/server-runtime-legacy");
 const platform = require("../../../bootstrap/lib");
 const Constants = require("../../../../../sources/server-essentials/lib/lex/constants");
 const { permissionValue } = require("../../../../../sources/server-essentials/lib/lex/permission");
@@ -33,7 +33,7 @@ test("real minimal runtime authenticates humans but has no platform authority co
       async await_func(name, ...parameters) { assert.match(name, /^[a-z_]+$/); return (await this.query(`SELECT \`${name}\`(${parameters.map(() => "?").join(",")}) AS value`, ...parameters))[0]; }
     };
     await database.query("CREATE DATABASE yp CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci");
-    const package_root = path.dirname(require.resolve("@drumee/server-runtime/package.json"));
+    const package_root = path.dirname(require.resolve("@drumee/server-runtime-legacy/package.json"));
     const manifest = JSON.parse(fs.readFileSync(path.join(package_root, "schemas/SCHEMA_MANIFEST.json")));
     assert.equal(manifest.schemaVersion, "phase4.5-runtime-schema-1");
     for (const entry of [...manifest.install].sort((a, b) => a.order - b.order)) {
