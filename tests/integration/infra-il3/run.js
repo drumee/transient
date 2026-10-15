@@ -48,6 +48,7 @@ async function run() {
     const acceptance = require("./acceptance");
     const baseline = await acceptance.verify({ prepared, directory, driver });
     assert.equal((await lifecycle.activateDeployment(prepared, context)).effect, "no-op");
+    prepared = await require("./rotation").verifyRotation(prepared, context);
     driver.compose(prepared, ["restart", "database", "redis", "kernel"]);
     // Restart invalidates attestation; explicit reconciliation is required.
     assert.equal((await lifecycle.inspectDeployment(deployment_root, context)).ready, false);
@@ -64,7 +65,7 @@ async function run() {
     assert.equal((await lifecycle.activateDeployment(restored, restore_context)).ready, true);
     await acceptance.verify({ prepared: restored, directory, driver, baseline });
     console.log("REAL_KERNEL_ISOLATED_RECOVERY_VERIFIED");
-    const report = { project, source_revision, composition_revision: composition.revision, image_id, tools_id, https_port, dns_port, real_kernel: true, restart: true, isolated_recovery: true, ca_fingerprint: baseline.ca_fingerprint };
+    const report = { project, source_revision, composition_revision: composition.revision, image_id, tools_id, https_port, dns_port, real_kernel: true, interrupted_rotation_recovered: true, restart: true, isolated_recovery: true, ca_fingerprint: baseline.ca_fingerprint };
     fs.writeFileSync(path.join(directory, "report.json"), JSON.stringify(report, null, 2), { mode: 0o600 });
     console.log(JSON.stringify(report));
   } catch (error) {
