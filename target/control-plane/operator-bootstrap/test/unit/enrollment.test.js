@@ -50,3 +50,8 @@ test("pool-like adapters and unauthorized enrollment fail before credential acqu
   let called=0;await assert.rejects(api.enrollInitialOperator({...options(),database:{query(){}},credential_provider:{mode:"test",prepare(){called++;}}}),{code:"OPERATOR_DEDICATED_CONNECTION_REQUIRED"});
   await assert.rejects(api.enrollInitialOperator({...options(),authorization:null,credential_provider:{mode:"test",prepare(){called++;}}}),{code:"OPERATOR_AUTHORIZATION_REQUIRED"});assert.equal(called,0);
 });
+test("retrieval command never falls back to ordinary stdout without a secure terminal",t=>{
+ const {spawnSync}=require("node:child_process"),root=temporary(t);
+ const result=spawnSync(process.execPath,[path.join(__dirname,"../../scripts/retrieve.js"),"--authorize-retrieval","--resource",path.join(root,"resource"),"--operation-id",intent().operation_id],{encoding:"utf8",stdio:["pipe","pipe","pipe"]});
+ assert.equal(result.status,1);assert.equal(result.stdout,"");assert.equal(result.stderr.trim(),"OPERATOR_PROTECTED_RETRIEVAL_FAILED");
+});

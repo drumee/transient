@@ -57,6 +57,13 @@ protected backups. Initial delivery is separate from future account recovery.
 Buffers are cleared where feasible; immutable JavaScript/JSON strings cannot
 be reliably zeroized. Operator UID/root compromise is outside this boundary.
 
+From an operator-owned interactive terminal, explicit retrieval can use:
+`node scripts/retrieve.js --authorize-retrieval --resource /private/path/credential.json --operation-id deployment-first-admin-1`.
+The command writes only to `/dev/tty`, refuses noninteractive input, checks
+resource ownership and operation binding, and never falls back to stdout.
+The flag acknowledges initial delivery; filesystem ownership authorizes access.
+Do not capture or share the terminal. It is not a password-reset operation.
+
 ## SQL policy and crash behavior
 
 A single versioned `initial_operator_enrollment` row is locked FOR UPDATE
