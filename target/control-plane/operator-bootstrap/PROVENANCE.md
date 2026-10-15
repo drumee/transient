@@ -44,3 +44,25 @@ normal authenticated sessions and a `can_create` policy invoking the canonical
 PlatformAuthorizer. Cross-Hub denial is exercised through the real dispatcher,
 Hub resolver, MFS permission backend and SQL. No permissive runtime fallback
 or module/schema change was introduced. Report 40 records full test evidence.
+
+
+## KB-01B canonical enrollment
+
+Starting transient: `7c2e3b0a3ea5d75623c67faa123e48d6eb9b1052`.
+Runtime: published `@drumee/server-runtime@0.1.0-alpha.4`, gitHead
+`f961f6214432c2e6dbbcde2b926544c076935950`, integrity
+`sha512-bOZ/v6/4mQ/FPa8iE21polPx2PjJWFYTKqTz+2duqxI2ljpviemNgOtpwkxF4j/1Xn/1aVIxdvVCc8Tch2ctEQ==`.
+No local runtime implementation or older alpha fallback is used.
+
+New enrollment/store/validation/credentials code and singleton schema are
+focused AGPL-3.0-only control-plane implementations. Identity INSERT shape is
+derived from existing platform bootstrap store and current intrinsic schema;
+human identity uses personal/active, Domain privilege 1, separate remit 15.
+Fingerprinting reuses unchanged session_signin SHA2(password,512) semantics.
+Reserved identity semantics are not copied onto humans. All transaction DML
+uses the same native MariaDB connection. Runtime, bootstrap, Hub and MFS
+implementations remain unchanged; first Hub-probe owner now uses canonical
+enrollment, additional counterexamples remain disposable SQL test setup.
+
+Historical blocked evidence above remains provenance, not current module
+status. See report 41 for fixture acquisition, commits and qualification.

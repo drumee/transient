@@ -1,0 +1,9 @@
+{
+  "manifestVersion": 1,
+  "owner": "@drumee/operator-bootstrap-transitional",
+  "schemaVersion": "kb01b-initial-operator-1",
+  "install": [{"order": 10, "path": "schemas/001-initial-operator.sql"}],
+  "prerequisites": ["canonical-platform-bootstrap", "kb01a-platform-authority-1"],
+  "transaction": "DML only, dedicated MariaDB connection, singleton row FOR UPDATE",
+  "repair": "none; existing malformed or incomplete enrollment schema fails closed"
+}

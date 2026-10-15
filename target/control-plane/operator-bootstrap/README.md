@@ -1,83 +1,93 @@
-# KB-01 / KB-01A — operator bootstrap and platform authority probes
+# KB-01B — Canonical initial operator enrollment
 
-KB-01A supplies and validates the corrected canonical runtime authority
-contract; see [the technical report](../../../docs/refactoring/40-kernel-platform-authority.md).
-The runtime implementation lives exclusively in `drumee/server-runtime` at
-`a6c4dbf24b036255ea0dbfe70dbe80a402c990b0`, acquired by immutable source archive
-with lockfile integrity. It is not the published npm alpha.3 artifact despite
-unchanged package metadata. No enrollment API is implemented here; KB-01B
-requires its own approval. The historical blocked evidence below is retained.
+Private CommonJS installation-time control plane. Runtime dependency is the
+published `@drumee/server-runtime@0.1.0-alpha.4`, registry integrity pinned in
+package-lock. Legacy alpha.3 remains a diagnostic test alias only.
 
-Historical status at diagnostic commit 53432be: **KB-01 — CONTRACT_BLOCKED**. This directory contains executable
-evidence and a pinned test environment, not an enrollment implementation.
-There is no public `enrollInitialOperator()` export, no credential provider,
-no enrollment migration and no administrator installed by this package.
+`enrollInitialOperator(options)` and `validateInitialOperator(options)` provide
+version-1 enrollment and read-only validation. `installOperatorSchema(options)`
+applies the separately authorized additive migration before enrollment DML.
+No HTTP registration endpoint, alternate authentication system or Hub creation
+is installed by this module.
 
-The selected minimal runtime supports domain/Hub/MFS authorization but lacks
-the canonical platform authority path. Historical `server-core` used
-`scope: "plateform"` → `Acl.check_remit()` → `yp.get_remit(uid)` →
-`drumate.remit`. The selected intrinsic schema has neither the column nor the
-function, and `createAuthorizer()` rejects platform scopes.
+## Invocation
 
-Assigning 63 or 127 in the domain `privilege` table does not repair this:
-the tests authenticate real human sessions for both values and prove that the
-real dispatcher still denies platform operations. Requesting a cumulative root
-word through DomainAuthorizer is also unsuitable: domain authorization tests
-nonzero intersection, so a domain owner with 63 passes a requested mask of 127.
-No alternate role table or infrastructure-side authorization was introduced.
+Supply `contract_version: 1`, a dedicated MariaDB `database.connection`,
+`domain`, `organisation_id: 1`, stable `operation_id`, and
+`identity: {username, email}`. Supply trusted installation authorization:
+`{authorized: true, scope: "initial-operator", operation_id, domain,
+organisation_id: 1}`. This is a host authorization decision, never an anonymous
+client claim. Validate canonical platform bootstrap and KB-01A first; the API
+rejects missing or inconsistent prerequisites without repair. Distributions
+projecting the module elsewhere may inject the same canonical `platform`
+bootstrap validator. Pooled query facades are rejected.
 
-## Run the evidence
+Create `credential_provider` with
+`createFileCredentialProvider({mode, file, password_fd, input, output})` and
+pass it to enrollment. Result fields are contract_version, valid, uid,
+operation_id, policy, changed. No password or fingerprint is returned.
 
-From a checkout of transient containing this directory:
+## Credentials
 
-```sh
-cd target/control-plane/operator-bootstrap
-npm ci --ignore-scripts --no-audit --no-fund
-npm test
-npm run test:integration
-```
+Exactly three modes share the same SQL policy: `test`, `interactive`,
+`automatic`. Test/automatic generate 32 cryptographic random bytes encoded
+base64url once per resource. Interactive reads a private owned regular-file
+FD (>=3) or uses a raw, non-echoing TTY prompt with confirmation. Without a
+secure input channel it fails; there is no generation fallback. No password
+argument, environment variable or implicit Unix administrator is accepted.
+The host supplies explicit username/email; automatic installations may use
+username `admin`.
 
-Test dependencies include the corrected source archive, legacy published
-`@drumee/server-runtime@0.1.0-alpha.3` under the explicit test-only alias
-`@drumee/server-runtime-legacy`, `system-mfs` source revision
-`53101c4a995ffca9118f795ab5d4c7c731200a2f` and `mariadb@3.5.4`, all with
-SHA-512 integrity in package-lock.json. The probe also
-reads the repository's existing transitional runtime, platform-bootstrap and
-immutable Essentials constants as explicit test inputs. It is a private monorepo
-probe, not a standalone production package. No developer-specific absolute
-paths or sibling repositories are required by these tests.
+The operator must provide an existing owned 0700 parent directory. Files are
+0600, owner-only, with no symlink ancestors/leaf or extra hardlinks. Unsafe
+writable ancestors are rejected. An exclusive writer lock, non-overwriting
+atomic file link, fsync and intent checksum protect creation. Credentials bind
+the operation/domain/organization/identity/mode and persist before SQL.
+Existing material is reused; malformed state or stale locks fail closed,
+requiring explicit operator investigation. No stale-lock takeover occurs.
 
-Integration requires Docker. It starts a uniquely labelled digest-pinned
-MariaDB with tmpfs database storage, dynamic loopback-only TCP publication and
-a private temporary administrative credential file. Only its owned container
-and temporary directory are removed. There are no deployment or host changes.
+Explicit retrieval is `retrieveInitialCredential({file, authorization:
+{authorized:true, scope:"retrieve-initial-credential", operation_id}})`.
+It returns a password Buffer to the trusted process for protected delivery;
+clear it after use. Never write it to ordinary stdout, Docker/CI logs or
+reports. Enrollment only reports success; the distribution reports the
+resource location and operator retrieval procedure. Preserve the resource in
+protected backups. Initial delivery is separate from future account recovery.
+Buffers are cleared where feasible; immutable JavaScript/JSON strings cannot
+be reliably zeroized. Operator UID/root compromise is outside this boundary.
 
-The test's two human SQL counterexamples are explicitly disposable. They are
-not production provisioning logic and must not be called by Debian. They use
-the unchanged SQL `session_signin`, session issuance/resumption and dispatcher.
-Database/Docker errors are reduced to stable probe codes; plaintext credentials
-are not logged. Random per-run credentials are never Git/package/image inputs.
+## SQL policy and crash behavior
 
-KB-01A results: eight unit tests and sixteen integration TAP tests including
-parents, zero failures/skips. Four units and seven SQL TAP tests preserve
-the old diagnostic; four units and nine SQL TAP tests validate the corrected
-runtime with real bootstrap, sessions, platform authorization, Hub lifecycle,
-module provisioning and cross-Hub/per-resource MFS denial. Test human creation
-and explicit grant assignment are confined to disposable probe SQL, not
-production enrollment. Existing bootstrap, Hub and MFS implementations are
-test inputs, never copied or patched by this correction.
+A single versioned `initial_operator_enrollment` row is locked FOR UPDATE
+through principal creation, canonical SHA-512 fingerprint, remit assignment,
+completion marker and commit. Every statement uses the same native dedicated
+connection. The normal human drumate has personal/active state, independent
+PLATFORM_ADMINISTRATOR remit 15 and basic Domain privilege 1. It receives no
+implicit Hub/MFS rights. Reserved identities remain unchanged.
 
-## Historical required canonical correction
+Concurrent identical requests create once and replay the same UID. Changed
+operation/identity/credential commitments conflict. Existing administrators,
+username/email collisions and corrupt state fail closed. Replays preserve
+UID/password/remit; they never reset credentials or restore a revoked grant.
 
-The owning project is `drumee/server-runtime`. KB-01 requested a narrow, versioned
-platform authorization contract and its intrinsic schema prerequisites before
-enrollment. KB-01A now defines the PLATFORM_ADMINISTRATOR grant separately from
-domain owner privileges, uses real authenticated human sessions, and preserves
-Hub/MFS ACL isolation. The role cannot be manufactured by naming an enrollment
-record or assigning a domain number.
+Before commit, failures roll back the whole enrollment. After commit, a lost
+acknowledgment is recovered from the persistent credential resource and marker.
+DDL is separate and nontransactional. A crash between creating the table and
+seeding its guard requires explicit investigation; an existing empty table is
+never silently adopted. Validation is read-only and rejects enrollment-state
+drift; later authenticated identity maintenance/recovery is separate. Arbitrary
+privileged DBA SQL is outside enrollment-writer mutual exclusion.
 
-See [the KB-01 report](../../../docs/refactoring/39-kernel-operator-bootstrap.md)
-for exact affected files, source revisions, tests and the smallest proposed
-correction. Interactive/test/automatic credential handling, enrollment locking,
-idempotence and crash recovery remain required after that correction. No mode
-is silently substituted and the approved IL-3 fixture remains unchanged.
+## Tests and ownership
+
+Run `npm ci --ignore-scripts --no-audit --no-fund`, `npm test`, and
+`npm run test:integration`. Tests use uniquely owned disposable MariaDB,
+private generated credentials and loopback dynamic ports. Real authentication,
+separate-connection concurrency, disconnect rollback, commit acknowledgment
+loss, all interruption checkpoints, canonical Hub provisioning and per-resource
+MFS denial are covered. The IL-3 fixture consumes a pinned source projection;
+reader/outsider creation remains strictly disposable test-only setup.
+
+No npm publication, permanent deployment, Infra Layer policy or Debian-owned
+SQL enrollment is introduced. See
+[report 41](../../../docs/refactoring/41-kernel-operator-enrollment.md).

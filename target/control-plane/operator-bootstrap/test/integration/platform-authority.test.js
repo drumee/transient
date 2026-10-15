@@ -4,6 +4,7 @@ const test = require("node:test"), assert = require("node:assert/strict");
 const fs = require("node:fs"), path = require("node:path"), os = require("node:os"), crypto = require("node:crypto");
 const { execFileSync } = require("node:child_process");
 const mariadb = require("mariadb"), runtime = require("@drumee/server-runtime"), system_mfs = require("@drumee/system-mfs");
+const operator = require("../../lib");
 const platform = require("../../../bootstrap/lib"), hub_api = require("../../../hub-lifecycle/lib");
 const { MfsPermissionBackend, MfsService } = require("../../../../modules/mfs-service/lib");
 const Constants = require("../../../../../sources/server-essentials/lib/lex/constants");
@@ -24,6 +25,7 @@ test("corrected canonical runtime with real bootstrap, sessions, Hub lifecycle a
   async function connect(selected) {
     const connection = await mariadb.createConnection({ host: "127.0.0.1", port, user: "root", password, ...(selected ? { database: selected } : {}), bigIntAsNumber: true }); connections.push(connection);
     return {
+      connection,
       async query(sql, ...parameters) { try { return await connection.query(sql, parameters.map(value => value && typeof value === "object" ? JSON.stringify(value) : value)); } catch (error) { throw Object.assign(Error("KB01A_SQL_PROBE_FAILED"), { code: "KB01A_SQL_PROBE_FAILED", errno: error.errno }); } },
       async await_query(sql, ...parameters) { return this.query(sql, ...parameters); },
       async await_proc(name, ...parameters) { return this.query(`CALL ${sql_id(name)}(${parameters.map(() => "?").join(",")})`, ...parameters); },
@@ -61,6 +63,16 @@ test("corrected canonical runtime with real bootstrap, sessions, Hub lifecycle a
     const store = new runtime.YellowPageStore({ database }), sessions = new runtime.SessionManager({ store }), humans = [];
     // Test-only SQL setup, expressly not a KB-01B enrollment implementation.
     for (const [name, privilege] of [["platform-human", 1], ["domain-human", 63]]) {
+      if (name === "platform-human") {
+        const operation_id = "kb01b-hub-owner-1", file = path.join(directory, "operator-credential");
+        const enrollment = { contract_version: 1, database, domain: "drumee.lan", organisation_id: 1, operation_id, identity: { username: name, email: name + "@drumee.lan" }, authorization: { authorized: true, scope: "initial-operator", operation_id, domain: "drumee.lan", organisation_id: 1 } };
+        await operator.installOperatorSchema(enrollment);
+        const enrolled = await operator.enrollInitialOperator({ ...enrollment, credential_provider: operator.createFileCredentialProvider({ mode: "test", file }) });
+        const credential = operator.retrieveInitialCredential({ file, authorization: { authorized: true, scope: "retrieve-initial-credential", operation_id } });
+        const session = await sessions.fromRequest({ headers: {} });
+        try { await session.signin({ uid: enrolled.uid, password: credential.password.toString() }); } finally { credential.password.fill(0); }
+        humans.push({ uid: enrolled.uid, session }); continue;
+      }
       const uid = (await database.query("SELECT uniqueId() AS id"))[0].id, credential = crypto.randomBytes(32).toString("base64url");
       await database.query("START TRANSACTION");
       try {

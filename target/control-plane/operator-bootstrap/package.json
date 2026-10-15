@@ -1,10 +1,10 @@
 {
-  "name": "@drumee/operator-bootstrap-contract-probe",
-  "version": "0.0.0-kb01a-probe",
+  "name": "@drumee/operator-bootstrap-transitional",
+  "version": "0.0.0-kb01b",
   "private": true,
   "type": "commonjs",
   "license": "AGPL-3.0-only",
-  "description": "KB-01A canonical platform authority integration probes; no operator enrollment.",
+  "description": "Canonical privileged first human platform administrator enrollment.",
   "engines": {
     "node": ">=22"
   },
@@ -13,9 +13,12 @@
     "test:integration": "node --test test/integration/*.test.js"
   },
   "devDependencies": {
-    "@drumee/server-runtime": "https://codeload.github.com/drumee/server-runtime/tar.gz/a6c4dbf24b036255ea0dbfe70dbe80a402c990b0",
     "mariadb": "3.5.4",
     "@drumee/server-runtime-legacy": "npm:@drumee/server-runtime@0.1.0-alpha.3",
     "@drumee/system-mfs": "https://codeload.github.com/drumee/system-mfs/tar.gz/53101c4a995ffca9118f795ab5d4c7c731200a2f"
+  },
+  "main": "lib/index.js",
+  "dependencies": {
+    "@drumee/server-runtime": "0.1.0-alpha.4"
   }
 }

@@ -7,10 +7,10 @@ test("corrected canonical archive exposes the named independent policy", () => {
   assert.equal(runtime.PLATFORM_ADMINISTRATOR.remit, 15);
   assert.equal(require("@drumee/server-runtime/platform-authority").PlatformAuthorizer, runtime.PlatformAuthorizer);
 });
-test("lockfile pins corrected source rather than claiming registry alpha.3 has new APIs", () => {
+test("lockfile pins published canonical alpha.4 rather than the old alpha.3", () => {
   const lock = require("../../package-lock.json"), record = lock.packages["node_modules/@drumee/server-runtime"];
-  assert.equal(record.resolved, "https://codeload.github.com/drumee/server-runtime/tar.gz/a6c4dbf24b036255ea0dbfe70dbe80a402c990b0");
-  assert.match(record.integrity, /^sha512-/);
+  assert.equal(record.resolved, "https://registry.npmjs.org/@drumee/server-runtime/-/server-runtime-0.1.0-alpha.4.tgz");
+  assert.equal(record.integrity, "sha512-bOZ/v6/4mQ/FPa8iE21polPx2PjJWFYTKqTz+2duqxI2ljpviemNgOtpwkxF4j/1Xn/1aVIxdvVCc8Tch2ctEQ==");
   const package_root = path.dirname(require.resolve("@drumee/server-runtime/package.json"));
   const manifest = JSON.parse(fs.readFileSync(path.join(package_root, "schemas/SCHEMA_MANIFEST.json")));
   assert.equal(manifest.schemaVersion, runtime.PLATFORM_AUTHORITY_SCHEMA_VERSION);
