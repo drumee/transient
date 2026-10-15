@@ -83,7 +83,7 @@ installed on testbox. An external-browser timeout is a failure, not a skip.
 
 The fixture consumes published `@drumee/server-runtime@0.1.0-alpha.4` and
 projects operator-bootstrap from source revision
-`47d1c7d9750287852f342790c2788bcca1182bf8` through sources.lock.json.
+`4424fde877eb12a719d6057449ba11aa245244fd` through sources.lock.json.
 The first owner is enrolled by the canonical control-plane API in test mode,
 with operation `il3-initial-operator-1`, personal/active human identity,
 platform remit 15 and minimal Domain membership 1. Hub creation requires the

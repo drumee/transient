@@ -39,7 +39,7 @@ report. Local test image labels do not substitute for code provenance.
 
 Reference before change: transient `7c2e3b0a3ea5d75623c67faa123e48d6eb9b1052`.
 Canonical enrollment projection: transient
-`47d1c7d9750287852f342790c2788bcca1182bf8`, allowlisted sources.lock acquisition.
+`4424fde877eb12a719d6057449ba11aa245244fd`, allowlisted sources.lock acquisition.
 Bootstrap/Hub/MFS/HostFilesystem implementations are unchanged; the source pin
 moves to acquire the canonical new control-plane capability with provenance.
 Runtime is published alpha.4, npm gitHead

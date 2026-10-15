@@ -54,7 +54,7 @@ function compose({ root, project, image, tools_image, https_port, dns_port, addr
   const distribution = {
     contract_version: "1", id: "approved-minimal-kernel-il3", profile: "kernel", helper_image: node_image, external_writers: "none", init_jobs: [job],
     persistent_resources: [ ["acceptance", acceptance], ["content", content], ["public", public_root] ].map(([id, source]) => ({ id, source, uid, gid, backup_required: true })),
-    schema_versions: { runtime: "kb01a-platform-authority-1", operator: "kb01b-initial-operator-1", platform: "git-47d1c7d9750287852f342790c2788bcca1182bf8", hub: "git-47d1c7d9750287852f342790c2788bcca1182bf8", mfs: "phase4.8-system-mfs-2" },
+    schema_versions: { runtime: "kb01a-platform-authority-1", operator: "kb01b-initial-operator-1", platform: "git-4424fde877eb12a719d6057449ba11aa245244fd", hub: "git-4424fde877eb12a719d6057449ba11aa245244fd", mfs: "phase4.8-system-mfs-2" },
     provenance: { repository: "https://github.com/drumee/transient", revision: source_revision, path: "target/distributions/minimal-kernel-il3", acceptance: "real-kernel" },
     kernel: { id: "kernel", image, uid, gid, entrypoint: ["node"], command: ["lib/host.js"], mounts: [mount("content", "/content", false), mount("public", "/public", true)], secret_mounts: [database_secret, { ref: keys.redis, consumer: "kernel", target: "/run/infra/redis-config.json", format: "redis-client-config" }], requires: ["database", "redis", job.id], listener_ports: [3101, 3102], healthcheck: { test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3102/__ready').then(r=>process.exit(r.status===200?0:1)).catch(()=>process.exit(1))"], interval: "2s", timeout: "3s", retries: 30 } }
   };
