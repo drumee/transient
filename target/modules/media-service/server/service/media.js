@@ -1,12 +1,12 @@
 "use strict";
 
 module.exports = class MediaWorker {
-  constructor({ session, media_service, file_io } = {}) { this.session = session; this.media_service = media_service; this.file_io = file_io; }
+  constructor({ session, media_service, file_io, hub_context, hub_contexts } = {}) { this.session = session; this.media_service = media_service; this.file_io = file_io; this.hub_context = hub_context; this.hub_contexts = hub_contexts; }
   context() {
     const input = this.session && this.session.input;
     const auth = input && typeof input.authorization === "function" ? input.authorization() : {};
     const hub = this.session && this.session.hub;
-    return { current_hub_id: this.session && typeof this.session.currentHub === "function" ? this.session.currentHub() : hub && (typeof hub.get === "function" ? hub.get("id") : hub.id || hub.hub_id), keysel: auth && auth.keysel };
+    return { uid: this.session && typeof this.session.uid === "function" ? this.session.uid() : null, hub_context: this.hub_context, hub_contexts: this.hub_contexts, current_hub_id: this.session && typeof this.session.currentHub === "function" ? this.session.currentHub() : hub && (typeof hub.get === "function" ? hub.get("id") : hub.id || hub.hub_id), keysel: auth && auth.keysel };
   }
   async deliver(service, input) {
     const result = await this.media_service.resolve(service, input, this.context());
