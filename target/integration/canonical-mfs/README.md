@@ -8,7 +8,7 @@ implementation or a published package. P0-02R-B is its first consumer.
 `createCanonicalMfs(options)` receives the actual `runtime`, `system_mfs`,
 `database`, official `hub_store`, `session_manager`, canonical permission
 constants/converter, manifest `system_mfs_schema_version`, absolute server-only
-content/staging/incoming roots and optional native descriptor registry and
+artifact/content/staging/incoming roots and optional native descriptor registry and
 application capability providers. It returns the dispatcher, stores/services,
 registry, `createServer(options)` and `destroy()`.
 
@@ -21,9 +21,11 @@ authorized context; physical input from the browser is not consulted.
 Upload metadata is authorized before receiving bytes, then authorized again
 by native dispatch. Transfer ownership, staging bounds and integrity remain
 owned by MfsTransferService. FileIo returns an internal Nginx redirect; the
-caller must mount the canonical content root in Nginx and keep that location
+caller must mount the native artifact root in Nginx and keep that location
 `internal`. Expose only the native service route through the trusted proxy.
-Store content and SQL outside the checkout; do not erase volumes at teardown.
+The content resolver maps canonical content references inside that root;
+transfer archives remain under its separate staging directory. Store content
+and SQL outside the checkout; do not erase volumes at teardown.
 
 The generic media/transfer Workers previously dropped the injected Hub context.
 They now forward it, and MediaService passes it as the resolver's second
