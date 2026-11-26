@@ -12,7 +12,7 @@ class MediaService {
 
   async resolve(service, input = {}, context = {}) {
     if (!KNOWN.has(service)) throw Object.assign(new Error("Unknown public media representation"), { code: "MEDIA_REPRESENTATION_INVALID" });
-    const node = await this.node_resolver({ hub_id: input.hub_id || context.current_hub_id, nid: input.nid });
+    const node = await this.node_resolver({ hub_id: input.hub_id || context.current_hub_id, nid: input.nid }, context);
     if (!node) throw Object.assign(new Error("Media node was not found"), { code: "MFS_NODE_NOT_FOUND" });
     if (service === "orig") return { kind: "file", artifact: this.host_filesystem.original(node), name: node.filename, mimetype: node.mimetype };
     if (["preview", "thumb", "document", "video"].includes(service)) return { kind: "file", artifact: await this.representations.ensure(node, service), name: node.filename, mimetype: undefined };
