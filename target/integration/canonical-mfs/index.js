@@ -21,13 +21,13 @@ function createHubCapabilityProvider({ hub_store, module_id, schema_version }) {
   };
 }
 
-function createCanonicalMfs({ runtime, system_mfs, system_mfs_schema_version, database, hub_store, session_manager, permission_contract, permission_value, content_root, staging_root, incoming_root, registry, capability_providers = {} }) {
+function createCanonicalMfs({ runtime, system_mfs, system_mfs_schema_version, database, hub_store, session_manager, permission_contract, permission_value, artifact_root, content_root, staging_root, incoming_root, registry, capability_providers = {} }) {
   if (!runtime || !system_mfs || !database || !hub_store || !session_manager || !permission_contract || !permission_value) throw new Error("Canonical MFS requires runtime, SQL MFS, Hub store, sessions and permissions");
   const mfs_store = new system_mfs.SqlMfsStore({ database });
   const hub_authorizer = new runtime.HubAuthorizer({ resolver: hub_store, permissionValue: permission_value });
   const staging = new TransferStaging({ root: staging_root });
   const content_store = new system_mfs.LocalContentStore({ root: content_root, staging });
-  const host_filesystem = new HostFilesystem({ root: content_root });
+  const host_filesystem = new HostFilesystem({ root: artifact_root, content_resolver: ref => path.relative(artifact_root, content_store.filename(ref)) });
   const file_io = new FileIo({ host_filesystem });
   const filesystem_factory = principal => {
     const scoped_store = new system_mfs.SqlMfsStore({ database, shard_resolver: async ({ hub_id }) => {
